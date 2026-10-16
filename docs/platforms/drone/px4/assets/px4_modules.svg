@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 820" width="1300" height="820" role="img" aria-label="PX4 drone dimOS modules, their streams and RPCs">
+<title>PX4 drone dimOS modules, their streams and RPCs</title>
+<defs><marker id="a64748b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#64748b"/></marker><marker id="a0f766e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#0f766e"/></marker><marker id="a0e7490" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#0e7490"/></marker><marker id="abe123c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#be123c"/></marker></defs>
+<rect width="1300" height="820" fill="#ffffff"/>
+<text x="16" y="26" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="start">dimOS modules</text>
+<text x="150" y="26" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#475569" text-anchor="start">px4-a8-follow plus the agent from px4-agentic · all on one machine, bound by stream name</text>
+<rect x="12" y="40" width="170" height="712" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="28" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">OUTSIDE dimOS</text>
+<rect x="196" y="40" width="832" height="712" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="212" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">DIMOS</text>
+<rect x="1042" y="40" width="246" height="712" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="1058" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">ON THE GROUND</text>
+<rect x="28" y="84" width="140" height="60" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="40" y="105" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">LLM provider</text>
+<text x="40" y="123" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">HTTPS</text>
+<rect x="28" y="214" width="140" height="132" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="40" y="235" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">PX4</text>
+<text x="40" y="253" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">flight controller</text>
+<text x="40" y="270" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">MAVLink v2 via</text>
+<text x="40" y="287" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">mavlink-router,</text>
+<text x="40" y="304" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">UDP 14556</text>
+<rect x="28" y="556" width="140" height="84" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="40" y="577" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">SIYI A8 mini</text>
+<text x="40" y="595" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">camera: RTSP H.265</text>
+<text x="40" y="612" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">gimbal: via PX4</text>
+<rect x="214" y="80" width="144" height="76" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="226" y="101" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">McpClient</text>
+<text x="226" y="119" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">the LLM agent</text>
+<text x="226" y="136" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">humancli talks to it</text>
+<rect x="384" y="80" width="144" height="76" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="396" y="101" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">McpServer</text>
+<text x="396" y="119" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">skills as MCP tools</text>
+<text x="396" y="136" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">HTTP 127.0.0.1:9990</text>
+<rect x="554" y="80" width="228" height="76" rx="8" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.6"/>
+<text x="566" y="101" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Px4SkillContainer</text>
+<text x="566" y="119" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">takeoff, go_to, land,</text>
+<text x="566" y="136" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">set_guidance_mode, flight_status</text>
+<circle cx="767" cy="95" r="9" fill="#1d4ed8"/>
+<text x="767" y="99.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<text x="608" y="182" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0f766e" text-anchor="start">RPC</text>
+<rect x="214" y="196" width="420" height="248" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="226" y="217" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Px4DroneConnection</text>
+<text x="226" y="235" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dedicated worker · one MAVLink socket · one setpoint writer</text>
+<circle cx="619" cy="211" r="9" fill="#0f766e"/>
+<text x="619" y="215.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="230" y="252" width="192" height="58" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="242" y="273" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">mavlink.py</text>
+<text x="242" y="291" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">socket, heartbeat, rates</text>
+<circle cx="407" cy="267" r="9" fill="#0f766e"/>
+<text x="407" y="271.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="434" y="252" width="184" height="58" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="446" y="273" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">supervisor_core.py</text>
+<text x="446" y="291" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">20 Hz state machine, no I/O</text>
+<circle cx="603" cy="267" r="9" fill="#0f766e"/>
+<text x="603" y="271.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="230" y="320" width="192" height="58" rx="8" fill="#fff1f2" stroke="#be123c" stroke-width="1.6"/>
+<text x="242" y="341" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">timebase.py</text>
+<text x="242" y="359" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">PX4 clock for the stamps</text>
+<circle cx="407" cy="335" r="9" fill="#be123c"/>
+<text x="407" y="339.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="434" y="320" width="184" height="58" rx="8" fill="#fff1f2" stroke="#be123c" stroke-width="1.6"/>
+<text x="446" y="341" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">follow.py</text>
+<text x="446" y="359" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">FOLLOW, YAW_TRACK</text>
+<circle cx="603" cy="335" r="9" fill="#be123c"/>
+<text x="603" y="339.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<text x="230" y="404" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">RPC: takeoff, go_to, land, hold, estop,</text>
+<text x="230" y="421" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">set_guidance_mode, sitl_enable, status</text>
+<rect x="650" y="196" width="176" height="248" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.4"/>
+<text x="662" y="217" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Streams out</text>
+<text x="662" y="243" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">odometry, odom, tf</text>
+<text x="662" y="265" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">imu, battery</text>
+<text x="662" y="287" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">gps (NavSatFix)</text>
+<circle cx="808" cy="283" r="9" fill="#b45309"/>
+<text x="808" y="287.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="662" y="309" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">vehicle_status</text>
+<circle cx="808" cy="305" r="9" fill="#b45309"/>
+<text x="808" y="309.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="662" y="331" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">gimbal_attitude</text>
+<text x="662" y="353" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">statustext</text>
+<text x="662" y="375" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">supervisor_state</text>
+<text x="662" y="397" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">global_pose</text>
+<circle cx="808" cy="393" r="9" fill="#be123c"/>
+<text x="808" y="397.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="846" y="196" width="166" height="70" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="858" y="217" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">RerunBridgeModule</text>
+<text x="858" y="235" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">draws every stream</text>
+<rect x="846" y="300" width="166" height="70" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="858" y="321" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">RerunWebSocketServer</text>
+<text x="858" y="339" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">viewer keys to cmd_vel</text>
+<text x="1016" y="223" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0e7490" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">9877</text>
+<text x="1016" y="327" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0e7490" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">3030</text>
+<text x="640" y="464" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">cmd_vel (keys, in TELEOP)</text>
+<rect x="214" y="556" width="168" height="84" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="226" y="577" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">RtspCamera</text>
+<text x="226" y="595" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">video (encoded, untouched)</text>
+<text x="226" y="612" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">color_image, color_jpeg</text>
+<circle cx="367" cy="571" r="9" fill="#7c3aed"/>
+<text x="367" y="575.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<rect x="452" y="556" width="168" height="84" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="464" y="577" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">Detection2DModule</text>
+<text x="464" y="595" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">YOLO boxes, track ids</text>
+<text x="464" y="612" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos/perception</text>
+<rect x="690" y="556" width="180" height="84" rx="8" fill="#fff1f2" stroke="#be123c" stroke-width="1.6"/>
+<text x="702" y="577" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">PerceptionBridge</text>
+<text x="702" y="595" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">selected track to target</text>
+<text x="702" y="612" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">position and line of sight</text>
+<circle cx="855" cy="571" r="9" fill="#be123c"/>
+<text x="855" y="575.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="452" y="668" width="560" height="66" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="464" y="689" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">SiyiA8Gimbal</text>
+<text x="464" y="707" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">tf chain, camera_info and aim requests (aim off by default)</text>
+<text x="464" y="724" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">in: gimbal_attitude, target_los  ·  out: tf, camera_info, gimbal_target</text>
+<circle cx="997" cy="683" r="9" fill="#7c3aed"/>
+<text x="997" y="687.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<text x="172" y="583" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">RTSP</text>
+<text x="386" y="591" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">color_image</text>
+<text x="624" y="591" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">detections</text>
+<text x="600" y="488" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#be123c" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">target_state, target_valid, target_los</text>
+<text x="470" y="536" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">odometry, gimbal_attitude, global_pose</text>
+<text x="788" y="658" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#be123c" text-anchor="start">target_los</text>
+<rect x="1058" y="80" width="214" height="76" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="1070" y="101" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Terminal, over SSH</text>
+<text x="1070" y="119" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos shell: the RPCs</text>
+<text x="1070" y="136" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos humancli: the agent</text>
+<rect x="1058" y="196" width="214" height="180" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="1070" y="217" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">dimos-viewer</text>
+<text x="1070" y="235" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">3D scene, A8 video,</text>
+<text x="1070" y="252" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">battery, status log</text>
+<text x="1070" y="269" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start"></text>
+<text x="1070" y="286" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">keyboard pad:</text>
+<text x="1070" y="303" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">W S · Q E · A D</text>
+<text x="1070" y="320" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Shift faster, Space stops</text>
+<circle cx="25" cy="786" r="9" fill="#7c3aed"/>
+<text x="25" y="790.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<text x="40" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">gimbal + camera</text>
+<circle cx="174" cy="786" r="9" fill="#b45309"/>
+<text x="174" y="790.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="189" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">messages</text>
+<circle cx="276" cy="786" r="9" fill="#0f766e"/>
+<text x="276" y="790.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="291" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">connection, supervisor, blueprints</text>
+<circle cx="550" cy="786" r="9" fill="#1d4ed8"/>
+<text x="550" y="790.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<text x="565" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">agent skills</text>
+<circle cx="679" cy="786" r="9" fill="#be123c"/>
+<text x="679" y="790.5" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<text x="694" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">follow</text>
+<rect x="759" y="777" width="18" height="18" rx="4" fill="#f8fafc" stroke="#64748b" stroke-width="1.4"/>
+<text x="785" y="790" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#0f172a" text-anchor="start">already in dimOS</text>
+<path d="M168,114 L214,114" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M358,118 L384,118" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M528,118 L554,118" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M600,156 L600,196" fill="none" stroke="#0f766e" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0f766e)"/>
+<path d="M168,280 L214,280" fill="none" stroke="#0f766e" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0f766e)" marker-start="url(#a0f766e)"/>
+<path d="M634,300 L650,300" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M826,231 L846,231" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M1012,231 L1058,231" fill="none" stroke="#0e7490" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0e7490)"/>
+<path d="M1058,335 L1012,335" fill="none" stroke="#0e7490" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0e7490)"/>
+<path d="M930,370 L930,470 L590,470 L590,444" fill="none" stroke="#0f766e" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0f766e)"/>
+<path d="M168,590 L214,590" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M382,598 L452,598" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M620,598 L690,598" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M800,556 L800,494 L540,494 L540,444" fill="none" stroke="#be123c" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#abe123c)"/>
+<path d="M460,444 L460,520 L740,520 L740,556" fill="none" stroke="#0f766e" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0f766e)"/>
+<path d="M780,640 L780,668" fill="none" stroke="#be123c" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#abe123c)"/>
+</svg>
