@@ -13,11 +13,13 @@ Every module but the connection is optional and binds to its streams by name.
 | `Px4DroneConnection` | MAVLink bridge, flight supervisor | cmd_vel | odometry (twist: linear in `odom`, angular in `base_link`), odom, tf, imu, gps, battery, gimbal_attitude, vehicle_status, statustext, supervisor_state | all |
 | `RtspCamera` | H.264/H.265 stream in; passthrough video, decoded frames, small JPEG out | none (video and JPEG rate are RPCs) | video, color_image, color_jpeg | `px4-a8` |
 | `SiyiA8Gimbal` | Gimbal tf chain, camera intrinsics, aim requests | gimbal_attitude, target_los | tf, camera_info, gimbal_target | `px4-a8` |
+| `Px4SkillContainer` | The flight commands as agent skills | none (calls the connection's RPCs) | none | `px4-agentic`, `px4-sitl-agentic` |
 
 ## Install
 
 ```bash
 uv sync --extra px4
+uv sync --extra px4 --extra agents        # for px4-agentic
 ```
 
 ## Run
@@ -27,6 +29,7 @@ uv sync --extra px4
 | `px4` | connection, viewer and its keyboard: any PX4 vehicle |
 | `px4-sitl` | the same against PX4 SITL, with the RC enable switch faked |
 | `px4-a8` | `px4` plus the SIYI A8 camera and gimbal |
+| `px4-agentic`, `px4-sitl-agentic` | `px4` and `px4-sitl` with the skills, the MCP server and the LLM agent |
 
 ```bash
 dimos run px4                                             # router on PX4's companion port
@@ -82,6 +85,23 @@ Keys are ignored outside `TELEOP`. Speeds are clamped to 1.5 m/s (W+Q together t
 0.8 rad/s. Altitude stays where `TELEOP` began. When keys stop for 0.5 s the vehicle holds
 position.
 
+## Agent
+
+1. `uv sync --extra px4 --extra agents` and set `OPENAI_API_KEY`.
+2. `dimos run px4-agentic` (or `px4-sitl-agentic`, with QGroundControl open and
+   `drone.sitl_enable(True)` in `dimos shell` first, as in Test).
+3. Talk to it in `dimos humancli`, or send commands:
+
+```bash
+dimos agent-send "take off to 2 meters"
+dimos agent-send "go to 2 meters south at 3 m altitude"
+dimos mcp call go_to --arg north_m=-2 --arg altitude_m=3 --timeout 120   # the same skill, no LLM; it blocks until the manoeuvre ends
+```
+
+Skills: `takeoff`, `go_to`, `land`, `set_guidance_mode`, `flight_status`. A skill is the
+connection RPC plus a wait for the outcome. The supervisor refuses a skill exactly as it
+refuses the RPC.
+
 ## Test
 
 Unit tests, no hardware and no simulator:
@@ -110,8 +130,8 @@ connection's `link` differ:
 
 | Setup | dimOS and the router run on | The router faces | `link` | Blueprint |
 |---|---|---|---|---|
-| Bare kit | the laptop | the telemetry radio on USB (PX4 TELEM1, 57600) | `radio` | `px4` |
-| Companion computer | the computer on the aircraft | PX4 TELEM2 in Onboard mode, 921600 | `onboard` | `px4`, `px4-a8` |
+| Bare kit | the laptop | the telemetry radio on USB (PX4 TELEM1, 57600) | `radio` | `px4`, `px4-agentic` |
+| Companion computer | the computer on the aircraft | PX4 TELEM2 in Onboard mode, 921600 | `onboard` | `px4`, `px4-agentic`, `px4-a8` |
 
 `link` sets the message rates the connection asks PX4 for at start (`LINK_STREAM_HZ` in
 `config.py`). On TELEM1 PX4 sends local position at 1 Hz, below what the supervisor accepts,
@@ -157,7 +177,8 @@ so `radio` asks for 10 Hz. `onboard` asks for nothing.
    baud / 20, 2880 B/s: local position at about 8 Hz, about 130 ms old. At the default 1200
    B/s it is about 3 Hz and 200-470 ms old, close to the supervisor's limits. PX4 sends no
    HIGHRES_IMU on TELEM1, so `imu` stays silent; the odometry's body rates come from ATTITUDE.
-5. `dimos run px4 --px4droneconnection.link=radio`
+5. `dimos run px4 --px4droneconnection.link=radio`, or `px4-agentic` with the same flag and
+   `dimos humancli`.
 
 The supervisor aborts when PX4 goes silent for 1 s; the Hold it sends needs the link, so
 PX4's Offboard-loss failsafe (`COM_OBL_RC_ACT`) is what catches a longer outage. The RC pilot

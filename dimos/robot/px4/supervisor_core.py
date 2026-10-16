@@ -62,6 +62,8 @@ ARMED_STATES = GUIDANCE_STATES | {"ARMING", "TAKEOFF", "LANDING"}
 # Where the safety rules apply: the armed states but LANDING (PX4 owns the descent), and the
 # pre-stream before the arm command.
 _ABORTABLE = (ARMED_STATES - {"LANDING"}) | {"STREAMING", "OFFBOARD_REQ"}
+# From an accepted takeoff to the hover; any other state after it means it failed.
+TAKEOFF_STATES = frozenset({"PREFLIGHT", "STREAMING", "OFFBOARD_REQ", "ARMING", "TAKEOFF"})
 # The HOVER reason that tells a finished go-to from an interrupted or timed-out one.
 GOTO_ARRIVED = "arrived at the go-to goal"
 GuidanceMode = Literal["HOVER", "TELEOP"]
