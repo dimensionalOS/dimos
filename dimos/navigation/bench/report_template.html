@@ -100,7 +100,7 @@ addEventListener("click", event => {
 });
 </script>
 <h1>Navigation Sim Results</h1>
-<details>
+{% if c %}{% include "comparison_template.html" %}{% endif %}<details>
 <summary>What the outcomes mean</summary>
 <dl>
 {% for outcome, meaning in glossary.items() %}<dt>{{ outcome }}</dt><dd>{{ meaning }}</dd>
@@ -219,10 +219,10 @@ addEventListener("click", event => {
 {% endif %}
 <details><summary>Episodes ({{ report.rows | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th class="cp"></th><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
+<thead><tr><th class="cp"></th><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th>{% if c %}<th>baseline</th>{% endif %}<th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.rows %}
-<tr><td class="cp"><button class="copy" title="Copy the replay command">cp</button></td><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
+<tr><td class="cp"><button class="copy" title="Copy the replay command">cp</button></td><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td>{% if c %}<td>{{ baseline.get(row.case.id, "") }}</td>{% endif %}<td>{{ row.signatures | join(", ") }}</td>
 <td class="n">{{ "%.2f" | format(row.spl) if row.spl is not none }}</td>
 <td class="n">{{ "%.0f" | format(row.arrived_s) if row.arrived_s is not none }}</td>
 <td class="n">{{ "%.2f" | format(row.case.difficulty.min_clearance) }}</td>

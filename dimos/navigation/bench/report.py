@@ -12,26 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One self-contained HTML page per run, from its results and the suite it names."""
+"""One self-contained HTML page per run, from its results and the suite it names, optionally against a baseline."""
 
 from __future__ import annotations
 
 import base64
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 import json
 import math
 from pathlib import Path
 import shlex
 from statistics import median
 import time
-from typing import get_args
+from typing import Literal, TypeAlias, get_args
 
 from jinja2 import Environment, FileSystemLoader
 from pydantic import TypeAdapter
 
 from dimos.navigation.bench.ground_truth import GO2
-from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
+from dimos.navigation.bench.paired import (
+    Attempt,
+    LevelTally,
+    Pair,
+    Reason,
+    Tally,
+    level_tallies,
+    pair,
+    tally,
+)
+from dimos.navigation.bench.runner import RECORDING_FILE, RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
 from dimos.navigation.bench.snapshot import bounds, sample, snapshot_path
 from dimos.navigation.bench.suite import PROBES, Case, Manifest, Pose, Rules
@@ -50,6 +61,11 @@ CURVE_LABEL_PX = 34
 CURVE_ROW_PX = 28
 THUMBNAIL_PX = 240
 SNAPSHOT_PX = 480
+BAR_PX = 100
+FAILURE_NAMES = {"reached_with_collision": "collision"}
+MEASURES = ("first_contact_speed", "final_error_xy", "arrived_s", "spl")
+
+Json: TypeAlias = "dict[str, Json] | list[Json] | str | int | float | bool | None"
 
 
 @dataclass(frozen=True)
@@ -68,6 +84,7 @@ class Row:
     final_error_xy: float | None
     collisions: int | None
     feature_m: float | None
+    first_contact_speed: float | None
     near_fall: bool
     mismatch: bool
     contacts: tuple[str, ...]
@@ -221,16 +238,68 @@ def load(run_dir: Path) -> Report:
     )
 
 
-def write(run_dir: Path) -> Path:
-    """The report of one suite's run, or one page for every suite run under the directory."""
-    if (run_dir / RESULTS_FILE).exists():
-        reports = [load(run_dir)]
-    else:
-        suites = sorted(d for d in run_dir.iterdir() if (d / RESULTS_FILE).exists())
-        reports = [load(d) for d in suites]
-    path = run_dir / REPORT_FILE
-    path.write_text(render(reports))
-    return path
+@dataclass(frozen=True)
+class Side:
+    """One side's suite runs oldest first, and one report per suite holding each case's latest attempt."""
+
+    label: str
+    runs: list[Report]
+    reports: list[Report]
+
+    @property
+    def cases(self) -> int:
+        return sum(len(r.rows) + len(r.invalid) for r in self.reports)
+
+    @property
+    def replaced(self) -> int:
+        """The episodes that a later attempt at the same case replaced."""
+        return sum(len(r.rows) + len(r.invalid) for r in self.runs) - self.cases
+
+
+def suite_runs(path: Path) -> list[Path]:
+    """The suite run at path, or every suite run under it."""
+    if (path / RESULTS_FILE).exists():
+        return [path]
+    runs = sorted(d for d in path.iterdir() if (d / RESULTS_FILE).exists())
+    if not runs:
+        raise ValueError(f"no suite run in {path}")
+    return runs
+
+
+def started(report: Report) -> float:
+    run = report.run
+    return run.started if run.started is not None else run.time
+
+
+def load_side(label: str, paths: Iterable[Path]) -> Side:
+    """Every suite run under the paths, where a case run again keeps the attempt that started last."""
+    runs = sorted((load(d) for path in paths for d in suite_runs(path)), key=started)
+    first: dict[str, Report] = {}
+    latest: dict[str, dict[str, Row | Invalid]] = {}
+    for run in runs:
+        first.setdefault(run.suite, run)
+        episodes: list[Row | Invalid] = [*run.rows, *run.invalid]
+        latest.setdefault(run.suite, {}).update((e.case.id, e) for e in episodes)
+    reports = [
+        replace(
+            first[suite],
+            rows=[e for _, e in sorted(cases.items()) if isinstance(e, Row)],
+            invalid=[e for _, e in sorted(cases.items()) if isinstance(e, Invalid)],
+        )
+        for suite, cases in latest.items()
+    ]
+    return Side(label, runs, sorted(reports, key=lambda r: r.run_dir))
+
+
+def write(new: Side, out: Path, baseline: Side | None = None) -> Path:
+    """The report of the side's runs at out, with a baseline comparison on top and its numbers in out.json."""
+    comparison = None if baseline is None else compare(baseline, new)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render(new.reports, comparison))
+    if comparison is not None:
+        numbers = out.with_name(out.name + ".json")
+        numbers.write_text(json.dumps(to_json(comparison), indent=2) + "\n")
+    return out
 
 
 def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
@@ -250,6 +319,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         final_error_xy=_float(metrics.get("final_error_xy")),
         collisions=None if metrics.get("collisions") is None else int(metrics["collisions"]),
         feature_m=_float(metrics.get("feature_m")),
+        first_contact_speed=_float(metrics.get("first_contact_speed")),
         near_fall=record["outcome"] != "fall" and bool(metrics.get("trunk_floor_s")),
         mismatch=bool(metrics.get("mismatch")),
         contacts=tuple(_contact(name) for name in metrics.get("contacts") or ()),
@@ -495,12 +565,379 @@ def _section(report: Report) -> Section:
     )
 
 
-def render(reports: list[Report]) -> str:
-    """The whole page from the template beside this module, one section per suite."""
+@dataclass(frozen=True)
+class Measure:
+    """Medians of one continuous measure over the pairs with a value on both sides."""
+
+    name: str
+    n: int
+    base: float
+    new: float
+
+    @property
+    def change(self) -> float:
+        return self.new - self.base
+
+
+@dataclass(frozen=True)
+class ProbeRow:
+    """One probe's comparison."""
+
+    probe: str
+    tally: Tally
+    levels: list[LevelTally]
+    measures: list[Measure]
+
+
+@dataclass(frozen=True)
+class Comparison:
+    """The runs against a baseline, case by case, with the latest episode of every case on each side."""
+
+    base: Side
+    new: Side
+    base_rows: dict[str, Row]
+    new_rows: dict[str, Row]
+    pairs: list[Pair]
+    left_out: dict[str, Counter[Reason]]
+    scene_differs: list[str]
+    probes: list[ProbeRow]
+
+    @property
+    def changed(self) -> list[Pair]:
+        return [p for p in self.pairs if p.changed]
+
+
+@dataclass(frozen=True)
+class Bar:
+    """A signed change drawn from the middle, as a share of the cases."""
+
+    x: int
+    width: int
+    direction: Literal["up", "down", "flat"]
+    significant: bool
+
+
+@dataclass(frozen=True)
+class Detail:
+    """One line of the run details, for each side."""
+
+    name: str
+    base: str
+    new: str
+
+
+def _rows(side: Side) -> dict[str, Row]:
+    return {r.case.id: r for report in side.reports for r in report.rows}
+
+
+def _attempts(side: Side) -> dict[str, Attempt]:
+    attempts = {r.case.id: Attempt(r.case, None) for report in side.reports for r in report.invalid}
+    return attempts | {case_id: Attempt(r.case, r.outcome) for case_id, r in _rows(side).items()}
+
+
+def _measures(row: Row) -> dict[str, float | None]:
+    return {
+        "first_contact_speed": row.first_contact_speed,
+        "final_error_xy": row.final_error_xy,
+        "arrived_s": row.arrived_s,
+        "spl": row.spl,
+    }
+
+
+def measures(pairs: list[Pair], base: dict[str, Row], new: dict[str, Row]) -> list[Measure]:
+    """Medians of each continuous measure over the pairs that have it on both sides."""
+    found = []
+    for name in MEASURES:
+        values = [
+            (b, n)
+            for p in pairs
+            if (b := _measures(base[p.case.id])[name]) is not None
+            and (n := _measures(new[p.case.id])[name]) is not None
+        ]
+        if values:
+            found.append(
+                Measure(
+                    name, len(values), median(b for b, _ in values), median(n for _, n in values)
+                )
+            )
+    return found
+
+
+def compare(base: Side, new: Side) -> Comparison:
+    """Pair the sides by case and tally every probe."""
+    pairing = pair(_attempts(base), _attempts(new))
+    base_rows, new_rows = _rows(base), _rows(new)
+    groups: dict[str, list[Pair]] = {}
+    for p in pairing.pairs:
+        groups.setdefault(p.case.tag, []).append(p)
+    probes = [
+        ProbeRow(probe, tally(group), level_tallies(group), measures(group, base_rows, new_rows))
+        for probe, group in sorted(groups.items())
+    ]
+    return Comparison(
+        base,
+        new,
+        base_rows,
+        new_rows,
+        pairing.pairs,
+        pairing.left_out,
+        pairing.scene_differs,
+        probes,
+    )
+
+
+def warnings(comparison: Comparison) -> list[str]:
+    """What makes the two sides less comparable than they look."""
+    found = []
+    days = {name: _days(side) for name, side in _sides(comparison)}
+    if days["base"] != days["new"]:
+        found.append(
+            f"The sides ran on different days, base {', '.join(days['base'])}"
+            f" and new {', '.join(days['new'])}."
+        )
+    policies = {name: {r.run.policy for r in side.runs} for name, side in _sides(comparison)}
+    for name in ("base", "new"):
+        if None in policies[name]:
+            found.append(f"A {name} run has no policy, so it ran the default body policy.")
+    if policies["base"] != policies["new"]:
+        found.append("The sides ran different body policies.")
+    for field_name, ran in (
+        ("machine", "on different machines"),
+        ("procs", "a different number of episodes at once"),
+    ):
+        values = {name: _recorded(side, field_name) for name, side in _sides(comparison)}
+        if values["base"] and values["new"] and values["base"] != values["new"]:
+            found.append(
+                f"The sides ran {ran}, base {', '.join(values['base'])}"
+                f" and new {', '.join(values['new'])}."
+            )
+    if comparison.scene_differs:
+        found.append(
+            f"{len(comparison.scene_differs)} cases have a different scene on each side"
+            " and are left out."
+        )
+    return found
+
+
+def _sides(comparison: Comparison) -> list[tuple[str, Side]]:
+    return [("base", comparison.base), ("new", comparison.new)]
+
+
+def _recorded(side: Side, field_name: str) -> list[str]:
+    """The values the side's runs recorded for the field. Older runs recorded none."""
+    values = (getattr(r.run, field_name) for r in side.runs)
+    return sorted({str(v) for v in values if v is not None})
+
+
+def _days(side: Side) -> list[str]:
+    return sorted({time.strftime("%Y-%m-%d", time.localtime(started(r))) for r in side.runs})
+
+
+def _tally_json(t: Tally) -> dict[str, Json]:
+    return {
+        "cases": t.cases,
+        "base_successes": t.base_successes,
+        "new_successes": t.new_successes,
+        "change": t.change,
+        "became_success": t.became_success,
+        "became_failure": t.became_failure,
+        "unchanged": t.unchanged,
+        "p": t.p,
+        "verdict": t.verdict,
+        "base_failures": dict(t.base_failures),
+        "new_failures": dict(t.new_failures),
+    }
+
+
+def _side_json(side: Side) -> dict[str, Json]:
+    return {
+        "label": side.label,
+        "episodes": side.cases,
+        "replaced": side.replaced,
+        "runs": [
+            {
+                "path": str(r.run_dir.resolve()),
+                "suite": r.suite,
+                "commit": r.run.commit,
+                "dirty": r.run.dirty,
+                "policy": r.run.policy,
+                "overrides": list(r.run.overrides),
+                "started": r.run.started,
+                "finished": r.run.finished,
+            }
+            for r in side.runs
+        ],
+    }
+
+
+def recorded(row: Row) -> bool:
+    return (row.episode / RECORDING_FILE).exists()
+
+
+def _episode_json(row: Row) -> dict[str, Json]:
+    return {"outcome": row.outcome, "episode": str(row.episode), "recorded": recorded(row)}
+
+
+def to_json(comparison: Comparison) -> dict[str, Json]:
+    """The comparison's numbers, for agents."""
+    verdicts = Counter(row.tally.verdict for row in comparison.probes)
+    total = tally(comparison.pairs)
+    return {
+        "base": _side_json(comparison.base),
+        "new": _side_json(comparison.new),
+        "summary": {
+            "cases": total.cases,
+            "base_successes": total.base_successes,
+            "new_successes": total.new_successes,
+            "probes_better": verdicts["better"],
+            "probes_worse": verdicts["worse"],
+            "probes_no_clear_change": verdicts["no clear change"],
+            "outcomes_changed": len(comparison.changed),
+        },
+        "left_out": {
+            name: {reason: n for reason, n in counts.items()}
+            for name, counts in comparison.left_out.items()
+        },
+        "scene_differs": list(comparison.scene_differs),
+        "warnings": list(warnings(comparison)),
+        "probes": [
+            {
+                "probe": row.probe,
+                **_tally_json(row.tally),
+                "levels": [
+                    {
+                        "control": level.value is None,
+                        "value": level.value,
+                        **_tally_json(level.tally),
+                    }
+                    for level in row.levels
+                ],
+                "measures": [
+                    {"name": m.name, "n": m.n, "base": m.base, "new": m.new, "change": m.change}
+                    for m in row.measures
+                ],
+            }
+            for row in comparison.probes
+        ],
+        "changed": [
+            {
+                "case": p.case.id,
+                "probe": p.case.tag,
+                "control": p.case.level is not None and p.case.level.control,
+                "level": None if p.case.level is None else p.case.level.value,
+                "seed": p.case.seed,
+                "base": _episode_json(comparison.base_rows[p.case.id]),
+                "new": _episode_json(comparison.new_rows[p.case.id]),
+            }
+            for p in comparison.changed
+        ],
+    }
+
+
+def bar(t: Tally) -> Bar:
+    half = BAR_PX // 2
+    width = round(abs(t.change) / t.cases * half) if t.cases else 0
+    direction: Literal["up", "down", "flat"] = (
+        "up" if t.change > 0 else "down" if t.change < 0 else "flat"
+    )
+    return Bar(
+        half - width if t.change < 0 else half, width, direction, t.verdict != "no clear change"
+    )
+
+
+def failures(counts: Counter[str]) -> str:
+    return ", ".join(f"{FAILURE_NAMES.get(o, o)} {counts[o]}" for o in OUTCOMES if counts[o])
+
+
+def level_label(probe: str, value: float | None) -> str:
+    if value is None:
+        return "control"
+    spec = PROBES.get(probe)
+    unit = spec.unit if spec is not None else "m"
+    return level_text(value, unit) + (f" {unit}" if unit else "")
+
+
+def pair_level(p: Pair) -> str:
+    level = p.case.level
+    if level is None:
+        return ""
+    return level_label(p.case.tag, None if level.control else level.value)
+
+
+def direction(p: Pair) -> str:
+    return {1: "became success", -1: "became failure"}.get(p.flip, "other change")
+
+
+def signed(value: float, digits: int = 0) -> str:
+    text = f"{abs(value):.{digits}f}"
+    if float(text) == 0:
+        return text
+    return ("+" if value > 0 else "\u2212") + text
+
+
+def p_text(p: float) -> str:
+    return f"{p:.3f}" if p >= 0.001 else f"{p:.0e}"
+
+
+def details(base: Side, new: Side) -> list[Detail]:
+    """What each side ran, one line per field."""
+    sides = [_details(base), _details(new)]
+    return [Detail(name, sides[0][name], sides[1][name]) for name in sides[0]]
+
+
+def _details(side: Side) -> dict[str, str]:
+    runs = [r.run for r in side.runs]
+    commits = [(r.commit or "unknown")[:10] + (", dirty" if r.dirty else "") for r in runs]
+    return {
+        "runs": f"{len(side.runs)} suite runs, {side.cases} cases",
+        "suites": _join(sorted(r.suite for r in side.runs)),
+        "commit": _join(commits),
+        "policy": _join([r.policy or "none given" for r in runs]),
+        "overrides": _join([" ".join(r.overrides) for r in runs if r.overrides]),
+        "date": _join(_days(side)),
+        "procs": _join(_recorded(side, "procs"), "not recorded"),
+        "machine": _join(_recorded(side, "machine"), "not recorded"),
+        "run again": f"{side.replaced} cases, latest kept" if side.replaced else "none",
+    }
+
+
+def _join(values: list[str], empty: str = "none") -> str:
+    return ", ".join(dict.fromkeys(values)) or empty
+
+
+def _comparison_context(comparison: Comparison) -> dict[str, object]:
+    changed = sorted(
+        comparison.changed, key=lambda p: (p.case.tag, -p.flip, p.case.seed, p.case.id)
+    )
+    return {
+        "c": comparison,
+        "summary": to_json(comparison)["summary"],
+        "warnings": warnings(comparison),
+        "details": details(comparison.base, comparison.new),
+        "changed": changed,
+        "changed_probes": sorted({p.case.tag for p in changed}),
+        "baseline": {
+            case_id: a.outcome or "invalid" for case_id, a in _attempts(comparison.base).items()
+        },
+        "bar": bar,
+        "bar_px": BAR_PX,
+        "failures": failures,
+        "level_label": level_label,
+        "pair_level": pair_level,
+        "direction": direction,
+        "recorded": recorded,
+        "written": time.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def render(reports: list[Report], comparison: Comparison | None = None) -> str:
+    """The whole page from the template beside this module, one section per suite, a comparison first when given."""
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
     env.filters["quote"] = shlex.quote
     env.filters["degrees"] = math.degrees
     env.filters["level"] = level_text
+    env.filters["signed"] = signed
+    env.filters["p"] = p_text
     return env.get_template(TEMPLATE_FILE).render(
         sections=[_section(report) for report in reports],
         glossary=definitions(reports[0].rules),
@@ -511,4 +948,5 @@ def render(reports: list[Report]) -> str:
         strip_m=STRIP_M,
         strip_px=STRIP_PX,
         strip_ticks=[_strip_x(k * STRIP_TICK_M) for k in range(int(STRIP_M / STRIP_TICK_M) + 1)],
+        **({} if comparison is None else _comparison_context(comparison)),
     )

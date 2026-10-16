@@ -31,10 +31,13 @@ from dimos.navigation.bench.report import (
     by_level,
     by_signature,
     by_stressor,
+    compare,
     encountered,
     load,
+    load_side,
     render,
     thumbnail,
+    to_json,
     write,
 )
 from dimos.navigation.bench.snapshot import snapshot_path
@@ -166,7 +169,8 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
     assert "<summary>Episodes (2)</summary>" in page and "Outcomes by stressor" in page
     assert "<summary>What the outcomes mean</summary>" in page
     assert "<dt>stalled</dt><dd>No arrival, and no motion was commanded for the last 10 s." in page
-    assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
+    write(load_side("run", [run]), run / "report.html")
+    assert (run / "report.html").read_text() == page
 
 
 def test_report_gives_the_success_rate_per_level(tmp_path: Path) -> None:
@@ -309,9 +313,8 @@ def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -
         "leg_width",
     )
     (tmp_path / "leg_width.json").write_text("{}")
-    path = write(tmp_path)
-    page = path.read_text()
-    assert path == tmp_path / "report.html" and "Navigation Sim Results" in page
+    page = write(load_side("runs", [tmp_path]), tmp_path / "report.html").read_text()
+    assert "Navigation Sim Results" in page
     assert '<a href="#door_width">door_width</a>' in page
     assert (
         '<td class="n">2 of 2</td><td class="n">1</td><td class="n"></td><td class="n">1 of 1</td>'
@@ -321,6 +324,38 @@ def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -
     assert "<h3>Success against door width</h3>" in page
     assert "<h3>Success against leg width</h3>" in page
     assert page.count("<summary>Episodes") == 2 and page.count("<script>") == 1
+
+
+def test_a_case_run_again_keeps_the_attempt_that_started_last(tmp_path: Path) -> None:
+    a, b = _case("door-s1-a", "door", 0.5), _case("door-s2-b", "door", 0.5)
+    first, again = tmp_path / "z-first", tmp_path / "a-again"
+    _run(first, [a, b], [_result(a, "stuck"), _result(b, None)], "door_width", started=100.0)
+    _run(again, [a, b], [_result(b, "success"), _result(a, "fall")], "door_width", started=200.0)
+    _run(tmp_path / "older", [a], [_result(a, "success")], "door_width", started=50.0, time=900.0)
+    side = load_side("runs", [tmp_path])
+    (report,) = side.reports
+    assert [(r.case.id, r.outcome) for r in report.rows] == [(a.id, "fall"), (b.id, "success")]
+    assert report.invalid == [] and report.run_dir == tmp_path / "older"
+    assert (side.cases, side.replaced) == (2, 3)
+
+
+def test_a_baseline_comparison_is_written_with_its_numbers(tmp_path: Path) -> None:
+    cases = [
+        _case("door-s1-a", "door", 0.5, Level("door_width", 0.0, control=True)),
+        _case("door-s1-b", "door", 0.5, Level("door_width", 0.6)),
+        _case("door-s2-b", "door", 0.5, Level("door_width", 0.6), seed=2),
+    ]
+    base_outcomes, new_outcomes = ("success", "stuck", "fall"), ("success", "success", None)
+    _run(
+        tmp_path / "base", cases, [_result(c, o) for c, o in zip(cases, base_outcomes, strict=True)]
+    )
+    _run(tmp_path / "new", cases, [_result(c, o) for c, o in zip(cases, new_outcomes, strict=True)])
+    base, new = load_side("main", [tmp_path / "base"]), load_side("pr", [tmp_path / "new"])
+    out = write(new, tmp_path / "page" / "report.html", base)
+    numbers = json.loads((tmp_path / "page" / "report.html.json").read_text())
+    assert out.exists() and numbers == json.loads(json.dumps(to_json(compare(base, new))))
+    assert numbers["summary"]["cases"] == 2 and numbers["left_out"]["new"] == {"invalid": 1}
+    assert [c["case"] for c in numbers["changed"]] == ["door-s1-b"]
 
 
 def _probe_case(family: Family, seed: int, param: str, value: float) -> Case:

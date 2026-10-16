@@ -1,11 +1,4 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Navigation Sim Comparison</title>
 <style>
-{{ style | safe }}
 :root { --up: #0ca30c; --down: #d03b3b; }
 body { max-width: 90em; }
 .wrap th { white-space: normal; vertical-align: bottom; }
@@ -38,11 +31,7 @@ tr.level[hidden] { display: none; }
 td.up { color: var(--up); }
 td.down { color: var(--down); }
 </style>
-</head>
-<body>
-<button id="theme" title="Switch between light and dark" hidden></button>
 <script>
-{{ script | safe }}
 addEventListener("DOMContentLoaded", () => {
   for (const th of document.querySelectorAll(".nosort th")) th.onclick = null;
   for (const button of document.querySelectorAll("button.toggle")) button.onclick = () => {
@@ -68,7 +57,7 @@ addEventListener("DOMContentLoaded", () => {
   for (const f of filters) f.onchange = apply;
 });
 </script>
-<h1>Navigation Sim Comparison</h1>
+<h2>Against {{ c.base.label }}</h2>
 <p class="sub">{{ c.base.label }} (base) against {{ c.new.label }} (new), {{ summary.cases }} paired cases, written {{ written }}</p>
 
 <div class="tiles">
@@ -79,7 +68,7 @@ addEventListener("DOMContentLoaded", () => {
 <div class="tile"><div class="label">outcome changed</div><div class="value">{{ summary.outcomes_changed }}</div><div class="note">cases</div></div>
 </div>
 
-<h2>Runs</h2>
+<h3>Runs</h3>
 {% for w in warnings %}<p class="warn">{{ w }}</p>
 {% endfor %}
 <div class="scroll"><table class="nosort wrap">
@@ -92,14 +81,14 @@ addEventListener("DOMContentLoaded", () => {
 </table></div>
 <details><summary>Run directories</summary>
 <div class="row">
-{% for side in (c.base, c.new) %}<div><p><b>{{ side.label }}</b></p><ul>{% for r in side.runs %}<li><code>{{ r.path }}</code></li>{% endfor %}</ul></div>
+{% for side in (c.base, c.new) %}<div><p><b>{{ side.label }}</b></p><ul>{% for r in side.runs %}<li><code>{{ r.run_dir.resolve() }}</code></li>{% endfor %}</ul></div>
 {% endfor %}
 </div>
 </details>
 
-<h2>Probes</h2>
+<h3>Probes</h3>
 <div class="scroll"><table class="nosort wrap">
-<thead><tr><th>probe</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th><th class="n">became success</th><th class="n">became failure</th><th class="n">unchanged</th><th class="n">p</th><th>verdict</th>{% if c.repeat %}<th class="n">noise flips</th><th class="n">candidate flips</th>{% endif %}<th>failures base</th><th>failures new</th></tr></thead>
+<thead><tr><th>probe</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th><th class="n">became success</th><th class="n">became failure</th><th class="n">unchanged</th><th class="n">p</th><th>verdict</th><th>failures base</th><th>failures new</th></tr></thead>
 <tbody>
 {% macro cells(t) %}<td class="n">{{ t.cases }}</td><td class="n">{{ t.base_successes }}</td><td class="n">{{ t.new_successes }}</td>
 {% set b = bar(t) %}<td class="n {{ b.direction if b.significant }}">{{ t.change | signed }} <svg class="bar" width="{{ bar_px }}" height="14"><title>{{ t.change | signed }} of {{ t.cases }} cases</title><rect x="{{ b.x }}" y="3" width="{{ b.width }}" height="8" rx="2" class="{{ b.direction if b.significant else "muted" }}"/><line x1="{{ bar_px // 2 }}" x2="{{ bar_px // 2 }}" y1="0" y2="14" class="mid"/></svg></td>
@@ -107,25 +96,16 @@ addEventListener("DOMContentLoaded", () => {
 <td><span class="chip {{ t.verdict if t.verdict != "no clear change" else "flat" }}">{{ t.verdict }}</span></td>{% endmacro %}
 {% for row in c.probes %}
 <tr><td>{% if row.levels %}<button class="toggle" data-probe="{{ row.probe }}" aria-expanded="false" title="Show the levels">&#9656;</button>{% endif %}{{ row.probe }}</td>{{ cells(row.tally) }}
-{% if c.repeat %}<td class="n">{% if row.noise %}{{ row.noise.flips }} of {{ row.noise.cases }} ({{ "%.0f" | format(100 * row.noise.rate) }}%){% else %}<span class="none">no repeat</span>{% endif %}</td><td class="n">{{ row.tally.became_success + row.tally.became_failure }} of {{ row.tally.cases }}</td>{% endif %}
 <td class="text">{{ failures(row.tally.base_failures) }}</td><td class="text">{{ failures(row.tally.new_failures) }}</td></tr>
 {% for level in row.levels %}
 <tr class="level" data-probe="{{ row.probe }}" hidden><td>{{ level_label(row.probe, level.value) }}</td>{{ cells(level.tally) }}
-{% if c.repeat %}<td></td><td></td>{% endif %}
 <td class="text">{{ failures(level.tally.base_failures) }}</td><td class="text">{{ failures(level.tally.new_failures) }}</td></tr>
 {% endfor %}
 {% endfor %}
 </tbody>
 </table></div>
-<details>
-<summary>What the outcomes mean</summary>
-<dl>
-{% for outcome, meaning in glossary.items() %}<dt>{{ outcome }}</dt><dd>{{ meaning }}</dd>
-{% endfor %}
-</dl>
-</details>
 
-<h2>Measures</h2>
+<h3>Measures</h3>
 <p class="sub">Medians over the cases with a value on both sides.</p>
 <div class="scroll"><table>
 <thead><tr><th>probe</th><th>measure</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th></tr></thead>
@@ -135,7 +115,7 @@ addEventListener("DOMContentLoaded", () => {
 </tbody>
 </table></div>
 
-<h2>Changed cases</h2>
+<h3>Changed cases</h3>
 <div class="filters">
 <label>probe <select name="probe"><option value="">all</option>{% for probe in changed_probes %}<option>{{ probe }}</option>{% endfor %}</select></label>
 <label>direction <select name="direction"><option value="">all</option><option>became success</option><option>became failure</option><option>other change</option></select></label>
@@ -144,11 +124,9 @@ addEventListener("DOMContentLoaded", () => {
 <div class="scroll"><table id="changed">
 <thead><tr><th>probe</th><th class="n">level</th><th class="n">room</th><th>case</th><th>base</th><th>new</th><th>direction</th><th>replay base</th><th>replay new</th></tr></thead>
 <tbody>
-{% macro replay(episode) %}<td>{% if episode.recorded %}<button class="copy" data-cmd="dimos nav-bench replay {{ episode.path | string | quote }}" title="Copy the replay command">cp</button>{% else %}<span class="none">no recording</span>{% endif %}</td>{% endmacro %}
+{% macro replay(episode) %}<td>{% if recorded(episode) %}<button class="copy" data-cmd="dimos nav-bench replay {{ episode.episode | string | quote }}" title="Copy the replay command">cp</button>{% else %}<span class="none">no recording</span>{% endif %}</td>{% endmacro %}
 {% for p in changed %}
-<tr data-probe="{{ p.case.tag }}" data-direction="{{ direction(p) }}"><td>{{ p.case.tag }}</td><td class="n" data-sort="{{ -1 if p.case.level is none or p.case.level.control else p.case.level.value }}">{{ pair_level(p) }}</td><td class="n">{{ p.case.seed }}</td><td>{{ p.case.id }}</td><td>{{ p.base.outcome }}</td><td>{{ p.new.outcome }}</td><td>{{ direction(p) }}</td>{{ replay(p.base) }}{{ replay(p.new) }}</tr>
+<tr data-probe="{{ p.case.tag }}" data-direction="{{ direction(p) }}"><td>{{ p.case.tag }}</td><td class="n" data-sort="{{ -1 if p.case.level is none or p.case.level.control else p.case.level.value }}">{{ pair_level(p) }}</td><td class="n">{{ p.case.seed }}</td><td>{{ p.case.id }}</td><td>{{ p.base }}</td><td>{{ p.new }}</td><td>{{ direction(p) }}</td>{{ replay(c.base_rows[p.case.id]) }}{{ replay(c.new_rows[p.case.id]) }}</tr>
 {% endfor %}
 </tbody>
 </table></div>
-</body>
-</html>

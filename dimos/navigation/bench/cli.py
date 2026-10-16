@@ -18,8 +18,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
+import glob
 import json
+import os
 from pathlib import Path
+import re
 import signal
 from typing import TYPE_CHECKING, cast
 
@@ -57,6 +60,29 @@ def override_flag(setting: str) -> str:
     if not sep or not key:
         raise typer.BadParameter(f"expected Module.field=value, got {setting!r}")
     return f"--{key.lower().replace('_', '-')}={value}"
+
+
+def run_dirs(patterns: list[str]) -> list[Path]:
+    """The run directories the patterns name, each a path or a glob."""
+    dirs: list[Path] = []
+    for pattern in patterns:
+        matches = sorted(glob.glob(os.path.expanduser(pattern)))
+        if not matches:
+            raise typer.BadParameter(f"no run directory matches {pattern}")
+        dirs.extend(Path(match) for match in matches)
+    return dirs
+
+
+def label_of(dirs: list[Path]) -> str:
+    """A side's default name: its run directory's, the name its chunks share, or their parent's."""
+    names = sorted({d.resolve().name for d in dirs})
+    stems = {re.sub(r"-\d+$", "", name) for name in names}
+    parents = {d.resolve().parent.name for d in dirs}
+    if len(names) == 1:
+        return names[0]
+    if len(stems) == 1:
+        return stems.pop()
+    return parents.pop() if len(parents) == 1 else "+".join(names)
 
 
 @app.command("freeze")
@@ -136,7 +162,6 @@ def run_command(
     Several suites run one after another, each into its own directory under the run directory,
     with one report for all of them.
     """
-    from dimos.navigation.bench.report import write
     from dimos.navigation.bench.runner import (
         RUNS_DIR,
         LowDiskError,
@@ -194,12 +219,12 @@ def run_command(
         typer.echo(f"run stopped, {stop} -> {run_dir}" if low else f"run interrupted -> {run_dir}")
         _finish(run_dir)
         if several:
-            typer.echo(f"report -> {write(out)}")
+            typer.echo(f"report -> {_write_report(out)}")
         if low:
             raise typer.Exit(1) from stop
         raise
     if several:
-        typer.echo(f"report -> {write(out)}")
+        typer.echo(f"report -> {_write_report(out)}")
 
 
 @app.command("score")
@@ -214,52 +239,43 @@ def score_command(
 
 @app.command("report")
 def report_command(
-    run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
-) -> None:
-    """Write report.html for a suite's run, or for every suite run under the directory."""
-    from dimos.navigation.bench.report import write
-
-    typer.echo(write(run_dir))
-
-
-@app.command("compare")
-def compare_command(
-    base: list[str] = typer.Option(
-        ..., "--base", help="A baseline run directory, or a quoted glob of them. Repeatable."
+    runs: list[str] = typer.Argument(
+        ...,
+        help="A run directory, or a quoted glob of them. A case run again keeps its latest attempt.",
     ),
-    new: list[str] = typer.Option(
-        ..., "--new", help="A candidate run directory, or a quoted glob of them. Repeatable."
+    baseline: list[str] = typer.Option(
+        [],
+        "--baseline",
+        help="A baseline run directory, or a quoted glob of them. Repeatable. Adds a case by case comparison on top.",
     ),
-    base_label: str | None = typer.Option(None, help="Name of the baseline on the page."),
-    new_label: str | None = typer.Option(None, help="Name of the candidate on the page."),
-    base_repeat: list[str] = typer.Option(
-        [], "--base-repeat", help="A second baseline run of the same cases, for the noise."
-    ),
+    new_label: str | None = typer.Option(None, help="Name of the runs on the page."),
+    baseline_label: str | None = typer.Option(None, help="Name of the baseline on the page."),
     out: Path | None = typer.Option(
-        None, "--out", help="The page. Default: under ~/Documents/nav_evals, named from the labels."
+        None,
+        "--out",
+        help="The page. Default: report.html in the run directory, or in the common parent of several.",
     ),
 ) -> None:
-    """Compare two sets of runs case by case, into a page and its numbers as json beside it."""
-    from dimos.navigation.bench.compare import (
-        compare,
-        default_out,
-        label_of,
-        load_side,
-        run_dirs,
-        write,
-    )
+    """Write the report of the runs, with a comparison against a baseline and its numbers as json beside it."""
+    from dimos.navigation.bench.report import REPORT_FILE, load_side, write
 
+    new_dirs, base_dirs = run_dirs(runs), run_dirs(baseline)
     try:
-        base_dirs, new_dirs, repeat_dirs = run_dirs(base), run_dirs(new), run_dirs(base_repeat)
+        new = load_side(new_label or label_of(new_dirs), new_dirs)
+        base = load_side(baseline_label or label_of(base_dirs), base_dirs) if base_dirs else None
     except ValueError as missing:
         raise typer.BadParameter(str(missing)) from missing
-    base_side = load_side(base_label or label_of(base_dirs), base_dirs)
-    new_side = load_side(new_label or label_of(new_dirs), new_dirs)
-    repeat = load_side(f"{base_side.label} repeat", repeat_dirs) if repeat_dirs else None
-    path = write(
-        compare(base_side, new_side, repeat), out or default_out(base_side.label, new_side.label)
-    )
-    typer.echo(f"page -> {path}\nnumbers -> {path}.json")
+    if out is None:
+        folder = (
+            new_dirs[0]
+            if len(new_dirs) == 1
+            else os.path.commonpath([d.resolve() for d in new_dirs])
+        )
+        out = Path(folder) / REPORT_FILE
+    path = write(new, out, base)
+    typer.echo(path)
+    if base is not None:
+        typer.echo(f"{path}.json")
 
 
 @app.command("replay")
@@ -322,14 +338,19 @@ def _report(bar: _Bar) -> Report:
 
 def _finish(run_dir: Path) -> None:
     """Print the run's summary and write its report, if any episode finished."""
-    from dimos.navigation.bench.report import write
     from dimos.navigation.bench.runner import RESULTS_FILE
 
     results = run_dir / RESULTS_FILE
     if not results.exists():
         return
     _summary(results)
-    typer.echo(f"report -> {write(run_dir)}")
+    typer.echo(f"report -> {_write_report(run_dir)}")
+
+
+def _write_report(run_dir: Path) -> Path:
+    from dimos.navigation.bench.report import REPORT_FILE, load_side, write
+
+    return write(load_side(run_dir.name, [run_dir]), run_dir / REPORT_FILE)
 
 
 def _summary(results: Path) -> None:
