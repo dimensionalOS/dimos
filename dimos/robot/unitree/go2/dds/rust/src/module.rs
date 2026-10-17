@@ -617,7 +617,7 @@ fn dynamic_joint_state<'a>(
 }
 
 /// Every leg motor's readings, then each foot's contact force, named as
-/// experimental/go2web_recordings/process.py names them so live and recorded match.
+/// dds/cli/mcap2db.py names them so live and recorded match.
 pub fn motor_state(s: &types::LowState, ts: f64) -> DynamicJointState {
     let motors = JOINTS.iter().zip(&s.motor_state).map(|(&n, m)| {
         let vals = vec![
@@ -641,7 +641,7 @@ pub fn motor_state(s: &types::LowState, ts: f64) -> DynamicJointState {
     dynamic_joint_state(ts, motors.chain(feet))
 }
 
-/// The leg targets and PD gains, as process.py's `joint_command`.
+/// The leg targets and PD gains, as mcap2db.py's `joint_command`.
 pub fn joint_command(c: &types::LowCmd, ts: f64) -> DynamicJointState {
     let rows = JOINTS.iter().zip(&c.motor_cmd).map(|(&n, m)| {
         let vals = vec![

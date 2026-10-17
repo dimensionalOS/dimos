@@ -25,6 +25,7 @@ Conversion only — nothing is estimated or calibrated here. Standalone, not wir
     uv run python -m dimos.robot.unitree.go2.dds.cli.mcap2db recordings/*.mcap
 """
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -45,7 +46,8 @@ if TYPE_CHECKING:
 
 
 # go2web's recorder companion: regenerates the mid360 cloud (+ .pcap) from mid360/raw_lvxz.
-HELPER = Path.home() / "coding/go2web/target/release/dimos-helper"
+# On PATH, or wherever DIMOS_HELPER points.
+HELPER = os.environ.get("DIMOS_HELPER", "dimos-helper")
 CODECS = {
     **GO2_CODECS,
     "mid360/imu": FnCodec(Imu, ros.decode_imu),
@@ -67,7 +69,7 @@ def copy_streams(mcap: Path, dst: SqliteStore) -> None:
         if first is None:
             continue
         n = len(s.order_by("ts").save(dst.stream(name, type(first.data))).to_list())
-        print(f"[process]   {name:20s} {type(first.data).__name__:16s} {n}", flush=True)
+        print(f"[mcap2db]   {name:20s} {type(first.data).__name__:16s} {n}", flush=True)
 
 
 # Unitree SDK motor order (FR, FL, RR, RL; hip, thigh, calf), Go2 URDF joint names.
@@ -193,7 +195,7 @@ def add_std_streams(store: SqliteStore) -> None:
             dst.append(_dynamic_joint_state(oc.ts, rows), ts=oc.ts)
     for name in STD_STREAMS:
         if name in store.list_streams():
-            print(f"[process]   {name:20s} {store.stream(name).count()}", flush=True)
+            print(f"[mcap2db]   {name:20s} {store.stream(name).count()}", flush=True)
 
 
 def convert(mcap: Path) -> SqliteStore:
@@ -202,7 +204,7 @@ def convert(mcap: Path) -> SqliteStore:
     cloud, db = out / f"{stem}.cloud.mcap", out / f"{stem}.db"
     if db.exists():
         sys.exit(f"{db} exists, delete it to rebuild")
-    subprocess.run(["nice", "-n", "19", str(HELPER), "restore", str(mcap), str(out)], check=True)
+    subprocess.run(["nice", "-n", "19", HELPER, "restore", str(mcap), str(out)], check=True)
     store = SqliteStore(path=str(db))
     copy_streams(mcap, store)
     copy_streams(cloud, store)
