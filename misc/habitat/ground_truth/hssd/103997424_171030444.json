@@ -1,0 +1,4480 @@
+{
+  "dataset": "hssd-hab",
+  "scene_id": "103997424_171030444",
+  "frame_id": "world",
+  "timestamp": 0.0,
+  "count": 187,
+  "detections": [
+    {
+      "id": "10aad7e8b95a3bc4bf9cc81d416016befad8e737@0",
+      "label": "book",
+      "score": 1.0,
+      "center_xyz": [
+        6.454974,
+        5.026751,
+        0.747295
+      ],
+      "size_xyz": [
+        0.20646200000000015,
+        0.2438760000000002,
+        0.014589999999999992
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "book",
+        "Eclectic - A5 Notebooks"
+      ]
+    },
+    {
+      "id": "1363704ef1a2dc37a27d347b2af3bd79772a1423@1",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        7.3587095,
+        12.4655195,
+        0.802851
+      ],
+      "size_xyz": [
+        0.30326900000000023,
+        0.414890999999999,
+        1.605702
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "floor_lamp",
+        "CRAZY TRIPLE FLOOR LAMP"
+      ]
+    },
+    {
+      "id": "4f4dc83733f276205742a9248af1b17c0d37d594@2",
+      "label": "range_hood",
+      "score": 1.0,
+      "center_xyz": [
+        9.7464195,
+        12.9233695,
+        2.2994825
+      ],
+      "size_xyz": [
+        0.7009690000000006,
+        0.5007929999999998,
+        0.9981790000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "range_hood",
+        "Elica Concept Glacier 70 Chimney Cooker Hood, Stainless Steel"
+      ]
+    },
+    {
+      "id": "0a172f2702ec99b7009cd9b5022569c2b3e757c4@3",
+      "label": "Tom Aikens knife block",
+      "score": 1.0,
+      "center_xyz": [
+        5.522527999999999,
+        4.770335,
+        0.9456705
+      ],
+      "size_xyz": [
+        0.24739799999999956,
+        0.3730659999999997,
+        0.362881
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "015ae9b8de4de0be8a2c276c15869fa381923022@4",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        10.856579,
+        16.947969,
+        1.7000005
+      ],
+      "size_xyz": [
+        0.019999999999999574,
+        0.759999999999998,
+        1.139999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "ABC LOVE ART PRINT"
+      ]
+    },
+    {
+      "id": "0c14c132672f293310432d06c89d503657210f0d@5",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        7.9662595000000005,
+        15.6193995,
+        0.3808725
+      ],
+      "size_xyz": [
+        0.46309100000000036,
+        0.4630909999999986,
+        0.761745
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Furniture Imports High Backless Swivel Bar Stool"
+      ]
+    },
+    {
+      "id": "0c14c132672f293310432d06c89d503657210f0d@6",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        8.5361195,
+        15.6172515,
+        0.3808725
+      ],
+      "size_xyz": [
+        0.4630909999999986,
+        0.4630909999999986,
+        0.761745
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Furniture Imports High Backless Swivel Bar Stool"
+      ]
+    },
+    {
+      "id": "0c14c132672f293310432d06c89d503657210f0d@7",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        9.1154095,
+        15.611390499999999,
+        0.3808725
+      ],
+      "size_xyz": [
+        0.4630909999999986,
+        0.46309100000000036,
+        0.761745
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Furniture Imports High Backless Swivel Bar Stool"
+      ]
+    },
+    {
+      "id": "0c14c132672f293310432d06c89d503657210f0d@8",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        9.693848500000001,
+        15.5887595,
+        0.3808725
+      ],
+      "size_xyz": [
+        0.46309100000000036,
+        0.4630909999999986,
+        0.761745
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Furniture Imports High Backless Swivel Bar Stool"
+      ]
+    },
+    {
+      "id": "a322d675c10d402de8fbb166bc05a571f790bb38@9",
+      "label": "The Ex 5-Piece Knife Set with Unique Red Holder Designed By Raffaele Iannello",
+      "score": 1.0,
+      "center_xyz": [
+        7.249072999999999,
+        4.6677055,
+        1.210067
+      ],
+      "size_xyz": [
+        0.22343199999999985,
+        0.2463690000000005,
+        0.3901340000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f925d72eab5ee89042e4c73a09fe4669a8b5a681@10",
+      "label": "Rockingham Forge Utility Knife",
+      "score": 1.0,
+      "center_xyz": [
+        7.1480595000000005,
+        4.939518,
+        1.0201305
+      ],
+      "size_xyz": [
+        0.2628250000000003,
+        0.2499659999999997,
+        0.011206999999999967
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f925d72eab5ee89042e4c73a09fe4669a8b5a681@11",
+      "label": "Rockingham Forge Utility Knife",
+      "score": 1.0,
+      "center_xyz": [
+        5.5442275,
+        4.9981955,
+        0.7451305
+      ],
+      "size_xyz": [
+        0.19140699999999988,
+        0.30708099999999927,
+        0.011206999999999967
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f4a45868e5b9f545314d1b123a4b68f4458ba1f2@12",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        10.481579,
+        16.947969,
+        0.355001
+      ],
+      "size_xyz": [
+        0.7699999999999996,
+        1.6499999999999986,
+        0.71
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "kubus 2 Seat Sofa"
+      ]
+    },
+    {
+      "id": "1bb66668829970ef66295bb7e8b946b6974b55ca@13",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.496939000000001,
+        12.97297,
+        0.45000100000000004
+      ],
+      "size_xyz": [
+        0.20000000000000107,
+        0.6000000000000014,
+        0.9
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen Cabinet, 1 door"
+      ]
+    },
+    {
+      "id": "1bb66668829970ef66295bb7e8b946b6974b55ca@14",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.696947999999999,
+        12.97297,
+        0.45000100000000004
+      ],
+      "size_xyz": [
+        0.20000000000000107,
+        0.6000000000000014,
+        0.9
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen Cabinet, 1 door"
+      ]
+    },
+    {
+      "id": "7296cba85cfaf0ab1733eca053ca054eeae8afb6@15",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.0596295,
+        15.79411,
+        1.75
+      ],
+      "size_xyz": [
+        0.08000100000000021,
+        1.0,
+        1.0
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Red Light"
+      ]
+    },
+    {
+      "id": "73cae0c00c31e895cbf8c6ac2bcc3ce718d03b21@16",
+      "label": "Pen pot - black",
+      "score": 1.0,
+      "center_xyz": [
+        6.616038,
+        5.0072765,
+        0.865483
+      ],
+      "size_xyz": [
+        0.16176600000000008,
+        0.1499890000000006,
+        0.25086600000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "67666ce1019ebc977deca75006e62555d108cbf8@17",
+      "label": "table_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        12.9210185,
+        17.183069500000002,
+        0.892136
+      ],
+      "size_xyz": [
+        0.32120899999999963,
+        0.32120899999999963,
+        0.66479
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table_lamp",
+        "Pleated shade table lamp"
+      ]
+    },
+    {
+      "id": "d46d68c38dd2d64388be98b66b665b7db512f1ab@18",
+      "label": "bathtub",
+      "score": 1.0,
+      "center_xyz": [
+        10.471579,
+        10.0921095,
+        0.315
+      ],
+      "size_xyz": [
+        0.7899999999999991,
+        1.7999989999999997,
+        0.63
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bathtub",
+        "Stone Bath"
+      ]
+    },
+    {
+      "id": "de47820f2dc539102408f43243369f2a952b7b2f@19",
+      "label": "counter",
+      "score": 1.0,
+      "center_xyz": [
+        8.470309499999999,
+        14.77355,
+        0.397378
+      ],
+      "size_xyz": [
+        2.6473649999999997,
+        1.1301039999999993,
+        0.794756
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "counter",
+        "Kitchen Island"
+      ]
+    },
+    {
+      "id": "8e92add4e92d62f3ba081781873b0b3fb3de021d@20",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        15.433211,
+        14.019744,
+        0.846617
+      ],
+      "size_xyz": [
+        0.45364999999999966,
+        0.45364999999999966,
+        1.701006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "floor_lamp",
+        "lisboa black gloss floor light"
+      ]
+    },
+    {
+      "id": "c39dc0b9f1bb9173e74c1842874690e236dc5f40@21",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        11.041979000000001,
+        16.613931,
+        1.591121
+      ],
+      "size_xyz": [
+        0.05080000000000062,
+        0.5079999999999991,
+        0.508
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "PICTURE, COLOR RUSH YELLOW"
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_4@22",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.1296040000000005,
+        6.619222499999999,
+        1.740039
+      ],
+      "size_xyz": [
+        0.15407799999999927,
+        0.03617899999999974,
+        0.20846399999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_5@23",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.126447,
+        6.575642,
+        1.7371465000000001
+      ],
+      "size_xyz": [
+        0.14545999999999992,
+        0.04935400000000012,
+        0.2022950000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_7@24",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.140314500000001,
+        6.51895,
+        1.740039
+      ],
+      "size_xyz": [
+        0.1540790000000003,
+        0.03617999999999988,
+        0.20846399999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_8@25",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.146208,
+        6.479928,
+        1.7498505
+      ],
+      "size_xyz": [
+        0.18791400000000014,
+        0.03617999999999988,
+        0.22808699999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_9@26",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.1457315,
+        6.4172485,
+        1.7400395
+      ],
+      "size_xyz": [
+        0.1540789999999994,
+        0.0889009999999999,
+        0.21072500000000005
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_6@27",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.132770000000001,
+        6.5438195,
+        1.7452735000000001
+      ],
+      "size_xyz": [
+        0.1595979999999999,
+        0.010397000000000212,
+        0.22014899999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_12@28",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.1508325,
+        6.0797965000000005,
+        1.7809665
+      ],
+      "size_xyz": [
+        0.22767099999999996,
+        0.06188100000000052,
+        0.29350300000000007
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_10@29",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.1555245,
+        6.2214345,
+        1.799037
+      ],
+      "size_xyz": [
+        0.25387499999999985,
+        0.07726500000000058,
+        0.33000000000000007
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_11@30",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.14468,
+        6.1463925,
+        1.7768920000000001
+      ],
+      "size_xyz": [
+        0.21984400000000015,
+        0.0669070000000005,
+        0.28576400000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_1@31",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.127066,
+        6.020798,
+        1.7473625
+      ],
+      "size_xyz": [
+        0.17446200000000012,
+        0.05309600000000003,
+        0.22677499999999995
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_2@32",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.149679,
+        6.37447,
+        1.617321
+      ],
+      "size_xyz": [
+        0.2599999999999998,
+        1.0,
+        0.03471599999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "bc6c8a3e519467676740e364525104805f91be7a_part_3@33",
+      "label": "Single Shelf",
+      "score": 1.0,
+      "center_xyz": [
+        5.245013999999999,
+        6.705138,
+        1.7167075
+      ],
+      "size_xyz": [
+        0.1341720000000004,
+        0.1341719999999995,
+        0.16889299999999996
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "1d438cf2a0be5706ffdbd1489fbfb27f712589a0@34",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        16.0186755,
+        15.50978,
+        1.5950004999999998
+      ],
+      "size_xyz": [
+        0.07618699999999912,
+        3.1602179999999986,
+        1.8099269999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "Flat TV"
+      ]
+    },
+    {
+      "id": "ab05e0ea6aa3801d378abbbc54a269212303822a@35",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.0446295,
+        13.706040000000002,
+        1.65
+      ],
+      "size_xyz": [
+        0.05000099999999996,
+        0.7599999999999998,
+        0.7599999999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Picture, Trio Of Blue Feathers"
+      ]
+    },
+    {
+      "id": "b695338d64fbf943ad64f49d510d8399245708d0@36",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.2649919999999995,
+        9.848719500000001,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490200000000005,
+        0.10356699999999996,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, Gray"
+      ]
+    },
+    {
+      "id": "b695338d64fbf943ad64f49d510d8399245708d0@37",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.2649919999999995,
+        11.848719500000001,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490200000000005,
+        0.10356699999999996,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, Gray"
+      ]
+    },
+    {
+      "id": "b695338d64fbf943ad64f49d510d8399245708d0@38",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.2649919999999995,
+        7.84872,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490200000000005,
+        0.10356599999999982,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, Gray"
+      ]
+    },
+    {
+      "id": "b695338d64fbf943ad64f49d510d8399245708d0@39",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        9.263462,
+        10.744909499999999,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490200000000094,
+        0.10356699999999996,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, Gray"
+      ]
+    },
+    {
+      "id": "d9a2866b5b36ed12b7aff0769e5f1066e7417774@40",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        6.439999500000001,
+        17.66,
+        0.3831235
+      ],
+      "size_xyz": [
+        1.1682709999999998,
+        2.131281999999999,
+        0.766247
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Chapleau Dining Table"
+      ]
+    },
+    {
+      "id": "183de9f61a9c362d58ac340058ecddc54da18809@41",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        5.2593595,
+        10.4529695,
+        0.38
+      ],
+      "size_xyz": [
+        0.479463,
+        1.500001000000001,
+        0.76
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Marrakesh Console Table"
+      ]
+    },
+    {
+      "id": "c62509f7f96cb4c6d1d6b23b585fe911983ddfd1@42",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        14.356418999999999,
+        15.753070000000001,
+        0.19987249999999998
+      ],
+      "size_xyz": [
+        0.7007999999999992,
+        1.4003999999999994,
+        0.399743
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Revolve Ghost Coffee Table"
+      ]
+    },
+    {
+      "id": "a3037f0f7fbe458c01e019a5db8c4d9914ed0f10@43",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        10.846181,
+        5.1726589999999995,
+        1.700009
+      ],
+      "size_xyz": [
+        0.0408059999999999,
+        0.8114140000000001,
+        1.0676119999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Translucent Leaves Framed Print I"
+      ]
+    },
+    {
+      "id": "84ec73df1d73e318c129fe1e41f417f7376f9e78@44",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        10.846181,
+        7.835819000000001,
+        1.700009
+      ],
+      "size_xyz": [
+        0.0408059999999999,
+        0.8114140000000001,
+        1.0676119999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Translucent Leaves Framed Print II"
+      ]
+    },
+    {
+      "id": "27f0693e994d95f0e728ac4360c0dcbdbaf29d14@45",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        8.5931195,
+        4.2787144999999995,
+        1.4685405
+      ],
+      "size_xyz": [
+        1.0987709999999993,
+        0.04983500000000074,
+        1.0987710000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Sunburst Mirror"
+      ]
+    },
+    {
+      "id": "6b72541c4a983863be92d0c603846ca9e1792ad1@46",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        9.244689,
+        8.55038,
+        0.704915
+      ],
+      "size_xyz": [
+        1.0921880000000002,
+        0.5329379999999997,
+        1.40983
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Merrick Tall Chest"
+      ]
+    },
+    {
+      "id": "a34eb58d8e8c6c14548c4d3b915eed8b124dbd63@47",
+      "label": "Indesit free standing cooker KD3C1MG_MS",
+      "score": 1.0,
+      "center_xyz": [
+        9.746419,
+        12.97297,
+        0.45000100000000004
+      ],
+      "size_xyz": [
+        0.5,
+        0.5999979999999994,
+        0.9
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "924c97c4257c0bc594577391d0c32aa36adfff2f@48",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        7.3781995,
+        9.1949395,
+        1.5038230000000001
+      ],
+      "size_xyz": [
+        0.3323830000000001,
+        0.4759209999999996,
+        0.40998999999999985
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "plant"
+      ]
+    },
+    {
+      "id": "34170a3abede075d1e15942197394d95ee063bf7@49",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        7.98864,
+        9.2157075,
+        1.0632795
+      ],
+      "size_xyz": [
+        0.6566480000000006,
+        0.4981030000000004,
+        2.125409
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "plant"
+      ]
+    },
+    {
+      "id": "4c5ce521bec71f4b040ca4ccdd2f8e1f7652dc2a@50",
+      "label": "Orion Bath Taps",
+      "score": 1.0,
+      "center_xyz": [
+        10.809078,
+        10.0942495,
+        0.6900010000000001
+      ],
+      "size_xyz": [
+        0.11500000000000021,
+        0.25000100000000103,
+        0.12
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_1@51",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.5309575,
+        19.3180695,
+        1.2538495
+      ],
+      "size_xyz": [
+        0.15872300000000017,
+        0.1587209999999999,
+        0.13226899999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_2@52",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.206095999999999,
+        19.3180695,
+        1.2801375
+      ],
+      "size_xyz": [
+        0.21935400000000094,
+        0.21935299999999813,
+        0.18279500000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_3@53",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.834477,
+        19.3180695,
+        1.312223
+      ],
+      "size_xyz": [
+        0.3000000000000007,
+        0.2999989999999997,
+        0.25
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_4@54",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.507172,
+        19.319078,
+        0.9674740000000001
+      ],
+      "size_xyz": [
+        0.26649600000000007,
+        0.16133800000000065,
+        0.25201000000000007
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_5@55",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.304679499999999,
+        19.319069499999998,
+        0.6088195000000001
+      ],
+      "size_xyz": [
+        0.19000100000000053,
+        0.055001000000000744,
+        0.210001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@56",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.185031500000001,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@57",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.1347105,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@58",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.0843885,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@59",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.034067499999999,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@60",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.983746499999999,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@61",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.933424500000001,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@62",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.8831035,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@63",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.832782,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.05067800000000133,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@64",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.7824605,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@65",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.732139499999999,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_6@66",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.681817500000001,
+        19.3188805,
+        0.64623
+      ],
+      "size_xyz": [
+        0.050679000000000585,
+        0.21582499999999882,
+        0.292006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@67",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.7070785,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@68",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.6549605,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@69",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.6028435,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@70",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.5507265,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@71",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.4986095,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.05190300000000114,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@72",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.446492,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@73",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.394375,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@74",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.342258000000001,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@75",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.290140999999998,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@76",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.2380235,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.05190300000000114,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@77",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.1892355,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@78",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.1371185,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@79",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.085000999999998,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@80",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.032884,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@81",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.980767,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902000000000115,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@82",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.928649499999999,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.05190300000000114,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@83",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.8765325,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@84",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.8244155,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.05190300000000114,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@85",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.7722985,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@86",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.720181499999999,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.05190300000000114,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_17@87",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        11.6680645,
+        19.31749,
+        0.298089
+      ],
+      "size_xyz": [
+        0.051902999999999366,
+        0.22103800000000007,
+        0.302006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "ef869ab4f9509c95898f831ff810bec753ab871f_part_38@88",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        12.182049,
+        19.3180695,
+        0.9845474999999999
+      ],
+      "size_xyz": [
+        1.2715380000000014,
+        0.4604670000000013,
+        1.969093
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Wellesley Tall Bookcase - Burke Decor"
+      ]
+    },
+    {
+      "id": "8d05088e19ee677c0e12018771bf4aae3edefac1@89",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        8.5176505,
+        14.838000000000001,
+        2.1849125
+      ],
+      "size_xyz": [
+        0.504688999999999,
+        0.3793419999999994,
+        1.2264449999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Artemide Copernico 500, red"
+      ]
+    },
+    {
+      "id": "8d05088e19ee677c0e12018771bf4aae3edefac1@90",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        9.274701,
+        14.838000000000001,
+        2.1849125
+      ],
+      "size_xyz": [
+        0.5046900000000001,
+        0.3793419999999994,
+        1.2264449999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Artemide Copernico 500, red"
+      ]
+    },
+    {
+      "id": "a1df429dfce559731be5c2dbcae1b8073cdd8e1f@91",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        6.1460930000000005,
+        5.490254,
+        0.4824305
+      ],
+      "size_xyz": [
+        0.6764920000000005,
+        0.6884240000000004,
+        0.964861
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Office Chair"
+      ]
+    },
+    {
+      "id": "52b9fa711a6deed35c45d2776631f03fb075858f@92",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xyz": [
+        8.8696695,
+        12.410340000000001,
+        0.138429
+      ],
+      "size_xyz": [
+        0.22525899999999943,
+        0.22526000000000046,
+        0.27685600000000005
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "trashcan",
+        "Coppercraft Waste Bin"
+      ]
+    },
+    {
+      "id": "6be10e64bffa1946ba2f1ba623d6a92ecede2cbf@93",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        12.921019000000001,
+        17.183069,
+        0.2798725
+      ],
+      "size_xyz": [
+        0.6100000000000012,
+        0.6099999999999994,
+        0.559743
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Revolve Ghost End Table"
+      ]
+    },
+    {
+      "id": "e0486f8e03441481436254ea00d35fed866c68d3@94",
+      "label": "stand",
+      "score": 1.0,
+      "center_xyz": [
+        15.832318999999998,
+        15.753070000000001,
+        0.280501
+      ],
+      "size_xyz": [
+        0.45099999999999874,
+        1.600200000000001,
+        0.5609999999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stand",
+        "Revolve Ghost TV Stand"
+      ]
+    },
+    {
+      "id": "e3d8c7485b594d0ddf81302c96585d585089df27@95",
+      "label": "Deborah Tissue Box Cover",
+      "score": 1.0,
+      "center_xyz": [
+        14.28593,
+        16.173189,
+        0.508739
+      ],
+      "size_xyz": [
+        0.1409880000000001,
+        0.1409880000000001,
+        0.21799599999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "63f1092365918e9da7368dd69be88012b30ca145@96",
+      "label": "shower",
+      "score": 1.0,
+      "center_xyz": [
+        10.3806665,
+        12.0350115,
+        0.7480144999999999
+      ],
+      "size_xyz": [
+        1.0681809999999992,
+        0.9758289999999992,
+        1.496027
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shower",
+        "Shower"
+      ]
+    },
+    {
+      "id": "f05bd29fb90510885dfdcd048dd7af8234dd7d01@97",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        7.3303395,
+        6.2036605,
+        1.01
+      ],
+      "size_xyz": [
+        0.36000100000000046,
+        1.2000010000000003,
+        2.02
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Petra Bookcase 120 x 154 x 44 cm"
+      ]
+    },
+    {
+      "id": "4bc70f82b71353ef76b6fb89c5388d1241a15e11@98",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        5.03563,
+        10.45297,
+        1.7000000000000002
+      ],
+      "size_xyz": [
+        0.03200000000000003,
+        1.0,
+        1.0000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Marrakesh Dresser Mirror"
+      ]
+    },
+    {
+      "id": "03e195f8bd27ffb3982ccb69dcab98d53f3f6920@99",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        8.981501,
+        16.11063,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490199999999916,
+        0.10356600000000071,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, White"
+      ]
+    },
+    {
+      "id": "03e195f8bd27ffb3982ccb69dcab98d53f3f6920@100",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        8.981501,
+        18.11063,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490199999999916,
+        0.10356600000000071,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, White"
+      ]
+    },
+    {
+      "id": "03e195f8bd27ffb3982ccb69dcab98d53f3f6920@101",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        8.981501,
+        14.11063,
+        2.8561935
+      ],
+      "size_xyz": [
+        0.10490199999999916,
+        0.10356600000000071,
+        0.11716300000000013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Round Ceiling Light, White"
+      ]
+    },
+    {
+      "id": "800f42a04a677e79c61400b604ccc278347d5737@102",
+      "label": "Gestell/cadre",
+      "score": 1.0,
+      "center_xyz": [
+        8.22842,
+        12.34797,
+        0.8343995
+      ],
+      "size_xyz": [
+        0.8504299999999994,
+        0.3500000000000014,
+        1.668799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "fdf7479cc9da8f4486359f66965869b5c58c74ed@103",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        9.14206,
+        12.857798500000001,
+        2.0750005000000002
+      ],
+      "size_xyz": [
+        0.5,
+        0.369669,
+        0.7499990000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "fdf7479cc9da8f4486359f66965869b5c58c74ed@104",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.44692,
+        12.857798500000001,
+        2.075001
+      ],
+      "size_xyz": [
+        0.5,
+        0.369669,
+        0.7499999999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "ccf3f0ee76dd2263f77ad90a7cec59da84e047c8@105",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        8.79547,
+        19.2614505,
+        1.1008565
+      ],
+      "size_xyz": [
+        0.5,
+        0.5737090000000009,
+        2.198263
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen tall cabinet"
+      ]
+    },
+    {
+      "id": "8750ca4725e0059dfa5d57740e3aafd69911ba12@106",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.280529,
+        8.5516795,
+        0.9407584999999999
+      ],
+      "size_xyz": [
+        0.6755420000000001,
+        0.530341,
+        1.881515
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "floor_lamp",
+        "Bodina Floor Lamp Black"
+      ]
+    },
+    {
+      "id": "11197c522faac322f1118db8636104856bd7c9bf@107",
+      "label": "Sagamore Wood on stand, Small",
+      "score": 1.0,
+      "center_xyz": [
+        9.0808195,
+        4.4478995,
+        1.0350495
+      ],
+      "size_xyz": [
+        0.329701,
+        0.14567300000000039,
+        0.43179900000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f6fcc984009f9416729641d35f0151295d0619ee@108",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.599229,
+        5.1726595,
+        2.1232815
+      ],
+      "size_xyz": [
+        0.2491979999999998,
+        0.24921299999999924,
+        1.360721
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Harper Cylinder Pendant"
+      ]
+    },
+    {
+      "id": "f6fcc984009f9416729641d35f0151295d0619ee@109",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.599229,
+        7.8358205000000005,
+        2.1232815
+      ],
+      "size_xyz": [
+        0.2491979999999998,
+        0.24921300000000013,
+        1.360721
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Harper Cylinder Pendant"
+      ]
+    },
+    {
+      "id": "3fc77979a4622ac665589e79822641ba6b7aa66f@110",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        10.599229000000001,
+        5.1726600000000005,
+        0.35877600000000004
+      ],
+      "size_xyz": [
+        0.5347039999999996,
+        0.7619999999999996,
+        0.71755
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Merrick Night Table"
+      ]
+    },
+    {
+      "id": "3fc77979a4622ac665589e79822641ba6b7aa66f@111",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        10.599229000000001,
+        7.83582,
+        0.35877600000000004
+      ],
+      "size_xyz": [
+        0.5347039999999996,
+        0.7620000000000005,
+        0.71755
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Merrick Night Table"
+      ]
+    },
+    {
+      "id": "db74ce14813eb0d5c54c8992806b22fb846ee34c@112",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        8.896159999999998,
+        12.97297,
+        0.45
+      ],
+      "size_xyz": [
+        1.2005,
+        0.6000000000000014,
+        0.9
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen Cabinet, 2 door"
+      ]
+    },
+    {
+      "id": "c624e2fa4f1d962515c51ffbb2e1d20c7b5cc560@113",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.0450295,
+        13.075539,
+        1.9015
+      ],
+      "size_xyz": [
+        0.050800999999999874,
+        0.38099999999999845,
+        0.381
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "PICTURE, CASE STUDY BLUE I"
+      ]
+    },
+    {
+      "id": "b5ac5dd1dc346152f1a07d3e40e665de05095852@114",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        12.420193000000001,
+        12.9266365,
+        0.4823545
+      ],
+      "size_xyz": [
+        1.7272060000000007,
+        0.5071789999999989,
+        0.964707
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Pierce Dresser, Black"
+      ]
+    },
+    {
+      "id": "eb6a73a8cbd7df887187a2b9fad7fae1e5753d93@115",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        7.995649,
+        12.97297,
+        0.583887
+      ],
+      "size_xyz": [
+        0.6005000000000003,
+        0.6000000000000014,
+        1.167774
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Zentuvo Kitchen Cabinet w Sink"
+      ]
+    },
+    {
+      "id": "986d7ca749662bad0c2c59c4cdd1129247728d69@116",
+      "label": "Boho Circa Wall Decor - 88x88 cms",
+      "score": 1.0,
+      "center_xyz": [
+        10.850290999999999,
+        6.5042175,
+        2.075291
+      ],
+      "size_xyz": [
+        0.03267600000000037,
+        0.8773569999999999,
+        0.8803919999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "dfa7a62e5be41b97c5f2e2fc372c6a2a54264ec1@117",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        12.921019,
+        15.753070000000001,
+        0.305001
+      ],
+      "size_xyz": [
+        0.75,
+        2.049994,
+        0.61
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Zanotta Throw-Away Sofa"
+      ]
+    },
+    {
+      "id": "063168a53d4fa2422c8ddb49959bcbcd7b598402@118",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        6.13,
+        5.12,
+        0.0075
+      ],
+      "size_xyz": [
+        2.0000079999999993,
+        1.3999939999999995,
+        0.015
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Thick pile white rug"
+      ]
+    },
+    {
+      "id": "03f6741a77ff5522231bdf85e92fa0b7f81ac06e@119",
+      "label": "Hudson Reed Sass Freestanding Vanity Unit - Black",
+      "score": 1.0,
+      "center_xyz": [
+        9.3091895,
+        9.2544595,
+        1.0000005
+      ],
+      "size_xyz": [
+        0.4758829999999996,
+        0.5752210000000009,
+        1.999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0245ea7e27dca7c58b0fbf3f5bfc5eb1de3abd09@120",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        14.356418999999999,
+        15.75307,
+        0.008795500000000001
+      ],
+      "size_xyz": [
+        1.700000000000001,
+        2.399998,
+        0.017589
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Gems Black Rug Black"
+      ]
+    },
+    {
+      "id": "0f91e09e7aaa94072daa3be9f4f09b9d60f600b8@121",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xyz": [
+        10.72008,
+        18.819468999999998,
+        0.365001
+      ],
+      "size_xyz": [
+        0.29300000000000104,
+        0.2930000000000028,
+        0.73
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "trashcan",
+        "Brabantia Red Pedal Bin 30L"
+      ]
+    },
+    {
+      "id": "18c70042058e30b46be5c8f856f215bb78377f2c@122",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        14.3564185,
+        13.604831,
+        0.405001
+      ],
+      "size_xyz": [
+        1.1051789999999997,
+        0.35609,
+        0.8099999999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "HENSHAW CONSOLE TABLE"
+      ]
+    },
+    {
+      "id": "1a3975bbd2e01e0ee0e1dd01a204bfc39dac32fc@123",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        14.356419,
+        14.1678695,
+        0.305001
+      ],
+      "size_xyz": [
+        1.5,
+        0.749998999999999,
+        0.61
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Zanotta Throw-Away Sofa"
+      ]
+    },
+    {
+      "id": "a2019b85453656ac64d641ff7098bc79598089e8@124",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        6.4400025,
+        18.8355535,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.6078010000000003,
+        0.6593889999999973,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Arm Chair"
+      ]
+    },
+    {
+      "id": "a2019b85453656ac64d641ff7098bc79598089e8@125",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        6.4399964999999995,
+        16.4844485,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.6078009999999994,
+        0.6593890000000009,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Arm Chair"
+      ]
+    },
+    {
+      "id": "26c38871b1ff2736109edd0ccac7858c95ac3e49@126",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        7.1340535,
+        18.12839,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.659389,
+        0.5367880000000014,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Side Chair"
+      ]
+    },
+    {
+      "id": "26c38871b1ff2736109edd0ccac7858c95ac3e49@127",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        7.1340535,
+        17.191601,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.659389,
+        0.5367879999999978,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Side Chair"
+      ]
+    },
+    {
+      "id": "26c38871b1ff2736109edd0ccac7858c95ac3e49@128",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        5.7459465000000005,
+        17.1916005,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.659389,
+        0.5367869999999968,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Side Chair"
+      ]
+    },
+    {
+      "id": "26c38871b1ff2736109edd0ccac7858c95ac3e49@129",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        5.7459465000000005,
+        18.128400499999998,
+        0.5321505
+      ],
+      "size_xyz": [
+        0.659389,
+        0.5367870000000003,
+        1.0643129999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Chapleau II Side Chair"
+      ]
+    },
+    {
+      "id": "a5d89c779d988acf9d344e5b0fd0952cb90c0a4a@130",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        9.0308395,
+        6.50424,
+        0.007671000000000001
+      ],
+      "size_xyz": [
+        1.828799,
+        2.7432,
+        0.01524
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Landon 6' x 9' Handwoven Rug, Grey"
+      ]
+    },
+    {
+      "id": "0b66f086c925b3c5b087b2149b23295d74a12fb1@131",
+      "label": "Sagamore Wood on stand, Large",
+      "score": 1.0,
+      "center_xyz": [
+        8.8597795,
+        4.593579500000001,
+        1.1379985000000001
+      ],
+      "size_xyz": [
+        0.5332870000000014,
+        0.1456729999999995,
+        0.637697
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "1ab37dd4718602cf2b6f55270f0253e1ecd0a7d0@132",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        11.7406535,
+        12.9265595,
+        1.1029815
+      ],
+      "size_xyz": [
+        0.32275100000000023,
+        0.2978550000000002,
+        0.2761030000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Calla Lily Mixed Watergarden in Fishbowl Vase"
+      ]
+    },
+    {
+      "id": "2506544e6c898212a4b2098aa49c8e5a2bfbca21@133",
+      "label": "Thea Wool Pouf, Brown",
+      "score": 1.0,
+      "center_xyz": [
+        7.99631,
+        6.856339999999999,
+        0.23
+      ],
+      "size_xyz": [
+        0.49091600000000035,
+        0.49091599999999946,
+        0.46
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3448a0f2142df518fd92e165207bf1d58dd05fa0@134",
+      "label": "vase",
+      "score": 1.0,
+      "center_xyz": [
+        6.5134495,
+        17.733397500000002,
+        1.0062505000000002
+      ],
+      "size_xyz": [
+        0.146903,
+        0.1467950000000009,
+        0.47999900000000006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "vase",
+        "Medium goddess vase, Blue"
+      ]
+    },
+    {
+      "id": "69ed26faa8d3253125e831d78fde303fc0a3f62c@135",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        5.14924,
+        12.375976,
+        0.6883445
+      ],
+      "size_xyz": [
+        0.19005600000000022,
+        0.19011199999999917,
+        1.376689
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "floor_lamp",
+        "VIDJA Floor lamp"
+      ]
+    },
+    {
+      "id": "a1df437d263e5758c23e6653d365e0fdcc81ad31@136",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.02463,
+        13.066040000000001,
+        1.06
+      ],
+      "size_xyz": [
+        0.009999999999999787,
+        0.40000000000000036,
+        0.29999999999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Blue Stripes Flow, Canvas Art Picture Print by Migg"
+      ]
+    },
+    {
+      "id": "a980ba02a55b4f8bd67d9e1c6dc2231679bc82c9@137",
+      "label": "table_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.730191,
+        4.672825,
+        1.0052569999999998
+      ],
+      "size_xyz": [
+        0.2786800000000005,
+        0.2935100000000004,
+        0.5305139999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table_lamp",
+        "Retro - Desk Lamp (Black)"
+      ]
+    },
+    {
+      "id": "6aa6b20a49e05ab2cddb6899406ff752bd8d4e61@138",
+      "label": "Bisley 3 Drawer Filing Cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        7.2025795,
+        4.80759,
+        0.5075
+      ],
+      "size_xyz": [
+        0.4700009999999999,
+        0.6409739999999999,
+        1.015
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "1197126f20af28831340ff4e55039430ce711a31@139",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xyz": [
+        5.1774195,
+        4.6121,
+        0.155
+      ],
+      "size_xyz": [
+        0.2100010000000001,
+        0.25,
+        0.31
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "trashcan",
+        "Hampton white bamboo waste bin"
+      ]
+    },
+    {
+      "id": "f1b26d26f03db8b784b3fbc0ccdef3bbc080069a@140",
+      "label": "toilet",
+      "score": 1.0,
+      "center_xyz": [
+        8.0346985,
+        9.886560500000002,
+        0.9763005
+      ],
+      "size_xyz": [
+        0.7487209999999989,
+        0.43089699999999986,
+        1.152597
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "toilet",
+        "Tube Toilet"
+      ]
+    },
+    {
+      "id": "90bc63fa89c2db5fbaafad4dcc1614e801fcc4b6@141",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.196679,
+        12.97297,
+        0.45000100000000004
+      ],
+      "size_xyz": [
+        0.40050000000000097,
+        0.6000000000000014,
+        0.9
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen Cabinet, 1 door"
+      ]
+    },
+    {
+      "id": "bcc2d2bda9532b1fd0f5a0501cdf5a8eab47862b@142",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.045030000000001,
+        13.075539,
+        1.4605000000000001
+      ],
+      "size_xyz": [
+        0.050799999999999734,
+        0.38099999999999845,
+        0.381
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "PICTURE, CASE STUDY BLUE II"
+      ]
+    },
+    {
+      "id": "aee5b09c6ec3331b898f991b11b84e451199251e@143",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        14.356397000000001,
+        15.7530845,
+        2.3084645
+      ],
+      "size_xyz": [
+        0.5149460000000001,
+        0.5156449999999992,
+        0.9894509999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Hanging Lamp"
+      ]
+    },
+    {
+      "id": "8e5194ea2c796c09de74b07a3b02569a9ed8b003@144",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        6.264989,
+        4.27866,
+        1.7000000000000002
+      ],
+      "size_xyz": [
+        0.7599999999999998,
+        0.04999999999999982,
+        0.76
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Picture, Shades Of Blue Agate"
+      ]
+    },
+    {
+      "id": "e005cbb7de96d0ab84ceb9d2dd6ed418e2bcc17e@145",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        14.356418999999999,
+        17.138269,
+        0.305001
+      ],
+      "size_xyz": [
+        0.9500000000000011,
+        0.75,
+        0.61
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Zanotta Throw-Away Armchair"
+      ]
+    },
+    {
+      "id": "fe2f537712c8741402437354c5a6c63dc3332f35@146",
+      "label": "Coppercraft Toilet Brush Holder",
+      "score": 1.0,
+      "center_xyz": [
+        7.7192,
+        10.1608695,
+        0.234808
+      ],
+      "size_xyz": [
+        0.11771599999999971,
+        0.11771700000000074,
+        0.469616
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "adc3aaea6b4bf09f853a3844655b98af8c6af2a6@147",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        5.32378,
+        19.218200500000002,
+        0.7698109999999999
+      ],
+      "size_xyz": [
+        0.6082900000000002,
+        0.7591769999999975,
+        1.542886
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Interior Plant"
+      ]
+    },
+    {
+      "id": "5e60836dcd1cda51a634fc116b9d86eaf884cd28@148",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        8.29547,
+        19.2515315,
+        1.1008545
+      ],
+      "size_xyz": [
+        0.5,
+        0.5935349999999993,
+        2.198259
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen tall cabinet with oven"
+      ]
+    },
+    {
+      "id": "5b61a5bb930b6d858826813b245859e1f562658d@149",
+      "label": "Victoria HTR, Vintage Gold",
+      "score": 1.0,
+      "center_xyz": [
+        9.5078995,
+        12.454648,
+        1.27014
+      ],
+      "size_xyz": [
+        0.6773550000000004,
+        0.13664400000000043,
+        0.940278
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "2efebdcc1ba9514b0deb0dfb05951341432bd26a@150",
+      "label": "APPLE iMac 5K 27\"",
+      "score": 1.0,
+      "center_xyz": [
+        6.02853,
+        4.8691395,
+        0.985016
+      ],
+      "size_xyz": [
+        0.6448680000000007,
+        0.46663299999999985,
+        0.48885599999999996
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "b5a2e303c9a5cfa54fb5b257cd82926b194e1e26@151",
+      "label": "vase",
+      "score": 1.0,
+      "center_xyz": [
+        6.4399999999999995,
+        17.0206205,
+        1.0397245
+      ],
+      "size_xyz": [
+        0.10188000000000041,
+        0.10180499999999881,
+        0.5468489999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "vase",
+        "Large goddess vase, Blue"
+      ]
+    },
+    {
+      "id": "c5fe7eaaa71f5cc7e2bc468d56bbdd3685b24224@152",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        8.66143,
+        4.52074,
+        0.409575
+      ],
+      "size_xyz": [
+        1.6256000000000004,
+        0.5341520000000006,
+        0.81915
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Merrick Dresser"
+      ]
+    },
+    {
+      "id": "09843c7d1af4d42f2c34c69e80992049361770dd@153",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        15.4003025,
+        13.0042055,
+        0.359997
+      ],
+      "size_xyz": [
+        0.6673989999999996,
+        0.6625130000000006,
+        0.719992
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "coloured cordyline plant"
+      ]
+    },
+    {
+      "id": "d6b5822b17434f97ff007e0854cd9385dc79a150@154",
+      "label": "vase",
+      "score": 1.0,
+      "center_xyz": [
+        14.02486,
+        13.604831,
+        0.9550025
+      ],
+      "size_xyz": [
+        0.2699999999999996,
+        0.27000000000000135,
+        0.290003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "vase",
+        "Black reactive vase"
+      ]
+    },
+    {
+      "id": "9ff0e2c2b2d7081e92f2ee4fb21a48a483b5f1d9@155",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xyz": [
+        10.489818,
+        18.369759000000002,
+        0.8408035
+      ],
+      "size_xyz": [
+        0.7534399999999994,
+        0.5936100000000017,
+        1.678995
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "fridge",
+        "Smeg Fridge FAB30RS7"
+      ]
+    },
+    {
+      "id": "6390cbe813d8715d580974eaeb12cc14716ae9bd@156",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        7.497789,
+        9.84872,
+        1.7000000000000002
+      ],
+      "size_xyz": [
+        0.025100000000000122,
+        0.8000000000000007,
+        0.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Shades Of Grey Lacquer Painting 80X2.5X80Cm-Black/White"
+      ]
+    },
+    {
+      "id": "704be01f7db2f73ed7ef831d13b24a1bbadc8341@157",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.439999500000001,
+        17.278259499999997,
+        2.030869
+      ],
+      "size_xyz": [
+        0.6124049999999999,
+        0.612404999999999,
+        1.5382619999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "PH Artichoke Lamp - Medium, White"
+      ]
+    },
+    {
+      "id": "704be01f7db2f73ed7ef831d13b24a1bbadc8341@158",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.439999500000001,
+        18.0417405,
+        2.030869
+      ],
+      "size_xyz": [
+        0.6124049999999999,
+        0.6124050000000025,
+        1.5382619999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "PH Artichoke Lamp - Medium, White"
+      ]
+    },
+    {
+      "id": "704be01f7db2f73ed7ef831d13b24a1bbadc8341@159",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.439999500000001,
+        17.278259499999997,
+        2.030869
+      ],
+      "size_xyz": [
+        0.6124049999999999,
+        0.612404999999999,
+        1.5382619999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "PH Artichoke Lamp - Medium, White"
+      ]
+    },
+    {
+      "id": "704be01f7db2f73ed7ef831d13b24a1bbadc8341@160",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.439999500000001,
+        18.0417405,
+        2.030869
+      ],
+      "size_xyz": [
+        0.6124049999999999,
+        0.6124050000000025,
+        1.5382619999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "PH Artichoke Lamp - Medium, White"
+      ]
+    },
+    {
+      "id": "4f89b3cd70cb8d85fa7e9f050ea71aed1c3d80cb@161",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        7.309969000000001,
+        9.521985,
+        0.6500659999999999
+      ],
+      "size_xyz": [
+        0.40073200000000053,
+        1.2602600000000006,
+        1.30013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Storage Unit"
+      ]
+    },
+    {
+      "id": "a0ab0f0d7974fcdc0eafd46ab094a5ed9351d26c@162",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        8.49386,
+        12.857798500000001,
+        2.075
+      ],
+      "size_xyz": [
+        0.7963899999999988,
+        0.369669,
+        0.7500000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet with 2 doors"
+      ]
+    },
+    {
+      "id": "602cdcd92744d0f17ced70fadc44d7c3fe25c831@163",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        6.129999,
+        4.8866700000000005,
+        0.364956
+      ],
+      "size_xyz": [
+        1.5951579999999996,
+        0.7991420000000007,
+        0.729912
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "160cm Desk"
+      ]
+    },
+    {
+      "id": "56a3cb5686d12e4bad648c325ae998def645c997@164",
+      "label": "vase",
+      "score": 1.0,
+      "center_xyz": [
+        6.4399995,
+        18.37008,
+        0.9912525
+      ],
+      "size_xyz": [
+        0.14150099999999988,
+        0.1413979999999988,
+        0.45000299999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "vase",
+        "Small goddess vase, Blue"
+      ]
+    },
+    {
+      "id": "9fa35b1e57472e0f1be4cd0d11efd14ff1237164@165",
+      "label": "bed",
+      "score": 1.0,
+      "center_xyz": [
+        9.79631,
+        6.5042415,
+        0.6753115
+      ],
+      "size_xyz": [
+        2.1405439999999984,
+        1.9011549999999993,
+        1.350621
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bed",
+        "Merrick Bed - Queen Size"
+      ]
+    },
+    {
+      "id": "4149-1@166",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        4.94463,
+        17.67613,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        0.08000000000000007,
+        1.8703800000000008,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3757-0@167",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        4.94463,
+        8.37123,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        0.08000000000000007,
+        1.08,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3752-0@168",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        9.829119,
+        4.17866,
+        1.4500005
+      ],
+      "size_xyz": [
+        1.1799999999999997,
+        0.08000000000000007,
+        1.4999990000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "220-34@169",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        14.349208999999998,
+        19.6233005,
+        1.665001
+      ],
+      "size_xyz": [
+        2.08,
+        0.08000099999999932,
+        1.9300000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "219-26@170",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        14.522189000000001,
+        12.59797,
+        1.635001
+      ],
+      "size_xyz": [
+        1.4664200000000012,
+        0.08000000000000007,
+        1.87
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@171",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        12.420539000000002,
+        12.59797,
+        1.840001
+      ],
+      "size_xyz": [
+        1.08,
+        0.08000000000000007,
+        1.5
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "209-2@172",
+      "label": "door",
+      "score": 1.0,
+      "center_xyz": [
+        16.132818999999998,
+        18.00552,
+        1.120001
+      ],
+      "size_xyz": [
+        0.23000000000000043,
+        1.7899999999999991,
+        2.1999999999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_000",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        7.8707835,
+        4.2776175,
+        1.4
+      ],
+      "size_xyz": [
+        6.002307000000001,
+        0.3479150000000004,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_001",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        4.94463,
+        11.863480500000001,
+        1.4
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        15.519641000000002,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_002",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        5.30494,
+        7.0542235,
+        1.4
+      ],
+      "size_xyz": [
+        0.8706199999999997,
+        0.3374790000000001,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_003",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        10.5387255,
+        19.6102875,
+        1.4
+      ],
+      "size_xyz": [
+        11.338190999999998,
+        0.17603099999999827,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_004",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        7.190295,
+        7.024347499999999,
+        1.4
+      ],
+      "size_xyz": [
+        0.9400899999999996,
+        0.39558499999999963,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_005",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        7.6998485,
+        5.8210049999999995,
+        1.4
+      ],
+      "size_xyz": [
+        0.37901700000000016,
+        3.4346900000000007,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_006",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        7.6998485,
+        9.59835,
+        1.4
+      ],
+      "size_xyz": [
+        0.37901700000000016,
+        2.16,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_007",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        7.630206,
+        12.165659999999999,
+        1.4
+      ],
+      "size_xyz": [
+        0.23973200000000006,
+        1.014619999999999,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_008",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        11.784079499999999,
+        12.568159999999999,
+        1.4
+      ],
+      "size_xyz": [
+        8.547479,
+        0.33054000000000094,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_009",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        9.33846,
+        8.983276499999999,
+        1.4
+      ],
+      "size_xyz": [
+        3.3562399999999997,
+        0.33587900000000026,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_010",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        10.925583499999998,
+        8.8115325,
+        1.4
+      ],
+      "size_xyz": [
+        0.30818499999999993,
+        9.415745000000001,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_011",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        10.988245500000001,
+        17.766858,
+        1.4
+      ],
+      "size_xyz": [
+        0.24333099999999952,
+        3.8628860000000014,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_012",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        16.022419499999998,
+        14.8167445,
+        1.4
+      ],
+      "size_xyz": [
+        0.37080299999999866,
+        4.587548999999999,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_013",
+      "label": "wall",
+      "score": 1.0,
+      "center_xyz": [
+        16.108216,
+        19.2994105,
+        1.4
+      ],
+      "size_xyz": [
+        0.19921000000000078,
+        0.7977810000000005,
+        2.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}
