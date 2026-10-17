@@ -449,3 +449,14 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
+
+    cloud, _t, db = env
+    mcap = db.parent / "run.mcap"
+    write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
+    before = mcap.read_bytes()
+    assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    assert mcap.read_bytes() == before

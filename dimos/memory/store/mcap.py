@@ -21,8 +21,9 @@ topic -> codec), while ``streams`` may map friendly stream names to topics. See
 
 Channels published by dimos itself need neither: a dimos topic carries its
 message type in its own name, so it is decoded and named from the wire with no
-registry at all (``_dimos_wire``). An injected codec still wins where both
-apply.
+registry at all (``_dimos_wire``). Neither do ROS 2 (CDR) channels whose type
+has a dimos twin: the mcap embeds their schema (``_Ros2Codec``). An injected
+codec still wins where these apply.
 
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
@@ -30,7 +31,8 @@ Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Protocol, runtime_checkable
@@ -44,6 +46,8 @@ from dimos.memory.observationstore.base import ObservationStore, ObservationStor
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.msgs.helpers import lcm_msg_type
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
@@ -79,6 +83,78 @@ class _DimosCodec:
         return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
 
 
+_LCM_PRIMITIVES = {
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "float",
+    "double",
+    "string",
+    "boolean",
+    "byte",
+}
+
+
+def _ros_to_lcm(ros: Any, lcm_type: Any) -> Any:
+    """Copy a decoded ROS 2 message into its dimos_lcm twin, which shares its field names."""
+    out = lcm_type()
+    package = lcm_type.__module__.split(".")[-2]  # dimos_lcm.sensor_msgs.PointCloud2
+    for name, kind, dims in zip(
+        lcm_type.__slots__, lcm_type.__typenames__, lcm_type.__dimensions__, strict=True
+    ):
+        value = getattr(ros, "nanosec" if name == "nsec" else name, None)
+        if value is None:  # a `_length` field, or one ROS 2 dropped (Header.seq)
+            continue
+        if kind not in _LCM_PRIMITIVES:
+            sub = lcm_msg_type(kind if "." in kind else f"{package}.{kind}")
+            value = [_ros_to_lcm(v, sub) for v in value] if dims else _ros_to_lcm(value, sub)
+        elif dims:
+            value = bytes(value) if kind == "byte" else list(value)
+        setattr(out, name, value)
+        if dims and isinstance(dims[0], str):  # variable length: LCM carries the count
+            setattr(out, dims[0], len(value))
+    return out
+
+
+@dataclass(frozen=True)
+class _Ros2Codec:
+    """Decodes a ROS 2 channel with the schema the mcap embeds, then into its dimos type."""
+
+    payload_type: type
+    msg_type: type
+    decode_ros: Callable[[bytes], Any]
+    # A flat dimos type that is its own LCM struct is filled directly: an LCM round
+    # trip would push ROS's unsigned ints through signed ones (a uint32 of 3e9 fails)
+    direct: bool = False
+
+    def decode(self, data: bytes) -> Any:
+        ros = self.decode_ros(data)
+        if self.direct:
+            return _ros_to_lcm(ros, self.msg_type)
+        twin = lcm_msg_type(self.msg_type.msg_name)  # type: ignore[attr-defined]
+        msg = self.msg_type.lcm_decode(_ros_to_lcm(ros, twin).lcm_encode())  # type: ignore[attr-defined]
+        return msg if self.payload_type is self.msg_type else msg.decode()
+
+
+def _ros2_codec(schema: Any) -> _Ros2Codec | None:
+    """A codec for a ``ros2msg`` schema with a dimos twin, else None."""
+    package, _, name = schema.name.partition("/msg/")  # sensor_msgs/msg/PointCloud2
+    msg_type = get_dimos_type(f"{package}.{name}") if name else None
+    if msg_type is None:
+        return None
+    from mcap_ros2.decoder import DecoderFactory  # optional mcap dependency
+
+    decode_ros = DecoderFactory().decoder_for("cdr", schema)
+    if decode_ros is None:
+        return None
+    # A compressed frame decodes to an Image, as the jpeg channels do
+    payload = Image if msg_type.msg_name == "sensor_msgs.CompressedImage" else msg_type
+    twin = lcm_msg_type(msg_type.msg_name)
+    direct = issubclass(msg_type, twin) and set(twin.__typenames__) <= _LCM_PRIMITIVES
+    return _Ros2Codec(payload, msg_type, decode_ros, direct)
+
+
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
     """Split a dimos wire topic into its port name and message type.
 
@@ -97,7 +173,8 @@ def _dimos_wire(topic: str) -> tuple[str, type] | None:
 
 
 def _slug(topic: str) -> str:
-    """Auto stream name from a topic: drop the ``rt/`` prefix and ``/`` -> ``_``.
+    """Auto stream name from a topic: drop the ``rt/`` prefix and the ROS 2 leading ``/``,
+    then ``/`` -> ``_``.
 
     ``rt/`` is the ROS2-over-DDS topic prefix; ``removeprefix`` only strips it
     where present (e.g. app-level ``control_log`` is left alone). A dimos topic
@@ -107,7 +184,7 @@ def _slug(topic: str) -> str:
     wire = _dimos_wire(topic)
     if wire is not None:
         return wire[0].replace("/", "_")
-    return topic.removeprefix("rt/").replace("/", "_")
+    return topic.removeprefix("rt/").strip("/").replace("/", "_")
 
 
 class McapObservationStoreConfig(ObservationStoreConfig):
@@ -227,9 +304,17 @@ class McapStore(Store):
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
         if summary is not None and summary.statistics is not None:
+            # ROS topics folding to one slug (`a/b_c`, `a_b/c`) keep their `/` as `__` instead
+            folded = Counter(
+                _slug(t)
+                for t in {ch.topic for ch in summary.channels.values()}
+                if _dimos_wire(t) is None
+            )
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
+                if ch.topic not in name_of and folded[name] > 1 and _dimos_wire(ch.topic) is None:
+                    name = ch.topic.removeprefix("rt/").strip("/").replace("/", "__")
                 taken = self._stream_topic.get(name)
                 if taken is not None and taken != ch.topic:
                     # Two topics, one name. One port carrying two types is
@@ -253,13 +338,21 @@ class McapStore(Store):
                         == f"{kind.__module__}.{kind.__qualname__}"
                     ):
                         self._codecs[ch.topic] = JsonCodec()
+                sch = summary.schemas.get(ch.schema_id)
+                if (
+                    ch.topic not in self._codecs
+                    and ch.message_encoding == "cdr"
+                    and sch is not None
+                    and sch.encoding == "ros2msg"
+                    and (ros2 := _ros2_codec(sch)) is not None
+                ):
+                    self._codecs[ch.topic] = ros2
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
                 self._observation_uses_publish_time[name] = (
                     ch.metadata.get("dimos.observation_time") == "publish_time"
                 )
                 if ch.topic not in self._codecs and _dimos_wire(ch.topic) is None:
-                    sch = summary.schemas.get(ch.schema_id)
                     self._raw[name] = sch.name if sch else None
 
     def list_streams(self) -> list[str]:

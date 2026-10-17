@@ -147,3 +147,78 @@ def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
         [0.4],
         [0.9],
     ]
+
+
+def test_ros2_mcap_scans_placed_by_tf_with_an_odometry_path(tmp_path: Path) -> None:
+    from dimos.memory.store.mcap import McapStore
+    from dimos.memory.store.test_mcap import ros2_cloud, ros2_odom, ros2_tf, write_ros2_mcap
+
+    path = tmp_path / "ros2.mcap"
+    write_ros2_mcap(
+        path,
+        [
+            (
+                "/tf",
+                "tf2_msgs/TFMessage",
+                1.0,
+                ros2_tf(1.0, "odom", "lidar_link", (5, 0, 0.3), np.pi / 2),
+            )
+        ]
+        + [("/odometry", "nav_msgs/Odometry", 1.0 + i, ros2_odom(1.0 + i, i, 2)) for i in range(3)]
+        + [("/lidar", "sensor_msgs/PointCloud2", 1.5, ros2_cloud(1.5, "lidar_link", (1, 0, 0)))],
+    )
+    with McapStore(path=str(path)) as recording:
+        doc = preview.build(recording)
+    assert doc is not None and len(doc["scans"]) == 1
+    assert np.allclose(points(doc, doc["map"]), [[5.0, 1.0, 0.3]], atol=0.03)  # lidar_link, by tf
+    assert [r[1:3] for r in doc["trajectory"]] == [[0, 2], [1, 2], [2, 2]]  # nav_msgs/Odometry
+
+
+def test_ros2_static_tf_and_the_path_frame(tmp_path: Path) -> None:
+    from dimos.memory.store.mcap import McapStore
+    from dimos.memory.store.test_mcap import ros2_cloud, ros2_odom, ros2_tf, write_ros2_mcap
+
+    path = tmp_path / "ros2.mcap"
+    mount = ros2_tf(0.0, "base_link", "lidar_link", (0, 0, 0), 0.0)  # latched once, at the start
+    moving = [ros2_tf(1.0, "map", "odom", (100, 0, 0), 0.0)]
+    moving[0]["transforms"] += ros2_tf(1.0, "odom", "base_link", (5, 0, 0.3), np.pi / 2)[
+        "transforms"
+    ]
+    write_ros2_mcap(
+        path,
+        [
+            ("/tf_static", "tf2_msgs/TFMessage", 0.0, mount),
+            ("/tf", "tf2_msgs/TFMessage", 1.0, moving[0]),
+        ]
+        + [("/odometry", "nav_msgs/Odometry", 1.0 + i, ros2_odom(1.0 + i, i, 2)) for i in range(3)]
+        + [("/lidar", "sensor_msgs/PointCloud2", 1.5, ros2_cloud(1.5, "lidar_link", (1, 0, 0)))],
+    )
+    with McapStore(path=str(path)) as recording:
+        doc = preview.build(recording)
+    assert doc is not None and len(doc["scans"]) == 1
+    # through tf_static, into the odometry's frame (not map's, 100 m off the path)
+    assert np.allclose(points(doc, doc["map"]), [[5.0, 1.0, 0.3]], atol=0.03)
+
+
+def test_ros2_tf_static_without_tf(tmp_path: Path) -> None:
+    from dimos.memory.store.mcap import McapStore
+    from dimos.memory.store.test_mcap import ros2_cloud, ros2_odom, ros2_tf, write_ros2_mcap
+
+    path = tmp_path / "ros2.mcap"
+    write_ros2_mcap(
+        path,
+        [
+            (
+                "/tf_static",
+                "tf2_msgs/TFMessage",
+                0.0,
+                ros2_tf(0.0, "odom", "lidar_link", (5, 0, 0.3), 0.0),
+            )
+        ]
+        + [("/odometry", "nav_msgs/Odometry", 1.0 + i, ros2_odom(1.0 + i, i, 0)) for i in range(3)]
+        + [("/lidar", "sensor_msgs/PointCloud2", 1.5, ros2_cloud(1.5, "lidar_link", (1, 0, 0)))],
+    )
+    with McapStore(path=str(path)) as recording:
+        doc = preview.build(recording)
+    assert doc is not None and len(doc["scans"]) == 1
+    assert np.allclose(points(doc, doc["map"]), [[6.0, 0.0, 0.3]], atol=0.03)

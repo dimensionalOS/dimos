@@ -163,6 +163,9 @@ dependencies = [
     # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
     "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
+    # `dimos data upload` previews an .mcap: ROS 2 (CDR) channels decode from their embedded schema
+    "mcap>=1.2.0",
+    "mcap-ros2-support>=0.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
@@ -761,6 +764,7 @@ module = [
     "h5py.*",
     "mcap",
     "mcap.*",
+    "mcap_ros2.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
