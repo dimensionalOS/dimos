@@ -286,6 +286,7 @@ all_modules = {
     "heuristic-grasp-module": "dimos.manipulation.grasping.heuristic_grasp.HeuristicGraspModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
     "hybrid-teleop-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.HybridTeleopCoordinator",
+    "ivan-pgo": "dimos.navigation.jnav.components.loop_closure.ivan_pgo_module.IvanPGO",
     "joint-trajectory-controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller.JointTrajectoryController",
     "joystick-module": "dimos.robot.unitree.b1.joystick_module.JoystickModule",
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
