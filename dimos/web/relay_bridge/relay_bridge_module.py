@@ -72,7 +72,13 @@ from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, Runti
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import TRACK_ENCODING, parse_manifest
-from dimos.web.relay_bridge.pacing import FrameMeta, PacedSender, Sender, passes_rate_gate
+from dimos.web.relay_bridge.pacing import (
+    FrameMeta,
+    PacedSender,
+    Sender,
+    passes_rate_gate,
+    passes_sampling_gate,
+)
 from dimos.web.relay_bridge.protocol import (
     MAX_RTC_TRACKS,
     ChannelSpec,
@@ -239,7 +245,8 @@ class RelayBridgeModule(Module):
         # (_reconcile, rate gates, encode counters) never sees them.
         self._publish: PublishHandler | None = None
         self._min_interval: dict[str, float] = {}
-        self._last_input: dict[str, float] = {}
+        # Per-channel sampling schedule (next due time) for the maxHz gate.
+        self._next_due: dict[str, float] = {}
         # Last "encoder failed" log time per channel: a broken encoder on a
         # 30 Hz stream must not flood the log (rate gated like the inputs).
         self._encode_error_logged: dict[str, float] = {}
@@ -660,6 +667,7 @@ class RelayBridgeModule(Module):
         )
         try:
             await client.hello(robot=self._robot_info, manifest=manifest, token=self._key)
+            client.start_keepalive()
             senders = self._build_senders(client, rtc_channels)
         except BaseException:
             try:
@@ -714,7 +722,9 @@ class RelayBridgeModule(Module):
             else:
                 sender = functools.partial(self._send_reliable, client, spec.ch)
             if spec.paced:
-                sender = PacedSender(asyncio.get_running_loop(), 1.0 / spec.max_hz, sender)
+                sender = PacedSender(
+                    asyncio.get_running_loop(), 1.0 / spec.max_hz, sender, name=spec.ch
+                )
             senders[spec.ch] = sender
         return senders
 
@@ -973,8 +983,8 @@ class RelayBridgeModule(Module):
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if not spec.paced and not passes_rate_gate(
-            self._last_input, spec.ch, now, self._min_interval[spec.ch]
+        if not spec.paced and not passes_sampling_gate(
+            self._next_due, spec.ch, now, self._min_interval[spec.ch]
         ):
             return
         if spec.ch in session.rtc_channels:

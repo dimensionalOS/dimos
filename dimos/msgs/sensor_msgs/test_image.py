@@ -94,3 +94,15 @@ def test_sharpness_barrier() -> None:
     assert len(emitted) == 2, f"Expected one emission per window, got {len(emitted)}"
     assert emitted[0].sharpness == 0.3711  # Sharpest of the 4 in the first window
     assert emitted[1].sharpness == 0.3665  # Only item in the second window
+
+
+@pytest.mark.skipif_no_turbojpeg
+def test_jpeg_bytes_do_not_depend_on_the_pixel_layout(img: Image) -> None:
+    # BGR and RGB go to TurboJPEG as they are (no to_rgb() copy per frame),
+    # so the same picture must still encode to the same bytes either way.
+    assert img.to_jpeg_bytes(quality=80) == img.to_rgb().to_jpeg_bytes(quality=80)
+    gray = Image(data=img.to_opencv()[:, :, 0].copy(), format=ImageFormat.GRAY)
+    assert gray.to_jpeg_bytes()[:2] == b"\xff\xd8"  # converts through to_rgb()
+    rgba = Image(data=np.zeros((4, 6, 4), dtype=np.uint8), format=ImageFormat.RGBA)
+    with pytest.warns(UserWarning):
+        assert rgba.to_jpeg_bytes()[:2] == b"\xff\xd8"  # converts through to_rgb()

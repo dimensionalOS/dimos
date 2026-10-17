@@ -2,7 +2,7 @@
 // three.js scene arrives through a lazy import (deps.createScene), so pages
 // without a map3d panel never download it.
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
 import { type ChannelStore, inflateVoxels, type VoxelsValue } from "@dimos/sdk";
@@ -220,7 +220,14 @@ function VoxelCanvas({ spec, store, cloudCh, poseCh, sinkDeps }: {
   const [error, setError] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: React removes a deleted subtree's
+  // DOM before its passive cleanups run, and OrbitControls.dispose()
+  // unregisters its document keydown listener from the canvas's root node,
+  // which for a detached canvas is the detached subtree. The listener (and
+  // through it the renderer, the scene and the whole grid) then leaks on
+  // every page switch. Layout cleanups run while the canvas is still in the
+  // document.
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
     const deps = { ...sinkDeps, onError: setError };

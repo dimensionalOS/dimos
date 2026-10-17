@@ -166,6 +166,9 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
       (marker.material as Material).dispose();
       grid.geometry.dispose();
       (grid.material as Material).dispose();
+      // dispose() alone keeps the canvas's drawing buffer until the browser
+      // evicts the context; losing it frees the GPU memory now.
+      renderer.forceContextLoss();
       renderer.dispose();
     },
   };
