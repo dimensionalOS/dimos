@@ -37,6 +37,10 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
+# Distinct path colours, assigned in stream order.
+_PATH_COLOURS = ((230, 75, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15), (155, 89, 182))
+
+
 def _pair_camera_infos(
     renderable: list[tuple[str, Stream[Any], Observation[Any]]],
 ) -> tuple[dict[str, tuple[CameraInfo, str]], set[str]]:
@@ -127,6 +131,7 @@ def render_store(
     import rerun as rr
 
     from dimos.memory.utils.progress import progress
+    from dimos.msgs.nav_msgs.Path import Path as NavPath
     from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
     from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
     from dimos.visualization.rerun.init import rerun_init
@@ -199,6 +204,7 @@ def render_store(
 
     tf_tree = TfFrameTree()
     mesh_colours: Any = None
+    path_colours: dict[str, tuple[int, int, int]] = {}
     for name, stream, _ in renderable:
         path = entity(name)
         attached: str | None = None
@@ -224,7 +230,13 @@ def render_store(
                         rr.log(entry.path, entry.archetype, static=entry.static)
                     report(obs)
                     continue
-                data = obs.data.to_rerun()
+                if isinstance(obs.data, NavPath):  # thin, at true height, one colour per stream
+                    colour = path_colours.setdefault(
+                        name, _PATH_COLOURS[len(path_colours) % len(_PATH_COLOURS)]
+                    )
+                    data = obs.data.to_rerun(color=colour, z_offset=0.0, radii=0.015)
+                else:
+                    data = obs.data.to_rerun()
                 if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
                     for sub, arch in data:
                         rr.log(f"{path}/{sub}", arch)
