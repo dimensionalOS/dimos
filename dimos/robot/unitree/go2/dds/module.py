@@ -24,8 +24,6 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
-
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
@@ -53,7 +51,7 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     # Also the undeskewed sensor-frame cloud and the L1's own IMU.
     lidar_raw_on: bool = False
     # The robot's built-in obstacle avoidance, applied at start.
-    obstacle_avoidance: bool = Field(default_factory=lambda m: m["g"].obstacle_avoidance)
+    obstacle_avoidance: bool = True
     # Body joint states, IMU and battery off rt/lowstate, decimated to lowstate_hz.
     lowstate_on: bool = True
     lowstate_hz: float = 50.0
