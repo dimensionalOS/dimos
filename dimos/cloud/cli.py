@@ -21,11 +21,14 @@ import contextlib
 from datetime import datetime, timezone
 import functools
 from pathlib import Path
+import re
 from typing import Any
+from urllib.parse import quote
 
 import typer
 
 from dimos.cloud.data import CloudData, recordings
+from dimos.core.global_config import global_config
 
 
 def tz_label() -> str:
@@ -96,6 +99,11 @@ def upload(
     explicit = path is not None
     path = None if str(path) == "latest" else path
     cloud = CloudData()
+    console_url, matched = re.subn(
+        r"\Ahttps://api\.(staging\.)?dimensional\.org/?\Z",
+        r"https://console.\1dimensional.org",
+        global_config.dimos_cloud_url,
+    )
     targets = recordings(since_s) if since_s else [path] if path else recordings()[-1:]
     if not targets:
         raise RuntimeError("nothing to upload — pass a path")
@@ -117,6 +125,10 @@ def upload(
                 typer.echo(f"  console preview: {r['preview']}")
             if r["quota"].get("state") not in (None, "ok"):
                 typer.echo(r["quota"]["message"], err=True)
+            if matched:
+                typer.echo(
+                    f"  console: {console_url}/console/data?open={quote(r['upload_id'], safe='')}"
+                )
         except (RuntimeError, OSError) as e:
             typer.echo(f"{t.name}: {e}", err=True)
             failed = True
