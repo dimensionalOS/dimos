@@ -565,24 +565,14 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
-        try:
-            proxy.stop()
-        except Exception:
-            logger.error(
-                "Error stopping module during unload",
-                module=name,
-                exc_info=True,
-            )
-
+        # The worker pipe waits for stop() to finish. An RPC stop is fire-and-forget
+        # and can leave the old endpoint serving when a replacement is deployed.
         python_wm = cast("WorkerManagerPython", self._managers["python"])
+        python_wm.undeploy(proxy)
         try:
-            python_wm.undeploy(proxy)
+            cast("RPCClient", proxy).stop_rpc_client()
         except Exception:
-            logger.error(
-                "Error undeploying module from worker",
-                module=name,
-                exc_info=True,
-            )
+            logger.error("Error closing unloaded module client", module=name, exc_info=True)
 
         del self._deployed_modules[name]
         del self._instance_classes[name]

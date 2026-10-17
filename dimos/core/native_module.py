@@ -41,6 +41,7 @@ Example usage::
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 import enum
 import functools
 import json
@@ -258,6 +259,7 @@ class NativeModule(Module):
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
     _stop_lock: threading.Lock
+    _stop_result: Future[None] | None = None
     _cwd: str | None = None
     _executable: str = ""
     _prepared: bool = False
@@ -401,48 +403,65 @@ class NativeModule(Module):
             if self._stopping:
                 return
             self._stopping = True
+            result: Future[None] = Future()
+            self._stop_result = result
             proc = self._process
             watchdog = self._watchdog
 
-        if proc is not None and proc.poll() is None:
-            logger.info(
-                "Stopping native process",
-                module=self._module_label,
-                pid=proc.pid,
-            )
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                proc.wait(timeout=self.config.shutdown_timeout)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "Native process did not exit, sending SIGKILL",
+        try:
+            if proc is not None and proc.poll() is None:
+                logger.info(
+                    "Stopping native process",
                     module=self._module_label,
                     pid=proc.pid,
                 )
                 try:
-                    os.killpg(proc.pid, signal.SIGKILL)
+                    os.killpg(proc.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
                 try:
                     proc.wait(timeout=self.config.shutdown_timeout)
                 except subprocess.TimeoutExpired:
-                    logger.error(
-                        "Native process not reapable after SIGKILL",
+                    logger.warning(
+                        "Native process did not exit, sending SIGKILL",
                         module=self._module_label,
                         pid=proc.pid,
                     )
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=self.config.shutdown_timeout)
+                    except subprocess.TimeoutExpired:
+                        logger.error(
+                            "Native process not reapable after SIGKILL",
+                            module=self._module_label,
+                            pid=proc.pid,
+                        )
 
-        if watchdog is not None and watchdog is not threading.current_thread():
-            watchdog.join(timeout=self.config.shutdown_timeout)
+            if watchdog is not None and watchdog is not threading.current_thread():
+                watchdog.join(timeout=self.config.shutdown_timeout)
 
+            with self._stop_lock:
+                self._watchdog = None
+                self._process = None
+
+            super().stop()
+        except BaseException as error:
+            result.set_exception(error)
+            raise
+        else:
+            result.set_result(None)
+
+    def stop_and_wait(self) -> None:
+        # RPC stop calls must return while another stop is closing the RPC pool.
+        # Only the worker waits before releasing the module's ownership.
+        self.stop()
         with self._stop_lock:
-            self._watchdog = None
-            self._process = None
-
-        super().stop()
+            result = self._stop_result
+        if result is not None:
+            result.result()
 
     def _watch_process(self) -> None:
         proc = self._process
@@ -456,7 +475,9 @@ class NativeModule(Module):
         stdout_t.join(timeout=self.config.shutdown_timeout)
         stderr_t.join(timeout=self.config.shutdown_timeout)
 
-        if self._stopping:
+        with self._stop_lock:
+            stopping = self._stopping
+        if stopping:
             logger.info(
                 "Native process exited (expected)",
                 module=self._module_label,
