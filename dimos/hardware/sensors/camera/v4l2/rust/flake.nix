@@ -65,9 +65,10 @@
           if called ? rootCrate then called.rootCrate.build
           else called.workspaceMembers.${name}.build;
 
-        # nix's glibc doesn't read ld.so.cache, so point it at JetPack's driver directories.
+        # nix's glibc doesn't read ld.so.cache, so point it at JetPack's driver directories; nvbufsurface's libEGL and libstdc++ come from nix.
         withJetPack = unwrapped: pkgs.writeShellScriptBin "v4l2_camera" ''
-          export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/lib/aarch64-linux-gnu/tegra''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+          export LD_LIBRARY_PATH=${pkgs.libglvnd}/lib:${pkgs.stdenv.cc.cc.lib}/lib:/usr/lib/aarch64-linux-gnu/nvidia:/usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra-egl''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+          [ -e /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && export __EGL_VENDOR_LIBRARY_FILENAMES=''${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}
           exec ${unwrapped}/bin/v4l2_camera "$@"
         '';
       in {
