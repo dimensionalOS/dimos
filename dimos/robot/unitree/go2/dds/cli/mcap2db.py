@@ -23,7 +23,6 @@
 Conversion only — nothing is estimated or calibrated here. Standalone, not wired into the dimos CLI:
 
     uv run python -m dimos.robot.unitree.go2.dds.cli.mcap2db recordings/*.mcap
-    uv run python -m dimos.robot.unitree.go2.dds.cli.mcap2db --joints recordings/*.mcap  # joint streams only
 """
 
 from pathlib import Path
@@ -60,11 +59,9 @@ EXTRA_STREAMS = {
 }
 
 
-def copy_streams(mcap: Path, dst: SqliteStore, only: tuple[str, ...] = ()) -> None:
+def copy_streams(mcap: Path, dst: SqliteStore) -> None:
     src = McapStore(path=str(mcap), codecs=CODECS, streams={**STREAMS, **EXTRA_STREAMS})
-    for name in only or src.list_streams():
-        if name not in src.list_streams():
-            continue
+    for name in src.list_streams():
         s: Stream[Any] = src.stream(name)
         first = s.first() if s.count() else None
         if first is None:
@@ -73,8 +70,6 @@ def copy_streams(mcap: Path, dst: SqliteStore, only: tuple[str, ...] = ()) -> No
         print(f"[process]   {name:20s} {type(first.data).__name__:16s} {n}", flush=True)
 
 
-# Motor-record streams; the CDR decoder misaligned them until the struct-alignment fix.
-JOINT_STREAMS = ("lowstate", "lowcmd", "policy_lowcmd")
 # Unitree SDK motor order (FR, FL, RR, RL; hip, thigh, calf), Go2 URDF joint names.
 LEG_JOINTS = [
     f"{leg}_{j}_joint" for leg in ("FR", "FL", "RR", "RL") for j in ("hip", "thigh", "calf")
@@ -118,9 +113,6 @@ def add_std_streams(store: SqliteStore) -> None:
     from dimos.msgs.sensor_msgs.BatteryState import BatteryState
     from dimos.msgs.sensor_msgs.JointState import JointState
 
-    for name in STD_STREAMS:
-        if name in store.list_streams():
-            store.delete_stream(name)
     js, ms = store.stream("joint_state", JointState), store.stream("motor_state", DynamicJointState)
     imu, bat = store.stream("body_imu", Imu), store.stream("battery", BatteryState)
     for o in store.stream("lowstate", LowState).order_by("ts"):
@@ -204,19 +196,6 @@ def add_std_streams(store: SqliteStore) -> None:
             print(f"[process]   {name:20s} {store.stream(name).count()}", flush=True)
 
 
-def refresh_joints(mcap: Path) -> None:
-    """Re-decode only the joint streams of an existing <stem>.db from its mcap."""
-    store = SqliteStore(path=str(mcap.with_suffix(".db")))
-    try:
-        for name in JOINT_STREAMS:
-            if name in store.list_streams():
-                store.delete_stream(name)
-        copy_streams(mcap, store, JOINT_STREAMS)
-        add_std_streams(store)
-    finally:
-        store.stop()
-
-
 def convert(mcap: Path) -> SqliteStore:
     """<stem>.mcap -> <stem>.db (plus the restored <stem>.pcap). Returns the open store."""
     out, stem = mcap.parent, mcap.stem
@@ -233,10 +212,5 @@ def convert(mcap: Path) -> SqliteStore:
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    joints = "--joints" in args
-    for p in (a for a in args if a != "--joints"):
-        if joints:
-            refresh_joints(Path(p).resolve())
-        else:
-            convert(Path(p).resolve()).stop()
+    for p in sys.argv[1:]:
+        convert(Path(p).resolve()).stop()
