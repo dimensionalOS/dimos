@@ -37,10 +37,6 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
-# Distinct path colours, assigned in stream order.
-_PATH_COLOURS = ((230, 75, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15), (155, 89, 182))
-
-
 def _pair_camera_infos(
     renderable: list[tuple[str, Stream[Any], Observation[Any]]],
 ) -> tuple[dict[str, tuple[CameraInfo, str]], set[str]]:
@@ -130,6 +126,7 @@ def render_store(
     """
     import rerun as rr
 
+    from dimos.core.introspection.utils import GROUP_COLORS
     from dimos.memory.utils.progress import progress
     from dimos.msgs.nav_msgs.Path import Path as NavPath
     from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
@@ -231,8 +228,15 @@ def render_store(
                     report(obs)
                     continue
                 if isinstance(obs.data, NavPath):  # thin, at true height, one colour per stream
+                    # The blueprint graph palette, assigned in stream order so paths stay distinct.
+                    hex_colour = GROUP_COLORS[len(path_colours) % len(GROUP_COLORS)]
                     colour = path_colours.setdefault(
-                        name, _PATH_COLOURS[len(path_colours) % len(_PATH_COLOURS)]
+                        name,
+                        (
+                            int(hex_colour[1:3], 16),
+                            int(hex_colour[3:5], 16),
+                            int(hex_colour[5:7], 16),
+                        ),
                     )
                     data = obs.data.to_rerun(color=colour, z_offset=0.0, radii=0.015)
                 else:
