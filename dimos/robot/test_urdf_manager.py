@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -24,15 +25,14 @@ import pinocchio as pin
 import pytest
 import trimesh
 
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.msgs.shape_msgs.MeshFile import MeshFile
+from dimos.msgs.std_msgs.String import String
+from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm.config import (
@@ -40,6 +40,7 @@ from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REPO,
     make_xarm7_model_config,
 )
+from dimos.robot.urdf_manager import UrdfManager
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -56,12 +57,12 @@ _URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelfFilter]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[RoboPlanPointCloudSelfFilter] = []
+    modules: list[UrdfManager] = []
 
-    def make(**overrides: Any) -> RoboPlanPointCloudSelfFilter:
+    def make(**overrides: Any) -> UrdfManager:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -70,8 +71,8 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = RoboPlanPointCloudSelfFilter(**settings)
-        cast("dict[str, Any]", module.__dict__)["_tf"] = MultiTBuffer()
+        module = UrdfManager(**settings)
+        cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
 
@@ -81,9 +82,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
         module.dispose()
 
 
-def _place_arm(
-    module: RoboPlanPointCloudSelfFilter, at: tuple[float, float, float], ts: float
-) -> None:
+def _place_arm(module: UrdfManager, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -105,7 +104,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManager],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -118,7 +117,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManager],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -310,3 +309,119 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
     for cloud, filtered in zip(captures, (first, second), strict=True):
         np.testing.assert_allclose(filtered.points_f32(), controls)
         assert filtered.frame_id == "world" and filtered.ts == cloud.ts
+
+
+def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
+    module = make_filter(urdf_xml=_joint_robot("prismatic"))
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    edge = module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001)
+
+    assert edge is not None
+    np.testing.assert_allclose(
+        [edge.translation.x, edge.translation.y, edge.translation.z], [0.3, 0, 0], atol=1e-9
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Multi-DOF joints are read from tf, so publishing them would feed the filter its own output.
+        {"urdf_xml": _joint_robot("planar")},
+        {"urdf_xml": _joint_robot("prismatic"), "publish_joint_tf": False},
+    ],
+)
+def test_no_tf_edge_is_published(make_filter, overrides):
+    module = make_filter(**overrides)
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
+
+
+def test_urdf_info_names_meshes_by_package_and_mesh_request_serves_only_those(
+    make_filter, tmp_path, monkeypatch
+):
+    package = tmp_path / "box_description"
+    (package / "meshes").mkdir(parents=True)
+    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
+    urdf = tmp_path / "mesh_robot.urdf"
+    urdf.write_text(
+        _URDF.replace(
+            '<box size="0.2 0.2 0.2"/>', '<mesh filename="package://box/meshes/cube.stl"/>'
+        )
+    )
+    module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
+    sent: list[MeshFile] = []
+    monkeypatch.setattr(module.mesh_info, "publish", sent.append)
+
+    assert 'filename="package://box/meshes/cube.stl"' in module._urdf_xml
+    assert str(tmp_path) not in module._urdf_xml
+    for request in ("package://box/meshes/cube.stl", str(urdf)):
+        asyncio.run(module.handle_mesh_request(String(request)))
+
+    assert [mesh.uri for mesh in sent] == ["package://box/meshes/cube.stl"]
+    decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
+    assert decoded.data == (package / "meshes" / "cube.stl").read_bytes()
+
+
+def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_captures_drop(
+    make_filter: Callable[..., UrdfManager],
+) -> None:
+    module = make_filter()
+    _place_arm(module, (0.0, 0.0, 0.0), 2.0)
+    cloud = _cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=2.0)
+    cloud.seq = 7
+    cloud.pointcloud_tensor.point["intensity"] = Tensor(np.asarray([[10], [20]], dtype=np.float32))
+
+    result = module.filter_cloud(cloud)
+
+    assert result is not None
+    assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
+    np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    # a capture older than one already published is out of order
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]], ts=1.0)) is None
+
+
+def test_with_self_filter_off_no_cloud_is_filtered_or_published(
+    make_filter: Callable[..., UrdfManager],
+) -> None:
+    module = make_filter(self_filter=False)
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    published: list[PointCloud2] = []
+    module.filtered_pointcloud.subscribe(published.append)
+
+    asyncio.run(module.handle_pointcloud(_cloud([[2.0, 0.0, 0.0]])))
+
+    assert published == []
+
+
+def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monkeypatch):
+    # a moving joint (shoulder) and a fixed one (tool) under it
+    urdf = _joint_robot("prismatic").replace(
+        "</robot>",
+        '<link name="tool"/><joint name="tool_mount" type="fixed"><parent link="arm"/><child link="tool"/></joint></robot>',
+    )
+    module = make_filter(urdf_xml=urdf, joint_tf_hz=1000.0, unchanged_tf_hz=4.0)
+    sent: list[set[str]] = []
+    monkeypatch.setattr(
+        module.tfbuffer,
+        "publish",
+        lambda *edges: sent.append({edge.child_frame_id for edge in edges}),
+    )
+    clock = [100.0]
+    monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
+
+    def state_at(t: float, shoulder: float) -> None:
+        clock[0] = 100.0 + t
+        module.add_joint_state(JointState(ts=t, name=["shoulder"], position=[shoulder]))
+
+    state_at(0.0, 0.3)
+    state_at(0.1, 0.4)  # the shoulder moved; the tool's edge (relative to arm) did not
+    state_at(0.2, 0.4)  # nothing moved, keepalive not due
+    state_at(
+        0.3, 0.4
+    )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
+
+    assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
