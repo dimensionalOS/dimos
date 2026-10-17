@@ -25,11 +25,12 @@ from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import random
+import threading
 
 import numpy as np
 import pytest
 
-from dimos.perception.localize.localize import answer_window, memory_key
+from dimos.perception.localize.localize import LocalizeTrace, answer_window, memory_key
 from dimos.perception.localize.localize_params import XARM_PARAMS
 from dimos.perception.localize.memento import Gap, Memento, Sighting
 from dimos.perception.localize.types import Localization, LocalizeParams
@@ -102,6 +103,7 @@ def _sighting(stay: Stay, ts: float) -> Sighting:
         score=0.6,
         points=np.asarray(stay.at) + grid.reshape(-1, 3),
         viewpoint=(math.cos(0.3 * ts), math.sin(0.3 * ts), 1.0),
+        detection=(stay.label, stay.at, ts),
     )
 
 
@@ -111,6 +113,7 @@ def ask(
     labels: list[str],
     window: tuple[float, float],
     params: LocalizeParams = XARM_PARAMS,
+    traces: list[LocalizeTrace] | None = None,
 ) -> dict[str, list[Localization]]:
     answers = answer_window(
         labels,
@@ -121,7 +124,7 @@ def ask(
         read=desk.read,
         params=params,
         world_frame="world",
-        traces=[None] * len(labels),
+        traces=list(traces) if traces is not None else [None] * len(labels),
     )
     return dict(zip(labels, answers, strict=True))
 
@@ -210,19 +213,47 @@ def test_recent_windows_count_what_is_there_now() -> None:
     assert ask(desk, memento, ["book"], (25, 30))["book"] == []
 
 
+def test_same_place_across_windows_when_objects_swap_presence_and_absence() -> None:
+    # UC2: at place A, O2 is present and O1 is absent in (0, 20), and in (60, 80) O1 is
+    # present at A and O2 is absent.
+    stays = [Stay("pen", A, 0, 20), Stay("book", A, 60, 80)]
+    desk, memento = Desk(stays, head=100), Memento()
+
+    visit_1 = ask(desk, memento, ["book", "pen"], (0, 20))
+    assert visit_1["book"] == []
+    assert places(visit_1["pen"]) == [A]
+
+    visit_2 = ask(desk, memento, ["book", "pen"], (60, 80))
+    assert places(visit_2["book"]) == [A]
+    assert visit_2["pen"] == []
+
+    # Re-querying either window comes entirely from memory with each window's own state.
+    assert evidence(ask(desk, memento, ["book", "pen"], (0, 20))["pen"]) == evidence(visit_1["pen"])
+    assert ask(desk, memento, ["book", "pen"], (0, 20))["book"] == []
+    assert evidence(ask(desk, memento, ["book", "pen"], (60, 80))["book"]) == evidence(
+        visit_2["book"]
+    )
+    assert ask(desk, memento, ["book", "pen"], (60, 80))["pen"] == []
+    assert len(desk.reads) == 2
+
+
 # Clause 2: a window read before is answered from memory
 
 
 def test_asking_a_window_again_reads_nothing_and_answers_the_same(desk: Desk) -> None:
     memento = Memento()
-    first = ask(desk, memento, LABELS, (0, 100))
-    again = ask(desk, memento, LABELS, (0, 100))
+    first_traces = [LocalizeTrace() for _ in LABELS]
+    again_traces = [LocalizeTrace() for _ in LABELS]
+    first = ask(desk, memento, LABELS, (0, 100), traces=first_traces)
+    again = ask(desk, memento, LABELS, (0, 100), traces=again_traces)
     assert len(desk.reads) == 1
-    for label in LABELS:
+    for label, first_trace, again_trace in zip(LABELS, first_traces, again_traces, strict=True):
         assert evidence(again[label]) == evidence(first[label])
         assert [hit.instance_id for hit in again[label]] == [
             hit.instance_id for hit in first[label]
         ]
+        assert again_trace.answers == first_trace.answers
+        assert again_trace.spans == first_trace.spans
         for a, b in zip(again[label], first[label], strict=True):
             assert np.array_equal(a.point_cloud.points_f32(), b.point_cloud.points_f32())
 
@@ -251,13 +282,34 @@ def test_a_label_asked_later_reads_only_that_label(desk: Desk) -> None:
     assert desk.reads[1] == {"pen": ((0, 100),)}
     assert places(answers["book"]) == [B, A]
     assert places(answers["pen"]) == [PEN]
+    again = ask(desk, memento, ["book", "pen"], (0, 100))
+    assert len(desk.reads) == 2
+    assert evidence(again["book"]) == evidence(answers["book"])
+    assert evidence(again["pen"]) == evidence(answers["pen"])
+
+
+def test_an_absent_label_already_searched_is_not_read_again_when_a_new_label_joins(
+    desk: Desk,
+) -> None:
+    memento = Memento()
+    assert ask(desk, memento, ["red marker"], (25, 50))["red marker"] == []
+    combined = ask(desk, memento, ["red marker", "pen"], (25, 50))
+    assert desk.reads[1] == {"pen": ((25, 50),)}
+    assert combined["red marker"] == []
+    assert places(combined["pen"]) == [PEN]
+    again = ask(desk, memento, ["red marker", "pen"], (25, 50))
+    assert len(desk.reads) == 2
+    assert again["red marker"] == []
+    assert evidence(again["pen"]) == evidence(combined["pen"])
 
 
 def test_memory_survives_a_dump_and_load(desk: Desk, tmp_path: Path) -> None:
     memento = Memento()
     first = ask(desk, memento, LABELS, (0, 100))
-    memento.dump(tmp_path / "memento.db")
-    loaded = Memento.load(tmp_path / "memento.db")
+    db_path = tmp_path / "dir#1" / "memento.db"
+    db_path.parent.mkdir()
+    memento.dump(db_path)
+    loaded = Memento.load(db_path)
     again = ask(desk, loaded, LABELS, (0, 100))
     assert len(desk.reads) == 1
     for label in LABELS:
@@ -274,10 +326,35 @@ def test_an_overlapping_window_reads_only_its_new_part(desk: Desk) -> None:
     memento = Memento()
     ask(desk, memento, ["book"], (10, 35))
     desk.detected.clear()
-    book = ask(desk, memento, ["book"], (20, 50))["book"]
+    trace = LocalizeTrace()
+    book = ask(desk, memento, ["book"], (20, 50), traces=[trace])["book"]
     assert desk.reads[1] == {"book": ((35, 50),)}
     assert [ts for _, ts in desk.detected] == [float(t) for t in range(36, 51)]
     assert spans(book) == [(20, 50)]  # 20 to 35 from memory, 36 to 50 just read
+    fresh_trace = LocalizeTrace()
+    ask(Desk(DESK, head=100), Memento(), ["book"], (20, 50), traces=[fresh_trace])
+    assert trace.answers == fresh_trace.answers
+
+
+def test_an_overlapping_window_with_a_new_label_reads_each_labels_own_gap(desk: Desk) -> None:
+    memento = Memento()
+    ask(desk, memento, ["book"], (10, 35))
+    desk.detected.clear()
+    answers = ask(desk, memento, ["book", "pen"], (20, 50))
+    assert desk.reads[1] == {"book": ((35, 50),), "pen": ((20, 50),)}
+    assert [ts for label, ts in desk.detected if label == "book"] == [
+        float(t) for t in range(36, 51)
+    ]
+    assert [ts for label, ts in desk.detected if label == "pen"] == [
+        float(t) for t in range(20, 51)
+    ]
+    fresh = ask(Desk(DESK, head=100), Memento(), ["book", "pen"], (20, 50))
+    assert evidence(answers["book"]) == evidence(fresh["book"])
+    assert evidence(answers["pen"]) == evidence(fresh["pen"])
+    again = ask(desk, memento, ["book", "pen"], (20, 50))
+    assert len(desk.reads) == 2
+    assert evidence(again["book"]) == evidence(answers["book"])
+    assert evidence(again["pen"]) == evidence(answers["pen"])
 
 
 def test_a_window_inside_what_was_read_reads_nothing(desk: Desk) -> None:
@@ -297,6 +374,26 @@ def test_a_window_across_two_read_spans_reads_only_the_hole_between(desk: Desk) 
     assert [ts for _, ts in desk.detected] == [float(t) for t in range(21, 40)]
 
 
+def test_a_window_across_three_read_spans_reads_only_both_holes_and_coalesces(
+    desk: Desk,
+) -> None:
+    memento = Memento()
+    ask(desk, memento, ["book"], (0, 15))
+    ask(desk, memento, ["book"], (30, 45))
+    ask(desk, memento, ["book"], (60, 75))
+    desk.detected.clear()
+    book = ask(desk, memento, ["book"], (10, 70))["book"]
+    assert desk.reads[3] == {"book": ((15, 30), (45, 60))}
+    assert [ts for _, ts in desk.detected] == [
+        *[float(t) for t in range(16, 30)],
+        *[float(t) for t in range(46, 60)],
+    ]
+    assert spans(book) == [(55, 70), (10, 50)]
+    assert len(desk.reads) == 4
+    ask(desk, memento, ["book"], (0, 75))
+    assert len(desk.reads) == 4
+
+
 def test_no_frame_is_detected_twice_and_memory_answers_like_a_fresh_read(desk: Desk) -> None:
     memento, rng = Memento(), random.Random(7)
     for _ in range(40):
@@ -311,11 +408,88 @@ def test_no_frame_is_detected_twice_and_memory_answers_like_a_fresh_read(desk: D
 
 
 def test_a_window_past_the_newest_frame_reads_the_rest_once_it_arrives() -> None:
-    desk, memento = Desk(DESK, head=70, recorded=90), Memento()
+    desk, memento = Desk(DESK, head=50, recorded=90), Memento()
+    assert ask(desk, memento, ["book"], (60, 90))["book"] == []
+    assert desk.reads == []
+    desk.head = 70
     assert spans(ask(desk, memento, ["book"], (60, 90))["book"]) == [(60, 70)]
     desk.head = 90
     assert spans(ask(desk, memento, ["book"], (60, 90))["book"]) == [(60, 90)]
     assert [ts for _, ts in desk.detected] == [float(t) for t in range(60, 91)]
+
+
+def test_concurrent_recalls_serialize_and_never_detect_a_frame_twice(desk: Desk) -> None:
+    memento = Memento()
+    windows = [(0.0, 60.0), (20.0, 80.0), (40.0, 100.0), (0.0, 100.0)]
+    results: dict[tuple[float, float], dict[str, list[Localization]]] = {}
+    barrier = threading.Barrier(len(windows))
+
+    def worker(w: tuple[float, float]) -> None:
+        barrier.wait()
+        results[w] = ask(desk, memento, ["book", "pen"], w)
+
+    threads = [threading.Thread(target=worker, args=(w,)) for w in windows]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(desk.detected) == len(set(desk.detected))
+    for w in windows:
+        fresh = ask(Desk(DESK, head=100), Memento(), ["book", "pen"], w)
+        assert evidence(results[w]["book"]) == evidence(fresh["book"])
+        assert evidence(results[w]["pen"]) == evidence(fresh["pen"])
+
+
+def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
+    tmp_path: Path,
+) -> None:
+    memento, key = Memento(), memory_key(XARM_PARAMS)
+
+    def read_np(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+        return {
+            "book": [
+                Sighting(
+                    ts=float(np.float32(t)),
+                    camera="camera",
+                    score=float(np.float32(0.75)),
+                    points=np.asarray(A) + np.zeros((18, 3), dtype=np.float32),
+                    viewpoint=(
+                        float(np.float32(math.cos(t))),
+                        float(np.float32(math.sin(t))),
+                        float(np.float32(1.0)),
+                    ),
+                )
+                for t in (10.0, 20.0, 80.0, 90.0)
+                if np.float32(t) in gaps["book"]
+            ]
+        }
+
+    # Construct Sighting with raw numpy.float32 scalars at runtime as callers might.
+    s_early = _sighting(DESK[0], 10.0)
+    s_late = _sighting(DESK[1], 80.0)
+    s_early.ts = np.float32(10.0)  # type: ignore[assignment]
+    s_early.score = np.float32(0.7)  # type: ignore[assignment]
+    s_early.__post_init__()
+    s_late.ts = np.float32(80.0)  # type: ignore[assignment]
+    s_late.score = np.float32(0.8)  # type: ignore[assignment]
+    s_late.viewpoint = (np.float32(0.0), np.float32(1.0), np.float32(1.0))  # type: ignore[assignment]
+    s_late.__post_init__()
+
+    memento.recall(
+        ["book"],
+        key,
+        (float(np.float32(0.0)), float(np.float32(100.0))),
+        float(np.float32(100.0)),
+        lambda _: {"book": [s_early, s_late]},
+    )
+    memento.forget(np.float32(50.0))  # type: ignore[arg-type]
+    memento.dump(tmp_path / "np.db")
+    loaded = Memento.load(tmp_path / "np.db")
+    found, _ = loaded.recall(["book"], key, (50.0, 100.0), 100.0, read_np)
+    assert [s.ts for s in found["book"]] == [80.0]
+    assert isinstance(found["book"][0].score, float)
+    assert all(isinstance(v, float) for v in found["book"][0].viewpoint)
 
 
 def test_a_failed_read_leaves_nothing_behind(desk: Desk) -> None:
@@ -350,6 +524,9 @@ def test_a_read_rejected_after_storing_a_sighting_leaves_nothing_behind(desk: De
 
     with pytest.raises(ValueError):
         memento.recall(["book"], key, (0, 50), desk.head, stray)
+
+    with pytest.raises(ValueError):
+        memento.recall(["book"], key, (0, 50), desk.head, lambda _: {"pen": []})
 
     retried: list[dict[str, Gap]] = []
 
