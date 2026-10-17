@@ -92,6 +92,16 @@ const result = await (await fetch("../../dimos-gateway/skills/call", {
 })).json() // { ok, text }; this acts on the robot, so call it only from a user's action
 ```
 
+## How do I decode dimos messages in a page?
+
+```js
+import { DimApp } from "./dim-app/mod.js"
+
+const app = new DimApp({ msgDecodeEndpoint: "../../dimos-gateway/msgs.js" })
+app.subscribe("odom", (odom) => console.log(odom.pose.pose.position)) // decoded
+const twist = app.msgs.geometry_msgs.Twist.encode({ linear: { x: 0.3 } }) // bytes
+```
+
 ## How do I list robots and their recommended blueprints?
 
 ```js

@@ -114,6 +114,21 @@ provides:
     - method: GET
       path: docs/search
       description: 'Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)'
+    - method: GET
+      path: blueprint_view
+      description: The blueprint view page (?name=, view=, run=); Desktop's Details shows it
+    - method: GET
+      path: blueprint_view/{file}
+      description: The blueprint view's assets
+    - method: GET
+      path: source
+      description: A source file the blueprint view links to (?file=)
+    - method: GET
+      path: msgs.js
+      description: The LCM message decoders for the browser
+    - method: GET
+      path: cloud/login/page
+      description: The cloud login page apps embed
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |

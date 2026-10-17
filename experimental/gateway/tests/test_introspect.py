@@ -14,7 +14,27 @@
 
 import asyncio
 
-from experimental.gateway.introspect import Cache
+from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+from experimental.gateway.introspect import Cache, blueprint, spec_topic
+
+
+def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
+    assert spec_topic(LCMTransport.spec("/cmd_vel", Twist)) == "/cmd_vel"
+    assert (
+        spec_topic(ZenohTransport.spec(ZenohTopic("dimos/head_left_color", Twist)))
+        == "/head_left_color"
+    )
+
+
+def test_remapped_streams_show_their_wired_topic() -> None:
+    streams = {
+        (m["name"], s["name"]): s for m in blueprint("r1pro-nav")["modules"] for s in m["streams"]
+    }
+    left = streams["headleftcamera", "jpeg_out"]
+    assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")
+    assert streams["headrightcamera", "jpeg_out"]["topic"] == "/head_right_color"
 
 
 def test_the_cache_shares_a_computation_and_drops_expired_ones() -> None:

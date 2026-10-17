@@ -242,11 +242,12 @@ def spec_topic(spec: Any) -> str | None:
     if isinstance(kwargs, dict) and isinstance(kwargs.get("topic"), str):
         return str(kwargs["topic"])
     args = getattr(spec, "args", None)
-    if isinstance(args, tuple) and args and isinstance(args[0], str):
-        return args[0]
-    topic = getattr(spec, "topic", None)
+    topic = args[0] if isinstance(args, tuple) and args else getattr(spec, "topic", None)
+    # a Topic object (LCM/Zenoh specs) carries the string; Zenoh's has its "dimos/" namespace
     topic = getattr(topic, "topic", topic)
-    return topic if isinstance(topic, str) else None
+    if not isinstance(topic, str):
+        return None
+    return "/" + topic.removeprefix("dimos/").lstrip("/")
 
 
 def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
@@ -258,9 +259,13 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
             if isinstance(effective, str):
                 wired[effective].add(stream.type)
 
-    def topic(atom: Any, stream: Any) -> str | None:
+    def wire(atom: Any, stream: Any) -> str | None:
         effective = remap.get((atom.name, stream.name), stream.name)
-        if not isinstance(effective, str):
+        return effective if isinstance(effective, str) else None
+
+    def topic(atom: Any, stream: Any) -> str | None:
+        effective = wire(atom, stream)
+        if effective is None:
             return None
         spec = pinned.get((effective, stream.type))
         if spec is not None:
@@ -277,6 +282,8 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
                     "name": stream.name,
                     "type": type_name(stream.type),
                     "direction": stream.direction,
+                    # the name it's wired under after .remappings(): streams sharing it are one topic
+                    "wire": wire(atom, stream),
                     "topic": topic(atom, stream),
                 }
                 for stream in atom.streams

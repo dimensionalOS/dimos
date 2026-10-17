@@ -618,6 +618,18 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
 
+      - name: Blueprint view type-check
+        working-directory: web/blueprint_view
+        run: deno task check
+
+      - name: Blueprint view vitest
+        working-directory: web/blueprint_view
+        run: deno task test
+
+      - name: Blueprint view build
+        working-directory: web/blueprint_view
+        run: deno task build
+
       # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0

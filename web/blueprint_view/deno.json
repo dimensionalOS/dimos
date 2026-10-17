@@ -1,0 +1,19 @@
+{
+  "imports": {
+    "dimos-react": "jsr:@robotics/dimos-react@^0.2.1"
+  },
+  "compilerOptions": {
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable",
+      "deno.ns"
+    ]
+  },
+  "tasks": {
+    "dev": "deno run -A npm:vite",
+    "build": "deno run -A npm:vite build",
+    "test": "deno run -A npm:vitest run",
+    "check": "deno check src vite.config.ts"
+  }
+}

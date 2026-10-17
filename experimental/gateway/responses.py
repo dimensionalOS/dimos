@@ -54,6 +54,8 @@ class Info(Body):
     found: bool
     installed: bool
     version: str | None
+    range: str
+    inRange: bool
     api: str
     commit: str | None
     tag: str | None
@@ -83,6 +85,7 @@ class Stream(Body):
     name: str
     type: str
     direction: str
+    wire: str | None
     topic: str | None
 
 
@@ -519,3 +522,10 @@ class SkillResult(Body):
     ok: bool
     text: str
     content: list[dict[str, Any]]
+
+
+class SourceFile(Body):
+    """A .py file of the dimos checkout."""
+
+    file: str
+    text: str

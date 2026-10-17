@@ -3,12 +3,18 @@
     "./relay",
     "./shared",
     "./sdk",
-    "./cockpit"
+    "./cockpit",
+    "./blueprint_view"
   ],
   "unstable": [
     "net"
   ],
   "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "jsxImportSourceTypes": "@types/react"
+  },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1",
     "@std/cli": "jsr:@std/cli@^1",
@@ -24,13 +30,15 @@
     "exclude": [
       "shared/fixtures/*.json",
       "cockpit/dist/",
-      "sdk/dist/"
+      "sdk/dist/",
+      "blueprint_view/dist/"
     ]
   },
   "lint": {
     "exclude": [
       "cockpit/dist/",
-      "sdk/dist/"
+      "sdk/dist/",
+      "blueprint_view/dist/"
     ],
     "rules": {
       "tags": [

@@ -17,6 +17,7 @@ on:
       - web/cockpit/**
       - web/sdk/**
       - web/shared/**
+      - web/blueprint_view/**
       - web/deno.json
       - web/deno.lock
       - dimos/utils/deno.py
