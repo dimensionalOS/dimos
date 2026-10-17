@@ -52,6 +52,13 @@ def _heat(text: str, value: float, column: list[float]) -> str:
     return f"[{_shade(value, lo, hi)}]{text}[/]"
 
 
+def _type_name(t: type | None) -> str:
+    """ROS-style ``pkg.Msg`` for message types, bare class name otherwise."""
+    if t is None:
+        return "—"
+    return getattr(t, "msg_name", None) or t.__qualname__
+
+
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db/.mcap: bare name (cwd or data/) or path"),
 ) -> None:
@@ -73,7 +80,7 @@ def main(
 
     from dimos.memory.store.sqlite import SqliteStore
 
-    rows: list[tuple[str, int, float | None, float | None, int]] = []
+    rows: list[tuple[str, int, float | None, float | None, int, str]] = []
     store = SqliteStore(path=str(db_path))
     with store, Progress(transient=True) as prog:
         names = store.list_streams()
@@ -83,12 +90,13 @@ def main(
             stream: Stream[Any] = store.stream(name)
             n = stream.count()
             t0, t1 = stream.get_time_range() if n else (None, None)
-            rows.append((name, n, t0, t1, stream.size_bytes() or 0))
+            rows.append((name, n, t0, t1, stream.size_bytes() or 0, _type_name(stream.data_type)))
             prog.advance(task)
     rows.sort(key=lambda r: r[4], reverse=True)
 
     table = Table(title=db_path.name)
     table.add_column("Stream", style="cyan")
+    table.add_column("Type", style="magenta")
     table.add_column("Items", justify="right")
     table.add_column("Hz", justify="right")
     table.add_column("Start (UTC)")
@@ -102,11 +110,12 @@ def main(
     hz_col = [hz(r[1], r[2], r[3]) for r in rows]
     size_col = [float(r[4]) for r in rows]
 
-    for name, n, t0, t1, size in rows:
+    for name, n, t0, t1, size, type_name in rows:
         dur = t1 - t0 if t0 is not None and t1 is not None else None
         rate = hz(n, t0, t1)
         table.add_row(
             name,
+            type_name,
             _heat(f"{n:,}", n, items_col),
             _heat(f"{rate:.1f}", rate, hz_col) if rate > 0 else "—",
             datetime.fromtimestamp(t0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -117,7 +126,13 @@ def main(
         )
     table.add_section()
     table.add_row(
-        "total", f"{sum(r[1] for r in rows):,}", "", "", "", human_bytes(sum(r[4] for r in rows))
+        "total",
+        "",
+        f"{sum(r[1] for r in rows):,}",
+        "",
+        "",
+        "",
+        human_bytes(sum(r[4] for r in rows)),
     )
 
     console = Console()
