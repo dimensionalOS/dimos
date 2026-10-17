@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -23,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from dimos.cloud import data as cd
+from dimos.cloud import data as cd, preview
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.core.global_config import global_config
 
@@ -144,6 +145,39 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
+
+
+def test_preview_timing_budget_includes_video(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cloud, _, source = env
+    original = source.read_bytes()
+    doc = {
+        "format": "dimos-spatial-preview-v2",
+        "duration_s": 2,
+        "timing": {"version": 1, "streams": {}},
+    }
+    video = {"bytes": 100, "duration_s": 2, "speed": 1, "type": "video/mp4"}
+    base = {k: v for k, v in doc.items() if k != "timing"}
+    limit = len(json.dumps({**base, "video": video}).encode())
+    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", limit)
+    monkeypatch.setattr(preview, "build", lambda store: doc.copy())
+    monkeypatch.setattr(preview, "timelapse", lambda store, path: video)
+
+    def open_copy(path: Path) -> Any:
+        assert path != source and path.read_bytes() == original
+        return nullcontext(None)
+
+    def put_preview(uid: str, sent: dict[str, Any]) -> dict[str, Any]:
+        assert "timing" not in sent
+        assert sent["video"] == video
+        assert len(json.dumps(sent).encode()) <= limit
+        return {}
+
+    monkeypatch.setattr(cd, "open_store", open_copy)
+    monkeypatch.setattr(cloud.backend.api, "put_preview", put_preview)
+    assert cloud.backend._preview("u0", source, tmp_path) == "sent"
+    assert source.read_bytes() == original
 
 
 def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport, Path]) -> None:

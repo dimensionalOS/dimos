@@ -14,6 +14,9 @@
 
 """Console preview sizes (dimos/cloud/preview.py). The server's limits: 4 MB JSON, 32 MB video."""
 
+PREVIEW_MAX_BYTES = 4 * 1024 * 1024  # uncompressed JSON endpoint limit
+PREVIEW_TIMING_GAPS = 64  # first intervals per stream; totals still cover every timestamp
+PREVIEW_GAP_THRESHOLD_S = 1.0  # strictly greater, not a sensor-rate/drop guarantee
 PREVIEW_FORMAT = "dimos-spatial-preview-v2"
 PREVIEW_SCALE = 0.02  # metres per int16 step: +-655 m around the origin
 PREVIEW_FRAMES = 24  # timed LiDAR scans and camera thumbnails
