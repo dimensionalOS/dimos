@@ -30,9 +30,13 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     DUAL_OPENYAM_WEBXR_TASK_NAME,
+    _dual_openyam_webxr_tasks,
     teleop_webxr_dual_openyam,
 )
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_HOME_PER_ARM,
+    dual_openyam_arm_joints,
+)
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
@@ -63,9 +67,7 @@ def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
-def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
-    mocker: MockerFixture,
-) -> None:
+def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None:
     kwargs = _module_kwargs(teleop_webxr_dual_openyam, DualOpenYamCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
@@ -79,18 +81,18 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
         "step",
-        return_value=JointState(name=DUAL_OPENYAM_ARM_JOINTS, position=[0.01] * 12),
+        side_effect=lambda targets, seed, dt: JointState(name=seed.name, position=[0.01] * 6),
     )
     mocker.patch.object(TickLoop, "start")
     coordinator = DualOpenYamCoordinator(publish_joint_state=False, **kwargs)
 
     coordinator.start()
     try:
-        task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_WEBXR_TASK_NAME])
-        assert set(task.claim().joints) == set(DUAL_OPENYAM_ARM_JOINTS)
+        for side, config in _dual_openyam_webxr_tasks.items():
+            task = cast("TeleopIKTask", coordinator._tasks[config.name])
+            assert set(task.claim().joints) == set(dual_openyam_arm_joints(side))
         buttons = Buttons()
         buttons.left_grip = True
-        buttons.right_grip = True
         coordinator._dispatch("teleop_buttons", buttons)
         coordinator._dispatch("left_gripper_command", Float32(data=0.75))
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
@@ -107,7 +109,8 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
 
         adapter = cast("WholeBodyAdapter", coordinator._hardware["dual_openyam"].adapter)
         states = adapter.read_motor_states()
-        assert [state.q for state in states[:12]] == [0.01] * 12
+        assert [state.q for state in states[:6]] == [0.01] * 6
+        assert [state.q for state in states[6:12]] == pytest.approx(DUAL_OPENYAM_HOME_PER_ARM)
         assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
     finally:
         coordinator.stop()
