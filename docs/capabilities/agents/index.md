@@ -14,7 +14,7 @@ boxrad = 5px
 
 Input: box "humancli / WebInput" "dimos agent-send" fit wid 170% ht 170%
 arrow right 0.85in "human_input" above "In[str]" below
-Agent: box "McpClient" "LangGraph + LLM" fit wid 170% ht 170%
+Agent: box "Agent" "LangGraph + LLM" fit wid 170% ht 170%
 Skills: box "@skill methods" "on any Module" fit wid 170% ht 170% \
     with .w at (Agent.e.x + 0.9in, Agent.e.y)
 arrow right 0.5in from Skills.e
@@ -39,7 +39,7 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 ![output](assets/agent_architecture.svg)
 
-**McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
+**Agent** (`dimos/agents/agent.py`) is a `Module` with:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
 - `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
@@ -88,10 +88,10 @@ class MySkillContainer(Module):
 
 ## MCP
 
-All agentic blueprints use two modules: `McpServer` and `McpClient`.
+All agentic blueprints use two modules: `McpServer` and `Agent`.
 
 * `McpServer` exposes the methods annotated with `@skill` as MCP tools. Any external client can connect to the server to use the MCP tools.
-* `McpClient` has a LangGraph LLM which calls MCP tools from `McpServer`.
+* `Agent` has a LangGraph LLM which calls MCP tools from `McpServer`.
 
 CLI access:
 
@@ -115,4 +115,4 @@ dimos mcp status                                    # Server status
 |--------|-------|-------|
 | Default | `gpt-5.6-luna` | Requires `OPENAI_API_KEY` |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
-| Custom | Any LangChain-compatible | Set via `McpClient.blueprint(model="...")` |
+| Custom | Any LangChain-compatible | Set via `Agent.blueprint(model="...")` |

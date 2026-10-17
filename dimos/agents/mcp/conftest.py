@@ -19,7 +19,7 @@ from threading import Event
 from langchain_core.messages.base import BaseMessage
 import pytest
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.testing.agent_test_runner import AgentTestRunner
 from dimos.core.coordination.blueprints import autoconnect
@@ -74,7 +74,7 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
         blueprint = autoconnect(
             *blueprints,
             McpServer.blueprint(),
-            McpClient.blueprint(**client_kwargs),
+            Agent.blueprint(**client_kwargs),
             AgentTestRunner.blueprint(messages=messages),
         )
 

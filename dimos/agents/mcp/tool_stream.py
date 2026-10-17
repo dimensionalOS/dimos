@@ -15,7 +15,7 @@
 """Server-initiated tool-stream notifications.
 
 A skill uses `ToolStream` to push text updates out to any connected MCP client
-(Claude Code, our own `McpClient`, curl, ...) while the skill's background work is
+(Claude Code, our own `Agent`, curl, ...) while the skill's background work is
 still running.
 
 Transport: each `ToolStream.send` publishes a ready-made JSON-RPC

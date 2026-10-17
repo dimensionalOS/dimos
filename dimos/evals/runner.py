@@ -34,7 +34,7 @@ import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.constants import DENIED
 from dimos.evals.types import (
     EvalCase,
@@ -87,7 +87,7 @@ class EvalRunner(Configurable):
     def run(
         self,
         cases: Suite,
-        agent: Agent,
+        agent: EvalAgent,
         *,
         tags: frozenset[str] = frozenset(),
         limit: int = 0,
@@ -140,7 +140,7 @@ class EvalRunner(Configurable):
         self._write_artifacts(ordered)
         return ordered
 
-    def _preflight(self, case: EvalCase, agent: Agent) -> str:
+    def _preflight(self, case: EvalCase, agent: EvalAgent) -> str:
         """Both sides checked before anything starts: the failure text, or ``""``."""
         try:
             case.environment.preflight(agent)
@@ -152,7 +152,7 @@ class EvalRunner(Configurable):
             return f"preflight: {e}"
         return ""
 
-    def run_case(self, case: EvalCase, agent: Agent) -> EvalResult:
+    def run_case(self, case: EvalCase, agent: EvalAgent) -> EvalResult:
         t0 = time.monotonic()
         case_dir = self.run_dir / case.id
         case_dir.mkdir(parents=True, exist_ok=True)

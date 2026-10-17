@@ -18,9 +18,9 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any
 
+from dimos.agents.agent import Agent
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
-from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprints import autoconnect
@@ -315,5 +315,5 @@ demo_capabilities = autoconnect(
     DemoRobotActions.blueprint(),
     DemoMonitoring.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=DEMO_CAPABILITIES_PROMPT),
+    Agent.blueprint(system_prompt=DEMO_CAPABILITIES_PROMPT),
 )

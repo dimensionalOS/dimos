@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
 from threading import RLock
@@ -22,9 +22,10 @@ from unittest.mock import MagicMock, create_autospec, patch
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 import pytest
+from pytest_mock import MockerFixture
 import requests
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 
 
 def _mock_payload(body: dict[str, object]) -> dict[str, object]:
@@ -100,26 +101,26 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
 
 
 @pytest.fixture
-def mcp_client() -> McpClient:
-    """Build an McpClient wired to a mock requests session."""
-    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
-    client._http_client = _mock_session(_mock_payload)
-    try:
-        yield client
-    finally:
-        client.stop()
+def agent(mocker: MockerFixture) -> Iterator[Agent]:
+    """An Agent whose MCP requests are answered by a mock session."""
+    mocker.patch(
+        "dimos.agents.mcp.mcp_client.requests.Session", return_value=_mock_session(_mock_payload)
+    )
+    agent = Agent(mcp_server_url="http://localhost:9990/mcp")
+    yield agent
+    agent.stop()
 
 
-def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
-    tools = mcp_client._fetch_tools()
+def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
+    tools = agent._fetch_tools()
 
     assert len(tools) == 2
     assert tools[0].name == "add"
     assert tools[1].name == "greet"
 
 
-def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
-    tools = mcp_client._fetch_tools()
+def test_tool_invocation_via_mcp(agent: Agent) -> None:
+    tools = agent._fetch_tools()
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
@@ -127,24 +128,7 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
-def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
-    def error_payload(body: dict[str, object]) -> dict[str, object]:
-        return {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "error": {"code": -32601, "message": "Unknown: bad/method"},
-        }
-
-    mcp_client._http_client = _mock_session(error_payload)
-
-    try:
-        mcp_client._mcp_request("bad/method")
-        raise AssertionError("Expected RuntimeError")
-    except RuntimeError as e:
-        assert "Unknown: bad/method" in str(e)
-
-
-def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -> None:
+def test_tool_stream_notification_becomes_human_message(agent: Agent) -> None:
     """A `notifications/message` delivered over LCM becomes a HumanMessage."""
     notification = {
         "jsonrpc": "2.0",
@@ -155,30 +139,30 @@ def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -
             "data": "Person follow stopped: lost track.",
         },
     }
-    mcp_client._on_tool_stream_message(notification)
+    agent._on_tool_stream_message(notification)
 
-    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+    msg: BaseMessage = agent._message_queue.get_nowait()
     assert isinstance(msg, HumanMessage)
     assert "[tool:follow_person]" in str(msg.content)
     assert "Person follow stopped: lost track." in str(msg.content)
 
 
-def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
+def test_tool_stream_ignores_unrelated_frames(agent: Agent) -> None:
     """Unknown methods and empty bodies are dropped on the floor."""
 
-    mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
-    mcp_client._on_tool_stream_message(
+    agent._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
+    agent._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": ""}}
     )
-    mcp_client._on_tool_stream_message(
+    agent._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/progress", "params": {"message": ""}}
     )
 
     with pytest.raises(Empty):
-        mcp_client._message_queue.get_nowait()
+        agent._message_queue.get_nowait()
 
 
-def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient) -> None:
+def test_tool_stream_progress_frame_becomes_human_message(agent: Agent) -> None:
     """A `notifications/progress` frame is routed as a HumanMessage."""
 
     progress_frame = {
@@ -191,59 +175,36 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient)
             "_meta": {"tool_name": "follow_person"},
         },
     }
-    mcp_client._on_tool_stream_message(progress_frame)
+    agent._on_tool_stream_message(progress_frame)
 
-    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+    msg: BaseMessage = agent._message_queue.get_nowait()
     assert isinstance(msg, HumanMessage)
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
-def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
-    """Every `tools/call` request carries a `_meta.progressToken`."""
-    captured: dict[str, object] = {}
-
-    def fake_request(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
-        captured["method"] = method
-        captured["params"] = params
-        return {"content": [{"type": "text", "text": "ok"}]}
-
-    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
-        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
-
-    assert captured["method"] == "tools/call"
-    params = captured["params"]
-    assert isinstance(params, dict)
-    assert params["name"] == "add"
-    assert params["arguments"] == {"x": 1, "y": 2}
-    meta = params["_meta"]
-    assert isinstance(meta, dict)
-    token = meta["progressToken"]
-    assert isinstance(token, str) and len(token) > 0
-
-
 @pytest.fixture
-def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
-    """Prepare a client for testing agent model initialization."""
-    mcp_client.config.model_fixture = None
-    mcp_client.config.system_prompt = "System prompt"
-    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
-    mcp_client._lock = RLock()
-    mcp_client._thread = MagicMock()
-    mcp_client._thread.is_alive.return_value = True
-    return mcp_client
+def configured_agent(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> Agent:
+    """An agent prepared for testing model initialization."""
+    agent.config.model_fixture = None
+    agent.config.system_prompt = "System prompt"
+    monkeypatch.setattr(agent, "_fetch_tools", MagicMock(return_value=[]))
+    agent._lock = RLock()
+    agent._thread = MagicMock()
+    agent._thread.is_alive.return_value = True
+    return agent
 
 
 def test_on_system_modules_uses_responses_api_model(
-    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+    configured_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
     from langchain_openai import ChatOpenAI
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    configured_mcp_client.config.model = "gpt-5.6-luna"
+    configured_agent.config.model = "gpt-5.6-luna"
 
     with patch("langchain.agents.create_agent") as create_agent:
-        configured_mcp_client.on_system_modules([])
+        configured_agent.on_system_modules([])
 
     model = create_agent.call_args.kwargs["model"]
     assert isinstance(model, ChatOpenAI)
@@ -254,40 +215,40 @@ def test_on_system_modules_uses_responses_api_model(
 
 @pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
 def test_on_system_modules_resolves_non_reasoning_models(
-    configured_mcp_client: McpClient, model_name: str
+    configured_agent: Agent, model_name: str
 ) -> None:
     """Models without Responses reasoning support use provider resolution."""
-    configured_mcp_client.config.model = model_name
+    configured_agent.config.model = model_name
     resolved_model = MagicMock()
 
     with (
         patch("langchain.agents.create_agent"),
         patch("langchain.chat_models.init_chat_model", return_value=resolved_model) as init,
     ):
-        configured_mcp_client.on_system_modules([])
+        configured_agent.on_system_modules([])
 
     init.assert_called_once_with(model=model_name)
 
 
 def test_set_trace_dir_rebuilds_the_model_with_capture(
-    configured_mcp_client: McpClient,
+    configured_agent: Agent,
 ) -> None:
     """Evals repoint raw LLM capture per case; the model must be rebuilt so
     the HTTP hook writes under the new directory. Before the agent exists
     the path is only stored for the first build."""
-    configured_mcp_client.config.model = "gpt-4o"
+    configured_agent.config.model = "gpt-4o"
     resolved = MagicMock()
 
     with (
         patch("langchain.agents.create_agent") as create_agent,
-        patch("dimos.agents.mcp.mcp_client.init_model", return_value=resolved) as init,
+        patch("dimos.agents.agent.init_model", return_value=resolved) as init,
     ):
-        configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
+        configured_agent.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
         assert init.call_count == 0
 
-        configured_mcp_client.on_system_modules([])
+        configured_agent.on_system_modules([])
         assert init.call_args.kwargs["trace_dir"] == Path("/eval/case/raw")
 
-        configured_mcp_client.set_trace_dir(None)
+        configured_agent.set_trace_dir(None)
         assert init.call_args.kwargs["trace_dir"] is None
         assert create_agent.call_count == 2

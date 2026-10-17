@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.coordination.blueprints import autoconnect
@@ -20,7 +20,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
 
-demo_agent = autoconnect(McpServer.blueprint(), McpClient.blueprint())
+demo_agent = autoconnect(McpServer.blueprint(), Agent.blueprint())
 
 
 def _create_webcam() -> Webcam:
@@ -33,7 +33,7 @@ def _create_webcam() -> Webcam:
 
 demo_agent_camera = autoconnect(
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
     ObserveSkill.blueprint(),
     CameraModule.blueprint(
         hardware=_create_webcam,

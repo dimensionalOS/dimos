@@ -387,10 +387,10 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `Agent.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
@@ -398,7 +398,7 @@ from dimos.core.coordination.blueprints import autoconnect
 my_mcp_blueprint = autoconnect(
     # my_robot_stack,
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
     # my_skill_containers,
 )
 ```
