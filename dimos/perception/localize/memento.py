@@ -69,6 +69,10 @@ class Sighting:
     detection: Any = None  # the lifted detection; this process only, never stored
 
     def __post_init__(self) -> None:
+        self.ts = float(self.ts)
+        self.score = float(self.score)
+        vx, vy, vz = self.viewpoint
+        self.viewpoint = (float(vx), float(vy), float(vz))
         self.points = np.ascontiguousarray(self.points, dtype=np.float32).reshape(-1, 3)
 
 
@@ -107,6 +111,7 @@ class Memento:
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._lock = threading.Lock()
+        self._held: dict[int, Sighting] = {}
 
     def recall(
         self, labels: list[str], key: str, window: Span, head: float, read: Reader
@@ -120,14 +125,17 @@ class Memento:
         frame that arrives later is read by a later call.
         """
         with self._lock:
-            end = min(window[1], head)
+            window = (float(window[0]), float(window[1]))
+            end = min(window[1], float(head))
             gaps = {label: self._gap(label, key, (window[0], end)) for label in labels}
             todo = {label: gap for label, gap in gaps.items() if gap}
             fresh = {label: list(found) for label, found in read(todo).items()} if todo else {}
             with self._db:
                 for label, found in fresh.items():
+                    if label not in todo:
+                        raise ValueError(f"{label!r} has no unread gap")
                     for sighting in found:
-                        if label not in todo or sighting.ts not in todo[label]:
+                        if sighting.ts not in todo[label]:
                             raise ValueError(
                                 f"{label!r} sighting at {sighting.ts} lies outside its unread gap"
                             )
@@ -135,15 +143,26 @@ class Memento:
                 if window[0] <= end:
                     for label in todo:
                         self._mark(label, key, (window[0], end))
-            held = {sighting.id: sighting for found in fresh.values() for sighting in found}
-            return {label: self._within(label, key, window, held) for label in labels}, gaps
+            for found in fresh.values():
+                for sighting in found:
+                    self._held[sighting.id] = sighting
+            return {label: self._within(label, key, window) for label in labels}, gaps
 
     def forget(self, before: float) -> None:
         """Drop every sighting older than ``before``, and the read spans with them."""
+        before = float(before)
         with self._lock, self._db:
+            dropped = [
+                row_id
+                for (row_id,) in self._db.execute(
+                    "SELECT id FROM sightings WHERE ts < ?", (before,)
+                )
+            ]
             self._db.execute("DELETE FROM sightings WHERE ts < ?", (before,))
             self._db.execute("DELETE FROM spans WHERE end < ?", (before,))
             self._db.execute("UPDATE spans SET start = ? WHERE start < ?", (before, before))
+            for row_id in dropped:
+                self._held.pop(row_id, None)
 
     def dump(self, path: str | Path) -> None:
         """Write everything to a sqlite file at ``path``."""
@@ -158,7 +177,8 @@ class Memento:
     def load(cls, path: str | Path) -> Memento:
         """An in-memory memento holding what ``dump`` wrote to ``path``."""
         memento = cls()
-        source = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+        source = sqlite3.connect(uri, uri=True)
         try:
             source.backup(memento._db)
         finally:
@@ -166,10 +186,14 @@ class Memento:
         return memento
 
     def close(self) -> None:
-        self._db.close()
+        with self._lock:
+            self._held.clear()
+            self._db.close()
 
     def _gap(self, label: str, key: str, window: Span) -> Gap:
-        start, end = window
+        start, end = float(window[0]), float(window[1])
+        if start > end:
+            return Gap((), ())
         read = tuple(
             (float(a), float(b))
             for a, b in self._db.execute(
@@ -178,8 +202,6 @@ class Memento:
                 (label, key, start, end),
             )
         )
-        if start > end:
-            return Gap((), read)
         if not read:
             return Gap(((start, end),), read)
         spans: list[Span] = []
@@ -229,16 +251,14 @@ class Memento:
         assert cursor.lastrowid is not None
         return cursor.lastrowid
 
-    def _within(
-        self, label: str, key: str, window: Span, held: dict[int, Sighting]
-    ) -> list[Sighting]:
+    def _within(self, label: str, key: str, window: Span) -> list[Sighting]:
         rows = self._db.execute(
             "SELECT id, ts, camera, score, vx, vy, vz, points FROM sightings "
             "WHERE label = ? AND key = ? AND ts BETWEEN ? AND ? ORDER BY ts, id",
             (label, key, *window),
         )
         return [
-            held.get(row_id)
+            self._held.get(row_id)
             or Sighting(
                 ts=ts,
                 camera=camera,

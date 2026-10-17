@@ -83,8 +83,8 @@ class IndexFrame:
 class LocalizeTrace:
     """Artifacts a renderer needs; collected only when one is passed in.
 
-    ``answers`` holds each answer's sightings this call lifted, ``spans`` its
-    first and last sighting.
+    ``answers`` holds each answer's lifted detections in this process, ``spans``
+    its first and last sighting.
     """
 
     detection_frames: list[Any] = field(default_factory=list)
@@ -318,7 +318,11 @@ def detect(
 
     def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
-            active = [j for j, q in enumerate(queries) if q in gaps and obs.ts in gaps[q]]
+            active = [
+                j
+                for j, q in enumerate(queries)
+                if q in gaps and obs.ts in gaps[q] and queries.index(q) == j
+            ]
             if not active:
                 continue
             img = rig.frame_at(obs)
@@ -381,7 +385,7 @@ def lift(
                 ),
             )
         for j, trace in enumerate(traces):
-            label_dets = [det for det in frame if det.class_id == j]
+            label_dets = [det for det in frame if det.name == queries[j]]
             if trace is not None and label_dets:
                 trace.detection_frames.append(
                     obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
