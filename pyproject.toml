@@ -103,6 +103,7 @@ dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.4",
+    "lcm-dimos-fork>=1.5.2", # the `lcm` module itself (protocol/service/lcmservice.py)
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
@@ -117,12 +118,16 @@ dependencies = [
     "reactivex",
     "sortedcontainers==2.4.0",
     "pydantic",
+    "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
     "python-dotenv",
     "packaging>=24.0",
+    "requests>=2.32",
+    "attrs>=25.4", # control/tasks
     "filelock>=3.20,<4",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
+    "tomli>=2.0; python_version < '3.11'", # tomllib fallback (cli/bake/discovery.py)
     "plum-dispatch==2.5.7",
     "GitPython>=3.1.45",
     # Logging
@@ -142,6 +147,7 @@ dependencies = [
     "typer>=0.19.2,<1",
     "keyring>=25,<26",
     "ipython",
+    "rich>=14.3", # cli/dtop.py, cli/shell.py, memory/utils
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
     "numba>=0.60.0", # First version supporting Python 3.12
@@ -162,6 +168,7 @@ dependencies = [
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
+    "websockets>=16.0", # Rerun viewer bridge (visualization/rerun/websocket_server.py)
 ]
 
 
@@ -221,6 +228,8 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
+    "langgraph>=1.0",  # agents/mcp/mcp_client.py
+    "httpx>=0.28",  # LLM trace (agents/llm_trace.py)
 
     # Audio
     "openai",
@@ -233,6 +242,7 @@ web = [
     "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
     "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
+    "starlette>=0.52",  # McpServer request/response types
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
     "ffmpeg-python",
@@ -247,6 +257,8 @@ perception = [
     "Pillow",
     "lap>=0.5.12",
     "transformers[torch]>=4.53.0,<4.54",
+    "huggingface-hub>=0.36",  # OmDet weight download (detection/detectors/omdet.py)
+    "safetensors>=0.8",
     # Florence2 (dimos/models/vl/florence.py) loads via transformers trust_remote_code;
     # its downloaded modeling file imports einops (not captured by package metadata).
     "einops>=0.8.1",
@@ -350,6 +362,7 @@ webrtc = [
     # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
     "aiortc>=1.14.0",
     "aiohttp>=3.9.0",
+    "av>=16.1",  # video frames; also the M20 camera and the Go2 DDS H264 decoder
 ]
 
 base = [
@@ -425,6 +438,9 @@ tests = [
     "pytest-rerunfailures>=15.0",
     "coverage>=7.0",
     "requests-mock==1.12.1",
+    "click>=8.3",  # click.testing in cli tests
+    "tqdm>=4.67",  # dimos/conftest.py
+    "traitlets>=5.14",  # IPython config in rpc/sdk tests
 
     # Misc dev tools
     "pre_commit==4.2.0",
@@ -470,6 +486,7 @@ lint = [
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
+    "deptry==0.25.1",
 
     "aiortc>=1.14.0",
     "ipython",
@@ -565,6 +582,97 @@ torchvision = [
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.deptry]
+# Scan source and colocated tests, accepting declarations in any extra
+# or development group.
+ignore = ["DEP002", "DEP004", "DEP005"]
+ignore_notebooks = true
+known_first_party = ["dimos"]
+
+[tool.deptry.per_rule_ignores]
+# ROS, system bindings, vendor SDKs and in-tree native builds are installed
+# outside uv. Isaac imports come from the Isaac Sim application runtime;
+# lcm_msgs is a legacy optional message namespace guarded by ImportError.
+# Ignore both codes so installing an external package cannot change the result.
+DEP001 = [
+    "a1z",
+    "a750_control",
+    "ament_index_python",
+    "builtin_interfaces",
+    "dimos_local_planner",
+    "dimos_mls_planner",
+    "dimos_trajectory_follower",
+    "dimos_voxel_ray_tracing",
+    "geometry_msgs",
+    "gi",
+    "gs_usb",
+    "habitat_sim",
+    "isaacsim",
+    "lcm_msgs",
+    "nav_msgs",
+    "omni",
+    "pyzed",
+    "rclpy",
+    "sensor_msgs",
+    "std_msgs",
+    "usb",
+]
+DEP003 = [
+    "a1z",
+    "a750_control",
+    "ament_index_python",
+    "builtin_interfaces",
+    "dimos_local_planner",
+    "dimos_mls_planner",
+    "dimos_trajectory_follower",
+    "dimos_voxel_ray_tracing",
+    "geometry_msgs",
+    "gi",
+    "gs_usb",
+    "habitat_sim",
+    "isaacsim",
+    "lcm_msgs",
+    "nav_msgs",
+    "omni",
+    "pyzed",
+    "rclpy",
+    "sensor_msgs",
+    "std_msgs",
+    "usb",
+]
+
+[tool.deptry.package_module_name_map]
+# Keys match dependency spelling, including case, in this deptry release.
+# Explicit mappings also work when an optional dependency is not installed.
+bosdyn-client = "bosdyn"
+drake = "pydrake"
+eclipse-zenoh = "zenoh"
+edgetam-dimos = "sam2"
+ffmpeg-python = "ffmpeg"
+GitPython = "git"
+gtsam-extended = "gtsam"
+hydra-core = "hydra"
+ipython = "IPython"
+lcm-dimos-fork = "lcm"
+openai-whisper = "whisper"
+opencv-contrib-python = "cv2"
+Pillow = "PIL"
+pin = "pinocchio"
+pin-pink = "pink"
+playground = "mujoco_playground"
+plum-dispatch = "plum"
+python-can = "can"
+python-dotenv = "dotenv"
+python-socketio = "socketio"
+PyTurboJPEG = "turbojpeg"
+pyyaml = "yaml"
+rerun-sdk = "rerun"
+unitree-sdk2py-dimos = "unitree_sdk2py"
+usd-core = "pxr"
+warp-lang = "warp"
+websocket-client = "websocket"
+xarm-python-sdk = "xarm"
 
 [tool.ruff]
 line-length = 100
