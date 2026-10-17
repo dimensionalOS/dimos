@@ -1,0 +1,36 @@
+[package]
+name = "dimos-system-log"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: machine health, a high-rate ring dumped on trouble, and dimos' logs, on one stream"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_system_log"
+path = "src/lib.rs"
+
+[[bin]]
+name = "system_log"
+path = "src/bin/system_log.rs"
+
+[package.metadata.dimos.module.system_log]
+path = "dimos_system_log::module::SystemLog"
+python = "dimos.diagnostics.system_log.module:SystemLog"
+
+[package.metadata.dimos.module.system_log.inputs]
+robot_health = "std_msgs.String"
+bad_event = "std_msgs.Bool"
+
+[package.metadata.dimos.module.system_log.outputs]
+system_log = "std_msgs.String"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+# CPU, memory, temperatures, network and processes on Linux and macOS
+sysinfo = { version = "0.38", default-features = false, features = ["system", "network", "component", "disk", "user"] }
