@@ -36,29 +36,33 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_overrides,
     go2_nav_static,
 )
-from dimos.robot.unitree.go2.dds.module import GO2DDS
+from dimos.robot.unitree.go2.dds.module import GO2DDS, GO2L1Lidar
 from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # GO2DDS doubles as a zenoh router
-go2_dds = GO2DDS.blueprint(
-    iface="enP8p1s0", session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[])
-).global_config(transport="zenoh", robot_model="unitree_go2")
+# GO2DDS on the Jetson, the zenoh router.
+JETSON: dict[str, Any] = {
+    "iface": "enP8p1s0",
+    "session": ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
+}
+
+go2_dds = GO2DDS.blueprint(**JETSON).global_config(transport="zenoh", robot_model="unitree_go2")
 
 # The head L1 stays off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or
 # odom tf edge. Its raw L1 cloud and body IMU move aside so only the MID-360 reaches
 # Point-LIO's inputs.
 go2_dds_mid360 = GO2DDS.blueprint(
-    iface="enP8p1s0",
-    session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
+    **JETSON,
     lidar_on=False,
     tf_root="mid360_link",
 ).remappings(
     [
         (GO2DDS, "odometry", "go2_odometry_unused"),
         (GO2DDS, "lidar", "go2_lidar_unused"),
-        (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
-        (GO2DDS, "imu", "body_imu"),
+        (GO2DDS, "lidar_raw", "l1_lidar_raw"),
+        (GO2DDS, "lidar_imu", "l1_lidar_imu"),
+        (GO2DDS, "imu", "go2_imu"),
     ]
 )
 
@@ -78,6 +82,14 @@ go2_dds_nav = autoconnect(
     n_workers=11,
     robot_model="unitree_go2",
 )
+
+# go2-dds-nav plus the head L1's deskewed scans on `l1_lidar`, in Point-LIO's odom. The later
+# GO2DDS atom wins and spins the L1 up; go2-dds-nav's remappings still apply.
+go2_dds_nav_l1 = autoconnect(
+    go2_dds_nav,
+    GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link"),
+    GO2L1Lidar.blueprint(),
+).global_config(n_workers=12)
 
 # h264 lands here off `video`; jpeg is redirected onto it, whichever the robot serves
 CAMERA_ENTITY = "world/video"
