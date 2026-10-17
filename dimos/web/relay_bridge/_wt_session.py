@@ -55,6 +55,7 @@ from dimos.web.relay_bridge.protocol import (
     FrameHeader,
     Manifest,
     Msg,
+    Ping,
     Pong,
     Subs,
     Welcome,
@@ -183,6 +184,9 @@ class SessionProtocol(QuicConnectionProtocol):
         # dropping the stream (see _carrier_stream).
         self.incoming_is_carrier: bool = False
         self.session_id: int | None = None
+        # Test seam: a session that stops answering the relay's probes plays
+        # a frozen bridge.
+        self.answer_pings = True
         self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
         self._frame_readers: dict[int, DataFrameStreamReader | None] = {}
         # ch -> encoding, learned from manifest messages; arms the
@@ -192,6 +196,10 @@ class SessionProtocol(QuicConnectionProtocol):
         # forward only then): the latest-wins pump waits here instead of
         # polling. See wait_delivery_progress.
         self._delivery_waiters: list[asyncio.Future[None]] = []
+        # Persistent bidi stream per reliable channel (send_frame_on): frames
+        # ride it back to back, so they arrive in order and cost no stream
+        # each (v8). Latest and @control frames keep one-shot streams.
+        self._channel_streams: dict[str, int] = {}
 
     def open_session(self, authority: str, path: str) -> None:
         self.session_id = self._quic.get_next_available_stream_id()
@@ -284,6 +292,12 @@ class SessionProtocol(QuicConnectionProtocol):
             waiter = self._pong_waiters.pop(msg.n, None)
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
+        elif isinstance(msg, Ping):
+            # The relay probes a robot whose id a new session claims; an
+            # answer keeps the id (a session that cannot answer is dead or
+            # frozen and is superseded).
+            if self.answer_pings:
+                self.send_msg(Pong(n=msg.n, ts=msg.ts))
         else:
             if isinstance(msg, Manifest) and msg.manifest is not None:
                 # The nested manifest is an opaque raw record at this layer;
@@ -461,17 +475,52 @@ class SessionProtocol(QuicConnectionProtocol):
         self.transmit()
         return stream_id
 
-    def stream_in_flight(self, stream_id: int) -> bool:
-        """True until every byte and the FIN (or a reset) is ACKed.
+    def send_frame_on(self, ch: str, header: FrameHeader, payload: bytes) -> int:
+        """One frame on the channel's persistent bidi stream, opened on first
+        use (never FIN'd; the relay reads frames by byte count). Returns the
+        stream id."""
+        assert self.session_id is not None
+        stream_id = self._channel_streams.get(ch)
+        if stream_id is None:
+            stream_id = self.h3.create_webtransport_stream(self.session_id, is_unidirectional=False)
+            self._channel_streams[ch] = stream_id
+        self._quic.send_stream_data(stream_id, encode_data_frame(header, payload))
+        self.transmit()
+        return stream_id
 
-        `sender.is_finished` is the precise per-stream delivery signal; the
-        stream's presence in `_streams` lags actual delivery by hundreds of ms
-        (discard also waits on the receive direction).
+    def channel_stream(self, ch: str) -> int | None:
+        """The channel's persistent stream id, if one is open."""
+        return self._channel_streams.get(ch)
+
+    def drop_channel_stream(self, ch: str) -> None:
+        """Forget the channel's persistent stream (after a reset); the next
+        frame opens a fresh one."""
+        self._channel_streams.pop(ch, None)
+
+    def stream_unacked_bytes(self, stream_id: int) -> int:
+        """Bytes written to the stream that the peer has not acknowledged
+        (aioquic drops acknowledged data from the front of its send buffer)."""
+        stream = self._quic._streams.get(stream_id)
+        if stream is None:
+            return 0
+        return len(stream.sender._buffer)
+
+    def stream_in_flight(self, stream_id: int) -> bool:
+        """True while the stream holds bytes or a FIN the peer has not ACKed.
+
+        `sender.is_finished` is the precise delivery signal of a one-shot
+        stream (data plus FIN acknowledged); a persistent channel stream never
+        finishes, so it is in flight while its send buffer holds unacked
+        bytes. The stream's presence in `_streams` lags actual delivery by
+        hundreds of ms (discard also waits on the receive direction).
         """
         stream = self._quic._streams.get(stream_id)
         if stream is None:
             return False
-        return not bool(stream.sender.is_finished)
+        sender = stream.sender
+        if sender.is_finished:
+            return False
+        return len(sender._buffer) > 0 or sender._buffer_fin is not None or sender.reset_pending
 
     def reset_if_in_flight(self, stream_id: int) -> bool:
         """Reset a stale stream. Membership check and reset happen in the same

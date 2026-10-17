@@ -103,6 +103,21 @@ class FakeRobot implements RobotPeer {
     return { queued: 0, queuedBytes: 0, sent: this.control.length, bytesOut: 0 };
   }
 
+  /** What probe() answers; probes are counted. */
+  alive = true;
+  probes = 0;
+  superseded = false;
+
+  probe(): Promise<boolean> {
+    this.probes++;
+    return Promise.resolve(this.alive);
+  }
+
+  supersede(): void {
+    this.superseded = true;
+    this.closed = "superseded";
+  }
+
   subs(): SubsMsg[] {
     return this.control.filter((m): m is SubsMsg => m.t === "subs");
   }
@@ -570,6 +585,50 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
   reg.onRobotFrame(robot, frame("color_image", 4, "latest"));
   await tick();
   assertEquals(viewer.sink.streamsOpened, 3);
+});
+
+Deno.test("claimRobot: a holder that answers its probe keeps the id; a silent one is superseded", async () => {
+  const reg = new Registry();
+  const first = new FakeRobot("r1", SPECS);
+  assertEquals(await reg.claimRobot(first), true);
+  assertEquals(first.probes, 0); // nothing to probe on a free id
+  assertEquals(await reg.claimRobot(first), true); // a hello resend
+  const viewer = attach(reg, "r1", ["odom"]);
+  pub(reg, viewer, "v-1", "odom", 1.5); // not publishable: settles at once, keeps the test simple
+
+  const second = new FakeRobot("r1", SPECS);
+  assertEquals(await reg.claimRobot(second), false); // the live holder answered
+  assertEquals([first.probes, first.superseded, second.closed], [1, false, null]);
+  assertEquals((reg.stats() as { robots: RobotInfo[] }).robots.length, 1);
+
+  first.alive = false; // killed without a close: its idle timeout still runs
+  assertEquals(await reg.claimRobot(second), true);
+  assertEquals([first.probes, first.superseded], [2, true]);
+  const stats = reg.stats() as { robots: RobotInfo[]; robotsSuperseded: number };
+  assertEquals([stats.robots.length, stats.robotsSuperseded], [1, 1]);
+  // The id is the second's: the surviving watcher got a fresh baseline and
+  // the old session's own close hook finds nothing to remove.
+  assertEquals(second.lastSubs().chs, ["odom"]);
+  reg.robotClosed(first);
+  assertEquals((reg.stats() as { robots: RobotInfo[] }).robots.length, 1);
+  reg.onRobotFrame(second, frame("odom", 1, "reliable"));
+  await tick();
+  assertEquals(viewer.sink.sent.length, 1);
+});
+
+Deno.test("claimRobot: a claimant that closed during the probe never registers", async () => {
+  const reg = new Registry();
+  const first = new FakeRobot("r1", SPECS);
+  first.alive = false;
+  await reg.claimRobot(first);
+  const second = new FakeRobot("r1", SPECS);
+  const claim = reg.claimRobot(second);
+  second.closed = "gone"; // disconnected while the probe ran
+  assertEquals(await claim, false);
+  // Nothing displaces the silent holder on behalf of a claimant that left;
+  // its idle timeout does, or the next claimant.
+  assertEquals(first.superseded, false);
+  assertEquals((reg.stats() as { robots: RobotInfo[] }).robots.length, 1);
 });
 
 Deno.test("a viewer's acks release its latest channel; the tick times out missing ones", async () => {

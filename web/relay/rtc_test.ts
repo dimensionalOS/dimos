@@ -143,6 +143,14 @@ class FakeRobot implements RobotPeer {
   carrierStats(): CarrierStats {
     return { queued: 0, queuedBytes: 0, sent: 0, bytesOut: 0 };
   }
+
+  probe(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
+  supersede(): void {
+    this.closed = "superseded";
+  }
 }
 
 class FakeViewer implements ViewerPeer {

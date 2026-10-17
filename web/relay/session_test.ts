@@ -6,6 +6,7 @@ import { assert, assertEquals } from "@std/assert";
 import {
   CONTROL_CHANNEL,
   ControlFrameReader,
+  decodeDatagram,
   encodeControlFrame,
   encodeDataFrame,
   encodeDatagram,
@@ -18,7 +19,6 @@ import { Registry } from "./registry.ts";
 import {
   CONTROL_SEND_ORDER,
   LATEST_SEND_ORDER,
-  ORDER_HOLD_MAX,
   RELIABLE_SEND_ORDER,
   RobotSession,
   ViewerSession,
@@ -233,7 +233,7 @@ function robotFrame(ch: string, seq: number, delivery: "latest" | "reliable"): U
   return encodeDataFrame(header, new Uint8Array(32).fill(seq));
 }
 
-function robotHarness() {
+function robotHarness(timing: { probeMs?: number } = {}) {
   let enqueueBidi!: (s: FakeRobotStream) => void;
   const conn = {
     incomingBidirectionalStreams: new ReadableStream<FakeRobotStream>({
@@ -242,21 +242,36 @@ function robotHarness() {
       },
     }),
   } as unknown as Deno.QuicConn;
+  /** Datagrams the session sent, decoded. */
+  const sentDatagrams: Msg[] = [];
+  let pushDatagram!: (bytes: Uint8Array) => void;
+  let closed: string | null = null;
   const wt = {
     closed: new Promise<void>(() => {}),
     datagrams: {
-      readable: new ReadableStream<Uint8Array>(),
-      writable: new WritableStream<Uint8Array>(),
+      readable: new ReadableStream<Uint8Array>({
+        start(c) {
+          pushDatagram = (bytes) => c.enqueue(bytes);
+        },
+      }),
+      writable: new WritableStream<Uint8Array>({
+        write(chunk) {
+          const msg = decodeDatagram(chunk);
+          if (msg !== null) sentDatagrams.push(msg);
+        },
+      }),
     },
     createUnidirectionalStream: () => Promise.resolve(new WritableStream<Uint8Array>()),
-    close: () => {},
+    close: (info?: WebTransportCloseInfo) => {
+      closed = info?.reason ?? "";
+    },
   } as unknown as WebTransport;
   const registry = new Registry();
   const dispatched: number[] = [];
   registry.onRobotFrame = (_peer, _bytes, header) => {
     dispatched.push(header!.seq);
   };
-  const session = new RobotSession(wt, conn, registry, null);
+  const session = new RobotSession(wt, conn, registry, null, timing);
   session.start();
   /** Accept a stream carrying `bytes` whole, or just its first `split` bytes. */
   const accept = (bytes: Uint8Array, split?: number): FakeRobotStream => {
@@ -271,15 +286,23 @@ function robotHarness() {
     }
     return stream;
   };
-  return { session, registry, dispatched, accept };
+  return {
+    session,
+    registry,
+    dispatched,
+    accept,
+    sentDatagrams,
+    pushDatagram: (msg: Msg) => pushDatagram(encodeDatagram(msg)),
+    closedReason: () => closed,
+  };
 }
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await tick();
 }
 
-Deno.test("robot frames: reliable frames wait for an incomplete earlier one, latest do not", async () => {
-  const { session, dispatched, accept } = robotHarness();
+Deno.test("robot frames: a stream's frames route in order as they complete; streams are independent", async () => {
+  const { session, registry, dispatched, accept } = robotHarness();
   accept(encodeDataFrame(
     { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
     encodeDatagram({
@@ -292,57 +315,52 @@ Deno.test("robot frames: reliable frames wait for an incomplete earlier one, lat
   await settle();
   assert(session.info !== null, "registered");
 
-  // Frame 1's payload is held back after its header; 2 and 3 complete.
+  // A persistent reliable stream: frame 1 arrives whole, frame 2 in pieces.
   const frame1 = robotFrame("odom", 1, "reliable");
-  const headerEnd = PREAMBLE.length + 8 +
-    JSON.stringify({ ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" }).length;
-  const straggler = accept(frame1, headerEnd);
-  accept(robotFrame("odom", 2, "reliable"));
+  const frame2 = robotFrame("odom", 2, "reliable");
+  const both = new Uint8Array([...frame1, ...frame2]);
+  const cut = PREAMBLE.length + frame1.byteLength + 5;
+  const odom = accept(both, cut);
+  await settle();
+  assertEquals(dispatched, [1]);
+  // A one-shot latest stream completes meanwhile and does not wait.
   accept(robotFrame("cam", 3, "latest"));
   await settle();
-  assertEquals(dispatched, [3]); // the latest frame passed; 2 waits for 1
-
-  straggler.push(new Uint8Array([...PREAMBLE, ...frame1]).slice(headerEnd));
-  straggler.end();
+  assertEquals(dispatched, [1, 3]);
+  odom.push(new Uint8Array([...PREAMBLE, ...both]).slice(cut));
   await settle();
-  assertEquals(dispatched, [3, 1, 2]);
-
-  // A stream that fails before its header leaves the queue.
-  const dead = accept(robotFrame("odom", 4, "reliable"), 2);
-  accept(robotFrame("odom", 5, "reliable"));
+  assertEquals(dispatched, [1, 3, 2]);
+  odom.push(robotFrame("odom", 4, "reliable"));
   await settle();
-  assertEquals(dispatched, [3, 1, 2]);
+  assertEquals(dispatched, [1, 3, 2, 4]);
+
+  // A stream reset mid-frame loses the partial and is counted.
+  const dead = accept(robotFrame("odom", 5, "reliable"), 2);
   dead.fail();
   await settle();
-  assertEquals(dispatched, [3, 1, 2, 5]);
+  assertEquals(dispatched, [1, 3, 2, 4]);
+  assertEquals((registry.stats() as { framesIncomplete: number }).framesIncomplete, 1);
 });
 
-Deno.test("robot frames: the hold behind a straggler is bounded", async () => {
-  const { dispatched, accept } = robotHarness();
-  accept(encodeDataFrame(
-    { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
-    encodeDatagram({
-      t: "hello",
-      v: PROTOCOL_VERSION,
-      role: "robot",
-      robot: { id: "r1", name: "r1", model: "t" },
-    }),
-  ));
+Deno.test("robot probe: a pong answers it, silence times it out, supersede closes", async () => {
+  const h = robotHarness({ probeMs: 40 });
+  const answered = h.session.probe();
   await settle();
-  const frame1 = robotFrame("odom", 1, "reliable");
-  const headerEnd = PREAMBLE.length + 8 +
-    JSON.stringify({ ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" }).length;
-  const straggler = accept(frame1, headerEnd);
-  for (let seq = 2; seq <= ORDER_HOLD_MAX; seq++) accept(robotFrame("odom", seq, "reliable"));
+  const ping = h.sentDatagrams.find((m) => m.t === "ping");
+  assert(ping !== undefined && ping.t === "ping", "the probe is a ping datagram");
+  h.pushDatagram({ t: "pong", n: ping.n, ts: ping.ts });
+  assertEquals(await answered, true);
+
+  const silent = h.session.probe();
   await settle();
-  assertEquals(dispatched, []); // ORDER_HOLD_MAX - 1 held
-  accept(robotFrame("odom", ORDER_HOLD_MAX + 1, "reliable"));
-  await settle();
-  // The hold overflowed: every completed frame went out in order, the
-  // straggler still pending.
-  assertEquals(dispatched, Array.from({ length: ORDER_HOLD_MAX }, (_, i) => i + 2));
-  straggler.push(new Uint8Array([...PREAMBLE, ...frame1]).slice(headerEnd));
-  straggler.end();
-  await settle();
-  assertEquals(dispatched.at(-1), 1); // late, as before ordering
+  h.pushDatagram({ t: "pong", n: 999, ts: 0.5 }); // some other ping's pong: not ours
+  assertEquals(await silent, false);
+
+  h.session.supersede();
+  assertEquals(h.session.closed, "superseded");
+  const error = h.sentDatagrams.find((m) => m.t === "error");
+  assertEquals(error?.t === "error" ? error.code : null, "robot_superseded");
+  assertEquals(await h.session.probe(), false); // a closing session is not alive
+  await new Promise((resolve) => setTimeout(resolve, 300)); // closeAfterFlush
+  assertEquals(h.closedReason(), "superseded");
 });

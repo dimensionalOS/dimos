@@ -37,7 +37,8 @@ import {
   CONTROL_SEND_ORDER,
   ControlPayloadTooLargeError,
   type FrameWriter,
-  readRobotStream,
+  IncompleteFrameError,
+  readRobotFrames,
   type ViewerSink,
 } from "./forward.ts";
 import type { Registry, RobotPeer, ViewerPeer } from "./registry.ts";
@@ -53,6 +54,11 @@ export { CONTROL_SEND_ORDER, LATEST_SEND_ORDER, RELIABLE_SEND_ORDER } from "./fo
 export const STREAM_CREDIT_STALL_MS = 1000;
 export const STREAM_CREDIT_KICK_MS = 10_000;
 
+// How long a robot session holding a contested id has to answer the
+// relay's ping before a new session with that id supersedes it (the bridge
+// answers at once; a killed one never does).
+export const ROBOT_PROBE_MS = 1000;
+
 /**
  * Force a V8 garbage collection and record its pause. Deno 2.6.10 ends a
  * stream (FIN or reset) only when its wrapper is finalized, so collection is
@@ -66,20 +72,6 @@ export function forceGc(registry: Registry): void {
   const started = performance.now();
   gc();
   registry.collected(performance.now() - started);
-}
-
-// Reliable frames behind an incomplete earlier stream that wait for it. The
-// bridge's QUIC stack packs a burst of streams into packets round-robin, so
-// the first frame of a burst can complete last; past this many held frames
-// the completed ones go out ahead of it (the straggler follows late and the
-// viewer's seq guard drops it, as before ordering), which also keeps a
-// release from flooding the viewer's reliable queue.
-export const ORDER_HOLD_MAX = 8;
-
-/** One accepted robot stream in the per-robot dispatch order. */
-interface OrderedFrame {
-  settled: boolean;
-  dispatch: (() => void) | null;
 }
 
 function closeAfterFlush(wt: WebTransport, reason: string): void {
@@ -111,22 +103,24 @@ export class RobotSession implements RobotPeer {
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
   readonly #carrier: RobotCarrier;
   readonly #auth: Auth | null;
-  /** Declared delivery per channel (the registry's precedence over the
-   * frame header), for ordering frames before they are routed. */
-  #deliveries = new Map<string, "latest" | "reliable">();
-  /** Accepted data streams in accept order (see #frameLoop). */
-  readonly #inOrder: OrderedFrame[] = [];
+  /** The registration claim in progress (hello resends wait on it). */
+  #claim: Promise<void> | null = null;
+  #probeN = 0;
+  readonly #probeWaiters = new Map<number, (alive: boolean) => void>();
+  readonly #probeMs: number;
 
   constructor(
     wt: WebTransport,
     conn: Deno.QuicConn,
     registry: Registry,
     auth: Auth | null = null,
+    timing: { probeMs?: number } = {},
   ) {
     this.#wt = wt;
     this.#conn = conn;
     this.#registry = registry;
     this.#auth = auth;
+    this.#probeMs = timing.probeMs ?? ROBOT_PROBE_MS;
     this.#dgWriter = wt.datagrams.writable.getWriter();
     // The stream opens lazily on the first sendControl - the registration
     // baseline snapshot - so a rejected session never burns a stream.
@@ -156,6 +150,26 @@ export class RobotSession implements RobotPeer {
 
   carrierStats(): CarrierStats {
     return this.#carrier.stats();
+  }
+
+  probe(): Promise<boolean> {
+    if (this.closed !== null) return Promise.resolve(false);
+    const n = ++this.#probeN;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.#probeWaiters.delete(n);
+        resolve(false);
+      }, this.#probeMs);
+      this.#probeWaiters.set(n, () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+      this.sendMsg({ t: "ping", n, ts: Date.now() / 1000 });
+    });
+  }
+
+  supersede(): void {
+    this.#reject("robot_superseded", "a new session registered this robot id", "superseded");
   }
 
   /** The carrier is a control dependency: on overflow or write failure the
@@ -212,6 +226,13 @@ export class RobotSession implements RobotPeer {
       );
     }
     if (msg.t === "ping") this.sendMsg({ t: "pong", n: msg.n, ts: msg.ts });
+    if (msg.t === "pong") {
+      const waiter = this.#probeWaiters.get(msg.n);
+      if (waiter !== undefined) {
+        this.#probeWaiters.delete(msg.n);
+        waiter(true);
+      }
+    }
     return true;
   }
 
@@ -314,7 +335,6 @@ export class RobotSession implements RobotPeer {
       this.info = msg.robot;
       this.channels = channels;
       this.manifest = msg.manifest ?? null;
-      this.#deliveries = new Map(channels.map((c) => [c.ch, c.delivery]));
     } else if (
       this.info.id !== msg.robot.id ||
       this.info.name !== msg.robot.name ||
@@ -328,89 +348,54 @@ export class RobotSession implements RobotPeer {
       );
       return;
     }
-    if (!this.#registry.registerRobot(this)) {
-      this.#reject(
-        "robot_id_conflict",
-        `robot id ${msg.robot.id} already has a live session`,
-        "robot id conflict",
-      );
-      return;
-    }
-    this.sendMsg({ t: "welcome", v: PROTOCOL_VERSION });
+    // The claim may probe a previous holder of the id for up to ROBOT_PROBE_MS;
+    // hello resends meanwhile wait for its outcome.
+    if (this.#claim !== null) return;
+    const robotId = msg.robot.id;
+    this.#claim = this.#registry.claimRobot(this).then((registered) => {
+      this.#claim = null;
+      if (this.closed !== null) return;
+      if (!registered) {
+        this.#reject(
+          "robot_id_conflict",
+          `robot id ${robotId} already has a live session`,
+          "robot id conflict",
+        );
+        return;
+      }
+      this.sendMsg({ t: "welcome", v: PROTOCOL_VERSION });
+    }).catch((e) => {
+      this.#claim = null;
+      console.log(`[relay] robot ${robotId} claim failed:`, (e as Error)?.message ?? e);
+    });
   }
 
   /**
-   * Robot data streams, one frame each. Reliable frames are dispatched in
-   * stream-accept order: QUIC orders bytes within a stream only, so a
-   * delayed stream would otherwise overtake its successor and the viewer's
-   * seq guard would drop the late one. Each accepted stream joins the
-   * per-robot queue; a stream whose header shows a latest or control frame
-   * leaves it at once (a slow 1 MB voxel frame must not hold back the pose
-   * behind it) and dispatches on completion, while a reliable frame waits
-   * until every earlier queued stream has completed or failed, up to
-   * ORDER_HOLD_MAX frames held. A stream that fails before its header
-   * (reset by the bridge) leaves the queue too.
+   * Robot data streams: one frame per latest or @control stream, a reliable
+   * channel's frames back to back on its persistent stream (v8), so they
+   * arrive in order with no stream per frame. Each stream is read in its own
+   * task and every frame routes as soon as it is complete.
    */
   #frameLoop(): void {
     (async () => {
       for await (const bidi of this.#conn.incomingBidirectionalStreams) {
         bidi.writable.abort().catch(() => {});
-        const entry: OrderedFrame = { settled: false, dispatch: null };
-        this.#inOrder.push(entry);
-        (async () => {
-          let ordered = true;
-          const { header, bytes, reserved } = await readRobotStream(
-            bidi.readable,
-            (header, reserved) => {
-              if (reserved || header === null || this.#deliveryOf(header) !== "reliable") {
-                ordered = false;
-                this.#settle(entry, null);
-              }
-            },
-          );
-          const dispatch = () => {
-            if (reserved) this.#onControlFrame(header, bytes);
-            else this.#registry.onRobotFrame(this, bytes, header);
-          };
-          if (ordered) this.#settle(entry, dispatch);
-          else dispatch();
-        })().catch((e) => {
-          this.#settle(entry, null);
+        readRobotFrames(bidi.readable, ({ header, bytes, reserved }) => {
+          if (reserved) this.#onControlFrame(header, bytes);
+          else this.#registry.onRobotFrame(this, bytes, header);
+        }).catch((e) => {
           if (e instanceof ControlPayloadTooLargeError) {
             this.#reject("control_too_large", e.message, "oversized control frame");
             return;
           }
-          // Reset before or mid-frame (the bridge reset a stale latest
-          // frame, or the connection died): the partial is dropped.
-          this.#registry.robotStreamIncomplete();
+          // Reset mid-frame (the bridge reset a stale latest frame, or the
+          // connection died): the partial is dropped.
+          if (e instanceof IncompleteFrameError) this.#registry.robotStreamIncomplete();
         });
       }
     })().catch((e) => {
       console.log("[relay] robot stream loop ended:", (e as Error)?.message ?? e);
     });
-  }
-
-  #deliveryOf(header: FrameHeader): "latest" | "reliable" {
-    return this.#deliveries.get(header.ch) ?? header.delivery;
-  }
-
-  /** Mark one queued stream done (dispatch null = nothing to route, or the
-   * frame routes outside the order) and release what the order allows: the
-   * run of settled streams at the head, or, past ORDER_HOLD_MAX settled
-   * frames held behind an incomplete head, every settled frame in order. */
-  #settle(entry: OrderedFrame, dispatch: (() => void) | null): void {
-    if (entry.settled) return;
-    entry.settled = true;
-    entry.dispatch = dispatch;
-    const queue = this.#inOrder;
-    while (queue.length > 0 && queue[0].settled) queue.shift()!.dispatch?.();
-    let held = 0;
-    for (const queued of queue) if (queued.settled && queued.dispatch !== null) held++;
-    if (held < ORDER_HOLD_MAX) return;
-    for (let i = 0; i < queue.length;) {
-      if (queue[i].settled) queue.splice(i, 1)[0].dispatch?.();
-      else i++;
-    }
   }
 }
 
