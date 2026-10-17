@@ -156,6 +156,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: native-shared-deps
+        name: native modules share their dependencies (nix)
+        entry: python3 bin/native-modules --check-shared-deps
+        language: system
+        files: (^|/)(Cargo\.lock|Cargo\.toml|flake\.lock|flake\.nix)$
+        pass_filenames: false
+
       - id: deno-fmt
         name: deno fmt (web/)
         entry: bash -c 'cd web && deno fmt'

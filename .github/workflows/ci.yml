@@ -185,6 +185,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         run: python3 bin/native-modules --build
+      - name: Check native modules share their dependencies
+        run: python3 bin/native-modules --check-shared-deps
       - name: Lint native modules
         run: python3 bin/native-modules --lint
       - name: Test native modules
@@ -256,6 +258,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         run: python3 bin/native-modules --build
+      - name: Check native modules share their dependencies
+        run: python3 bin/native-modules --check-shared-deps
       - name: Verify Cachix holds the built paths
         env:
           CACHIX_CACHE_NAME: dimensionalos
@@ -328,8 +332,8 @@ jobs:
 
       - name: Run pre-commit
         env:
-          # fmt is checked in the rust job, lint in cachix-build
-          SKIP: cargo-fmt,native-module-lint
+          # fmt is checked in the rust job, lint and shared deps in cachix-build
+          SKIP: cargo-fmt,native-module-lint,native-shared-deps
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files --verbose

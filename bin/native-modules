@@ -39,6 +39,20 @@ Modes (exactly one):
                  so the shared crates under native/rust are covered too, and a
                  flake that does not build on this system simply declares no
                  check for it.
+  --check-shared-deps
+                 Fail when the modules disagree on a dependency they share:
+                 a flake input (nixpkgs, crate2nix, …) locked to different
+                 revs, a nix package (gtsam, pcl, …) at versions no two
+                 modules have in common, or a crate resolved to two
+                 semver-compatible versions (tokio 1.53.1 here, 1.52.0
+                 there), which cargo would have unified in one workspace.
+                 Crate versions live in each Cargo.lock, not flake.lock, so
+                 this instantiates every module's derivation and reads its
+                 closure; nothing is built but crate2nix's Cargo.nix. Also
+                 fails where one crate version builds as several derivations
+                 because the modules enable different features, since that
+                 build is then not shared between them. Known mismatches are
+                 listed in SHARED_DEPS_EXCEPTIONS.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -594,6 +608,238 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
 
 
+# Known mismatches --check-shared-deps lets through: "input:<source>", "package:<name>",
+# "crate:<name>" (two compatible versions) or "features:<name>" (one version, several builds).
+# Drop an entry once the modules agree; the check warns about entries that no longer match.
+SHARED_DEPS_EXCEPTIONS: frozenset[str] = frozenset(
+    {
+        "crate:bitflags",
+        "crate:cc",
+        "crate:cfg-if",
+        "crate:chacha20",
+        "crate:cpufeatures",
+        "crate:crc32fast",
+        "crate:crossbeam",
+        "crate:crossbeam-channel",
+        "crate:crossbeam-deque",
+        "crate:crossbeam-epoch",
+        "crate:crossbeam-queue",
+        "crate:crossbeam-utils",
+        "crate:find-msvc-tools",
+        "crate:flate2",
+        "crate:indexmap",
+        "crate:lru-slab",
+        "crate:mio",
+        "crate:pest",
+        "crate:pest_derive",
+        "crate:pest_generator",
+        "crate:pest_meta",
+        "crate:proc-macro-error-attr3",
+        "crate:proc-macro-error3",
+        "crate:quinn",
+        "crate:quinn-proto",
+        "crate:rand",
+        "crate:rcgen",
+        "crate:rustls",
+        "crate:serde_with",
+        "crate:serde_with_macros",
+        "crate:smallvec",
+        "crate:syn",
+        "crate:tinyvec",
+        "crate:toml",
+        "crate:toml_edit",
+        "crate:unicode-ident",
+        "crate:wide",
+        "crate:yoke-derive",
+        "crate:zerocopy",
+        "crate:zerofrom-derive",
+        "features:ahash",
+        "features:anyhow",
+        "features:arrayvec",
+        "features:bitflags",
+        "features:bytemuck",
+        "features:cc",
+        "features:crc32fast",
+        "features:either",
+        "features:fastrand",
+        "features:getrandom",
+        "features:hashbrown",
+        "features:num-complex",
+        "features:num-traits",
+        "features:proc-macro2",
+        "features:regex",
+        "features:regex-automata",
+        "features:regex-syntax",
+        "features:serde_json",
+        "features:stable_deref_trait",
+        "features:syn",
+        "features:yoke",
+        "features:zerocopy",
+        "features:zerofrom",
+    }
+)
+
+
+def _parse_drv_name(store_path: str) -> tuple[str, str]:
+    """Split `/nix/store/<hash>-rust_tokio-1.53.1.drv` into ("rust_tokio", "1.53.1") as builtins.parseDrvName does."""
+    name = Path(store_path).name[33:].removesuffix(".drv")
+    match = re.search(r"-(?=[^a-zA-Z])", name)
+    return (name[: match.start()], name[match.end() :]) if match else (name, "")
+
+
+def _semver_group(version: str) -> str:
+    """The cargo compatibility class of a version: 1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3."""
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return version
+    parts = match.groups()
+    for index, part in enumerate(parts):
+        if part != "0":
+            return ".".join(parts[: index + 1])
+    return ".".join(parts)
+
+
+def _version_key(version: str) -> tuple[int, int, int, bool, str]:
+    """Semver order: 1.0.0-rc.1 sorts before 1.0.0, and +build metadata is ignored."""
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]*))?", version)
+    if match is None:
+        return (0, 0, 0, False, version)
+    major, minor, patch, pre = match.groups()
+    return (int(major), int(minor), int(patch), pre is None, pre or "")
+
+
+def _module_closure(module: DiscoveredModule) -> tuple[str, frozenset[str] | None]:
+    """Every derivation a module's build depends on, or None if it does not build on this system."""
+    systems = _declared_systems(module)
+    if systems is not None and current_system() not in systems:
+        return module.build_dir, None
+    ref = _flake_ref_of(module)
+    drv = _run(["nix", "path-info", "--derivation", ref], REPO_ROOT / module.build_dir)
+    closure = _run(["nix", "path-info", "--recursive", drv.stdout.split()[-1]])
+    return module.build_dir, frozenset(p for p in closure.stdout.split() if p.endswith(".drv"))
+
+
+def _direct_inputs(build_dir: str) -> dict[str, str]:
+    """A flake's own inputs (not its inputs' inputs), keyed by source, and the rev each is locked to; `follows` are skipped."""
+    lock = json.loads((REPO_ROOT / build_dir / "flake.lock").read_text())
+    nodes = lock["nodes"]
+    pins = {}
+    for node in nodes[lock["root"]].get("inputs", {}).values():
+        if isinstance(node, str):
+            original, locked = nodes[node].get("original", {}), nodes[node].get("locked", {})
+            source = original.get("url") or "/".join(
+                filter(None, [original.get("owner"), original.get("repo"), original.get("dir")])
+            )
+            pins[source or node] = locked.get("rev") or locked.get("narHash", "")
+    return pins
+
+
+def _crate_features(drvs: list[str]) -> dict[str, str]:
+    shown = json.loads(_run(["nix", "derivation", "show", *drvs]).stdout)
+    shown = shown.get("derivations", shown)
+    return {Path(path).name: info["env"].get("crateFeatures", "") for path, info in shown.items()}
+
+
+def _where(build_dirs: set[str], total: int) -> str:
+    if len(build_dirs) == total and total > 3:
+        return f"all {total} modules"
+    return ", ".join(sorted(build_dirs)) if len(build_dirs) <= 3 else f"{len(build_dirs)} modules"
+
+
+def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
+    problems: dict[str, str] = {}
+    build_dirs = sorted({m.build_dir for m in modules})
+
+    input_revs: dict[str, dict[str, set[str]]] = {}
+    for build_dir in build_dirs:
+        for name, rev in _direct_inputs(build_dir).items():
+            input_revs.setdefault(name, {}).setdefault(rev, set()).add(build_dir)
+    for name, revs in sorted(input_revs.items()):
+        if len(revs) > 1:
+            where = " · ".join(
+                f"{rev[:12]} ({_where(dirs, len(build_dirs))})" for rev, dirs in revs.items()
+            )
+            problems[f"input:{name}"] = where
+
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    closures: dict[str, frozenset[str]] = {}
+    unique = {m.build_dir: m for m in modules}.values()
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        for build_dir, closure in executor.map(_module_closure, unique):
+            if closure is None:
+                _log(f"SKIP:  {build_dir} does not build on {current_system()}")
+            else:
+                closures[build_dir] = closure
+    _log(f"Read the closures of {len(closures)} module(s)")
+
+    crate_versions: dict[tuple[str, str], dict[str, set[str]]] = {}
+    builds: dict[tuple[str, str], dict[str, set[str]]] = {}
+    packages: dict[str, dict[str, set[str]]] = {}
+    for build_dir, closure in closures.items():
+        for drv in closure:
+            name, version = _parse_drv_name(drv)
+            if name.startswith("rust_"):
+                key = (name.removeprefix("rust_"), _semver_group(version))
+                crate_versions.setdefault(key, {}).setdefault(version, set()).add(build_dir)
+                builds.setdefault((name, version), {}).setdefault(drv, set()).add(build_dir)
+            elif version and not version.endswith(".tar.gz"):
+                packages.setdefault(name, {}).setdefault(build_dir, set()).add(version)
+    crates = {crate for crate, _ in crate_versions}
+    # One closure legitimately holds several versions (bootstrap stages), so a package
+    # drifts only when two modules share no version of it. Crates vendored by a nixpkgs
+    # package look like packages too, and are left to that package.
+    for name, per_module in sorted(packages.items()):
+        version_sets = list(per_module.values())
+        if name not in crates and any(
+            a.isdisjoint(b) for i, a in enumerate(version_sets) for b in version_sets[i + 1 :]
+        ):
+            by_version: dict[str, set[str]] = {}
+            for build_dir, versions in per_module.items():
+                by_version.setdefault(" ".join(sorted(versions)), set()).add(build_dir)
+            where = " · ".join(
+                f"{v} ({_where(dirs, len(closures))})" for v, dirs in by_version.items()
+            )
+            problems[f"package:{name}"] = where
+    for (crate, group), versions in sorted(crate_versions.items()):
+        if len(versions) > 1:
+            ordered = sorted(versions.items(), key=lambda kv: _version_key(kv[0]))
+            where = " · ".join(f"{v} ({_where(dirs, len(closures))})" for v, dirs in ordered)
+            problems[f"crate:{crate}"] = f"{group}.x: {where}"
+
+    # A crate version built as several derivations is not shared; report only the
+    # ones whose own features differ, not the dependents that differ because of them.
+    split = {key: drvs for key, drvs in builds.items() if len(drvs) > 1}
+    features = _crate_features([drv for drvs in split.values() for drv in drvs]) if split else {}
+    for (name, version), drvs in sorted(split.items()):
+        by_features: dict[str, set[str]] = {}
+        for drv, dirs in drvs.items():
+            by_features.setdefault(features[Path(drv).name] or "(none)", set()).update(dirs)
+        if len(by_features) > 1:
+            where = " · ".join(
+                f"[{f}] ({_where(dirs, len(closures))})" for f, dirs in by_features.items()
+            )
+            key = f"features:{name.removeprefix('rust_')}"
+            problems[key] = (
+                f"{problems[key]} | {version} {where}" if key in problems else f"{version} {where}"
+            )
+
+    failures = {key: where for key, where in problems.items() if key not in SHARED_DEPS_EXCEPTIONS}
+    for key in sorted(SHARED_DEPS_EXCEPTIONS - problems.keys()):
+        _log(
+            f"WARN:  exception {key!r} no longer matches on {current_system()}; drop it if it matches nowhere"
+        )
+    for key, where in sorted(failures.items()):
+        _log(f"FAIL:  {key}  {where}")
+    if failures:
+        sys.exit(
+            f"{len(failures)} shared dependency mismatch(es). crate: in each module that lags,"
+            " cargo update -p <crate>@<old> --precise <newest>. features: enable the same"
+            " features in every module that uses the crate. input: lock it to the rev the"
+            " other modules use. Or add the key to SHARED_DEPS_EXCEPTIONS."
+        )
+    _log(f"Shared dependencies agree ({len(problems)} known exception(s))")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -618,6 +864,11 @@ def main() -> None:
         help="build every flake's checks.<system>.tests, which compiles and runs its tests",
     )
     mode.add_argument(
+        "--check-shared-deps",
+        action="store_true",
+        help="fail when modules lock or build a shared dependency differently",
+    )
+    mode.add_argument(
         "--record-links",
         action="store_true",
         help="print each built module's result symlink and its store path",
@@ -637,6 +888,9 @@ def main() -> None:
     if args.record_links:
         for link, store in _result_links(modules):
             print(f"{link} {store}")
+        return
+    if args.check_shared_deps:
+        check_shared_deps(modules)
         return
     if args.verify_published:
         verify_published(modules)
