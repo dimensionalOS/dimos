@@ -85,6 +85,7 @@ from dimos.web.relay_bridge.protocol import (
     DataFrame,
     IceServer,
     Msg,
+    Rate,
     RobotInfo,
     RobotManifest,
     RtcAnswer,
@@ -142,6 +143,8 @@ _ENCODE_ERROR_LOG_S = 5.0
 # reaching a robot (relay errors to robots are handshake-only), so an offer
 # the relay never answers is rebuilt and re-sent with backoff.
 _RTC_ANSWER_TIMEOUT_S = 15.0
+# The relay's rate feedback never samples a channel under this.
+_RATE_FLOOR_HZ = 0.5
 
 # Encodings whose live frames are encoded on a worker thread (latest wins,
 # one encode per channel at a time) instead of the transport thread, as
@@ -723,6 +726,9 @@ class RelayBridgeModule(Module):
     def _build_senders(
         self, client: RelayClient, rtc_channels: frozenset[str]
     ) -> dict[str, Sender]:
+        # A fresh session starts at the manifest rates; the relay's feedback
+        # lowers them again as its viewers show what they keep up with.
+        self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
         senders: dict[str, Sender] = {}
         for spec in self._channel_specs:
             if spec.ch in rtc_channels:
@@ -782,6 +788,8 @@ class RelayBridgeModule(Module):
                             teleop.on_start(msg)
                         elif teleop is not None and isinstance(msg, WireTeleopStop):
                             teleop.on_end(msg)
+                        elif isinstance(msg, Rate):
+                            self._on_rate(msg)
                         elif isinstance(msg, RtcIce):
                             self._on_rtc_ice(session, msg)
                         elif isinstance(msg, RtcAnswer):
@@ -807,6 +815,23 @@ class RelayBridgeModule(Module):
             await _cancel_task(deadman, "teleop watchdog")
             await _cancel_task(watchdog, "watchdog")
             await self._disconnect(session)
+
+    def _on_rate(self, msg: Rate) -> None:
+        """Rate feedback from the relay (v8): sample the channel at the rate
+        its slowest active viewer keeps up with, never above its max_hz.
+        Frames encoded past that rate were shed on the way anyway."""
+        spec = next((s for s in self._channel_specs if s.ch == msg.ch), None)
+        if spec is None or spec.paced:
+            return
+        hz = min(spec.max_hz, max(float(msg.hz), _RATE_FLOOR_HZ))
+        was_capped = self._min_interval.get(spec.ch, 0.0) > 1.0 / spec.max_hz + 1e-9
+        self._min_interval[spec.ch] = 1.0 / hz
+        if hz < spec.max_hz and not was_capped:
+            logger.info(
+                f"relay bridge: {spec.ch} capped at {hz:.1f} Hz (the slowest viewer's rate)"
+            )
+        elif hz >= spec.max_hz and was_capped:
+            logger.info(f"relay bridge: {spec.ch} back at its {spec.max_hz:.1f} Hz")
 
     def _on_rtc_ice(self, session: _Session, msg: RtcIce) -> None:
         # The first rtc_ice starts the peer; every later one (a TURN credential

@@ -125,6 +125,7 @@ const controlMsgs: Record<string, Msg> = {
   sub: { t: "sub", ch: "color_image" },
   unsub: { t: "unsub", ch: "color_image" },
   ack: { t: "ack", ch: "color_image", seq: 41 },
+  rate: { t: "rate", ch: "color_image", hz: 12.5 },
   subs_snapshot: { t: "subs", chs: ["color_image", "odom"], n: 3 },
   subs_empty: { t: "subs", chs: [], n: 4 },
   // Bare lease messages are the viewer-leg shapes (control stream); the
