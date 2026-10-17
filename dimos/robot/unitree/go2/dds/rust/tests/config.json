@@ -83,6 +83,7 @@
   "lidar_raw_on": false,
   "lowstate_on": true,
   "lowstate_hz": 50.0,
+  "lowcmd_on": false,
   "video_on": true,
   "video_encoding": "jpeg",
   "video_fps": 15.0,

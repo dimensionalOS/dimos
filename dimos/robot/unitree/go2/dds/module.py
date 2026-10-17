@@ -27,6 +27,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
+from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation, Slerp
@@ -63,11 +64,13 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     domain_id: int = 0
     # Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     lidar_on: bool = True
-    # Also the undeskewed sensor-frame cloud and the L1's own IMU.
+    # Also the undeskewed sensor-frame cloud, the L1's own IMU and its height map.
     lidar_raw_on: bool = False
-    # Body joint states, IMU and battery off rt/lowstate, decimated to lowstate_hz.
+    # Body joint and motor states, IMU and battery off rt/lowstate, decimated to lowstate_hz.
     lowstate_on: bool = True
     lowstate_hz: float = 50.0
+    # Also whatever drives the motors on rt/lowcmd (a low-level policy), at lowstate_hz.
+    lowcmd_on: bool = False
     # h264 off the RTP multicast onto `video`, or jpeg polled at `video_fps` onto `image`.
     video_on: bool = True
     video_encoding: Literal["h264", "jpeg"] = "jpeg"
@@ -87,6 +90,9 @@ class GO2DDS(NativeModule, Go2Base):
     lidar_raw: Out[PointCloud2]  # undeskewed L1 cloud in its sensor frame, `lidar_raw_on`
     lidar_imu: Out[Imu]  # the L1's own IMU, `lidar_raw_on`
     joint_state: Out[JointState]  # 12 leg joints, Unitree order
+    motor_state: Out[DynamicJointState]  # the 12 motors' full readings + 4 foot forces
+    joint_command: Out[DynamicJointState]  # rt/lowcmd targets and PD gains, `lowcmd_on`
+    height_map: Out[PointCloud2]  # the L1's elevation grid, known cells, `lidar_raw_on`
     imu: Out[Imu]  # the body IMU, base_link
     battery: Out[BatteryState]  # ~1 Hz
     joy: Out[Joy]  # the handheld remote: 4 stick axes, 16 key bits
