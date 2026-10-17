@@ -310,6 +310,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Check declared dependencies
+        run: uv run --no-sync deptry dimos --config pyproject.toml --github-output
       - name: Mypy
         run: uv run mypy
 
@@ -850,6 +852,17 @@ jobs:
           brew install ffmpeg
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv run playwright install chromium firefox
+      - name: Install Node 24 for the Pi and dimcode CLIs
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install the Pi and dimcode CLIs
+        # The agent eval tests (dimos/evals/agents) drive both. Installed outside
+        # the workspace: the no_dimos evals drop PATH entries with a "dimos" path
+        # component, and the CLIs must survive that.
+        run: |
+          bin/install-test-clis "$RUNNER_TEMP/test-clis"
+          echo "$RUNNER_TEMP/test-clis/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
@@ -948,6 +961,14 @@ jobs:
                 sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
               done
           fi
+      - name: Kill processes left over from earlier jobs (macOS)
+        # Not needed on Linux, as it uses a fresh container on every run.
+        if: matrix.os == 'macOS'
+        run: |
+          pgrep -fl "$GITHUB_WORKSPACE/" || exit 0
+          pkill -f "$GITHUB_WORKSPACE/" || true
+          for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
+          pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
