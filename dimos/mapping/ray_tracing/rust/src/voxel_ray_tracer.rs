@@ -49,6 +49,12 @@ pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
     )
 }
 
+/// The region grid cell a world point falls in.
+pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> Cell {
+    let cell_m = region_m.max(CHUNK_EDGE as f32 * voxel_size);
+    ((x / cell_m).floor() as i32, (y / cell_m).floor() as i32)
+}
+
 #[inline]
 fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;
@@ -115,14 +121,16 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_cell_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
-    pub viz_sweep_regions: u32,
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
+    pub viz_sweep_cells: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {

@@ -266,13 +266,13 @@ fn headway_never_reduces_the_commanded_speed() {
 
 // The stamped precision profile (the governor channel the follower runs on).
 
-/// `profile.governor_speed`, transcribed: clearance (m) -> speed ceiling (m/s).
+/// `stamps::governor_speed`, transcribed: clearance (m) -> speed ceiling (m/s).
 fn governor_speed(clearance: f64) -> f64 {
     let frac = ((clearance - 0.05) / (0.35 - 0.05)).clamp(0.0, 1.0);
     0.2 + (0.5 - 0.2) * frac
 }
 
-/// `profile.encode_precision`, transcribed: dt across a segment is its length over the
+/// `stamps::encode_precision`, transcribed: dt across a segment is its length over the
 /// governor speed of its tighter endpoint; a fan (zero-length) segment is priced by yaw.
 fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64) -> Vec<f64> {
     let mut ts = vec![t0; path.len()];

@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import field
 import functools
+from operator import attrgetter
 import os
 import shutil
 import signal
@@ -144,7 +145,7 @@ RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
 def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per key, taken unconflated."""
+    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
     renderer.keyed_by_seq = True  # type: ignore[attr-defined]
     return renderer
 
@@ -396,7 +397,7 @@ class RerunBridgeModule(Module):
         return composed
 
     def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every message must arrive."""
+        """Channels whose renderer keys entities by seq, so every seq must arrive."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
@@ -580,7 +581,8 @@ class RerunBridgeModule(Module):
         """
         if not self.config.topics:
             if isinstance(pubsub, Zenoh):
-                return pubsub.subscribe_all(self._on_message, unconflated=self._keyed_topics())
+                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
+                return pubsub.subscribe_all(self._on_message, keyed=keyed)
             return pubsub.subscribe_all(self._on_message)
 
         if not isinstance(pubsub, Zenoh):

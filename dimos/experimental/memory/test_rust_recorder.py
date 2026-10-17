@@ -226,6 +226,14 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
     assert Path(config.store.path).name == "recording.db"
 
 
+def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
+    config = RustRecorderConfig()
+
+    assert config.source_dir == "dimos/experimental/memory/rust"
+    assert config.build_command == "nix build -L path:."
+    assert config.executable == "result/bin/dimos-memory-recorder"
+
+
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
     recorder = make_recorder(
         SampleRustRecorder,

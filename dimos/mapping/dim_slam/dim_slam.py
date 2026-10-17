@@ -17,7 +17,7 @@ number of odometry sources by an error-state Kalman filter, in one process."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -122,13 +122,9 @@ class SourceConfig(BaseModel):
 class DimSlamConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/mapping/dim_slam/rust"
     executable: str = "result/bin/dim_slam"
-    # git+file, not path:. : the flake's ../../../.. input must be inside the entered tree.
-    # Builds see tracked files only.
-    build_command: str | None = Field(
-        default_factory=lambda: (
-            f"nix build -L 'git+file:../../../..?dir=dimos/mapping/dim_slam/rust#{sdk_variant()}'"
-        )
-    )
+    # A literal so bin/native-modules can read it: CI builds `default`, which needs
+    # no GPU. The variant this machine needs is chosen in model_post_init.
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
 
@@ -256,6 +252,11 @@ class DimSlamConfig(NativeModuleConfig):
                     "which fuses nothing; use a positive variance or drop the source"
                 )
         return self
+
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        if self.build_command == "nix build -L path:.":
+            self.build_command = f"nix build -L path:.#{sdk_variant()}"
 
 
 class DimSlam(NativeModule):
