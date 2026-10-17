@@ -41,6 +41,12 @@ class FakeSink implements ViewerSink {
     this.auto = auto;
   }
 
+  #shared: Promise<FrameWriter> | null = null;
+
+  sharedStream(order: number): Promise<FrameWriter> {
+    return this.#shared ??= this.openStream(order);
+  }
+
   openStream(order: number): Promise<FrameWriter> {
     this.streamsOpened++;
     this.orders.push(order);

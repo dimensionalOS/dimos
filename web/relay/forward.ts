@@ -40,10 +40,15 @@ export const LATEST_STALL_MS = 500;
 // next one: the backlog a slow link can carry is this many frames, not the
 // stream window's worth (20 s of video at 3 fps). Two keeps the link busy
 // while the ack of the previous frame travels back. An ack that never comes
-// (a lost datagram from the Python viewer, a viewer bug) releases its frame
-// after ACK_TIMEOUT_MS, counted as `ackTimeouts`.
+// (both acks of a pair lost, which only the Python viewer's datagram acks
+// can suffer, or a viewer bug) releases its frame after ACK_TIMEOUT_MS,
+// counted as `ackTimeouts`. That is a safety net, not pacing: a frame
+// released while its predecessors are still in the stream's send buffer
+// rebuilds the backlog the budget exists to bound (a 2 s timeout put 22 s
+// of video in flight on a 2 Mbit/s link with 3% loss), and a healthy viewer
+// on any link acknowledges well inside 10 s.
 export const ACK_BUDGET = 2;
-export const ACK_TIMEOUT_MS = 2000;
+export const ACK_TIMEOUT_MS = 10_000;
 
 // One decoder for every robot frame header (fatal so corrupt UTF-8 drops the
 // frame rather than routing a mangled channel name).
@@ -56,6 +61,9 @@ export interface ViewerSink {
    * FIN'd: on dispose it is aborted, which on Deno 2.6.10 delivers what was
    * buffered and ends the stream when the wrapper is finalized. */
   openStream(order: number): Promise<FrameWriter>;
+  /** The one stream the viewer's small reliable channels share, opened on
+   * first use at `order` and kept for the session: a policy never aborts it. */
+  sharedStream(order: number): Promise<FrameWriter>;
   kick(reason: string): void;
 }
 
@@ -68,7 +76,20 @@ export interface PolicyOptions {
   stallMs?: number;
   ackTimeoutMs?: number;
   now?: () => number;
+  /** Reliable: write on the viewer's shared reliable stream instead of a
+   * stream of the channel's own. */
+  shared?: boolean;
 }
+
+// Reliable channels in these encodings get a stream of their own; the rest
+// of a viewer's reliable channels share one (protocol.md workaround 11). A
+// frame of one of these takes long enough to send on a slow link that the
+// small channels must not queue behind it.
+export const BULK_ENCODINGS: ReadonlySet<string> = new Set([
+  "jpeg.v1",
+  "costmap.zlib.v1",
+  "voxels.zlib.v1",
+]);
 
 export interface ChannelPolicy {
   readonly delivery: Delivery;
@@ -336,7 +357,10 @@ export class LatestChannel implements ChannelPolicy {
  * teardown completes are ignored.
  *
  * All frames ride ONE persistent uni stream (opened on first use): QUIC
- * streams deliver in order (protocol.md workaround 11).
+ * streams deliver in order (protocol.md workaround 11). A small channel
+ * (`shared`) writes on the stream the viewer's small reliable channels share,
+ * whole frames interleaved, so a viewer costs one stream for all of them; a
+ * bulk one (BULK_ENCODINGS) has a stream of its own.
  */
 export class ReliableChannel implements ChannelPolicy {
   readonly delivery: Delivery = "reliable";
@@ -356,9 +380,11 @@ export class ReliableChannel implements ChannelPolicy {
   #writer: FrameWriter | null = null;
   #disposed = false;
   readonly #now: () => number;
+  readonly #shared: boolean;
 
   constructor(readonly sink: ViewerSink, opts: PolicyOptions = {}) {
     this.#now = opts.now ?? Date.now;
+    this.#shared = opts.shared ?? false;
   }
 
   queued(): number {
@@ -404,7 +430,8 @@ export class ReliableChannel implements ChannelPolicy {
     this.#bytes = 0;
     // Abort, not close: a closed stream cannot be aborted, and both
     // receivers treat the end of the stream as end-of-stream either way.
-    this.#writer?.abort().catch(() => {});
+    // The shared stream outlives the channel.
+    if (!this.#shared) this.#writer?.abort().catch(() => {});
     this.#writer = null;
   }
 
@@ -412,11 +439,14 @@ export class ReliableChannel implements ChannelPolicy {
     if (this.#writing || this.#disposed) return;
     this.#writing = true;
     (async () => {
-      const writer = this.#writer ??= await this.sink.openStream(RELIABLE_SEND_ORDER);
+      const writer = this.#writer ??=
+        await (this.#shared
+          ? this.sink.sharedStream(RELIABLE_SEND_ORDER)
+          : this.sink.openStream(RELIABLE_SEND_ORDER));
       if (this.#disposed) {
         // dispose() ran while the stream was opening and saw no writer to
         // abort; release the stream here.
-        writer.abort().catch(() => {});
+        if (!this.#shared) writer.abort().catch(() => {});
         this.#writer = null;
         return;
       }
