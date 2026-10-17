@@ -42,6 +42,7 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.joint_reset import JointResetModule
 
 _openyam_keyboard_hw = openyam_hardware()
 _openyam_model = make_openyam_model_config()
@@ -124,6 +125,7 @@ _openyam_webxr_task = teleop_ik_task(
 # Single-arm WebXR teleop: right controller -> OpenYAM arm
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(),
+    JointResetModule.blueprint(button_groups={"right_secondary": ["manipulator"]}),
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_webxr_hw],
