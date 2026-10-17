@@ -12,23 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Check that a window answered from Memento's cached reads matches a fresh read of it.
+"""Benchmark full-window ``localize`` against incremental ``--step`` reads cached in ``Memento``.
 
 Run: uv run python -m dimos.perception.localize.tools.tool_memento [query ...]
          [--dataset <db>] [--from <s>] [--duration <s>] [--params <name|json>] [--step <s>]
          [--whole-lidar]
 
-The window is embedded once and answered three times on that index and the
-same models, each from an empty memory and support-plane cache: fresh; fresh
-again, the run-to-run floor; and composed, after reading the window as
-consecutive ``--step`` second windows, the way a caller polling a rolling
-window fills the memory, so the composed answer itself reads nothing.
-Retrieval picks peaks and verification frames per window, so composed and
-fresh can differ. Every answer is printed beside its match by position.
+``test_memento.py`` verifies ``Memento`` deterministically. This tool runs the
+full ``localize`` pipeline on a recording to measure how slicing a window into
+consecutive ``--step`` sub-windows changes ``Counted.frames`` (candidate frames
+scored by ``detector.query_score_rows``) and the returned ``Localization``
+list.
 
-On a lidar rig each read lifts through its own window's scans, as the module's
-calls do; ``--whole-lidar`` lifts every read through the whole window's scans,
-so what still differs comes from retrieval alone.
+What is benchmarked:
+The window ``(after, before)`` is embedded once with ``embed_index`` and
+evaluated three times with the same models, each time starting from a new
+``Memento`` and an empty ``rig.plane_cache``:
+1. ``fresh``: one ``localize`` call over ``[(after, before)]``.
+2. ``fresh again`` (``again``): a second identical call over ``[(after, before)]``
+   to measure run-to-run variance on the same full window.
+3. ``composed``: consecutive ``--step`` second calls ``(t, min(t + step, before))``
+   sharing one ``Memento``, followed by a final ``(after, before)`` call that
+   scores zero frames and builds its ``Localization`` list from the ``Sighting``
+   rows stored during the ``--step`` calls.
+
+How to interpret the output:
+- ``frames scored``: ``composed`` usually scores more frames than ``fresh``
+  because ``retrieve`` runs on each sub-window ``Gap`` separately and selects up
+  to ``params.tail_k`` tail frames per sub-window instead of once for the whole
+  window.
+- ``fresh again``: any difference here is baseline run-to-run variance in a
+  single pass (such as RANSAC sampling inside ``fit_support_plane``).
+- ``composed``: differences beyond the ``fresh again`` baseline come from
+  sub-window boundary effects in ``retrieve`` (prominence ``peaks`` split at
+  ``--step`` boundaries and ``verify_radius_m`` searches bounded to the current
+  ``Gap``), ``support_planes`` (fitting ``rig.plane_cache`` from the first
+  sub-window with candidates rather than sampling keyframes across the full
+  window), and on a lidar rig, lifting each sub-window through
+  ``rig.lidar.time_range(lo, hi)``. Passing ``--whole-lidar`` keeps the full
+  window's ``rig.lidar`` for every sub-window so remaining differences come
+  only from ``retrieve`` and ``support_planes``.
 """
 
 import argparse
@@ -86,7 +109,7 @@ def describe(hit: Localization, lo: float) -> str:
 def compare(
     name: str, base: list[Localization], other: list[Localization], radius: float, lo: float
 ) -> int:
-    """Print ``other``'s answers beside ``base``'s, matched by position; count differences."""
+    """Print ``other``'s answers beside ``base``'s, matched by position, and count differences."""
     pending = list(range(len(other)))
     differences = 0
     for hit in base:
@@ -133,7 +156,7 @@ def answer(
     head: float,
     whole_lidar: bool,
 ) -> tuple[list[list[Localization]], int]:
-    """Read ``windows`` in order into one empty memory; the last one's answer and the frames scored.
+    """Read ``windows`` in order into one empty ``Memento`` and return the last answer and frame count.
 
     Each read lifts through its own window's lidar scans, as the module's calls do.
     """
