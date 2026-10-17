@@ -1,0 +1,43 @@
+[package]
+name = "dimos-gsc-pgo"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of the gsc_pgo pose-graph-optimization core (gtsam FFI shim + Scan Context)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_gsc_pgo"
+path = "src/lib.rs"
+
+# The module executable (port of gsc_pgo's main.cpp on dimos_module). Kept
+# behind the `native` feature so `--no-default-features` still builds/tests
+# the dependency-free PGO core alone.
+[[bin]]
+name = "gsc-pgo"
+path = "src/main.rs"
+required-features = ["native"]
+
+# Offline eval: replay a recorded db straight through GscPgo, faster than real
+# time, and dump an eval.py-shaped JSON. Bypasses the zenoh/replay scaffolding.
+[[bin]]
+name = "pgo-eval"
+path = "src/eval.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:serde_json", "dep:rusqlite", "dep:tracing", "dep:validator"]
+
+[dependencies]
+rayon = "1"
+dimos-module = { path = "../../../../../../../native/rust/dimos-module", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+tracing = { version = "0.1", optional = true }
+validator = { version = "0.21", features = ["derive"], optional = true }
+
+[build-dependencies]
+cc = "1"
