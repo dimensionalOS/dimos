@@ -27,20 +27,21 @@ frames, only as long as the embed tail and the pairing need them. What
 the depth frame or lidar scan paired with each of them, stored lz4. Both roll
 over ``horizon_s`` seconds. A lidar call lifts through its window's scans
 merged.
+
+Agents calling ``state`` and ``localize`` over MCP: ``SKILL.md`` in this
+package covers windows, watching labels, narrowing a position and params.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import replace
-import json
 import threading
 import time
 from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -60,8 +61,15 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, Rig, RigCamera
-from dimos.perception.localize.types import Localization
+from dimos.perception.localize.localize_params import XARM_PARAMS, parse_params
+from dimos.perception.localize.rig import (
+    DEPTH_TOLERANCE,
+    EMBED_HZ,
+    WALK_EMBED_HZ,
+    Rig,
+    RigCamera,
+)
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -78,6 +86,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     world_frame: str = "world"
     # what lifts a detection: the aligned depth_image, or the lidar
     geometry: Literal["depth", "lidar"] = "depth"
+    # the camera rides a walking base: the index runs at WALK_EMBED_HZ
+    mobile: bool = False
     horizon_s: float = 600.0
     # raw frames kept for the embed tail and the pairing
     feed_frames: int = 300
@@ -85,8 +95,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     embedder: str = "siglip"
     detector: str = "owlv2"
     segmenter: str = "edgetam"
-    # LocalizePolicy overrides on the models' shifts, tuned offline with tools/tool_localize
-    policy: dict[str, Any] = Field(default_factory=dict)
+    # the rig's params, a localize_params preset or built from one; localize() can change them
+    params: LocalizeParams = XARM_PARAMS
 
 
 class PerceptionLocalize(Module):
@@ -117,7 +127,8 @@ class PerceptionLocalize(Module):
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
 
-        memory_frames = int(self.config.horizon_s * EMBED_HZ)
+        embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
+        memory_frames = int(self.config.horizon_s * embed_hz)
         feed_frames = self.config.feed_frames
         geometry_type = Image if self.config.geometry == "depth" else PointCloud2
         self._memory = self.register_disposable(MemoryStore())
@@ -206,6 +217,7 @@ class PerceptionLocalize(Module):
             tf=self._tf_buffer,
             world_frame=self.config.world_frame,
             lidar=None if depth is not None else self._geometry_memory,
+            mobile=self.config.mobile,
         )
         self.detector.embed_live(self.rig, self._color_feed, self.index)
         self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
@@ -230,7 +242,7 @@ class PerceptionLocalize(Module):
 
     @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, policy: str = ""
+        self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
@@ -241,8 +253,12 @@ class PerceptionLocalize(Module):
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``policy`` is a JSON object of LocalizePolicy field overrides,
-        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'.
+        ``params`` changes the module's params for this call only: a preset,
+        ``xarm`` or ``dual_yam`` (desk) or ``go2`` (room), switches to it; a
+        JSON object sets LocalizeParams fields on the module's params, or on the
+        preset its "base" key names, e.g. '{"accept_score": 0.45}'.
+
+        Usage guide: dimos/perception/localize/SKILL.md.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
@@ -254,9 +270,9 @@ class PerceptionLocalize(Module):
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        tuning = self.detector.policy({**self.config.policy, **json.loads(policy or "{}")})
+        call_params = self.detector.shifted(*parse_params(params, self.config.params))
         results = self.detector.localize(
-            queries, index=index, rig=rig, policy=tuning, groups=self._groups
+            queries, index=index, rig=rig, params=call_params, groups=self._groups
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
 

@@ -35,6 +35,7 @@ from typing import Any
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.perception.localize.localize_params import XARM_PARAMS
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.visualization.vis_module import vis_module
 
@@ -80,6 +81,6 @@ rerun_config: dict[str, Any] = {
 
 xarm_localize_live = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
-    PerceptionLocalize.blueprint(world_frame="world"),
+    PerceptionLocalize.blueprint(world_frame="world", params=XARM_PARAMS),
     McpServer.blueprint(),
 ).global_config(n_workers=5)
