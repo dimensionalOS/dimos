@@ -76,6 +76,11 @@ class Image(Timestamped):
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
     ts: float = field(default_factory=time.time)
+    # The JPEG this image was decoded from (a JpegLcmTransport message), kept
+    # so a consumer that wants JPEG bytes (the web bridge) forwards them
+    # instead of encoding the pixels again. None for every other image, and
+    # for any copy or conversion of this one.
+    jpeg: bytes | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.data, np.ndarray):
@@ -106,13 +111,17 @@ class Image(Timestamped):
         return int(self.height * self.width)
 
     def __getstate__(self) -> dict[str, Any]:
-        return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
+        state = {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
+        if self.jpeg is not None:
+            state["jpeg"] = self.jpeg
+        return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.data = state.get("data", np.zeros((1, 1, 3), dtype=np.uint8))
         self.format = state.get("format", ImageFormat.BGR)
         self.frame_id = state.get("frame_id", "")
         self.ts = state.get("ts", time.time())
+        self.jpeg = state.get("jpeg")
 
     @property
     def height(self) -> int:
@@ -627,6 +636,7 @@ class Image(Timestamped):
                 and msg.header.stamp.sec > 0
                 else time.time()
             ),
+            jpeg=bytes(msg.data),
         )
 
 

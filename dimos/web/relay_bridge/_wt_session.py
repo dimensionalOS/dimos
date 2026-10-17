@@ -226,10 +226,10 @@ class SessionProtocol(QuicConnectionProtocol):
             self.closed.set()
             self._wake_delivery_waiters()
         elif isinstance(event, StreamReset):
-            # aioquic's H3 layer ignores resets, and the relay ends every
-            # latest stream with one (reap, dispose, or teardown): without
-            # this pop the reader map grows by one entry per latest stream.
-            # A partial frame in that reader is stale by definition.
+            # aioquic's H3 layer ignores resets, and the relay ends a
+            # channel's stream with one (unsubscribe, or teardown): without
+            # this pop the reader map keeps an entry per ended stream. A
+            # partial frame in that reader is stale by definition.
             self._frame_readers.pop(event.stream_id, None)
             if self._carrier_stream(event.stream_id):
                 self.fail_session(f"carrier stream {event.stream_id} reset")
@@ -336,10 +336,10 @@ class SessionProtocol(QuicConnectionProtocol):
         return msgs
 
     def _stream_data_received(self, stream_id: int, data: bytes, ended: bool) -> None:
-        # A latest stream carries one frame; a reliable channel's persistent
-        # stream carries them back to back, so frames dispatch on byte count
-        # (the peer's FIN can be seconds late). None poisons a stream that
-        # produced a bad frame: framing is unrecoverable mid-stream.
+        # A channel's persistent stream carries its frames back to back, so
+        # frames dispatch on byte count (the peer's FIN can be seconds late).
+        # None poisons a stream that produced a bad frame: framing is
+        # unrecoverable mid-stream.
         reader = self._frame_readers.get(stream_id, DataFrameStreamReader())
         if reader is not None:
             self._frame_readers[stream_id] = reader
@@ -432,6 +432,7 @@ class SessionProtocol(QuicConnectionProtocol):
         logger.error(f"failing relay session: {reason}")
         self._quic.close(error_code=ErrorCode.H3_GENERAL_PROTOCOL_ERROR, reason_phrase=reason)
         self.closed.set()
+        self._wake_delivery_waiters()
 
     def send_msg(self, msg: Msg) -> None:
         assert self.session_id is not None

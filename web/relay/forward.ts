@@ -1,9 +1,8 @@
 // Robot->viewer forwarding primitives: per-(viewer, channel) delivery
 // policies over a transport-blind ViewerSink (unit-testable without QUIC),
-// plus the raw-QUIC robot stream readers. Routing lives in registry.ts; the
+// plus the raw-QUIC robot stream reader. Routing lives in registry.ts; the
 // relay never parses payloads, only frame headers.
 import {
-  concatBytes,
   type Delivery,
   type FrameHeader,
   frameHeaderFromUnknown,
@@ -12,6 +11,16 @@ import {
   RESERVED_CHANNEL_PREFIX,
 } from "@dimos/shared";
 
+// Relay->viewer send priorities, all in one place. WebTransport sendOrder
+// (backed by quinn stream priority): queued bytes of a higher-order stream
+// are sent before those of a lower-order one, so control outranks reliable
+// telemetry, which outranks latest video. Every stream of a band shares its
+// order (quinn round-robins equals), one persistent stream per channel.
+// Datagrams (the Python viewer's control leg) have no sendOrder API.
+export const CONTROL_SEND_ORDER = 2;
+export const RELIABLE_SEND_ORDER = 1;
+export const LATEST_SEND_ORDER = 0;
+
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
 // reconnects with a clean slate. A lone frame over the byte cap (up to
 // MAX_DATA_FRAME_BYTES) still queues, as on the Python leg: kicking would
@@ -19,45 +28,24 @@ import {
 const RELIABLE_MAX_QUEUE = 64;
 const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 
-// A latest stream still un-reset this long after its frame was accepted is
-// presumed stale: a newer offer resets it. Matches the Python robot leg's
-// stale_after. Healthy viewers read frames long before this; the reset then
-// only ends an already-consumed stream (and returns its Firefox uni-stream
-// credit far faster than Deno's ~1 s lazy FIN would).
-export const LATEST_STALE_MS = 500;
+// A latest write the transport has not accepted after this long means the
+// viewer's stream window is full: it stopped reading (a suspended tab) or
+// its link is slower than the channel. Counted per channel as `stalled`,
+// the stalled-viewer signal in /api/stats. Matches the Python robot leg's
+// stale_after.
+export const LATEST_STALL_MS = 500;
 
 // One decoder for every robot frame header (fatal so corrupt UTF-8 drops the
 // frame rather than routing a mangled channel name).
 const headerDecoder = new TextDecoder("utf-8", { fatal: true });
 
-/** One latest-channel frame handed to the transport. */
-export interface FrameSend {
-  /** Settles when the transport ACCEPTED the whole frame into its send
-   * buffers (flow-control/credit acceptance, NOT delivery); rejects on
-   * abort() or transport failure. */
-  readonly done: Promise<void>;
-  /** True once abort() was called; a rejection of `done` is then expected. */
-  readonly aborted: boolean;
-  /** Reset the frame's stream: quinn discards buffered unsent data and the
-   * receiver discards buffered unread data. Rejects `done` immediately even
-   * while the stream is still being created. Idempotent; never throws. */
-  abort(): void;
-  /** Replace the payload if the stream write has not started (the send is
-   * still wedged in stream creation); false once the write began or after
-   * abort(). */
-  supersede(bytes: Uint8Array): boolean;
-}
-
 /** Transport surface a policy writes to. */
 export interface ViewerSink {
-  /** One uni stream per call, never FIN'd (a closed WritableStream cannot be
-   * aborted, per spec abort() on a closed stream is a no-op): every latest
-   * stream ends in a reset - reap, dispose, or session teardown. Receivers
-   * dispatch frames on byte count and treat the reset as end-of-stream.
-   * Returns synchronously; all async work rides `done`. */
-  sendFrame(bytes: Uint8Array): FrameSend;
-  /** One persistent uni stream (reliable channels pack frames onto it). */
-  openStream(): Promise<FrameWriter>;
+  /** One persistent uni stream at the given sendOrder; the policy packs its
+   * frames onto it back to back (receivers dispatch on byte count). Never
+   * FIN'd: on dispose it is aborted, which on Deno 2.6.10 delivers what was
+   * buffered and ends the stream when the wrapper is finalized. */
+  openStream(order: number): Promise<FrameWriter>;
   kick(reason: string): void;
 }
 
@@ -67,7 +55,7 @@ export interface FrameWriter {
 }
 
 export interface PolicyOptions {
-  staleMs?: number;
+  stallMs?: number;
   now?: () => number;
 }
 
@@ -75,34 +63,24 @@ export interface ChannelPolicy {
   readonly delivery: Delivery;
   /** Frames accepted by the transport (acceptance, not delivery). */
   sent: number;
-  /** Frames shed before reaching the wire (latest: pending-slot replacement,
-   * carrier supersede replacement, and the payload of a stale write-wedged
-   * carrier reset; reliable: never, it kicks instead). Outside dispose/kick:
+  /** Frames shed before reaching the wire (latest: pending-slot replacement;
+   * reliable: never, it kicks instead). Outside dispose/kick:
    * offers == sent + dropped + queued(). */
   dropped: number;
-  /** Latest streams reset while the channel was backpressured (the newest
-   * send still unaccepted): stale accepted streams reaped, plus stale
-   * write-wedged carriers themselves. The stalled/suspended-viewer signal,
-   * 0 when healthy. */
-  aborted: number;
-  /** Latest streams reset as routine end-of-life (~= sent when healthy:
-   * every latest stream ends in a reset). */
-  expired: number;
-  /** Payload bytes accepted by the transport (a superseded carrier counts
-   * the payload it finally carried). */
+  /** Latest writes the transport accepted only after LATEST_STALL_MS: the
+   * viewer's stream window was full (a suspended tab, a slow link). The
+   * stalled-viewer signal, 0 when healthy. Fixed 0 for reliable. */
+  stalled: number;
+  /** Payload bytes accepted by the transport. */
   bytesOut: number;
   /** Acceptance rate over the trailing window. */
   readonly rate: Rate;
   queued(): number;
-  /** Latest streams handed to the transport and not yet reset. */
-  inflight(): number;
+  /** True while a write waits for the transport to accept it. */
+  writing(): boolean;
   offer(bytes: Uint8Array): void;
-  /** Reset accepted latest streams older than staleMs; clock-free (callers
-   * pass nowMs). Never touches the unaccepted carrier. No-op for reliable. */
-  reap(nowMs: number): void;
-  /** Discard queued frames, reset in-flight sends, and release any
-   * persistent stream; later offers and in-flight drain completions become
-   * no-ops. Idempotent. */
+  /** Discard queued frames and release the persistent stream; later offers
+   * and in-flight drain completions become no-ops. Idempotent. */
   dispose(): void;
 }
 
@@ -182,44 +160,37 @@ export class TokenBucket {
   }
 }
 
-interface OutstandingSend {
-  send: FrameSend;
-  at: number;
-  size: number;
-  accepted: boolean;
-}
-
 /**
- * Latest-wins: a 1-slot pending buffer feeds sequential sends; a frame
- * arriving while a send is in flight replaces the pending one (newest wins),
- * and the final frame is always eventually delivered. A slow viewer sheds
- * its own frames and nothing else.
+ * Latest-wins: a 1-slot pending buffer feeds sequential writes on one
+ * persistent stream; a frame arriving while a write is in flight replaces
+ * the pending one (newest wins), and the final frame is always eventually
+ * delivered. A slow viewer sheds its own frames and nothing else.
  *
- * Acceptance is not delivery (quinn buffers writes without bound and QUIC
- * exposes no delivery signal to JS), so accepted streams are tracked and
- * REAPED: newer offers (and the relay's periodic reap; see server.ts) reset
- * streams older than staleMs, discarding their buffered-but-undelivered
- * bytes on both ends. A suspended viewer therefore resumes to at most
- * ~staleMs of backlog instead of a connection window's worth of stale video
- * replayed oldest-first.
+ * Acceptance is not delivery: `write()` resolves when quinn took the bytes
+ * into the stream's send window, which the viewer's reads replenish. A
+ * viewer that stops reading therefore stalls the write once the window is
+ * full (counted as `stalled`); when it resumes it reads the window's worth
+ * of stale frames oldest first and keeps the newest by seq. One stream per
+ * channel instead of one per frame: Deno 2.6.10 never resets or ends a
+ * stream before its wrapper is finalized and leaks ~400 B per stream for
+ * the connection's life, and every client allows only ~100 open streams.
  */
 export class LatestChannel implements ChannelPolicy {
   readonly delivery: Delivery = "latest";
   sent = 0;
   dropped = 0;
-  aborted = 0;
-  expired = 0;
+  stalled = 0;
   bytesOut = 0;
   readonly rate = new Rate();
   #pending: Uint8Array | null = null;
-  #outstanding: OutstandingSend[] = []; // append order = age order
   #writing = false;
+  #writer: FrameWriter | null = null;
   #disposed = false;
-  readonly #staleMs: number;
+  readonly #stallMs: number;
   readonly #now: () => number;
 
   constructor(readonly sink: ViewerSink, opts: PolicyOptions = {}) {
-    this.#staleMs = opts.staleMs ?? LATEST_STALE_MS;
+    this.#stallMs = opts.stallMs ?? LATEST_STALL_MS;
     this.#now = opts.now ?? Date.now;
   }
 
@@ -227,65 +198,15 @@ export class LatestChannel implements ChannelPolicy {
     return this.#pending ? 1 : 0;
   }
 
-  inflight(): number {
-    return this.#outstanding.length;
+  writing(): boolean {
+    return this.#writing;
   }
 
   offer(bytes: Uint8Array): void {
     if (this.#disposed) return;
-    const now = this.#now();
-    this.reap(now);
-    const last = this.#outstanding[this.#outstanding.length - 1];
-    if (last !== undefined && !last.accepted) {
-      // The carrier (sends are sequential: at most one unaccepted entry,
-      // always the tail). While it is still wedged in stream creation the
-      // newest payload replaces its old one in place: no reset, no
-      // replacement stream (README bug 12).
-      if (last.send.supersede(bytes)) {
-        this.dropped++; // the displaced carrier payload
-        last.at = now;
-        last.size = bytes.byteLength;
-        // Provably already null (parking only happens after supersede has
-        // latched false for this carrier); kept as cheap insurance.
-        this.#pending = null;
-        return;
-      }
-      // The write has begun, so the payload can no longer change: reset a
-      // stale carrier and let the newest go out on a fresh stream.
-      if (now - last.at >= this.#staleMs) {
-        // Pop first so reap and inflight() never see a dead unaccepted entry.
-        this.#outstanding.pop();
-        last.send.abort();
-        this.aborted++;
-        this.dropped++; // its payload never reached the wire
-      }
-    }
     if (this.#pending) this.dropped++;
     this.#pending = bytes;
     this.#drain();
-  }
-
-  /**
-   * Reset accepted sends older than staleMs. The unaccepted tail (at most
-   * one: sends are sequential) is never reaped: it is the drain's pacing
-   * carrier, and resetting a create-wedged send would only spawn a
-   * replacement wedged on the same exhausted stream credit - resets do not
-   * replenish credit while the viewer's application is not reading its
-   * incoming streams (verified against Deno's client; a frozen tab behaves
-   * the same way). Newer offers supersede its payload in place instead
-   * (details in README bug 12).
-   */
-  reap(nowMs: number): void {
-    const backpressured = this.#outstanding.length > 0 &&
-      !this.#outstanding[this.#outstanding.length - 1].accepted;
-    while (this.#outstanding.length > 0) {
-      const oldest = this.#outstanding[0];
-      if (!oldest.accepted || nowMs - oldest.at < this.#staleMs) break;
-      this.#outstanding.shift();
-      oldest.send.abort();
-      if (backpressured) this.aborted++;
-      else this.expired++;
-    }
   }
 
   dispose(): void {
@@ -294,40 +215,33 @@ export class LatestChannel implements ChannelPolicy {
     // disposal, not viewer failure.
     this.#disposed = true;
     this.#pending = null;
-    for (const entry of this.#outstanding) entry.send.abort();
-    this.#outstanding.length = 0;
+    this.#writer?.abort().catch(() => {});
+    this.#writer = null;
   }
 
   #drain(): void {
     if (this.#writing || this.#disposed) return;
     this.#writing = true;
     (async () => {
+      const writer = this.#writer ??= await this.sink.openStream(LATEST_SEND_ORDER);
+      if (this.#disposed) {
+        // dispose() ran while the stream was opening and saw no writer to
+        // abort; release the stream here.
+        writer.abort().catch(() => {});
+        this.#writer = null;
+        return;
+      }
       while (this.#pending) {
         const bytes = this.#pending;
         this.#pending = null;
-        const send = this.sink.sendFrame(bytes);
-        const entry: OutstandingSend = {
-          send,
-          at: this.#now(),
-          size: bytes.byteLength,
-          accepted: false,
-        };
-        this.#outstanding.push(entry);
-        try {
-          await send.done;
-          entry.accepted = true;
-          // Staleness is measured from acceptance (per the LATEST_STALE_MS
-          // doc): a long-wedged carrier accepted on resume must not be
-          // instantly reaped by the idle reap timer.
-          entry.at = this.#now();
-          this.sent++;
-          this.bytesOut += entry.size;
-          this.rate.push(entry.size, entry.at);
-        } catch (e) {
-          // dispose() or a stale-carrier reset in offer() aborted it (the
-          // entry is already off the list), or the transport failed.
-          if (!send.aborted && !this.#disposed) throw e;
-        }
+        const started = this.#now();
+        await writer.write(bytes);
+        if (this.#disposed) return;
+        const now = this.#now();
+        if (now - started >= this.#stallMs) this.stalled++;
+        this.sent++;
+        this.bytesOut += bytes.byteLength;
+        this.rate.push(bytes.byteLength, now);
       }
     })()
       .catch(() => {
@@ -337,7 +251,7 @@ export class LatestChannel implements ChannelPolicy {
       })
       .finally(() => {
         // Clearing #writing and rechecking must be one synchronous step: a
-        // frame offered between the loop observing an empty queue and this
+        // frame offered between the loop observing an empty slot and this
         // callback saw #writing still true and started no drain, so only
         // this recheck can pick it up.
         this.#writing = false;
@@ -353,17 +267,13 @@ export class LatestChannel implements ChannelPolicy {
  * teardown completes are ignored.
  *
  * All frames ride ONE persistent uni stream (opened on first use): QUIC
- * streams deliver in order, and stream-per-frame exhausts Firefox's ~100
- * uni-stream credit, which is only replenished when streams complete - and
- * Deno's lazy FIN (README bug 2) keeps delivered streams incomplete for
- * seconds (README bug 11).
+ * streams deliver in order (protocol.md workaround 11).
  */
 export class ReliableChannel implements ChannelPolicy {
   readonly delivery: Delivery = "reliable";
   sent = 0;
   dropped = 0;
-  aborted = 0; // reliable never resets frames; fixed 0
-  expired = 0;
+  stalled = 0; // reliable queues instead of shedding; fixed 0
   bytesOut = 0;
   readonly rate = new Rate();
   #fifo: Uint8Array[] = [];
@@ -381,8 +291,8 @@ export class ReliableChannel implements ChannelPolicy {
     return this.#fifo.length;
   }
 
-  inflight(): number {
-    return 0; // one persistent stream, no per-frame streams to reset
+  writing(): boolean {
+    return this.#writing;
   }
 
   offer(bytes: Uint8Array): void {
@@ -402,18 +312,12 @@ export class ReliableChannel implements ChannelPolicy {
     this.#drain();
   }
 
-  reap(_nowMs: number): void {
-    // no-op: one persistent stream, no per-frame streams to reset
-  }
-
   dispose(): void {
     this.#disposed = true;
     this.#fifo.length = 0;
     this.#bytes = 0;
-    // Abort, not close: close would still deliver the queued stale frames and
-    // (with Deno's lazy FIN, README bug 2) hold the stream's credit for
-    // seconds; both receivers treat a reset as end-of-stream, dropping a
-    // partial frame.
+    // Abort, not close: a closed stream cannot be aborted, and both
+    // receivers treat the end of the stream as end-of-stream either way.
     this.#writer?.abort().catch(() => {});
     this.#writer = null;
   }
@@ -422,7 +326,7 @@ export class ReliableChannel implements ChannelPolicy {
     if (this.#writing || this.#disposed) return;
     this.#writing = true;
     (async () => {
-      const writer = this.#writer ??= await this.sink.openStream();
+      const writer = this.#writer ??= await this.sink.openStream(RELIABLE_SEND_ORDER);
       if (this.#disposed) {
         // dispose() ran while the stream was opening and saw no writer to
         // abort; release the stream here.
@@ -471,45 +375,35 @@ export function parseRobotFrameHeader(bytes: Uint8Array): FrameHeader | null {
 // First varint of a WebTransport bidi data stream (the preamble is stream
 // type + session id, both QUIC varints).
 const WT_BIDI_STREAM_TYPE = 0x41;
+// Read buffer: a QUIC packet's worth of stream data is ~1.2 KB, so a 4 KiB
+// buffer takes the preamble, the 8-byte length prefix and the header in one
+// read. The payload buffer starts at the second size and doubles.
+const READ_BYTES = 4096;
+const FIRST_PAYLOAD_BYTES = 256 * 1024;
+
+function varintAt(buf: Uint8Array, at: number): { value: number; end: number } | null {
+  if (at >= buf.length) return null;
+  const size = 1 << (buf[at] >> 6);
+  if (at + size > buf.length) return null;
+  let value = buf[at] & 0x3f;
+  for (let i = 1; i < size; i++) value = value * 256 + buf[at + i];
+  return { value, end: at + size };
+}
 
 /**
- * Consume the WebTransport preamble of a raw incoming QUIC bidi stream, then
- * release the lock so readDataFrameBytes can take over. Robot streams are
- * accepted at the QUIC level because a reset racing the preamble read inside
- * wt.incomingBidirectionalStreams errors that stream permanently (rejected
- * pull) and kills the whole accept loop. Throws on a non-WebTransport type or
- * a stream reset/ended mid-preamble; the session id's value is not checked (a
- * robot connection carries exactly one WT session).
+ * Byte length of the WebTransport preamble at the start of `buf`, null if
+ * more bytes are needed. Throws on a non-WebTransport stream type; the
+ * session id's value is not checked (a robot connection carries exactly one
+ * WT session).
  */
-export async function readWebTransportPreamble(rs: ReadableStream<Uint8Array>): Promise<number> {
-  const reader = rs.getReader({ mode: "byob" });
-  try {
-    const type = await readVarint(reader);
-    if (type !== WT_BIDI_STREAM_TYPE) {
-      throw new Error(`not a WebTransport data stream (type ${type})`);
-    }
-    return await readVarint(reader);
-  } finally {
-    reader.releaseLock();
+export function parseWebTransportPreamble(buf: Uint8Array): number | null {
+  const type = varintAt(buf, 0);
+  if (type === null) return null;
+  if (type.value !== WT_BIDI_STREAM_TYPE) {
+    throw new Error(`not a WebTransport data stream (type ${type.value})`);
   }
-}
-
-async function readVarint(reader: ReadableStreamBYOBReader): Promise<number> {
-  const first = await readByte(reader);
-  const size = 1 << (first >> 6);
-  let value = first & 0x3f;
-  for (let i = 1; i < size; i++) {
-    value = value * 256 + (await readByte(reader));
-  }
-  return value;
-}
-
-async function readByte(reader: ReadableStreamBYOBReader): Promise<number> {
-  const { value, done } = await reader.read(new Uint8Array(1));
-  if (done || value === undefined || value.byteLength !== 1) {
-    throw new Error("stream ended mid-preamble");
-  }
-  return value[0];
+  const session = varintAt(buf, type.end);
+  return session === null ? null : session.end;
 }
 
 /** An @-channel frame claimed a payload beyond MAX_CONTROL_PAYLOAD_BYTES.
@@ -522,71 +416,130 @@ export class ControlPayloadTooLargeError extends Error {
   }
 }
 
+export interface RobotFrame {
+  /** Parsed header; null = malformed. */
+  header: FrameHeader | null;
+  /** The whole data frame (length prefix, header, payload), preamble excluded. */
+  bytes: Uint8Array;
+  /** True when the raw header JSON named an @-prefixed channel, independent
+   * of full header validity, so sessions fail closed on malformed control
+   * instead of misfiling it as ordinary data. */
+  reserved: boolean;
+}
+
 /**
- * Read one length-prefixed data frame from a robot stream, stopping at the
- * frame's byte count - never at EOF (Deno 2.6.x delays FIN by up to ~1 s, and
- * a reset-stale writer may never send one). BYOB reader: default readers were
- * observed to never deliver on Deno 2.6.10 incoming WT streams.
+ * Read one robot data stream, accepted at the QUIC level (protocol.md
+ * workaround 10): the WebTransport preamble, then one length-prefixed data
+ * frame, stopping at the frame's byte count, never at EOF (Deno's own client
+ * FINs late, and the stream's slot returns only at finalization either way,
+ * so there is nothing to gain from reading on). BYOB reads throughout (default readers never deliver
+ * on Deno 2.6.10 incoming WT streams), each into a whole zero-offset buffer
+ * (a read into a view at an offset never resolves there, workaround 8): the
+ * preamble and header come out of one small read, and the payload is copied
+ * chunk by chunk into its final buffer, which grows as bytes arrive.
  *
- * The header is parsed as soon as its bytes arrive (headerLen is bounded by
- * MAX_HEADER_LEN) and returned alongside the frame so callers dispatch
- * without re-parsing; null = malformed header. `reserved` reports whether
- * the raw header JSON named an @-prefixed channel, independent of full
- * header validity, so sessions fail closed on malformed control instead of
- * misfiling it as ordinary data. Reserved channels are capped at
- * MAX_CONTROL_PAYLOAD_BYTES before their payload is buffered -
- * pre-authentication control must not allocate unbounded state.
+ * `onHeader` fires once the header bytes are in, before the payload is read,
+ * so a session can order frames without waiting for a big one. Reserved
+ * (@-channel) frames are capped at MAX_CONTROL_PAYLOAD_BYTES before their
+ * payload is buffered: pre-authentication control must not allocate
+ * unbounded state.
  */
-export async function readRobotFrame(
+export async function readRobotStream(
   rs: ReadableStream<Uint8Array>,
-): Promise<{ header: FrameHeader | null; bytes: Uint8Array; reserved: boolean }> {
+  onHeader?: (header: FrameHeader | null, reserved: boolean) => void,
+): Promise<RobotFrame> {
   const reader = rs.getReader({ mode: "byob" });
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  let lens: { headerLen: number; payloadLen: number; total: number } | null = null;
-  let header: FrameHeader | null = null;
-  let headerParsed = false;
-  let reserved = false;
   try {
-    while (lens === null || size < lens.total) {
-      const { value, done } = await reader.read(new Uint8Array(64 * 1024));
-      if (value && value.byteLength) {
-        chunks.push(value);
-        size += value.byteLength;
-        if (lens === null && size >= 8) {
-          // peekDataFrameLengths throws on an oversize total (MAX_DATA_FRAME_BYTES).
-          lens = peekDataFrameLengths(concatBytes(chunks, 8));
+    // The read buffer: transferred to the stream and handed back with each
+    // read, always whole.
+    let scratch = new Uint8Array(READ_BYTES);
+    // Preamble, length prefix and header (and whatever payload came along).
+    let head = new Uint8Array(READ_BYTES);
+    let size = 0;
+    let preambleLen: number | null = null;
+    let lens: { headerLen: number; payloadLen: number; total: number } | null = null;
+    while (true) {
+      const { value, done } = await reader.read(scratch);
+      if (value !== undefined) {
+        scratch = new Uint8Array(value.buffer);
+        if (head.byteLength < size + value.byteLength) {
+          const grown = new Uint8Array(Math.max(head.byteLength * 2, size + value.byteLength));
+          grown.set(head.subarray(0, size));
+          head = grown;
         }
-        if (lens !== null && !headerParsed && size >= 8 + lens.headerLen) {
-          headerParsed = true;
-          let raw: unknown = null;
-          try {
-            raw = JSON.parse(
-              headerDecoder.decode(concatBytes(chunks, 8 + lens.headerLen).subarray(8)),
-            );
-          } catch {
-            // bad UTF-8 or bad JSON: header stays null, dropped downstream
-          }
-          const ch = typeof raw === "object" && raw !== null && !Array.isArray(raw)
-            ? (raw as Record<string, unknown>).ch
-            : undefined;
-          reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
-          if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
-            throw new ControlPayloadTooLargeError(
-              `control frame claims a ${lens.payloadLen} B payload ` +
-                `(cap ${MAX_CONTROL_PAYLOAD_BYTES})`,
-            );
-          }
-          header = frameHeaderFromUnknown(raw);
+        head.set(value, size);
+        size += value.byteLength;
+      }
+      if (preambleLen === null) {
+        preambleLen = parseWebTransportPreamble(head.subarray(0, size));
+        if (preambleLen === null) {
+          if (done) throw new Error("stream ended mid-preamble");
+          continue;
         }
       }
-      if (done) break;
+      if (lens === null && size >= preambleLen + 8) {
+        // Throws on an oversize total (MAX_DATA_FRAME_BYTES) or header; null
+        // only under 8 bytes, which the guard above excludes.
+        lens = peekDataFrameLengths(head.subarray(preambleLen, preambleLen + 8))!;
+      }
+      if (lens !== null && size >= preambleLen + 8 + lens.headerLen) break;
+      if (done) throw new Error(`robot stream ended mid-frame (${size - preambleLen} bytes)`);
     }
+    const frameStart = preambleLen;
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(
+        headerDecoder.decode(head.subarray(frameStart + 8, frameStart + 8 + lens.headerLen)),
+      );
+    } catch {
+      // bad UTF-8 or bad JSON: header stays null, dropped downstream
+    }
+    const ch = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).ch
+      : undefined;
+    const reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
+    if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
+      throw new ControlPayloadTooLargeError(
+        `control frame claims a ${lens.payloadLen} B payload (cap ${MAX_CONTROL_PAYLOAD_BYTES})`,
+      );
+    }
+    const header = frameHeaderFromUnknown(raw);
+    onHeader?.(header, reserved);
+
+    // The payload, copied into the frame buffer as it arrives. The buffer
+    // starts small and doubles, so a peer claiming a huge payload and
+    // sending nothing holds little.
+    let filled = Math.min(size - frameStart, lens.total);
+    let frame = new Uint8Array(Math.max(Math.min(lens.total, FIRST_PAYLOAD_BYTES), filled));
+    frame.set(head.subarray(frameStart, frameStart + filled));
+    while (filled < lens.total) {
+      const remaining = lens.total - filled;
+      // The last read's buffer is exactly the remainder, so a stream that
+      // (against the protocol) carries more never over-reads into it.
+      if (scratch.byteLength > remaining) scratch = new Uint8Array(remaining);
+      const { value, done } = await reader.read(scratch);
+      if (value !== undefined) {
+        scratch = new Uint8Array(value.buffer);
+        if (frame.byteLength < filled + value.byteLength) {
+          const grown = new Uint8Array(
+            Math.min(lens.total, Math.max(frame.byteLength * 2, filled + value.byteLength)),
+          );
+          grown.set(frame.subarray(0, filled));
+          frame = grown;
+        }
+        frame.set(value, filled);
+        filled += value.byteLength;
+      }
+      if (done && filled < lens.total) {
+        throw new Error(`robot stream ended mid-frame (${filled} bytes)`);
+      }
+    }
+    return {
+      header,
+      bytes: frame.byteLength === lens.total ? frame : frame.subarray(0, lens.total),
+      reserved,
+    };
   } finally {
     reader.releaseLock();
   }
-  if (lens === null || size < lens.total) {
-    throw new Error(`robot stream ended mid-frame (${size} bytes)`);
-  }
-  return { header, bytes: concatBytes(chunks, lens.total), reserved };
 }

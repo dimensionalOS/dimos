@@ -19,10 +19,10 @@ import {
 import type { CarrierStats } from "./carrier.ts";
 import {
   type ChannelPolicy,
-  type FrameSend,
   type FrameWriter,
-  LATEST_STALE_MS,
+  LATEST_SEND_ORDER,
   LatestChannel,
+  RELIABLE_SEND_ORDER,
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
@@ -38,38 +38,15 @@ class FakeSink implements ViewerSink {
   sent: Uint8Array[] = [];
   kicked: string | null = null;
   streamsOpened = 0;
+  /** sendOrder of every stream opened, in order. */
+  orders: number[] = [];
   streamsAborted = 0;
   auto = true;
   #waiters: (() => void)[] = [];
 
-  sendFrame(bytes: Uint8Array): FrameSend {
-    this.sent.push(bytes);
-    let settle!: () => void;
-    let fail!: (e: Error) => void;
-    const done = new Promise<void>((resolve, reject) => {
-      settle = resolve;
-      fail = reject;
-    });
-    if (this.auto) settle();
-    else this.#waiters.push(settle);
-    let aborted = false;
-    return {
-      done,
-      get aborted() {
-        return aborted;
-      },
-      abort() {
-        if (aborted) return;
-        aborted = true;
-        fail(new Error("frame send aborted"));
-      },
-      // Registry tests exercise the parking path, not the create wedge.
-      supersede: () => false,
-    };
-  }
-
-  openStream(): Promise<FrameWriter> {
+  openStream(order: number): Promise<FrameWriter> {
     this.streamsOpened++;
+    this.orders.push(order);
     return Promise.resolve({
       write: (bytes: Uint8Array) => {
         this.sent.push(bytes);
@@ -572,22 +549,26 @@ Deno.test("invalid and unregistered frames are dropped and counted", () => {
   assertEquals(stats.framesFromUnregistered, 1);
 });
 
-Deno.test("reapAll resets stale accepted latest streams", async () => {
-  // What server.ts drives on an interval: an idle input stops offering, so
-  // without this the last accepted stream would stay open indefinitely.
+Deno.test("latest and reliable channels each get one persistent stream at their order", async () => {
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
   reg.registerRobot(robot);
-  const viewer = attach(reg, "r1", ["color_image"]);
-  reg.onRobotFrame(robot, frame("color_image", 1, "latest"));
+  const viewer = attach(reg, "r1", ["color_image", "odom"]);
+  for (let seq = 1; seq <= 3; seq++) {
+    reg.onRobotFrame(robot, frame("color_image", seq, "latest"));
+    reg.onRobotFrame(robot, frame("odom", seq, "reliable"));
+    await tick();
+  }
+  assertEquals(viewer.sink.streamsOpened, 2);
+  assertEquals(viewer.sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
+  assertEquals(viewer.sink.sent.length, 6);
+  // An unsub releases the channel's stream; a resub opens a fresh one.
+  send(reg, viewer, { t: "unsub", ch: "color_image" });
+  assertEquals(viewer.sink.streamsAborted, 1);
+  send(reg, viewer, { t: "sub", ch: "color_image" });
+  reg.onRobotFrame(robot, frame("color_image", 4, "latest"));
   await tick();
-  const policy = viewer.policies.get("color_image")!;
-  assertEquals(policy.inflight(), 1);
-  // Entries carry real Date.now timestamps; fabricate a clock past staleMs.
-  reg.reapAll(Date.now() + LATEST_STALE_MS + 100);
-  assertEquals(policy.inflight(), 0);
-  assertEquals(policy.expired, 1);
-  assertEquals(policy.aborted, 0);
+  assertEquals(viewer.sink.streamsOpened, 3);
 });
 
 Deno.test("stats project exact per-channel key sets with counters and rates", async () => {
@@ -627,24 +608,33 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   const out = stats.perViewer[0].channels;
   const outKeys = Object.keys(out.color_image).sort();
   assertEquals(outKeys, [
-    "aborted",
     "bps",
     "bytesOut",
     "delivery",
     "dropped",
-    "expired",
     "fps",
-    "inflight",
     "queued",
     "sent",
+    "stalled",
+    "writing",
   ]);
   assertEquals(out.color_image.delivery, "latest");
   assertEquals(out.color_image.sent, 1);
-  assertEquals(out.color_image.inflight, 1); // its stream stays open until reaped
+  assertEquals([out.color_image.stalled, out.color_image.writing], [0, false]);
   assertEquals(out.odom.delivery, "reliable");
-  assertEquals(out.odom.inflight, 0); // one persistent stream, nothing to reset
+  assertEquals([out.odom.stalled, out.odom.writing], [0, false]);
   assert((out.odom.bytesOut as number) > 0);
   assertEquals(viewer.sink.kicked, null);
+  const top = reg.stats() as {
+    framesIncomplete: number;
+    streamCreditStalls: number;
+    gcRuns: number;
+    gcMs: number;
+  };
+  assertEquals([top.framesIncomplete, top.streamCreditStalls, top.gcRuns, top.gcMs], [0, 0, 0, 0]);
+  reg.collected(1.5);
+  const after = reg.stats() as { gcRuns: number; gcMs: number };
+  assertEquals([after.gcRuns, after.gcMs], [1, 1.5]);
 });
 
 Deno.test("undeclared channel frames aggregate into one per-robot bucket", async () => {
@@ -1113,10 +1103,10 @@ Deno.test("pub timeout settles pending with publish_timeout; a late ack is dropp
   const viewer = attach(reg, "r1", []);
   pub(reg, viewer, "v-1", "human_input", 1.5);
   now += PUBLISH_TIMEOUT_MS - 1;
-  reg.reapAll(now);
+  reg.tick(now);
   assertEquals(pubStats(reg).pending, 1);
   now += 1;
-  reg.reapAll(now);
+  reg.tick(now);
   assertEquals(viewer.pushed.at(-1), {
     t: "error",
     code: "publish_timeout",

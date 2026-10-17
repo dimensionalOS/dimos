@@ -935,10 +935,10 @@ class SessionImpl implements Session {
     }
   }
 
-  // A latest stream carries one frame; a reliable channel's persistent stream
-  // carries them back to back. Frames dispatch on byte count (the relay's FIN
-  // can be seconds late); the stream is never cancelled - reading to its end
-  // costs nothing and a cancel would reset the persistent stream.
+  // Every channel has one persistent stream carrying its frames back to
+  // back. Frames dispatch on byte count (the relay's FIN can be seconds
+  // late); the stream is never cancelled - reading to its end costs nothing
+  // and a cancel would reset the channel's stream.
   async #readStreamFrames(stream: ReadableStream<Uint8Array>, runId: number): Promise<void> {
     const reader = stream.getReader();
     const frames = new DataFrameStreamReader();
@@ -951,9 +951,10 @@ class SessionImpl implements Session {
         }
       }
     } catch (e) {
-      // reset/aborted stream: a partial latest-wins frame is dropped by
-      // design. Framing corruption still delivers the frames decoded before
-      // it; only the corrupt stream is abandoned.
+      // reset/aborted stream (an unsubscribed channel, a dead connection): a
+      // partial frame is dropped by design. Framing corruption still
+      // delivers the frames decoded before it; only the corrupt stream is
+      // abandoned.
       if (e instanceof DataFrameStreamError && runId === this.#runId) {
         for (const frame of e.frames) this.#ingest(frame);
       }

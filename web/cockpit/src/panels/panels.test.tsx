@@ -1026,6 +1026,7 @@ describe("startVoxelSink", () => {
   const deps = (over: Record<string, unknown> = {}) => ({
     hidden: () => false,
     createScene: () => Promise.resolve(scene as unknown as VoxelScene),
+    requestFrame: (cb: () => void) => cb(), // every render lands at once
     ...over,
   });
 
@@ -1132,6 +1133,39 @@ describe("startVoxelSink", () => {
     expect(scene.render.mock.calls.length).toBe(renders + 2);
     sink.follow(false);
     expect(scene.setFollow).toHaveBeenLastCalledWith(false);
+  });
+
+  it("coalesces renders into one per frame and skips an unchanged pose", async () => {
+    const { inflate, settlers } = deferredInflateVoxels();
+    const frames: (() => void)[] = [];
+    sink = startVoxelSink(
+      store,
+      CHS,
+      canvas,
+      health,
+      deps({ inflate, requestFrame: (cb: () => void) => frames.push(cb) }),
+    );
+    await flush();
+    voxelFrame(store, 1);
+    settlers[0].resolve(POSITIONS);
+    await flush();
+    poseFrame(store, 1);
+    poseFrame(store, 2);
+    expect(scene.render).not.toHaveBeenCalled(); // nothing draws between frames
+    expect(frames.length).toBe(1); // the voxels and both poses share one frame
+    frames.shift()!();
+    expect(scene.render).toHaveBeenCalledTimes(1);
+    expect(scene.setPose).toHaveBeenLastCalledWith({ x: 0.5, y: 0.5, z: 0.1, yaw: 0.25 });
+
+    poseFrame(store, 3); // same pose values again: no render scheduled
+    expect(frames.length).toBe(0);
+    store.ingest(
+      POSE_CH,
+      { ch: POSE_CH, seq: 4, ts: 4, delivery: "reliable" },
+      { x: 1, y: 0.5, z: 0.1, yaw: 0.25 },
+      true,
+    );
+    expect(frames.length).toBe(1); // the robot moved
   });
 
   it("carries a follow toggled before the scene is up into it and skips the first fit", async () => {
@@ -1260,6 +1294,7 @@ describe("Map3DPanel", () => {
   const sinkDeps = () => ({
     createScene: () => Promise.resolve(scene as unknown as VoxelScene),
     inflate: () => Promise.resolve(POSITIONS),
+    requestFrame: (cb: () => void) => cb(),
   });
 
   beforeEach(() => {

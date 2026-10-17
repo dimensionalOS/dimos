@@ -114,9 +114,10 @@ def relay_run_cmd(
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
     allow_read = ",".join([str(web_dir), *(str(path) for _, path in paths)])
-    # --v8-flags=--expose-gc: the relay forces a GC on every reap tick because
-    # Deno 2.6.10 ends a WebTransport send stream only when GC finalizes it
-    # without it viewers run out of stream credit and video freezes for seconds.
+    # --v8-flags=--expose-gc: Deno 2.6.10 ends a WebTransport send stream
+    # only when GC finalizes its wrapper, so when a viewer's stream credit
+    # runs out (its unsubscribed channels' streams not yet collected) the
+    # relay forces a GC to get it back (session.ts, STREAM_CREDIT_STALL_MS).
     cmd = [
         deno,
         "run",

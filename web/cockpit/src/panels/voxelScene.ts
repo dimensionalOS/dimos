@@ -7,6 +7,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   ConeGeometry,
+  DynamicDrawUsage,
   GridHelper,
   type Material,
   Mesh,
@@ -76,6 +77,13 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
   const points = new Points(new BufferGeometry(), material);
   points.frustumCulled = false; // one object: culling would only cost a bounding sphere
   scene.add(points);
+  // The voxel attributes persist and grow to the largest cloud seen; each
+  // frame copies into them and uploads only the used range. A fresh
+  // geometry per frame cost a 15 MB allocation and a new GL buffer per
+  // update at a million voxels.
+  let capacity = 0;
+  let positionAttr: BufferAttribute | null = null;
+  let colorAttr: BufferAttribute | null = null;
   const marker = new Mesh(
     new ConeGeometry(0.12, 0.4, 12),
     new MeshBasicMaterial({ color: POSE_COLOR }),
@@ -124,12 +132,28 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
   return {
     setVoxels(next, colors, res) {
       bounds = boundsOf(next);
-      for (let i = 0; i < colors.length; i++) colors[i] = SRGB_TO_LINEAR[colors[i]];
-      const geometry = new BufferGeometry();
-      geometry.setAttribute("position", new BufferAttribute(next, 3));
-      geometry.setAttribute("color", new BufferAttribute(colors, 3, true));
-      points.geometry.dispose(); // frees the previous frame's GPU buffers
-      points.geometry = geometry;
+      const n = next.length / 3;
+      if (n > capacity || positionAttr === null || colorAttr === null) {
+        capacity = Math.max(n, capacity);
+        positionAttr = new BufferAttribute(new Float32Array(capacity * 3), 3);
+        positionAttr.setUsage(DynamicDrawUsage);
+        colorAttr = new BufferAttribute(new Uint8Array(capacity * 3), 3, true);
+        colorAttr.setUsage(DynamicDrawUsage);
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", positionAttr);
+        geometry.setAttribute("color", colorAttr);
+        points.geometry.dispose(); // frees the outgrown GPU buffers
+        points.geometry = geometry;
+      }
+      (positionAttr.array as Float32Array).set(next);
+      const linear = colorAttr.array as Uint8Array;
+      for (let i = 0; i < colors.length; i++) linear[i] = SRGB_TO_LINEAR[colors[i]];
+      for (const attr of [positionAttr, colorAttr]) {
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(0, n * 3);
+        attr.needsUpdate = true;
+      }
+      points.geometry.setDrawRange(0, n);
       material.size = pointSize(res, FOV);
       updateClipping(); // a map that grew must not be clipped before the next orbit
     },
