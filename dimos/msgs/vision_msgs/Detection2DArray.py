@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from dimos_lcm.vision_msgs.Detection2DArray import (
     Detection2DArray as LCMDetection2DArray,
@@ -63,3 +63,31 @@ class Detection2DArray(LCMDetection2DArray):  # type: ignore[misc]
                 }
             )
         return out
+
+    def to_rerun(self) -> Any:
+        """Boxes2D in image pixels, to overlay on the image entity they came from."""
+        import rerun as rr
+
+        boxes: list[tuple[float, float, float, float]] = []
+        labels: list[str] = []
+        for d in self.detections[: self.detections_length]:
+            c = d.bbox.center.position
+            boxes.append(
+                (
+                    float(c.x - d.bbox.size_x / 2.0),
+                    float(c.y - d.bbox.size_y / 2.0),
+                    float(d.bbox.size_x),
+                    float(d.bbox.size_y),
+                )
+            )
+            class_id = next(
+                (
+                    str(r.hypothesis.class_id)
+                    for r in d.results[: d.results_length]
+                    if r.hypothesis.class_id
+                ),
+                "",
+            )
+            marker = str(getattr(d, "id", "") or "").strip()
+            labels.append(f"{class_id} id={marker}" if class_id and marker else class_id or marker)
+        return rr.Boxes2D(array=boxes, array_format=rr.Box2DFormat.XYWH, labels=labels)

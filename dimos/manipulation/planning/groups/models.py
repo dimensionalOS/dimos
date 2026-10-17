@@ -40,6 +40,9 @@ class PlanningGroupDefinition:
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "configured"
+    # Overrides RobotModelConfig.gripper_hardware_id for this group, so a
+    # two-armed model can drive one gripper per arm.
+    gripper_hardware_id: str | None = None
 
     @property
     def has_pose_target(self) -> bool:
@@ -59,6 +62,7 @@ class PlanningGroup:
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "configured"
+    gripper_hardware_id: str | None = None
 
     @property
     def has_pose_target(self) -> bool:

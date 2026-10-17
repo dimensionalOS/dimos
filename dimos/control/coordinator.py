@@ -153,6 +153,8 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
+    # Sparse position updates accepted by hardware, for diagnostics and recording.
+    applied_joint_position_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -915,6 +917,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_command_callback=self.applied_joint_position_command.publish,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses

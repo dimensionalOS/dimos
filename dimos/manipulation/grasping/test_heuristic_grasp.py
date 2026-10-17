@@ -68,6 +68,57 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
     assert proposals.candidates[0].score == pytest.approx(1.0)
 
 
+def test_heuristic_grasp_centres_a_tall_object_on_its_top(module: HeuristicGraspModule) -> None:
+    # A can seen from one side: a round lid on the axis, and the near face
+    # below it, offset toward the camera.
+    rng = np.random.default_rng(0)
+    angle = rng.uniform(0.0, 2.0 * np.pi, 300)
+    radius = np.sqrt(rng.uniform(0.0, 1.0, 300)) * 0.033
+    lid = np.column_stack(
+        [0.3 + radius * np.cos(angle), -0.2 + radius * np.sin(angle), np.full(300, 0.10)]
+    )
+    face_angle = rng.uniform(-np.pi / 2, np.pi / 2, 900)
+    face = np.column_stack(
+        [
+            0.3 - 0.033 * np.cos(face_angle),
+            -0.2 + 0.033 * np.sin(face_angle),
+            rng.uniform(0.0, 0.07, 900),
+        ]
+    )
+    candidates = module.propose_grasps(_cloud(np.vstack([lid, face])))
+
+    position = candidates.candidates[0].pose.position
+    assert position.x == pytest.approx(0.3, abs=0.005)
+    assert position.y == pytest.approx(-0.2, abs=0.005)
+
+
+def test_heuristic_grasp_offers_every_yaw_for_an_object_that_fits_both_ways() -> None:
+    module = HeuristicGraspModule(yaw_candidates=8)
+    try:
+        # a 6 x 7 cm slab: a clear narrow axis, yet it fits the 9 cm jaws either way
+        rng = np.random.default_rng(1)
+        pts = np.column_stack(
+            [
+                rng.uniform(-0.03, 0.03, 500),
+                rng.uniform(-0.035, 0.035, 500),
+                rng.uniform(0.0, 0.01, 500),
+            ]
+        )
+        candidates = module.propose_grasps(_cloud(pts))
+        assert len(candidates.candidates) == 8
+        # a 6 x 19 cm bar only fits across its narrow axis
+        pts = np.column_stack(
+            [
+                rng.uniform(-0.03, 0.03, 500),
+                rng.uniform(-0.095, 0.095, 500),
+                rng.uniform(0.0, 0.01, 500),
+            ]
+        )
+        assert len(module.propose_grasps(_cloud(pts)).candidates) == 2
+    finally:
+        module.stop()
+
+
 def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGraspModule) -> None:
     proposals = module.propose_grasps(
         _cloud(
