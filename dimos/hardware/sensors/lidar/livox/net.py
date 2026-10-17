@@ -32,7 +32,7 @@ def resolve_host_ip(lidar_ip: str, configured: str | None, *, label: str) -> str
     the local NIC on the lidar's /24 subnet. The chosen IP is UDP-bind-tested
     before returning. Raises ``RuntimeError`` with an actionable message when no
     local IP is on the lidar's subnet or the bind fails. ``label`` prefixes log
-    and error messages (e.g. ``"PointLio"``, ``"Mid360"``).
+    and error messages (e.g. ``"Mid360"``, ``"FastLio2"``).
     """
     local_ips = [ip for ip, _iface in get_local_ips()]
 
@@ -78,7 +78,7 @@ def resolve_host_ip(lidar_ip: str, configured: str | None, *, label: str) -> str
         )
         raise RuntimeError(
             f"{label}: Cannot bind UDP on {host_ip}: {err}. "
-            f"Check if another Livox/PointLio process is running."
+            f"Check if another Livox process is running."
         ) from err
 
     _logger.info(f"{label} network check passed", host_ip=host_ip, lidar_ip=lidar_ip)

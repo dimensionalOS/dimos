@@ -120,7 +120,7 @@ def test_throughput(
 
         # CPU sampled over the publish window only, so lossy transports' receive
         # idle doesn't skew it. psutil counts in-process threads but not kernel
-        # softirq or external daemons, so network transports read lower than SHM.
+        # softirq or external daemons, so it does not measure total system CPU.
         msgs_sent = 0
         process = psutil.Process()
         cpu_before = process.cpu_times()

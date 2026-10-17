@@ -1,0 +1,40 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1094.4 158.4" data-pikchr-date="20260403102956">
+<path d="M18.3,147.6L190.5,147.6A7.5 7.5 0 0 0 198 140.1L198,18.3A7.5 7.5 0 0 0 190.5 10.8L18.3,10.8A7.5 7.5 0 0 0 10.8 18.3L10.8,140.1A7.5 7.5 0 0 0 18.3 147.6Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="104.4" y="69.12" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">robot modules</text>
+<text x="104.4" y="89.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera, mapper, ...</text>
+<path d="M313.5,147.6L485.7,147.6A7.5 7.5 0 0 0 493.2 140.1L493.2,18.3A7.5 7.5 0 0 0 485.7 10.8L313.5,10.8A7.5 7.5 0 0 0 306 18.3L306,140.1A7.5 7.5 0 0 0 313.5 147.6Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="399.6" y="59.04" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Bridge</text>
+<text x="399.6" y="79.2" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">encodes subscribed</text>
+<text x="399.6" y="99.36" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">channels</text>
+<path d="M608.7,147.6L780.9,147.6A7.5 7.5 0 0 0 788.4 140.1L788.4,18.3A7.5 7.5 0 0 0 780.9 10.8L608.7,10.8A7.5 7.5 0 0 0 601.2 18.3L601.2,140.1A7.5 7.5 0 0 0 608.7 147.6Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="694.8" y="59.04" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Relay</text>
+<text x="694.8" y="79.2" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">copies frames to</text>
+<text x="694.8" y="99.36" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">each viewer</text>
+<path d="M903.9,147.6L1076.1,147.6A7.5 7.5 0 0 0 1083.6 140.1L1083.6,18.3A7.5 7.5 0 0 0 1076.1 10.8L903.9,10.8A7.5 7.5 0 0 0 896.4 18.3L896.4,140.1A7.5 7.5 0 0 0 903.9 147.6Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="990" y="69.12" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">viewers</text>
+<text x="990" y="89.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">cockpit, SDK pages</text>
+<polygon points="306,36 294.48,40.32 294.48,31.68" style="fill:rgb(255,255,255)"/>
+<path d="M198,36L300.24,36"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="252" y="24.3" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">streams</text>
+<polygon points="601.2,36 589.68,40.32 589.68,31.68" style="fill:rgb(255,255,255)"/>
+<path d="M493.2,36L595.44,36"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="547.2" y="24.3" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">frames</text>
+<polygon points="896.4,36 884.88,40.32 884.88,31.68" style="fill:rgb(255,255,255)"/>
+<path d="M788.4,36L890.64,36"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="842.4" y="24.3" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">frames</text>
+<polygon points="788.4,79.2 799.92,74.88 799.92,83.52" style="fill:rgb(255,255,255)"/>
+<path d="M896.4,79.2L794.16,79.2"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="842.4" y="67.5" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">sub, unsub</text>
+<polygon points="493.2,79.2 504.72,74.88 504.72,83.52" style="fill:rgb(255,255,255)"/>
+<path d="M601.2,79.2L498.96,79.2"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="547.2" y="67.5" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">wanted</text>
+<polygon points="788.4,122.4 799.92,118.08 799.92,126.72" style="fill:rgb(255,255,255)"/>
+<path d="M896.4,122.4L794.16,122.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="842.4" y="134.1" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">input</text>
+<polygon points="493.2,122.4 504.72,118.08 504.72,126.72" style="fill:rgb(255,255,255)"/>
+<path d="M601.2,122.4L498.96,122.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="547.2" y="134.1" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">input</text>
+<polygon points="198,122.4 209.52,118.08 209.52,126.72" style="fill:rgb(255,255,255)"/>
+<path d="M306,122.4L203.76,122.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="252" y="134.1" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">publishes</text>
+</svg>

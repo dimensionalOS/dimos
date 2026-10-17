@@ -2,7 +2,7 @@
 // Mirrored in Python at dimos/web/relay_bridge/protocol.py and pinned by the
 // golden vectors in ./fixtures/ (tested from both deno test and pytest).
 //
-// Framing (see web/README.md for the upstream-bug rationale):
+// Framing (see docs/web/protocol.md for the upstream-bug rationale):
 // - Control stream frame: u32-LE length | UTF-8 JSON.
 // - Datagram: raw UTF-8 JSON, no length prefix.
 // - Data frame: u32-LE headerLen | u32-LE payloadLen | header JSON | payload.
@@ -23,15 +23,27 @@ import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
-export type { ChannelSpec, Delivery, Dir, PanelSpec } from "./manifest.ts";
-export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
+export type { ChannelSpec, Delivery, Dir, PanelSpec, Publish } from "./manifest.ts";
+export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 
+// v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
+// video.webrtc.v1 track channels. An older peer would drop the unknown
+// messages and show a video panel that never draws, hence the bump.
+// v6 (amended, T12d): hello gains an optional `token` (a robot key or viewer
+// token for a relay started with --auth-file) and the relay answers
+// auth_failed; no bump: an older peer omits the field and an auth-on relay
+// rejects it, an auth-off relay ignores it.
+// v6: /api/info.wtUrl is a WebTransport base URL; clients append their role
+// path. v5 advertised the complete /viewer endpoint.
 // v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
 // an @control data frame on a robot-opened one-shot bidi stream; channel ids
 // beginning with "@" are reserved for protocol control; a robot datagram
 // hello is rejected; subs snapshots ride @control frames on the reliable
 // robot control carrier (one relay-opened uni stream per robot session)
-// instead of datagrams. v4: the twist datagram gains vy (strafe) and the teleop
+// instead of datagrams. Generic publish (amended into v5 pre-release):
+// pub/pub_ack/pub_nack and the error requestId correlation; an older v5 peer
+// drops the unknown messages, so a publish times out instead of misparsing.
+// v4: the twist datagram gains vy (strafe) and the teleop
 // lease messages (teleop_start/teleop_started/teleop_stop) enter the control
 // plane; robot-bound twist/stop/teleop_start/teleop_stop carry the
 // relay-stamped lease generation `gen` (amended into v4 pre-release: an
@@ -41,7 +53,7 @@ export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
 // misread in both directions). v2: a reliable channel packs all its frames
 // onto one persistent stream. Bump on any change an old peer would silently
 // misparse.
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 // The reserved data-frame channel carrying robot-leg control messages (v5+:
 // the robot's hello upstream, subs snapshots downstream on the robot control
@@ -54,6 +66,26 @@ export const CONTROL_CHANNEL = "@control";
 // must not allocate unbounded state) and the robot client refuses to send
 // beyond it.
 export const MAX_CONTROL_PAYLOAD_BYTES = 64 * 1024;
+
+// Cap for a pub message's serialized `data` JSON. The SDK checks it before
+// sending; the relay enforces it independently (callers can bypass the SDK).
+export const MAX_PUB_DATA_BYTES = 32 * 1024;
+
+// Bound for pub request ids (and the error requestId correlating a failure
+// to its publish). Ids are opaque: the SDK sends random-prefix + counter,
+// the relay forwards its own per-robot token robot-ward.
+export const MAX_REQUEST_ID_LEN = 64;
+
+// Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
+export const MAX_TOKEN_LEN = 256;
+
+// An SDP rides a control frame or an @control payload, so it stays well under
+// MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
+// MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
+// mirror's character count agree.
+export const MAX_SDP_LEN = 48 * 1024;
+export const MAX_MID_LEN = 16;
+export const MAX_RTC_TRACKS = 8;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -85,6 +117,8 @@ export interface HelloMsg {
   // role=robot only: identity + channel manifest, registered by the relay.
   robot?: RobotInfo;
   manifest?: RobotManifest;
+  // Robot key or viewer token for a relay started with --auth-file.
+  token?: string;
 }
 
 export interface WelcomeMsg {
@@ -108,6 +142,9 @@ export interface ErrorMsg {
   t: "error";
   code: string;
   message: string;
+  // Correlates a publish failure to its request (the viewer's own pub id);
+  // absent on session-level errors.
+  requestId?: string;
 }
 
 // Session messages (T2): robot registration, viewer watch + per-channel
@@ -191,10 +228,96 @@ export interface TeleopStopMsg {
   gen?: number;
 }
 
+/** What Session.publish accepts and `pub.data` carries: any JSON value. */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+// Generic publish (W7), for tx channels declared publish="shared". A viewer's
+// pub rides its control stream; the relay validates it, then forwards the
+// JSON `data` as a tx-channel data frame on the robot control carrier with
+// provenance in the frame meta (id there is a relay-authored token, never the
+// viewer's request id). The bridge acknowledges on a robot-opened one-shot
+// @control stream -- pub_ack after Out.publish() returned, pub_nack for a
+// decode/publish failure -- and the relay routes pub_ack (or a correlated
+// error carrying requestId) to the originating viewer. `data` is required and
+// spans all of JSON, null included; only an absent data field is invalid.
+export interface PubMsg {
+  t: "pub";
+  id: string;
+  ch: string;
+  data: JsonValue;
+  clientTs?: number;
+}
+
+export interface PubAckMsg {
+  t: "pub_ack";
+  id: string; // robot leg: the relay token; viewer leg: the viewer's pub id
+  ch: string;
+  relayTs: number;
+  bridgeTs: number;
+}
+
+// Robot->relay only; the relay maps it to a correlated viewer error.
+export interface PubNackMsg {
+  t: "pub_nack";
+  id: string;
+  code: string;
+  message: string;
+}
+
+// WebRTC video signaling (v7): rtc_ice hands a peer its ICE servers after
+// welcome and again after every TURN credential refresh; the robot offers once
+// with its ch->mid map and reports a track the SFU collected (rtc_stalled);
+// the viewer offers once and answers every relay-sent pull offer.
+// docs/web/protocol.md has the legs.
+export interface IceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface RtcIceMsg {
+  t: "rtc_ice";
+  iceServers: IceServer[];
+}
+
+export interface RtcTrack {
+  ch: string;
+  mid: string;
+}
+
+export interface RtcOfferMsg {
+  t: "rtc_offer";
+  sdp: string;
+  tracks?: RtcTrack[];
+  /** Relay-sent pulls only: the robot whose tracks these are. */
+  robotId?: string;
+}
+
+export interface RtcAnswerMsg {
+  t: "rtc_answer";
+  sdp: string;
+}
+
+/** Robot to relay: track `ch` carried no media for the SFU's track lifetime
+ * (30 s) and does again. The SFU collected it meanwhile, so the relay closes
+ * its pulls, declares it again and pulls it afresh. */
+export interface RtcStalledMsg {
+  t: "rtc_stalled";
+  ch: string;
+}
+
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
 export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
 export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
-export type Msg = ControlMsg | SessionMsg | TeleopMsg;
+export type PublishMsg = PubMsg | PubAckMsg | PubNackMsg;
+export type RtcMsg = RtcIceMsg | RtcOfferMsg | RtcAnswerMsg | RtcStalledMsg;
+export type Msg = ControlMsg | SessionMsg | TeleopMsg | PublishMsg | RtcMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
 // on channels the robot's manifest does not declare (the manifest's delivery
@@ -239,6 +362,13 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   teleop_start: {},
   teleop_started: {},
   teleop_stop: {},
+  pub: { id: "string", ch: "string" },
+  pub_ack: { id: "string", ch: "string", relayTs: "number", bridgeTs: "number" },
+  pub_nack: { id: "string", code: "string", message: "string" },
+  rtc_ice: {},
+  rtc_offer: { sdp: "string" },
+  rtc_answer: { sdp: "string" },
+  rtc_stalled: { ch: "string" },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -255,23 +385,52 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 }
 
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
-// Optional fields (hello.robot, hello/manifest.manifest, teleop gen) accept
-// absent but reject null: JSON encoders on both sides omit absent fields and
-// never emit null. The manifest is only checked for record-ness here -- its
+// Optional fields (hello.robot/token, hello/manifest.manifest, teleop gen,
+// pub clientTs, error requestId) accept absent but reject null: JSON encoders on
+// both sides omit absent fields and never emit null. Required pub.data is
+// different: it spans all of JSON (null included), so only absence is
+// invalid. The manifest is only checked for record-ness here -- its
 // structure belongs to parseManifest (see RobotManifest above).
-const genAbsentOrNumber = (v: Record<string, unknown>) =>
-  v.gen === undefined || typeof v.gen === "number";
+const absentOrNumber = (v: unknown) => v === undefined || typeof v === "number";
+const requestIdOk = (v: unknown) =>
+  typeof v === "string" && v.length >= 1 && v.length <= MAX_REQUEST_ID_LEN;
+const tokenOk = (v: unknown) => typeof v === "string" && v.length <= MAX_TOKEN_LEN;
+const sdpOk = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= MAX_SDP_LEN;
+const absentOrString = (v: unknown) => v === undefined || typeof v === "string";
+const isIceServer = (v: unknown) =>
+  isRecord(v) &&
+  Array.isArray(v.urls) && v.urls.length >= 1 && v.urls.every((u) => typeof u === "string") &&
+  absentOrString(v.username) && absentOrString(v.credential);
+const isRtcTrack = (v: unknown) =>
+  isRecord(v) &&
+  typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN &&
+  typeof v.mid === "string" && v.mid.length >= 1 && v.mid.length <= MAX_MID_LEN;
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
-    (v.manifest === undefined || isRecord(v.manifest)),
+    (v.manifest === undefined || isRecord(v.manifest)) &&
+    (v.token === undefined || tokenOk(v.token)),
+  error: (v) => v.requestId === undefined || requestIdOk(v.requestId),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
-  twist: genAbsentOrNumber,
-  stop: genAbsentOrNumber,
-  teleop_start: genAbsentOrNumber,
-  teleop_stop: genAbsentOrNumber,
+  twist: (v) => absentOrNumber(v.gen),
+  stop: (v) => absentOrNumber(v.gen),
+  teleop_start: (v) => absentOrNumber(v.gen),
+  teleop_stop: (v) => absentOrNumber(v.gen),
+  pub: (v) => requestIdOk(v.id) && v.data !== undefined && absentOrNumber(v.clientTs),
+  pub_ack: (v) => requestIdOk(v.id),
+  pub_nack: (v) => requestIdOk(v.id),
+  rtc_ice: (v) => Array.isArray(v.iceServers) && v.iceServers.every(isIceServer),
+  rtc_offer: (v) =>
+    sdpOk(v.sdp) &&
+    (v.tracks === undefined ||
+      (Array.isArray(v.tracks) && v.tracks.length <= MAX_RTC_TRACKS &&
+        v.tracks.every(isRtcTrack))) &&
+    absentOrString(v.robotId),
+  rtc_answer: (v) => sdpOk(v.sdp),
+  rtc_stalled: (v) =>
+    typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN,
 };
 
 /** Validated message from parsed JSON; null for unknown or malformed ones. */

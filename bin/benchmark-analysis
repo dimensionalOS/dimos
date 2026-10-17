@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""Find persistent shifts in the go2 replay benchmark series and file issues.
+
+Reads the series github-action-benchmark keeps on gh-pages (dev/bench/data.js),
+rescales each point to the most common CPU model, and runs Apache Otava's
+change point detection over the result. A change point is the first main
+commit of a new level, which on a squash-merged main is one PR; each
+regression becomes an issue assigned to that commit's author.
+
+Why rescale: hosted runners can be a mix of machine types whose numbers for
+identical code differ (CPU seconds on the x86 runners did by 10-20%), so left
+raw every switch between machine types looks like a change point. See
+`aligned` for how the scale of a machine type is estimated without flattening
+real shifts.
+
+Usage (Otava comes from the .github/benchmark-analysis project; the script itself
+needs only the stdlib):
+  uv run --project .github/benchmark-analysis python bin/benchmark-analysis data.js
+  ... --create-issues  # needs GITHUB_TOKEN + GITHUB_REPOSITORY
+
+The PR gate is the other mode and needs no Otava:
+  python3 bin/benchmark-analysis data.js --gate benchmark.json [--acknowledged]
+"""
+
+import argparse
+from collections import Counter, defaultdict
+import csv
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from itertools import count, pairwise
+import json
+import math
+import os
+from pathlib import Path
+import re
+import statistics
+import subprocess
+import sys
+import tempfile
+from typing import Any
+import urllib.error
+import urllib.request
+
+SERIES = "go2 replay realtime (arm64)"
+# What the PR gate (--gate) compares: the series that repeat to within a few
+# percent. The noisier ones are tracked for the trend analysis only.
+GATED = ("instructions", "peak memory", "peak threads", "network (transport)")
+# Every series the benchmark emits; listed so a new one is a deliberate
+# addition here rather than an automatic source of issues.
+METRICS = (*GATED, "disk write")
+LABEL = "benchmark-regression"
+MARKER = "<!-- benchmark-analysis: {sha} -->"
+
+
+@dataclass(frozen=True)
+class Point:
+    time: datetime
+    sha: str
+    message: str
+    author: str | None
+    cpu: str
+    values: dict[str, float]
+
+    @property
+    def pr(self) -> int | None:
+        match = re.search(r"\(#(\d+)\)\s*$", self.message.splitlines()[0] if self.message else "")
+        return int(match.group(1)) if match else None
+
+
+@dataclass(frozen=True)
+class Change:
+    metric: str
+    point: Point  # first point of the new level
+    previous: Point  # last point of the old level
+    next: Point | None
+    before: float
+    after: float
+    pvalue: float
+
+    @property
+    def percent(self) -> float:
+        return (self.after / self.before - 1) * 100
+
+    @property
+    def regression(self) -> bool:
+        return self.after > self.before  # every series is smaller-is-better
+
+
+def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
+    """The series' points in order, and each metric's unit."""
+    text = path.read_text()
+    data = json.loads(text[text.index("{") : text.rindex("}") + 1])
+    points = []
+    units = {}
+    for entry in data["entries"].get(SERIES, []):
+        commit = entry["commit"]
+        benches = entry["benches"]
+        cpu = re.match(r"cpu: ([^;]+)", benches[0].get("extra", "") if benches else "")
+        units.update({b["name"]: b["unit"] for b in benches})
+        points.append(
+            Point(
+                time=datetime.fromtimestamp(entry["date"] / 1000, timezone.utc),
+                sha=commit["id"],
+                message=commit.get("message", ""),
+                author=commit.get("author", {}).get("username"),
+                cpu=cpu.group(1) if cpu else "unknown",
+                values={b["name"]: float(b["value"]) for b in benches},
+            )
+        )
+    return points, units
+
+
+def emit(text: str) -> None:
+    """Print, and append to the job summary when there is one."""
+    print(text)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary).open("a") as f:
+            f.write(text + "\n")
+
+
+def gate(points: list[Point], current: Path, threshold: float, acknowledged: bool) -> int:
+    """Compare a run's gated series with the last run on main; 1 on a regression.
+
+    The same comparison github-action-benchmark makes, done here so the failing
+    step's own output carries the table and the way out, and so the noisy
+    series can be tracked without being able to fail a PR.
+    """
+    benches = json.loads(current.read_text())
+    now = {b["name"]: float(b["value"]) for b in benches}
+    units = {b["name"]: b["unit"] for b in benches}
+    rows = []
+    regressions = []
+    previous: Point | None = None
+    for metric in GATED:
+        if metric not in now:
+            continue
+        unit = units[metric]
+        last = next((p for p in reversed(points) if metric in p.values), None)
+        if last is None:
+            rows.append(f"| {metric} | - | {now[metric]:.3f} {unit} | - |")
+            continue
+        previous = previous or last
+        ratio = now[metric] / last.values[metric] if last.values[metric] else math.inf
+        if ratio > threshold:
+            regressions.append(metric)
+        rows.append(
+            f"| {metric} | {last.values[metric]:.3f} {unit} | {now[metric]:.3f} {unit} "
+            f"| {ratio:.3f}{' **regression**' if ratio > threshold else ''} |"
+        )
+    lines = [
+        f"### {SERIES}: gate at {threshold:.0%} of the last run on main"
+        + (f" ({previous.sha[:10]})" if previous else ""),
+        "",
+        "| Series | Previous | Current | Ratio |",
+        "|---|---|---|---|",
+        *rows,
+    ]
+    if regressions and acknowledged:
+        lines += ["", "Acknowledged with the `benchmark-ack` label, so not failing."]
+    elif regressions:
+        lines += [
+            "",
+            "If this regression is expected, a maintainer can add the `benchmark-ack`",
+            "label to the PR and re-run this job in order to merge.",
+        ]
+    emit("\n".join(lines))
+    if regressions and not acknowledged:
+        print(
+            f"::error title=Benchmark regression::{', '.join(regressions)} above {threshold:.0%} "
+            "of the last run on main. If expected, a maintainer can add the 'benchmark-ack' "
+            "label to the PR and re-run this job."
+        )
+        return 1
+    return 0
+
+
+def aligned(points: list[Point], metric: str) -> list[tuple[Point, float]]:
+    """(point, value rescaled to the most common CPU model) for points with the metric.
+
+    A machine type's scale is the median ratio between its points and the
+    reference type's points adjacent to them in the series. Neighbours almost
+    always share a level, so the ratio captures the hardware alone and a shift
+    in the code survives intact. Each type's whole-history median would not
+    do: it mixes the levels before and after a shift in proportions that
+    differ per type, and the leftover misalignment shows up as change points
+    of its own wherever the type mix changes. A type never adjacent to the
+    reference falls back to that anyway.
+    """
+    rows = [p for p in points if metric in p.values]
+    ref = Counter(p.cpu for p in rows).most_common(1)[0][0]
+    ratios: dict[str, list[float]] = defaultdict(list)
+    for a, b in pairwise(rows):
+        if a.cpu != b.cpu and ref in (a.cpu, b.cpu):
+            other, base = (a, b) if b.cpu == ref else (b, a)
+            if base.values[metric]:
+                ratios[other.cpu].append(other.values[metric] / base.values[metric])
+
+    def scale(cpu: str) -> float:
+        if cpu == ref:
+            return 1.0
+        if ratios[cpu]:
+            return statistics.median(ratios[cpu])
+        medians = [
+            statistics.median(p.values[metric] for p in rows if p.cpu == which)
+            for which in (cpu, ref)
+        ]
+        return medians[0] / medians[1] if medians[1] else 1.0
+
+    scales = {cpu: scale(cpu) or 1.0 for cpu in {p.cpu for p in rows}}
+    return [(p, p.values[metric] / scales[p.cpu]) for p in rows]
+
+
+def confirmed(values: list[float], splits: list[int], min_segment: int) -> list[int]:
+    """The splits that leave at least min_segment points on both sides.
+
+    A shift needs that many runs behind it before it counts: on a noisy
+    series E-divisive readily carves off a two-point edge segment, or brackets
+    an outlier next to a real step with a second, opposite split. Where two
+    splits crowd each other the one with the stronger local evidence wins,
+    and the latest shift waits for min_segment further runs before it is
+    reported.
+    """
+    if min_segment < 1:
+        return sorted(splits)
+
+    def strength(split: int) -> float:
+        # Welch's t over the min_segment points either side, from the values
+        # at full precision: Otava rounds the p-values it reports to six
+        # places, so every clear shift ties at 0.000000.
+        before = values[split - min_segment : split]
+        after = values[split : split + min_segment]
+        error = math.sqrt(
+            sum(statistics.variance(side) / len(side) for side in (before, after) if len(side) > 1)
+        )
+        shift = abs(statistics.fmean(after) - statistics.fmean(before))
+        return shift / error if error else math.inf
+
+    eligible = [s for s in splits if min_segment <= s <= len(values) - min_segment]
+    kept: list[int] = []
+    for split in sorted(eligible, key=lambda s: (-strength(s), s)):
+        if all(abs(split - k) >= min_segment for k in kept):
+            kept.append(split)
+    return sorted(kept)
+
+
+def detect(
+    points: list[Point],
+    workdir: Path,
+    otava: str,
+    p_value: float,
+    magnitude: float,
+    min_segment: int,
+) -> list[Change]:
+    """One Otava test per metric, so a series that started later is still whole."""
+    rows = {
+        metric: aligned(points, metric)
+        for metric in METRICS
+        if any(metric in p.values for p in points)
+    }
+    tests: dict[str, Any] = {}
+    for metric, series in rows.items():
+        if len(series) < 2:
+            continue
+        file = workdir / f"{len(tests)}.csv"
+        with file.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["time", "commit", "value"])
+            for point, value in series:
+                writer.writerow(
+                    [
+                        point.time.strftime("%Y-%m-%d %H:%M:%S %z"),
+                        point.sha,
+                        f"{value:.6f}",
+                    ]
+                )
+        tests[metric] = {
+            "type": "csv",
+            "file": str(file),
+            "time_column": "time",
+            "attributes": ["commit"],
+            "metrics": {"value": {"column": "value", "direction": -1}},
+        }
+    if not tests:
+        return []
+    config = workdir / "otava.yaml"
+    config.write_text(json.dumps({"tests": tests, "test_groups": {"all": list(tests)}}))
+
+    # Third-party code: keep the repository token out of its environment.
+    env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
+    env["OTAVA_CONFIG"] = str(config)
+    # Otava only looks at the last year unless told otherwise; the series is
+    # the whole history, so hand it all over.
+    since = min(p.time for p in points) - timedelta(days=1)
+    cmd = [
+        otava,
+        "analyze",
+        "all",
+        "--output",
+        "json",
+        "-P",
+        str(p_value),
+        "-M",
+        str(magnitude),
+        "--since",
+        since.strftime("%Y-%m-%d %H:%M:%S %z"),
+    ]
+    # Otava's progress and errors go to stderr; leave that on the job log.
+    stdout = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=True, env=env).stdout
+    # One JSON document per test, one per line.
+    report: dict[str, list[Any]] = {}
+    for line in stdout.splitlines():
+        if line.strip():
+            report.update(json.loads(line))
+    # Otava logs a test whose data it could not read and exits 0 regardless,
+    # so its absence from the output is the only sign.
+    if missing := tests.keys() - report.keys():
+        raise RuntimeError(f"Otava produced no report for {sorted(missing)}")
+
+    changes = []
+    for metric, change_points in report.items():
+        series = rows[metric]
+        values = [value for _, value in series]
+        # Otava numbers points within its own time window, so find the
+        # change point by its commit rather than trusting the index; the
+        # time tells apart re-runs of one commit.
+        position = {
+            (point.sha, int(point.time.timestamp())): i for i, (point, _) in enumerate(series)
+        }
+        pvalues = {}
+        for cp in change_points:
+            index = position[cp["attributes"]["commit"], cp["time"]]
+            for c in cp["changes"]:
+                pvalues[index] = float(c["pvalue"])
+        # Levels are recomputed over the merged segments: Otava's own means
+        # stop at the splits dropped here.
+        bounds = [0, *confirmed(values, list(pvalues), min_segment), len(series)]
+        for start, split, end in zip(bounds, bounds[1:], bounds[2:], strict=False):
+            before = statistics.fmean(values[start:split])
+            after = statistics.fmean(values[split:end])
+            if not before or abs(after / before - 1) < magnitude:
+                continue
+            changes.append(
+                Change(
+                    metric=metric,
+                    point=series[split][0],
+                    previous=series[split - 1][0],
+                    next=series[split + 1][0] if split + 1 < len(series) else None,
+                    before=before,
+                    after=after,
+                    pvalue=pvalues[split],
+                )
+            )
+    return sorted(changes, key=lambda c: (c.point.time, c.metric))
+
+
+class GitHub:
+    def __init__(self, repo: str, token: str) -> None:
+        self.base = f"https://api.github.com/repos/{repo}"
+        self.token = token
+
+    def request(
+        self, method: str, path: str, body: dict[str, Any] | None = None
+    ) -> tuple[int, Any]:
+        req = urllib.request.Request(
+            f"{self.base}{path}",
+            method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                raw = resp.read()
+                return resp.status, json.loads(raw) if raw else None
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                return 404, None
+            # GitHub's body says why (permissions, validation); the status alone does not.
+            err.add_note(f"{method} {path}: {err.read().decode()}")
+            raise
+
+
+def issue_body(
+    sha_changes: list[Change], units: dict[str, str], repo: str, p_value: float, magnitude: float
+) -> str:
+    point = sha_changes[0].point
+    url = f"https://github.com/{repo}"
+    pr = f" ([#{point.pr}]({url}/pull/{point.pr}))" if point.pr else ""
+    rows = "\n".join(
+        f"| {c.metric} | {c.before:.3f} {units[c.metric]} | {c.after:.3f} {units[c.metric]} "
+        f"| {c.percent:+.1f}% | {c.pvalue:.4f} |"
+        for c in sha_changes
+    )
+    run = (
+        f" in [this run]({url}/actions/runs/{os.environ['GITHUB_RUN_ID']})"
+        if os.environ.get("GITHUB_RUN_ID")
+        else ""
+    )
+    return f"""{MARKER.format(sha=point.sha)}
+The `{SERIES}` benchmark on main shifted at {point.sha[:10]}{pr} and has stayed there since.
+
+| Metric | Level before | Level after | Change | p-value |
+|---|---|---|---|---|
+{rows}
+
+Levels are the mean over each side of the change, with every run rescaled to
+the most common runner CPU model so the mix of machine types is factored out.
+The change point is the first commit of the new level; with noisy runs it can
+land one point late, so the previous point {sha_changes[0].previous.sha[:10]}
+is worth a look too.
+
+Detected by [Otava](https://otava.apache.org) (p ≤ {p_value}, magnitude ≥ {magnitude}){run}.
+"""
+
+
+def file_issues(
+    changes: list[Change],
+    units: dict[str, str],
+    gh: GitHub,
+    repo: str,
+    p_value: float,
+    magnitude: float,
+) -> list[str]:
+    """One issue per change-point commit; skipped when one already covers it."""
+    groups: dict[str, list[Change]] = {}
+    for c in changes:
+        if c.regression:
+            groups.setdefault(c.point.sha, []).append(c)
+    if not groups:
+        return []
+
+    filed = set()
+    for page in count(1):
+        _, issues = gh.request("GET", f"/issues?labels={LABEL}&state=all&per_page=100&page={page}")
+        for issue in issues or []:
+            if m := re.search(MARKER.format(sha="([0-9a-f]{40})"), issue.get("body") or ""):
+                filed.add(m.group(1))
+        if len(issues or []) < 100:
+            break
+    if gh.request("GET", f"/labels/{LABEL}")[0] == 404:
+        gh.request(
+            "POST",
+            "/labels",
+            {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/benchmark-analysis"},
+        )
+
+    actions = []
+    for sha, sha_changes in groups.items():
+        # A change point can wander by one point between runs as the series
+        # grows; an issue on either neighbour already covers this shift.
+        nearby = {sha, sha_changes[0].previous.sha} | {c.next.sha for c in sha_changes if c.next}
+        if nearby & filed:
+            actions.append(f"{sha[:10]}: already filed")
+            continue
+        author = sha_changes[0].point.author
+        assignees = (
+            [author] if author and gh.request("GET", f"/assignees/{author}")[0] == 204 else []
+        )
+        summary = ", ".join(f"{c.metric} {c.percent:+.1f}%" for c in sha_changes)
+        _, issue = gh.request(
+            "POST",
+            "/issues",
+            {
+                "title": f"Benchmark regression at {sha[:10]}: {summary}",
+                "body": issue_body(sha_changes, units, repo, p_value, magnitude),
+                "labels": [LABEL],
+                "assignees": assignees,
+            },
+        )
+        actions.append(f"{sha[:10]}: filed {issue['html_url']} (assignees: {assignees or 'none'})")
+    return actions
+
+
+def report(changes: list[Change], actions: list[str]) -> str:
+    lines = [f"### {SERIES}: change points", ""]
+    if changes:
+        lines += ["| When | Commit | Metric | Change | p-value |", "|---|---|---|---|---|"]
+        lines += [
+            f"| {c.point.time:%Y-%m-%d} | {c.point.sha[:10]} | {c.metric} | {c.percent:+.1f}%"
+            f"{' (regression)' if c.regression else ''} | {c.pvalue:.4f} |"
+            for c in changes
+        ]
+    else:
+        lines.append("None.")
+    lines += ["", *(f"- {a}" for a in actions)]
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("data", type=Path, help="data.js from the gh-pages branch")
+    parser.add_argument("--create-issues", action="store_true")
+    parser.add_argument("--p-value", type=float, default=0.001, help="Otava -P (default 0.001)")
+    parser.add_argument("--magnitude", type=float, default=0.05, help="Otava -M (default 0.05)")
+    parser.add_argument(
+        "--min-segment",
+        type=int,
+        default=5,
+        help="runs a level must hold on both sides of a shift to count (default 5)",
+    )
+    parser.add_argument("--otava", default="otava", help="otava executable")
+    parser.add_argument(
+        "--gate",
+        type=Path,
+        metavar="BENCHMARK_JSON",
+        help="instead of the analysis: compare this run's gated series with the last run on main",
+    )
+    parser.add_argument("--threshold", type=float, default=1.08, help="--gate ratio (default 1.08)")
+    parser.add_argument("--acknowledged", action="store_true", help="--gate reports but passes")
+    args = parser.parse_args()
+
+    points, units = load_series(args.data)
+    if args.gate:
+        return gate(points, args.gate, args.threshold, args.acknowledged)
+    with tempfile.TemporaryDirectory() as tmp:
+        changes = detect(
+            points, Path(tmp), args.otava, args.p_value, args.magnitude, args.min_segment
+        )
+
+    actions = []
+    if args.create_issues:
+        repo = os.environ["GITHUB_REPOSITORY"]
+        gh = GitHub(repo, os.environ["GITHUB_TOKEN"])
+        actions = file_issues(changes, units, gh, repo, args.p_value, args.magnitude)
+
+    emit(report(changes, actions))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

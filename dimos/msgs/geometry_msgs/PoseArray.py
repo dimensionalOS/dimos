@@ -16,17 +16,21 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
+from dimos_lcm.geometry_msgs import PoseArray as LCMPoseArray
+import numpy as np
+
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.std_msgs.Header import Header
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.msgs.geometry_msgs.Pose import Pose
+    from rerun._baseclasses import Archetype
 
 
-class PoseArray:
+class PoseArray(LCMPoseArray):  # type: ignore[misc]
     """
     An array of poses with a header for reference frame and timestamp.
 
@@ -35,6 +39,8 @@ class PoseArray:
     """
 
     msg_name = "geometry_msgs.PoseArray"
+    header: Header
+    poses: list[Pose]
 
     def __init__(self, header: Header | None = None, poses: list[Pose] | None = None) -> None:
         """
@@ -69,29 +75,39 @@ class PoseArray:
         """Add a pose to the array."""
         self.poses.append(pose)
 
-    def encode(self) -> bytes:
-        """
-        Encode to bytes for LCM transmission.
+    @property
+    def frame_id(self) -> str:
+        return str(self.header.frame_id)
 
-        Note: This is a simple implementation. For production use,
-        consider using proper LCM encoding.
-        """
-        import pickle
+    @property
+    def ts(self) -> float:
+        return float(self.header.stamp.sec + self.header.stamp.nsec / 1e9)
 
-        return pickle.dumps({"header": self.header, "poses": self.poses})
+    # The LCM wire count, always derived; the base decoder assigns it.
+    @property
+    def poses_length(self) -> int:
+        return len(self.poses)
+
+    @poses_length.setter
+    def poses_length(self, _: int) -> None:
+        pass
 
     @classmethod
-    def decode(cls, data: bytes) -> PoseArray:
-        """
-        Decode from bytes.
+    def lcm_decode(cls, data: bytes | BinaryIO) -> PoseArray:
+        msg = LCMPoseArray.lcm_decode(data)
+        return cls(Header(msg.header), [Pose(pose) for pose in msg.poses])
 
-        Args:
-            data: Pickled PoseArray data
+    def positions(self) -> np.ndarray:
+        """Pose positions, (N, 3)."""
+        return np.array([[p.x, p.y, p.z] for p in self.poses], dtype=np.float64).reshape(-1, 3)
 
-        Returns:
-            Decoded PoseArray
-        """
-        import pickle
+    def to_rerun(self, color: tuple[int, int, int] = (255, 0, 0), length: float = 0.1) -> Archetype:
+        """Render as ``rr.Arrows3D``, one arrow along each pose's x axis."""
+        import rerun as rr
+        from scipy.spatial.transform import Rotation
 
-        decoded = pickle.loads(data)
-        return cls(header=decoded["header"], poses=decoded["poses"])
+        if not self.poses:
+            return rr.Arrows3D(origins=[], vectors=[])
+        quats = np.array([p.orientation.to_numpy() for p in self.poses])
+        vectors = Rotation.from_quat(quats).apply([length, 0.0, 0.0])
+        return rr.Arrows3D(origins=self.positions(), vectors=vectors, colors=[color])

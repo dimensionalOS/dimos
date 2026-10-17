@@ -1,0 +1,15 @@
+# Replaces the repo-root .dockerignore for docker/relay/Dockerfile (BuildKit
+# prefers <Dockerfile>.dockerignore): that one drops package.json, which the
+# web build needs. Only web/ is copied; skip build products and local secrets.
+*
+!web
+web/**/node_modules
+web/**/dist
+web/**/.dist-*
+web/**/.build.lock
+web/**/.env
+web/**/.env.*
+web/**/auth.json
+web/**/*.pem
+web/**/*.key
+web/**/*.crt

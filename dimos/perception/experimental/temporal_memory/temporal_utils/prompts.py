@@ -17,7 +17,10 @@
 import json
 from typing import Any
 
-from .helpers import clamp_text, next_entity_id_hint
+from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import (
+    clamp_text,
+    next_entity_id_hint,
+)
 
 # JSON schema for window responses (from VideoRAG)
 WINDOW_RESPONSE_SCHEMA = {

@@ -21,3 +21,5 @@ ROBOT_WIDTH = 0.3175
 ROBOT_HEIGHT = 0.45
 # Ground to the base_link origin while standing.
 BASE_LINK_HEIGHT = 0.287
+# Seconds without a cmd_vel before the robot is told to stop.
+CMD_VEL_TIMEOUT = 0.2

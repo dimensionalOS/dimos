@@ -20,13 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.sensor_msgs.JointState import JointState
-
-
-def planning_group_id_from_selector(selector: PlanningGroupID | PlanningGroup) -> PlanningGroupID:
-    """Return the planning-group ID represented by a selector."""
-    return selector.id if isinstance(selector, PlanningGroup) else selector
 
 
 def filter_joint_state_to_selected_joints(

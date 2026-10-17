@@ -1,0 +1,10 @@
+title: Web
+nav:
+  - index.md
+  - cockpit.md
+  - web_sdk.md
+  - bridge.md
+  - relay.md
+  - relay_hosting.md
+  - development.md
+  - protocol.md

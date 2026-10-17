@@ -540,10 +540,10 @@ def _capture_frames_from_topic(
     no_display: bool = False,
     timeout_sec: float = 60.0,
 ) -> _WebcamCapture:
-    """Capture frames from an LCM/SHM image topic with the same interactive UX.
+    """Capture frames from a pubsub image topic with the same interactive UX.
 
     ``topic_uri`` follows the pubsub registry format ``"<proto>:<topic>"``, e.g.
-    ``"jpeg_lcm:/color_image"`` or ``"pshm:color_image"``. The publisher must
+    ``"zenoh:dimos/color_image"`` or ``"jpeg_lcm:/color_image"``. The publisher must
     emit ``sensor_msgs.Image`` messages; ``Image.to_opencv()`` normalizes the
     payload to BGR before detection. Raises ``RuntimeError`` if no frames arrive
     within ``timeout_sec``.
@@ -578,7 +578,7 @@ def _capture_frames_from_topic(
                 raise RuntimeError(
                     f"No frames received on topic {topic_uri!r} within {timeout_sec:.1f}s."
                 )
-            # Yield so the LCM/SHM callback thread can run; avoid busy spin.
+            # Yield so the pubsub callback thread can run; avoid busy spin.
             time.sleep(0.01)
             return None
         return frame
@@ -607,7 +607,7 @@ def capture_frames_from_topic(
     no_display: bool = False,
     timeout_sec: float = 60.0,
 ) -> list[np.ndarray]:
-    """Capture ``target_count`` frames from an LCM/SHM image topic."""
+    """Capture ``target_count`` frames from a pubsub image topic."""
     return _capture_frames_from_topic(
         topic_uri,
         target_count,
@@ -968,7 +968,7 @@ def calibrate(
         "--topic",
         help=(
             "Pubsub URI for --source topic (proto:channel), "
-            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+            "e.g. 'zenoh:dimos/color_image' or 'jpeg_lcm:/color_image'."
         ),
     ),
     topic_timeout_sec: float = typer.Option(

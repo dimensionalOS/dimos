@@ -49,9 +49,37 @@ app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.0
 app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
+## Manipulation SDK
+
+See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.md)
+for arm control from scripts or `dimos shell`, including setup, motion, and
+failure handling.
+
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:
+
+For a typed capability, pass a Spec Protocol to `app.find_module_by_spec()`. dimOS matches
+advertised RPC names and method signatures, using the same compliance checks as
+blueprint Spec injection:
+
+```python skip
+from typing import Protocol
+
+from dimos.spec.utils import Spec
+
+class PingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+ping = app.find_module_by_spec(PingSpec)
+print(ping.ping())
+```
+
+Exactly one deployed module must match. If several match, select one with
+`app.find_module_by_spec(PingSpec, instance_name="robot0/ping")`. No match raises
+`LookupError`; ambiguity raises `ValueError`. The deployed module class must be
+importable in the client to inspect its signatures. Spec lookup returns the same
+proxy as name lookup and does not change connection ownership.
 
 ```python skip
 # Live structured records for exact deployed instances.
@@ -113,6 +141,29 @@ import cv2
 cv2.imshow("color_image", img.data)
 cv2.waitKey(0)
 ```
+
+## Subscribing to streams
+
+Connect to a running system, list its wired streams, and subscribe through a
+module proxy:
+
+```python skip
+app = Dimos.connect()
+print(app.list_streams())
+unsubscribe = app.Detection3DModule.get_stream("detections").subscribe(print)
+input("Press Enter to stop listening")
+unsubscribe()
+```
+
+`list_streams(module)` filters by module name or proxy. Each result includes the
+stream's name, message type, module instance, direction and transport channel.
+Connected input, output and IO ports expose subscriptions. Messages use the
+existing stream transport directly; the client must have its message types
+installed. WebRTC streams require the hosted operator client.
+
+Stream handles are cached for the connection. Reconnect after changing stream
+wiring. Closing the connected app releases its stream transports while the
+running system continues.
 
 ## Remote mode
 

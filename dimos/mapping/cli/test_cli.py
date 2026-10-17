@@ -223,3 +223,21 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
     )
     assert res.returncode == 0, res.stderr
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_view_pc2(tmp_path: Path) -> None:
+    import numpy as np
+
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    pc2 = tmp_path / "map.pc2.lcm"
+    cloud = PointCloud2.from_numpy(
+        np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
+    )
+    pc2.write_bytes(cloud.lcm_encode())
+
+    out = tmp_path / "view.rrd"
+    res = _run("view", str(pc2), "--out", str(out))
+    assert res.returncode == 0, res.stderr
+    assert "256 points" in res.stdout
+    assert out.exists() and out.stat().st_size > 0

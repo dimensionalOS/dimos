@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import {
   CONTROL_CHANNEL,
   encodeDataFrame,
@@ -15,6 +15,7 @@ import {
   readRobotFrame,
   readWebTransportPreamble,
   ReliableChannel,
+  TokenBucket,
   type ViewerSink,
 } from "./forward.ts";
 
@@ -252,6 +253,22 @@ Deno.test("reliable: overflow kicks once and empties the FIFO", async () => {
   ch.offer(frame(200)); // still a no-op until transport teardown completes
   assertEquals(ch.queued(), 0);
   assertEquals(sink.kicks, 1);
+});
+
+Deno.test("reliable: a lone frame over the byte cap is sent, a backlog behind it kicks", async () => {
+  const big = new Uint8Array(17 * 1024 * 1024);
+  const alone = new FakeSink();
+  new ReliableChannel(alone).offer(big);
+  await tick();
+  assertEquals(alone.kicked, null);
+  assertEquals(alone.sent.length, 1);
+  assertStrictEquals(alone.sent[0], big);
+  const backlog = new FakeSink(false);
+  const ch = new ReliableChannel(backlog);
+  ch.offer(big);
+  ch.offer(frame(1)); // queued behind the unsent big frame: together over the cap
+  assertEquals(backlog.kicked, "reliable channel overflow");
+  assertEquals(ch.queued(), 0);
 });
 
 Deno.test("latest: dispose resets every outstanding send without kicking", async () => {
@@ -525,6 +542,31 @@ Deno.test("rate: bucketed trailing window with idle decay and wraparound", () =>
   // Wraparound: pushes far apart still land in the right buckets.
   rate.push(500, t0 + 30_000);
   assertEquals(rate.snapshot(t0 + 30_000), { fps: 0.2, bps: 100 });
+});
+
+Deno.test("token bucket: burst to capacity, continuous refill, no wobble drain", () => {
+  const bucket = new TokenBucket(2); // capacity max(1, ceil(2)) = 2
+  const t0 = 1_000_000;
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), false); // burst spent
+  // 2/s: half a second buys exactly one token.
+  assertEquals(bucket.take(t0 + 499), false);
+  assertEquals(bucket.take(t0 + 500), true);
+  // A backwards clock must not drain tokens (the failed take at t0+500ms+1
+  // refilled nothing; going back 400ms keeps the balance).
+  assertEquals(bucket.take(t0 + 100), false);
+  // Idle refill clamps at capacity: a long pause buys 2 tokens, not 20.
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), false);
+
+  // Fractional rates keep at least one token of capacity.
+  const slow = new TokenBucket(0.5);
+  assertEquals(slow.capacity, 1);
+  assertEquals(slow.take(t0), true);
+  assertEquals(slow.take(t0 + 1999), false);
+  assertEquals(slow.take(t0 + 2000), true);
 });
 
 Deno.test("parseRobotFrameHeader accepts valid frames and rejects junk", () => {

@@ -174,7 +174,7 @@ class SpatialVectorDB:
         if self.embedding_provider is None:
             from dimos.perception.experimental.image_embedding import ImageEmbeddingProvider
 
-            self.embedding_provider = ImageEmbeddingProvider(model_name="clip")
+            self.embedding_provider = ImageEmbeddingProvider()
 
         text_embedding = self.embedding_provider.get_text_embedding(text)
 

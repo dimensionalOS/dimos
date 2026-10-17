@@ -35,6 +35,7 @@ class ProcessStats:
     cpu_time_user: float = 0.0
     cpu_time_system: float = 0.0
     cpu_time_iowait: float = 0.0
+    rss: int = 0
     pss: int = 0
     num_threads: int = 0
     num_children: int = 0
@@ -150,8 +151,9 @@ def collect_process_stats(pid: int) -> ProcessStats:
             cpu = _collect_cpu(proc)
             io = _collect_io(proc)
             proc_stats = _collect_proc(proc)
+            rss = proc.memory_info().rss
         pss = _collect_pss(pid)
-        return ProcessStats(pid=pid, alive=True, pss=pss, **cpu, **io, **proc_stats)
+        return ProcessStats(pid=pid, alive=True, rss=rss, pss=pss, **cpu, **io, **proc_stats)
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         _proc_cache.pop(pid, None)
         _collect_pss.cache.pop((pid,), None)

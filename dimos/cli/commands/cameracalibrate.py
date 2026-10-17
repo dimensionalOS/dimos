@@ -32,7 +32,7 @@ def cameracalibrate(
         "--topic",
         help=(
             "Pubsub URI for --source topic (proto:channel), "
-            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+            "e.g. 'zenoh:dimos/color_image' or 'jpeg_lcm:/color_image'."
         ),
     ),
     topic_timeout_sec: float = typer.Option(

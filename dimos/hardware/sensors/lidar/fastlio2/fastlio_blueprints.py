@@ -15,7 +15,6 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
 
@@ -51,17 +50,3 @@ mid360_fastlio_voxels_native = autoconnect(
         },
     ),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")
-
-
-mid360_fastlio_ray_trace = autoconnect(
-    FastLio2.blueprint(),
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
-    vis_module(
-        "rerun",
-        rerun_config={
-            "visual_override": {
-                "world/lidar": None,
-            },
-        },
-    ),
-).global_config(n_workers=5, robot_model="mid360_fastlio2_ray_trace")

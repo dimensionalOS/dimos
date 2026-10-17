@@ -22,6 +22,8 @@ const MANIFEST: Manifest = {
       delivery: "latest",
       maxHz: 15,
       params: { maxLinear: 0.8, maxAngular: 1.0, boost: 2.0, watchdogMs: 300 },
+      publish: "none",
+      requiredScope: null,
     },
   ],
   panels: [SPEC],

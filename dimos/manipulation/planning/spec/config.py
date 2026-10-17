@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
@@ -29,26 +30,20 @@ from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):
-    """Configuration for adding a robot to the world.
+    """Configuration for the logical robot model loaded into the world.
 
     Attributes:
         model: Portable robot model loaded by backend adapters
         srdf_path: Optional path to SRDF file containing planning group definitions
-        base_pose: Placement transform. This is the canonical world placement for
-            robot instances.
+        base_pose: Placement transform for the model's base link in the world.
         joint_names: Ordered list of controllable joints in the canonical model
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
-        joint_limits_lower: Lower joint limits (radians)
-        joint_limits_upper: Upper joint limits (radians)
-        velocity_limits: Joint velocity limits (rad/s)
         auto_convert_meshes: Auto-convert DAE/STL meshes to OBJ for Drake
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
-        max_velocity: Maximum joint velocity for trajectory generation (rad/s)
-        max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
     """
 
     model: RobotModel
@@ -57,14 +52,8 @@ class RobotModelConfig(ModuleConfig):
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
-    joint_limits_lower: list[float] | None = None
-    joint_limits_upper: list[float] | None = None
-    velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
-    # Motion constraints for trajectory generation
-    max_velocity: float = 1.0
-    max_acceleration: float = 2.0
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
@@ -74,6 +63,12 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
     # Gripper feedback thresholds for pick/place.
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+
+    @field_validator("base_pose", mode="before")
+    @classmethod
+    def _parse_base_pose(cls, value: Any) -> Any:
+        """Accept a pose object or its JSON configuration across the launcher boundary."""
+        return PoseStamped(**value) if isinstance(value, dict) else value
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""

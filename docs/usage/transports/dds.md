@@ -50,5 +50,5 @@ sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
 To install all extras including DDS:
 
 ```bash
-CYCLONEDDS_HOME=/opt/cyclonedds uv sync --all-extras --all-groups
+CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds --inexact
 ```

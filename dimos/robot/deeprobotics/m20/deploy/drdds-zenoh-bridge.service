@@ -1,0 +1,19 @@
+[Unit]
+Description=DimOS M20 DrDDS/Zenoh bridge
+After=network-online.target localization.service
+BindsTo=localization.service
+PartOf=localization.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment="LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib/aarch64-linux-gnu"
+ExecStartPre=/usr/bin/test -e /run/dimos-m20-lio-ready
+ExecStart=/usr/local/libexec/m20_drdds_zenoh_bridge
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target localization.service

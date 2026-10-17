@@ -46,8 +46,15 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.imitation.dataprep.core import DEFAULT_FPS, OutputConfig, Sample, is_image_array
+from dimos.imitation.dataprep.core import (
+    is_image_array,
+)
 from dimos.imitation.dataprep.formats._stats import StreamingStats, stats_from_metadata
+from dimos.imitation.dataprep.schema import (
+    DEFAULT_FPS,
+    OutputConfig,
+    Sample,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -162,6 +169,7 @@ class _LeRobotV3Writer:
         self.image_keys: list[str] = []
         self.state_keys: list[str] = []
         self.action_keys: list[str] = []
+        self.info_keys: list[str] = []
         self.feature_shapes: dict[str, tuple[int, ...]] = {}
         self.feature_dtypes: dict[str, str] = {}
 
@@ -247,6 +255,16 @@ class _LeRobotV3Writer:
             self.global_stats.update(name, a)
             self.cur_ep_stats.update(name, a)
 
+        for key, arr in sample.complementary_info.items():
+            value = np.asarray(arr)
+            name = f"complementary_info.{key}"
+            if key not in self.info_keys:
+                self.info_keys.append(key)
+                self.feature_shapes[name] = tuple(value.shape)
+                self.feature_dtypes[name] = str(value.dtype)
+            self.global_stats.update(name, value)
+            self.cur_ep_stats.update(name, value)
+
         # Append image frames to the per-camera MP4 (RGB→BGR; cv2 is BGR-native).
         for k, arr in sample.observation.items():
             a = np.asarray(arr)
@@ -276,6 +294,7 @@ class _LeRobotV3Writer:
                     if not is_image_array(np.asarray(v))
                 },
                 "act": {k: np.asarray(v) for k, v in sample.action.items()},
+                "info": {k: np.asarray(v) for k, v in sample.complementary_info.items()},
             }
         )
         self.global_index += 1
@@ -305,6 +324,12 @@ class _LeRobotV3Writer:
         for k in self.action_keys:
             name = _feature_name("action", k, False, single_action=single_action)
             cols[name] = pa.array([r["act"][k].tolist() for r in cur_rows], type=f32_list)
+        for key in self.info_keys:
+            name = f"complementary_info.{key}"
+            dtype = pa.from_numpy_dtype(np.dtype(self.feature_dtypes[name]))
+            cols[name] = pa.array(
+                [row["info"][key].tolist() for row in cur_rows], type=pa.list_(dtype)
+            )
         table = pa.Table.from_pydict(cols)
         if self.data_writer is None:
             self.data_writer = self._pq.ParquetWriter(

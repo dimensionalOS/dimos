@@ -27,6 +27,7 @@ import pytest
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
+    blueprint_from_run_id,
     cleanup_stale,
     generate_run_id,
     list_runs,
@@ -43,6 +44,8 @@ def tmp_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _make_entry(
     run_id: str = "20260306-120000-test",
     pid: int | None = None,
+    config_overrides: dict[str, object] | None = None,
+    original_argv: list[str] | None = None,
 ) -> RunEntry:
     return RunEntry(
         run_id=run_id,
@@ -51,7 +54,8 @@ def _make_entry(
         started_at="2026-03-06T12:00:00Z",
         log_dir="/tmp/test-logs",
         cli_args=["test"],
-        config_overrides={},
+        config_overrides=config_overrides or {},
+        original_argv=original_argv or [],
     )
 
 
@@ -84,14 +88,57 @@ class TestRunEntryCRUD:
         entry.remove()
         entry.remove()  # already gone — still fine
 
+    def test_secrets_are_not_persisted_in_restart_metadata(self, tmp_registry: Path) -> None:
+        secrets = {
+            "relay_key": "relay-key-0123456789abcdef",
+            "dimos_api_key": "api-key-0123456789abcdef",
+            "unitree_aes_128_key": "aes-key-0123456789abcdef",
+        }
+        entry = _make_entry(
+            config_overrides={"viewer": "none", **secrets},
+            original_argv=[
+                "dimos",
+                "--relay-key",
+                secrets["relay_key"],
+                "run",
+                "unitree-go2",
+                f"--g.dimos-api-key={secrets['dimos_api_key']}",
+                "--unitree-aes-128-key",
+                secrets["unitree_aes_128_key"],
+                "--g.relay-key=another-relay-key-0123456789abcdef",
+                "--viewer",
+                "none",
+            ],
+        )
+
+        entry.save()
+
+        assert entry.config_overrides == {"viewer": "none"}
+        assert entry.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
+        persisted = entry.registry_path.read_text()
+        for secret in (*secrets.values(), "another-relay-key-0123456789abcdef"):
+            assert secret not in persisted
+        loaded = RunEntry.load(entry.registry_path)
+        assert loaded.config_overrides == {"viewer": "none"}
+        assert loaded.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
+
 
 class TestGenerateRunId:
     """test_generate_run_id_format — timestamp + sanitized blueprint name."""
 
     def test_generate_run_id_format(self):
         rid = generate_run_id("unitree-go2")
-        # Pattern: YYYYMMDD-HHMMSS-<name>
-        assert re.match(r"^\d{8}-\d{6}-unitree-go2$", rid), f"unexpected format: {rid}"
+        # Pattern: YYYYMMDD-HHMMSS-<4 hex>-<name>
+        assert re.match(r"^\d{8}-\d{6}-[0-9a-f]{4}-unitree-go2$", rid), f"unexpected format: {rid}"
+
+    def test_same_second_runs_differ(self):
+        assert generate_run_id("unitree-go2") != generate_run_id("unitree-go2")
+
+    def test_blueprint_round_trips(self):
+        assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
+        assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
+        assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
+        assert blueprint_from_run_id("downloads") is None
 
     def test_sanitizes_slashes(self):
         rid = generate_run_id("path/to/bp")

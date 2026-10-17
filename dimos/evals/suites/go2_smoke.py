@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hand-written passive smoke suite over the go2 replays.
+"""Hand-written smoke suite over the go2 replays.
 
 Ground truth verified against the recordings (contact sheets + odom math):
 go2_short is 60s — chairs room, store shelves, robot kiosk, glass booths, a
@@ -21,61 +21,54 @@ person at a table at the end; path 37.9m, displacement 1.7m.
 
 from __future__ import annotations
 
+from dimos.evals.environments.dataset import Dataset
 from dimos.evals.scorers import choice, exact, first_number, within, yes_no
-from dimos.evals.types import PassiveEval, Suite
+from dimos.evals.types import EvalCase, Suite
+
+_FURNITURE = ["chairs", "sofas", "beds", "desks"]
+_NOT_SEEN = ["a couch", "store shelves", "a swimming pool", "an office chair"]
 
 SUITE: Suite = [
-    PassiveEval(
+    EvalCase(
         id="short_person_visible",
-        inputs="Is a person visible in any of these images?",
-        expected="yes",
-        parse=yes_no,
-        score=exact,
-        context=(lambda s: s.streams.color_image.range_time(40, 61),),
-        dataset="go2_short",
+        inputs="Is a person visible in any of these images? Answer yes or no.",
+        environment=Dataset(
+            "go2_short", select=(lambda s: s.streams.color_image.range_time(40, 61),)
+        ),
+        grade=lambda o: exact("yes", yes_no(o.trajectory.final_answer)),
         tags=frozenset({"image", "presence"}),
     ),
-    PassiveEval(
+    EvalCase(
         id="short_start_furniture",
         inputs="At the start of these observations, which furniture is most numerous? "
-        "Answer with one of: chairs, sofas, beds, desks.",
-        expected="chairs",
-        parse=choice,
-        score=exact,
-        context=(lambda s: s.streams.color_image.range_time(0, 8),),
-        dataset="go2_short",
+        f"Answer with one of: {', '.join(_FURNITURE)}.",
+        environment=Dataset(
+            "go2_short", select=(lambda s: s.streams.color_image.range_time(0, 8),)
+        ),
+        grade=lambda o: exact("chairs", choice(_FURNITURE)(o.trajectory.final_answer)),
         tags=frozenset({"image", "mcq"}),
     ),
-    PassiveEval(
+    EvalCase(
         id="short_displacement",
         inputs="How far in a straight line is your final position from your first "
-        "shown position, in meters?",
-        expected=1.7,
-        parse=first_number,
-        score=within(1.5),
-        context=(lambda s: s.streams.odom,),
-        dataset="go2_short",
+        "shown position, in meters? Answer with just the number.",
+        environment=Dataset("go2_short", select=(lambda s: s.streams.odom,)),
+        grade=lambda o: within(1.5)(1.7, first_number(o.trajectory.final_answer)),
         tags=frozenset({"odom", "numeric"}),
     ),
-    PassiveEval(
+    EvalCase(
         id="short_lidar_points",
-        inputs="How many points does the shown pointcloud contain?",
-        expected=20834.0,
-        parse=first_number,
-        score=within(5000.0),
-        context=(lambda s: s.streams.lidar.limit(1),),
-        dataset="go2_short",
+        inputs="How many points does the shown pointcloud contain? Answer with just the number.",
+        environment=Dataset("go2_short", select=(lambda s: s.streams.lidar.limit(1),)),
+        grade=lambda o: within(5000.0)(20834.0, first_number(o.trajectory.final_answer)),
         tags=frozenset({"pointcloud", "numeric"}),
     ),
-    PassiveEval(
+    EvalCase(
         id="hk_not_seen",
         inputs="Which of these did you NOT see anywhere in the observations? "
-        "Answer with one of: a couch, store shelves, a swimming pool, an office chair.",
-        expected="a swimming pool",
-        parse=choice,
-        score=exact,
-        context=(lambda s: s.streams.color_image,),
-        dataset="go2_hongkong_office",
+        f"Answer with one of: {', '.join(_NOT_SEEN)}.",
+        environment=Dataset("go2_hongkong_office", select=(lambda s: s.streams.color_image,)),
+        grade=lambda o: exact("a swimming pool", choice(_NOT_SEEN)(o.trajectory.final_answer)),
         tags=frozenset({"image", "mcq"}),
     ),
 ]

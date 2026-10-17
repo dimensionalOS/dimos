@@ -294,7 +294,7 @@ def setup_logger(*, level: int | None = None) -> Any:
     file_handler.setFormatter(file_formatter)
     stdlib_logger.addHandler(file_handler)
 
-    return structlog.get_logger(name)
+    return structlog.wrap_logger(stdlib_logger, wrapper_class=structlog.stdlib.BoundLogger)
 
 
 def setup_exception_handler() -> None:

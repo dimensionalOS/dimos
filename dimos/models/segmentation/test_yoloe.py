@@ -124,7 +124,7 @@ def test_visual_box_prompts_use_segmentation_predictor(mocker: Any) -> None:
         "dimos.perception.detection.detectors.yoloe.get_data",
         return_value=Path("/models"),
     )
-    model_factory = mocker.patch("dimos.perception.detection.detectors.yoloe.YOLOE")
+    model_factory = mocker.patch("ultralytics.YOLOE")
     model = model_factory.return_value
     model.predict.return_value = []
     image = _image()

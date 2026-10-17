@@ -11,11 +11,11 @@
 # out of the box (uv venv + `uv sync --all-groups`, `.envrc` symlink, direnv allow).
 #
 # Examples:
-#   bin/worktree new feat/ivan/foo        # new branch off current HEAD -> ../dimos-foo
-#   bin/worktree new feat/ivan/foo origin/main
+#   bin/worktree new ivan/feat/foo        # new branch off current HEAD -> ../dimos-foo
+#   bin/worktree new ivan/feat/foo origin/main
 #   bin/worktree new existing-branch      # check out a branch that already exists
-#   bin/worktree rm feat/ivan/foo         # remove that worktree (keep the branch)
-#   bin/worktree rm feat/ivan/foo -b      # remove worktree and delete the branch
+#   bin/worktree rm ivan/feat/foo         # remove that worktree (keep the branch)
+#   bin/worktree rm ivan/feat/foo -b      # remove worktree and delete the branch
 set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --path-format=absolute --git-common-dir)

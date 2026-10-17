@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.agents.skill_result import SkillResult
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -62,11 +61,9 @@ def test_observe_returns_published_frame(module: ObserveSkill) -> None:
     assert result.data.shape[:2] == (8, 8)
 
 
-def test_observe_without_frames_fails(
+def test_observe_without_frames_raises(
     module: ObserveSkill, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ObserveSkill, "_frame_timeout", 0.2)
-    result = module.observe()
-    assert isinstance(result, SkillResult)
-    assert not result.success
-    assert result.error_code == "EXECUTION_TIMEOUT"
+    with pytest.raises(TimeoutError, match="No camera frame received within 0.2 seconds"):
+        module.observe()

@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _rpc_name(kwargs: dict[str, Any]) -> str | None:
+    return kwargs.get("rpc_name") or kwargs.get("instance_name")
+
+
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
@@ -85,7 +89,7 @@ class WorkerManagerPython:
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, kwargs.get("instance_name"))
+        return RPCClient(actor, module_class, _rpc_name(kwargs))
 
     def deploy_fresh(
         self,
@@ -111,7 +115,7 @@ class WorkerManagerPython:
         if module_class.dedicated_worker:
             worker.dedicated = True
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, kwargs.get("instance_name"))
+        return RPCClient(actor, module_class, _rpc_name(kwargs))
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
@@ -168,7 +172,7 @@ class WorkerManagerPython:
             return RPCClient(
                 worker.deploy_module(module_class, global_config, kwargs),
                 module_class,
-                kwargs.get("instance_name"),
+                _rpc_name(kwargs),
             )
 
         try:

@@ -19,8 +19,9 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
-    metric_voxel_keys, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
+    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
+    Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -53,8 +54,8 @@ impl Mapper {
     pub fn new(config: Config) -> Self {
         Self {
             pool: worker_pool(config.worker_threads),
+            map: VoxelMap::with_support_min(config.support_min),
             config,
-            map: VoxelMap::default(),
             live: FrameHits::default(),
             batch_points: Vec::new(),
             batch_origins: Vec::new(),
@@ -75,21 +76,38 @@ impl Mapper {
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
     pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
-        let (px, py, pz) = pose.position;
-        let (qx, qy, qz, qw) = pose.orientation;
-        let translation = Vector3::new(px, py, pz);
-        let rot =
-            UnitQuaternion::from_quaternion(Quaternion::new(qw, qx, qy, qz)).to_rotation_matrix();
-        for p in sensor_points.iter_mut() {
-            let w = rot * Vector3::new(p.0, p.1, p.2) + translation;
-            *p = (w.x, w.y, w.z);
-        }
+        register(&mut sensor_points, pose);
         self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
         self.ingest(world_points, origin);
+    }
+
+    /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
+    /// absent voxels. Returns how many voxels were created.
+    pub fn seed_points(&mut self, points: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_points(&mut self.map, points, &self.config))
+    }
+
+    /// Make room for `additional` chunks ahead of a tiled seed load.
+    pub fn reserve_chunks(&mut self, additional: usize) {
+        self.map.reserve_chunks(additional);
+    }
+
+    /// Seed one tile of a partitioned world-frame cloud. Returns how many
+    /// voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_tile(&mut self.map, tile, &self.config))
+            .len()
+    }
+
+    /// The last frame's sensor origin in the world frame.
+    pub fn last_origin(&self) -> Point {
+        self.last_origin
     }
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
@@ -122,6 +140,26 @@ impl Mapper {
         emit_due(self.frame_count, self.config.global_emit_every)
     }
 
+    /// Whether the map regions viz is due this frame.
+    pub fn viz_due(&self) -> bool {
+        emit_due(self.frame_count, self.config.viz_emit_every)
+    }
+
+    /// The chunks whose emitted points changed since the last take.
+    pub fn take_changed_chunks(&mut self) -> AHashSet<ChunkKey> {
+        self.map.take_changed_chunks()
+    }
+
+    pub fn healthy_chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.map.healthy_chunk_keys()
+    }
+
+    /// Support-gated centers of the given chunks' healthy voxels, flat triples.
+    pub fn chunk_points(&self, chunks: &[ChunkKey]) -> Vec<f32> {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| chunk_points(&self.map, self.config.voxel_size, chunks))
+    }
+
     /// Cylinder over the batched frames, consuming the batch. An empty batch
     /// yields a zero-radius region at the last origin.
     pub fn take_local_bounds(&mut self) -> Cylinder {
@@ -150,15 +188,8 @@ impl Mapper {
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
     pub fn global_points(&self) -> Vec<f32> {
-        self.pool.install(|| {
-            emit_points(
-                &self.map,
-                self.config.voxel_size,
-                None,
-                0,
-                &self.live.coarse,
-            )
-        })
+        self.pool
+            .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
@@ -169,7 +200,6 @@ impl Mapper {
                 &self.map,
                 self.config.voxel_size,
                 Some(bounds),
-                self.config.support_min,
                 &self.live.coarse,
             )
         })
@@ -185,10 +215,16 @@ impl Mapper {
                 self.config.voxel_size,
                 divisor,
                 Some(bounds),
-                self.config.support_min,
                 &self.live.fine,
             )
         }))
+    }
+
+    /// Positions and normals of every healthy voxel, fitting stale normals for
+    /// the output. Visualization only.
+    pub fn normals(&self) -> (Vec<f32>, Vec<f32>) {
+        self.pool
+            .install(|| global_normals(&self.map, self.config.voxel_size))
     }
 
     /// Positions, normals, and smallest eigenvalues from a fresh whole-map
@@ -196,26 +232,6 @@ impl Mapper {
     pub fn normal_fits(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         self.pool
             .install(|| global_normal_fits(&self.map, self.config.voxel_size))
-    }
-
-    /// Delete the voxels covering `points`, world-frame metric positions the
-    /// caller knows to be free. Returns how many voxels were removed.
-    ///
-    /// This frame's live hits are dropped alongside them, so a cleared voxel
-    /// cannot come back out of the live overlay before the next frame replaces
-    /// it.
-    pub fn clear_metric(&mut self, points: impl IntoIterator<Item = Point>) -> usize {
-        let keys: Vec<_> = metric_voxel_keys(points, self.config.voxel_size).collect();
-        for key in &keys {
-            self.live.coarse.remove(key);
-        }
-        if let Some((divisor, _)) = self.config.fine_layer() {
-            let cleared: AHashSet<_> = keys.iter().copied().collect();
-            self.live
-                .fine
-                .retain(|&fine| !cleared.contains(&coarse_of_fine(fine, divisor as i32)));
-        }
-        self.map.clear_voxels(keys)
     }
 
     /// Reset to an empty map, keeping the config.
@@ -227,6 +243,18 @@ impl Mapper {
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
+    }
+}
+
+/// Map points into the world frame by the pose, in place.
+pub fn register(points: &mut [Point], pose: Pose) {
+    let (px, py, pz) = pose.position;
+    let (qx, qy, qz, qw) = pose.orientation;
+    let translation = Vector3::new(px, py, pz);
+    let rot = UnitQuaternion::from_quaternion(Quaternion::new(qw, qx, qy, qz)).to_rotation_matrix();
+    for p in points.iter_mut() {
+        let w = rot * Vector3::new(p.0, p.1, p.2) + translation;
+        *p = (w.x, w.y, w.z);
     }
 }
 
@@ -245,6 +273,7 @@ mod tests {
         Config {
             voxel_size: 1.0,
             fine_divisor: 0,
+            emit_fine: false,
             max_range: 100.0,
             ray_subsample: 1,
             shadow_depth: 2.0,
@@ -258,7 +287,12 @@ mod tests {
             region_percentile: 95.0,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
+            max_cloud_age_s: 0.0,
+            tf_wait_timeout_s: 0.05,
             worker_threads: 4,
+            region_m: 4.0,
+            viz_emit_every: 0,
+            viz_sweep_regions: 0,
         }
     }
 
@@ -365,23 +399,58 @@ mod tests {
         }
     }
 
-    /// The ghost case: a sensor deposits returns off its own body, then tells
-    /// the mapper that volume is free. Ray tracing never reaches it because the
-    /// body occludes what is behind it, so the mask is the only way out.
     #[test]
-    fn clear_metric_erases_voxels_ray_tracing_cannot_reach() {
+    fn seed_points_emits_without_batching_regions() {
         let mut mapper = Mapper::new(config());
-        let pose = Pose {
-            position: (0.0, 0.0, 0.0),
-            orientation: IDENTITY,
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5), (6.5, 0.5, 0.5)]), 2);
+
+        assert_eq!(mapper.global_points().len(), 6);
+        let bounds = LocalBounds {
+            origin_x: 5.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: -5.0,
+            z_max: 5.0,
         };
-        mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
-        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
+        assert_eq!(mapper.local_points(&bounds).len(), 6);
 
-        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 1);
+        let c = mapper.take_local_bounds();
+        assert_eq!(c.radius, 0.0, "a seed must not feed the region batch");
 
-        assert!(mapper.global_points().is_empty());
-        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
+    }
+
+    /// local_points applies the support gate. global_points stays unfiltered.
+    #[test]
+    fn local_points_apply_support_gate() {
+        let cfg = Config {
+            support_min: 3,
+            ..config()
+        };
+        let mut mapper = Mapper::new(cfg);
+        let mut cloud: Vec<Point> = Vec::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                cloud.push((x as f32 + 0.5, y as f32 + 0.5, 0.5));
+            }
+        }
+        cloud.push((20.5, 20.5, 0.5));
+        assert_eq!(mapper.seed_points(&cloud), 10);
+
+        let everywhere = Cylinder {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 100.0,
+            z_min: -1.0,
+            z_max: 10.0,
+        }
+        .bounds();
+        assert_eq!(
+            mapper.local_points(&everywhere).len(),
+            27,
+            "isolated seed gated out"
+        );
+        assert_eq!(mapper.global_points().len(), 30);
     }
 
     #[test]

@@ -19,7 +19,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 import torch
-from ultralytics import YOLOE  # type: ignore[attr-defined]
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
@@ -60,6 +59,9 @@ class Yoloe2DDetector(Detector):
             max_area_ratio: Maximum bbox area ratio (0-1) relative to image.
             conf: Confidence threshold passed to Ultralytics inference.
         """
+        # ~0.5s: deferred to keep module import (test collection) light.
+        from ultralytics import YOLOE  # type: ignore[attr-defined]
+
         if model_name is None:
             if prompt_mode == YoloePromptMode.LRPC:
                 model_name = "yoloe-11s-seg-pf.pt"

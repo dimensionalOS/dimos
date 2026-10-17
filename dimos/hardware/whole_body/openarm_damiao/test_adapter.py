@@ -21,6 +21,7 @@ import pinocchio
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.hardware.whole_body.damiao import adapter as damiao_adapter_module
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.openarm_damiao import adapter as adapter_module
@@ -30,7 +31,12 @@ from dimos.robot.manipulators.openarm.config import OPENARM_DOF, OPENARM_JOINTS
 
 @pytest.fixture
 def openarm_adapter(mocker: MockerFixture) -> Iterator[OpenArmDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    # Darwin wheels of can_motor_control omit SocketCanBus (SocketCAN is
+    # Linux-only), so create the attribute and force the Linux bus path.
+    mocker.patch.object(
+        can_motor_control, "SocketCanBus", can_motor_control.MockCanBus, create=True
+    )
+    mocker.patch.object(damiao_adapter_module.sys, "platform", "linux")
     adapter = OpenArmDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
     )

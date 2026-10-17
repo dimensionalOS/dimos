@@ -52,11 +52,16 @@ def reader(values):
     return read
 
 
-def settle(values, target=0.0, clock=None, **overrides):
+def settle(values, target=0.0, clock=None, arrival_tolerance=None, **overrides):
     config = GraspVerificationConfig(**overrides)
     clock = clock or FakeClock()
     return await_gripper_settle(
-        reader(values), target, config, sleep=clock.sleep, clock=clock
+        reader(values),
+        target,
+        config,
+        arrival_tolerance=arrival_tolerance,
+        sleep=clock.sleep,
+        clock=clock,
     ), config
 
 
@@ -98,6 +103,34 @@ def test_open_command_settles_immediately_when_already_open():
     assert result.settled
     assert not result.moved
     assert clock.now < config.timeout
+
+
+def test_open_settles_when_the_jaws_stop_short_of_the_commanded_extreme():
+    """A gripper driven to its stop never reaches 1.0 and never moves again.
+
+    The real xArm rests at 0.988 of its nominal 850 count. Judged by the
+    stillness threshold it can never arrive, so re-opening an already-open
+    gripper times out; judged by open_tolerance it settles and reads open.
+    """
+    clock = FakeClock()
+    result, config = settle(
+        [0.988] * 4,
+        target=1.0,
+        clock=clock,
+        arrival_tolerance=GraspVerificationConfig().open_tolerance,
+    )
+
+    assert result.settled
+    assert not result.moved
+    assert clock.now < config.timeout
+    assert open_failure(result, config) is None
+
+
+def test_open_short_of_the_stop_still_times_out_on_the_stillness_threshold():
+    """The old behaviour, kept explicit: settle_tolerance cannot judge arrival."""
+    result, _ = settle([0.988] * 8, target=1.0)
+
+    assert not result.settled
 
 
 def test_a_gripper_that_never_stops_moving_times_out():

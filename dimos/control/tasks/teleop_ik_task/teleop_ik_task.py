@@ -38,7 +38,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.protocol.service.spec import BaseConfig
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
@@ -189,13 +189,13 @@ class TeleopIKTask(PoseTargetIKTask):
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition."""
-        primary_by_hand = {
-            OperatorHand.LEFT: msg.left_primary,
-            OperatorHand.RIGHT: msg.right_primary,
+        grip_by_hand = {
+            OperatorHand.LEFT: msg.left_grip,
+            OperatorHand.RIGHT: msg.right_grip,
         }
         with self._lock:
             self._last_button_update_time = t_now
-            condition = all(primary_by_hand[hand] for hand in self._bindings)
+            condition = all(grip_by_hand[hand] for hand in self._bindings)
             if self._session_state is _SessionState.ESTOPPED:
                 return True
             if condition and self._session_state is _SessionState.DISENGAGED:

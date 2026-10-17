@@ -15,19 +15,21 @@
 import base64
 from threading import Event, RLock, Thread
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skills.visual_servoing.detection_navigation import DetectionNavigation
+from dimos.agents.skills.visual_servoing.query import get_object_bbox_from_image
+from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.qwen.bbox import BBox
-from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -35,11 +37,11 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.visual.query import get_object_bbox_from_image
-from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.turbojpeg import get_turbojpeg
+
+if TYPE_CHECKING:
+    from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 
 logger = setup_logger()
 

@@ -27,7 +27,11 @@ from dimos.memory.codecs.base import codec_id
 from dimos.memory.observationstore.sqlite import SqliteObservationStore
 from dimos.memory.registry import RegistryStore, deserialize_component, qual
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.utils.sqlite import open_disposable_sqlite_connection
+from dimos.memory.utils.sqlite import (
+    close_sqlite_connection,
+    conn_lock,
+    open_disposable_sqlite_connection,
+)
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
@@ -59,7 +63,9 @@ class SqliteStore(Store):
             if parent:
                 os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
+        self._registry_lock = conn_lock(self._registry_conn)
         self._registry = RegistryStore(conn=self._registry_conn)
+        self._stopped = False
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""
@@ -212,12 +218,19 @@ class SqliteStore(Store):
 
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_vec"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_rtree"')
+        with self._registry_lock:
+            if self._stopped:
+                return
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_vec"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_rtree"')
         self._registry.delete(name)
 
     def stop(self) -> None:
         super().stop()
-        self._registry_conn.close()
+        with self._registry_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            close_sqlite_connection(self._registry_conn)

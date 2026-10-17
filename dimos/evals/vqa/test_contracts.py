@@ -23,6 +23,9 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.constants import STATE_DIR
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.types import Outcome
 from dimos.evals.vqa.author import OpenAIQuestionAuthor
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
@@ -40,11 +43,15 @@ from dimos.evals.vqa.families import (
 from dimos.evals.vqa.generate import (
     GenerationFrame,
     GenerationRequest,
+    GenerationResult,
     PrivateLabel,
     PublicCase,
     VqaGenerationConfig,
+    generate_dataset,
     generate_frames_dataset,
+    resolve_generation_frame_indices,
 )
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
@@ -372,21 +379,12 @@ class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
         return tuple(reversed(super().estimate_many(frame, object_names)))
 
 
-class _Rig:
-    blind = False
-
-    def __init__(self, answer: str = "yes") -> None:
-        self.answer = answer
-
-    def ask(self, context: object, question: str) -> str:
-        assert context
-        assert 'Choices: ["yes", "no"]' in question
-        return self.answer
-
-    def ask_structured(self, context: object, question: str, schema: type[object]) -> object:
-        assert context
-        assert 'Choices: ["yes", "no"]' in question
-        return schema(answer=self.answer)  # type: ignore[call-arg, return-value]
+def _outcome(answer: str) -> Outcome:
+    """What the runner hands a grader after an agent replied *answer*."""
+    raw = Path("/nonexistent/raw")
+    trajectory = TrajectoryBuilder("?", name="fake", model="fake")
+    trajectory.step(message=answer, request=raw / "r", response=raw / "s")
+    return Outcome(trajectory=trajectory.build("answer"), artifacts={})
 
 
 def test_presence_proposal_matches_available_family() -> None:
@@ -823,6 +821,133 @@ def test_generation_request_selects_frame_range() -> None:
     assert request.frame_indices() == range(2, 10, 3)
 
 
+def test_resolve_generation_frame_indices_rejects_quality_window() -> None:
+    request = GenerationRequest(
+        dataset="recording.db",
+        start=0,
+        stop=10,
+        quality_window=0.5,
+    )
+    with pytest.raises(ValueError, match="quality_window"):
+        resolve_generation_frame_indices(request, image_count=10)
+
+
+def test_generate_dataset_forwards_quality_window_indices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: list[int] = []
+    seen_selection: list[tuple[object, int, int, float, float | None]] = []
+
+    class _FakeImage:
+        pass
+
+    class _FakeLoader:
+        def __init__(self, dataset: object, tolerance_s: float = 0.1) -> None:
+            self.image_count = 200
+            self.images = object()
+
+        def __enter__(self) -> _FakeLoader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def load_image(self, index: int) -> _FakeImage:
+            return _FakeImage()
+
+        def load(self, index: int) -> object:
+            raise PointCloudFrameUnavailableError(f"no point cloud for {index}")
+
+    class _FakeModel:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake"})()
+
+        def stop(self) -> None:
+            return None
+
+    def fake_select_quality_indices(
+        images: object,
+        start: int,
+        stop: int,
+        *,
+        quality_window: float,
+        min_brightness: float | None = None,
+    ) -> tuple[int, ...]:
+        seen_selection.append((images, start, stop, quality_window, min_brightness))
+        return (12, 22)
+
+    def fake_generate_frames_dataset(
+        request: GenerationRequest,
+        frames: object,
+        *_args: object,
+        **_kwargs: object,
+    ) -> GenerationResult:
+        for frame in frames:  # type: ignore[attr-defined]
+            captured.append(frame.index)
+        return GenerationResult(
+            output=request.output_directory(),
+            cases=(
+                PublicCase(
+                    id="q",
+                    image="assets/frame.png",
+                    question="Is there a chair?",
+                    choices=("yes", "no"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("dimos.evals.vqa.generate.PointCloudFrameLoader", _FakeLoader)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.select_quality_indices", fake_select_quality_indices
+    )
+    monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
+    monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.generate_frames_dataset", fake_generate_frames_dataset
+    )
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.EdgeTAMObjectMaskPipeline", lambda detector: object()
+    )
+    monkeypatch.setattr("dimos.evals.vqa.generate.LidarRangeEstimator", lambda masks: object())
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenAIQuestionAuthor", lambda model: object())
+
+    result = generate_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=100,
+            quality_window=0.5,
+            min_brightness=0.1,
+            output=tmp_path / "out",
+        )
+    )
+    assert len(seen_selection) == 1
+    assert seen_selection[0][1:] == (0, 100, 0.5, 0.1)
+    assert captured == [12, 22]
+    assert result.output == tmp_path / "out"
+
+
+def test_generation_request_rejects_quality_window_with_image_index() -> None:
+    with pytest.raises(ValidationError, match="quality_window"):
+        GenerationRequest(dataset="go2_short", image_index=4, quality_window=0.5)
+
+
+def test_generation_request_rejects_quality_window_with_stride() -> None:
+    with pytest.raises(ValidationError, match="quality_window"):
+        GenerationRequest(
+            dataset="go2_short",
+            start=0,
+            stop=100,
+            stride=10,
+            quality_window=0.5,
+        )
+
+
+def test_generation_request_rejects_min_brightness_without_quality_window() -> None:
+    with pytest.raises(ValidationError, match="min_brightness"):
+        GenerationRequest(dataset="go2_short", start=0, stop=100, min_brightness=0.1)
+
+
 @pytest.mark.parametrize(
     "selection",
     (
@@ -966,14 +1091,16 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert (output / "audit" / "frame-000004" / "ground_truth.json").is_file()
 
     suite = load_suite(output)
-    evaluation = suite[0].evaluate(_Rig())
+    case = suite[0]
 
-    assert evaluation.case_id == "frame-000004-chair-presence"
-    assert json.loads(evaluation.outputs) == {"answer": "yes"}
-    assert evaluation.score == 1.0
-
-    invalid = suite[0].evaluate(_Rig(answer="maybe"))
-    assert invalid.score == 0.0
+    assert case.id == "frame-000004-chair-presence"
+    assert 'Choices: ["yes", "no"]' in case.inputs
+    assert isinstance(case.environment, ImageFile)
+    assert case.environment.config.path == image_path
+    assert case.grade(_outcome("yes")) == 1.0
+    assert case.grade(_outcome("Yes, there is.")) == 1.0
+    assert case.grade(_outcome("no")) == 0.0
+    assert case.grade(_outcome("maybe")) == 0.0
 
 
 def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path) -> None:

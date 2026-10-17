@@ -1,14 +1,17 @@
 # Native Modules
 
-Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
+Prerequisite for this is to understand dimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM or zenoh.
 
-Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on LCM.
+Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on the transport.
 
-Python module **never touches the pubsub data**. It just passes configuration and LCM topic to use via CLI args to your executable.
+Python module **never touches the pubsub data**. It just passes configuration and the topics to use via CLI args to your executable.
 
-On how to speak LCM with the rest of dimos, you can read our [LCM intro](/docs/usage/lcm.md)
+To learn how to communicate with the rest of dimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
+
+An experimental Python runtime with an isolated dependency environment is
+available in [`dimos/experimental/isolated_python/README.md`](/dimos/experimental/isolated_python/README.md).
 
 ## Defining a native module
 
@@ -79,9 +82,9 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `executable`       | `str`            | *(required)*  | Path to the native binary (relative to `cwd` if set)        |
+| `source_dir` | `str \| None` | `None` | Build directory relative to the shared project checkout; required for source builds |
+| `executable` | `str` | *(required)* | Source mode: relative to `source_dir`, inside the checkout. External mode: supplied binary path |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
-| `cwd`              | `str \| None`    | `None`        | Working directory for build and runtime. Relative paths are resolved against the Python file defining the module |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
 | `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
@@ -90,7 +93,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `source_dir`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field
@@ -178,7 +181,7 @@ Malformed lines fall back to plain text logging.
 
 ## Writing the C++ side
 
-The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config: bool = True` in the Python config. Topics and config then arrive as one JSON line on stdin instead of CLI args. A module includes `dimos/native.hpp`, subclasses `Module`, and calls `run_with_transport<M>()` from `main()`:
+The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config: bool = True` in the Python config. Topics, config, and the transport's `session` and `qos` blocks then arrive as one JSON line on stdin instead of CLI args. A module includes `dimos/native.hpp`, subclasses `Module`, and calls `run_with_transport<M>()` from `main()`:
 
 ```cpp
 #include "dimos/native.hpp"
@@ -221,8 +224,9 @@ int main() {
 
 The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks. It runs automatically after parsing. Input handlers run serialized on the dispatch thread. Each output publishes through its own worker, so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
+`run_with_transport` reads `DIMOS_TRANSPORT`, which the coordinator sets from the global `transport` setting, and opens LCM or zenoh. The zenoh side is built on [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) and [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp), reads the same `session` and `qos` blocks the Rust SDK reads, and waits for the dialed endpoints to link before the module starts, so a C++ module behaves like a Rust one on either transport.
 
-A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
 
 ## Examples
 
@@ -230,7 +234,7 @@ For language interop examples (subscribing to dimOS topics from C++, TypeScript,
 
 ### Livox Mid-360 Module
 
-The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py):
+The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py), wrapping a Rust binary:
 
 ```python skip
 from dimos.core.stream import Out
@@ -240,15 +244,15 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
-    host_ip: str = "192.168.1.5"
-    lidar_ip: str = "192.168.1.155"
+    source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
+    executable: str = "../../../../../../target/release/mid360_native"
+    build_command: str | None = "cargo build --release"
+    host_ip: str | None = None  # auto-detected on the lidar's subnet
+    lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0
     enable_imu: bool = True
     frame_id: str = "lidar_link"
-    # ... SDK port configuration
+    # ... pcap replay and SDK port configuration
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config
@@ -267,23 +271,60 @@ autoconnect(
 )
 ```
 
+## Native sources in pip installations
+
+An editable checkout uses its local sources. An installed wheel uses the same
+`get_project_root()` checkout as data downloads: clone `main` on first use,
+then reuse the existing checkout without automatically updating it. This checkout
+can differ from the installed Python version. Git and network access are needed
+on first use; the clone skips LFS assets.
+
+Source builds declare `source_dir` relative to the shared checkout and an
+`executable` relative to that directory. Configuration rejects absolute source
+paths, absolute build executables, and artifact paths that
+escape the checkout. Cargo workspace outputs can use `../` within the checkout.
+These paths do not depend on the Python file or a subclass's location.
+
+For an externally provisioned binary, set `source_dir=None`,
+`build_command=None`, and `executable="/path/to/binary"`. The process runs from
+its executable directory. Relative executable paths are anchored to the caller's
+current directory when the module is created; executable names are not searched
+on PATH. No checkout is fetched in this mode.
+
+The `cwd` config field was removed. Use `source_dir` for source builds. For an
+external binary, pass absolute resource paths or use a launcher script if the
+program needs a different working directory. Passing `cwd` raises a migration error.
+Data downloads and IsolatedPython behavior are unchanged.
+
+Nix-based modules still require Nix and their normal build dependencies.
+FastLIO2 requires Nix 2.26 or newer for relative flake inputs. This change does
+not establish additional platform or hardware support.
+
 ## Auto Building
 
-If `build_command` is set in the module config, and the executable doesn't exist when `start()` is called, NativeModule runs the build command automatically.
+Creating a config or module does not fetch native sources. `build()` resolves the
+source directory and prepares the executable. `start()` reuses that preparation,
+or prepares it first when called directly. Recorder replay skips both native
+preparation and launch.
+
+If the executable is missing and `build_command` is set, preparation runs the
+build command. With `build_command=None`, a missing executable is an error.
 Build output is streamed line by line through structlog at `info`, with stderr merged into
 stdout. `nix build` prints no build logs unless `-L` is passed, so the built-in modules all
 include it.
 
 ```python skip
 class MyLidarConfig(NativeModuleConfig):
-    cwd: str | None = "cpp"
+    source_dir: str | None = "dimos/my_module/cpp"
     executable: str = "result/bin/my_lidar"
     build_command: str | None = "nix build -L .#my_lidar"
 ```
 
-`cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
+The resolved `source_dir` is used for both the build command and the runtime subprocess.
 
-If the executable already exists, the build step is skipped entirely.
+If the executable exists, preparation skips compilation unless `auto_build=True`
+or `--build-native` requests a rebuild. `auto_build=False` does not disable
+building a missing executable. Calling `build()` again checks these rules again.
 
 ### Faster builds via the Cachix substituter
 

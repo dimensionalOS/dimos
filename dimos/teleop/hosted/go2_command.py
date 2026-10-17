@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
+from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -319,12 +320,9 @@ class Go2CommandModule(Module):
         if raw is None:
             raw = 1.0 if msg.get("enabled") else 0.0  # legacy on/off toggle
         try:
-            brightness = float(raw)
-        except (TypeError, ValueError):
+            brightness = finite_number(raw, "brightness")
+        except ValueError:
             logger.warning("light: malformed brightness %r", raw)
-            self._send_ack(nonce, False)
-            return
-        if math.isnan(brightness):
             self._send_ack(nonce, False)
             return
         brightness = max(0.0, min(1.0, brightness))
@@ -349,13 +347,13 @@ class Go2CommandModule(Module):
             self._send_ack(nonce, False)
             return
         try:
-            x, y = float(msg["x"]), float(msg["y"])
-        except (KeyError, TypeError, ValueError):
+            x, y = finite_number(msg.get("x"), "x"), finite_number(msg.get("y"), "y")
+        except ValueError:
             logger.warning("nav_goal: malformed %r", msg)
             self._send_ack(nonce, False)
             return
         limit = self.config.max_nav_goal_m
-        if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > limit or abs(y) > limit:
+        if abs(x) > limit or abs(y) > limit:
             logger.warning("nav_goal: out-of-range (%r, %r)", x, y)
             self._send_ack(nonce, False)
             return

@@ -25,6 +25,10 @@ Usage:
 
 from __future__ import annotations
 
+import math
+
+from dimos.utils.trigonometry import angle_diff
+
 
 class MockTwistBaseAdapter:
     """Fake twist base adapter for unit tests.
@@ -34,14 +38,25 @@ class MockTwistBaseAdapter:
     - Unit testing coordinator logic without hardware
     - Integration testing with predictable behavior
     - Development without a physical base
+
+    With ``integrate_odometry`` a 3-DOF base moves: each odometry read advances
+    the pose by the last commanded body-frame velocity, with yaw wrapped.
     """
 
-    def __init__(self, dof: int = 3, **_: object) -> None:
+    def __init__(
+        self,
+        dof: int = 3,
+        integrate_odometry: bool = False,
+        step_dt: float = 0.01,
+        **_: object,
+    ) -> None:
         self._dof = dof
         self._velocities = [0.0] * dof
         self._odometry: list[float] | None = [0.0] * dof
         self._enabled = False
         self._connected = False
+        self._integrate_odometry = integrate_odometry and dof == 3
+        self._step_dt = step_dt
 
     def connect(self) -> bool:
         """Simulate connection."""
@@ -70,11 +85,26 @@ class MockTwistBaseAdapter:
             return None
         return self._odometry.copy()
 
+    def _advance_odometry(self) -> None:
+        """Advance the pose by one ``step_dt`` of the commanded body velocity."""
+        if self._odometry is None:
+            return
+        dt = self._step_dt
+        vx, vy, wz = self._velocities
+        x, y, yaw = self._odometry
+        self._odometry = [
+            x + (math.cos(yaw) * vx - math.sin(yaw) * vy) * dt,
+            y + (math.sin(yaw) * vx + math.cos(yaw) * vy) * dt,
+            angle_diff(yaw + wz * dt, 0.0),
+        ]
+
     def write_velocities(self, velocities: list[float]) -> bool:
         """Set mock velocities."""
         if len(velocities) != self._dof:
             return False
         self._velocities = list(velocities)
+        if self._integrate_odometry:
+            self._advance_odometry()
         return True
 
     def write_stop(self) -> bool:

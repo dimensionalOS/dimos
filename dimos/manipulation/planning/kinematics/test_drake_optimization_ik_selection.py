@@ -24,10 +24,16 @@ from dimos.manipulation.planning.kinematics import drake_optimization_ik as drak
 from dimos.manipulation.planning.kinematics.drake_optimization_ik import DrakeOptimizationIK
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import IKResult
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class FakeWorld:
@@ -43,12 +49,22 @@ class FakeWorld:
             }
         )
         self.collision_checked_state: JointState | None = None
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("/tmp/fake.urdf"), {}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name, "revolute", CoordinateTopology.INTERVAL, -10.0, 10.0, 1.0, 2.0
+                    )
+                    for name in self.config.joint_names
+                )
+            ),
+            planning_groups=(),
+        )
 
-    def get_model_config(self) -> RobotModelConfig:
-        return self.config
-
-    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.array([-10.0] * 4), np.array([10.0] * 4)
+    def get_prepared_model(self) -> PreparedRobotModel:
+        return self.prepared
 
     @contextmanager
     def scratch_context(self):

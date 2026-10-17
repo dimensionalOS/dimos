@@ -1,0 +1,3 @@
+# Per-host outputs and datasets mounted into workers; never part of the image.
+eval-runs/
+habitat-data/

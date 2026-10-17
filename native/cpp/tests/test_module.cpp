@@ -190,23 +190,60 @@ TEST_CASE("topic_for maps a declared port") {
     CHECK(builder.topic_for("cmd_vel") == "/robot/cmd_vel");
 }
 
-TEST_CASE("topic_for rejects a port the coordinator never wired") {
+TEST_CASE("topic_for falls back for a port the coordinator never wired") {
     Notifier notifier;
     Builder builder({{"cmd_vel", "/robot/cmd_vel"}}, &notifier);
+    CHECK(builder.topic_for("unmapped") == "/unmapped");
+}
+
+TEST_CASE("enforce_topics_match_ports passes when every port is wired") {
+    Notifier notifier;
+    Builder builder({{"data", "/d"}, {"out", "/o"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.output<Bytes>("out", identity_encode);
+    builder.enforce_topics_match_ports();
+}
+
+TEST_CASE("enforce_topics_match_ports names every port the coordinator never wired") {
+    Notifier notifier;
+    // The unclaimed topic is named too, matching rust, even though on its own
+    // it is not what makes this throw.
+    Builder builder({{"tf", "/tf"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.output<Bytes>("out", identity_encode);
     try {
-        builder.topic_for("unmapped");
-        FAIL("expected an unmapped port to throw");
+        builder.enforce_topics_match_ports();
+        FAIL("expected an unwired port to throw");
     } catch (const std::runtime_error& e) {
-        CHECK(std::string(e.what()).find("unmapped") != std::string::npos);
+        CHECK(std::string(e.what()) ==
+              "topics do not match module ports: missing [\"data\", \"out\"], "
+              "unexpected [\"tf\"]");
     }
 }
 
-TEST_CASE("declaring a port the coordinator never wired fails the build") {
+TEST_CASE("enforce_topics_match_ports rejects a misspelled coordinator topic") {
     Notifier notifier;
-    Builder builder({}, &notifier);
-    CHECK_THROWS_AS(builder.input<Bytes>("data", identity_decode, [](Bytes) {}),
-                    std::runtime_error);
-    CHECK_THROWS_AS(builder.output<Bytes>("out", identity_encode), std::runtime_error);
+    // A misspelling is not an extra topic: the port the module asked for is now
+    // unwired, so the missing half throws and names both sides.
+    Builder builder({{"dtaa", "/d"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    try {
+        builder.enforce_topics_match_ports();
+        FAIL("expected a misspelled topic to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()) ==
+              "topics do not match module ports: missing [\"data\"], "
+              "unexpected [\"dtaa\"]");
+    }
+}
+
+// Rust rejects this.
+// TODO: add tf port type to C++ to match rust (so we can better check input)
+TEST_CASE("enforce_topics_match_ports allows a topic no port asked for") {
+    Notifier notifier;
+    Builder builder({{"data", "/d"}, {"tf", "/tf"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.enforce_topics_match_ports();
 }
 
 TEST_CASE("a full input queue drops newest and caps at capacity") {
@@ -217,7 +254,7 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
 
     Dispatch dispatch = builder.routes()[0].second;
     // Distinct values so the surviving set proves which end was dropped.
-    for (std::size_t i = 0; i < kInputQueueCapacity + 10; ++i) {
+    for (std::size_t i = 0; i < INPUT_QUEUE_CAPACITY + 10; ++i) {
         uint8_t byte = static_cast<uint8_t>(i);
         dispatch(&byte, 1);
     }
@@ -225,9 +262,9 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
     InputPort* port = builder.input_ports()[0];
     while (port->drain_one()) {
     }
-    REQUIRE(seen.size() == kInputQueueCapacity);
+    REQUIRE(seen.size() == INPUT_QUEUE_CAPACITY);
     // Drop-newest: the first capacity messages are kept, later ones dropped.
-    for (std::size_t i = 0; i < kInputQueueCapacity; ++i) {
+    for (std::size_t i = 0; i < INPUT_QUEUE_CAPACITY; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
 }
@@ -313,7 +350,7 @@ TEST_CASE("a decode error drops the message and never reaches the handler") {
 TEST_CASE("a full publish queue drops newest and caps at capacity") {
     PublishQueue queue("/out");
     // Distinct first-bytes so the surviving set proves which end was dropped.
-    for (std::size_t i = 0; i < kPublishQueueCapacity + 5; ++i) {
+    for (std::size_t i = 0; i < PUBLISH_QUEUE_CAPACITY + 5; ++i) {
         queue.push({static_cast<uint8_t>(i)});
     }
     queue.stop();
@@ -323,9 +360,9 @@ TEST_CASE("a full publish queue drops newest and caps at capacity") {
     while (queue.pop(out)) {
         seen.push_back(out[0]);
     }
-    REQUIRE(seen.size() == kPublishQueueCapacity);
+    REQUIRE(seen.size() == PUBLISH_QUEUE_CAPACITY);
     // Drop-newest: the first capacity pushes are kept, later ones dropped.
-    for (std::size_t i = 0; i < kPublishQueueCapacity; ++i) {
+    for (std::size_t i = 0; i < PUBLISH_QUEUE_CAPACITY; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
 }
@@ -366,15 +403,18 @@ TEST_CASE("parse_stdin_config extracts topics and config, ignoring other keys") 
     CHECK(p.config.at("x") == 1);
 }
 
-TEST_CASE("parse_stdin_config tolerates a missing config") {
-    StdinConfig p = parse_stdin_config(R"({"topics":{}})");
-    CHECK(p.config.is_null());
+TEST_CASE("parse_stdin_config rejects a missing config") {
+    CHECK_THROWS_AS(parse_stdin_config(R"({"topics":{}})"), std::runtime_error);
 }
 
-TEST_CASE("parse_stdin_config treats an empty line as an empty blob") {
-    StdinConfig p = parse_stdin_config("");
-    CHECK(p.topics.empty());
-    CHECK(p.config.is_null());
+TEST_CASE("parse_stdin_config rejects an empty line") {
+    CHECK_THROWS(parse_stdin_config(""));
+    CHECK_THROWS(parse_stdin_config("   \n"));
+}
+
+TEST_CASE("parse_stdin_config trims the line the coordinator wrote") {
+    StdinConfig p = parse_stdin_config("  {\"config\":{\"x\":1}}\r\n");
+    CHECK(p.config.at("x") == 1);
 }
 
 TEST_CASE("parse_stdin_config rejects a blob that is not an object") {
@@ -387,7 +427,7 @@ TEST_CASE("parse_stdin_config rejects malformed JSON") {
 }
 
 TEST_CASE("parse_stdin_config skips a topic whose value is not a string") {
-    StdinConfig p = parse_stdin_config(R"({"topics":{"good":"/g","bad":7}})");
+    StdinConfig p = parse_stdin_config(R"({"topics":{"good":"/g","bad":7},"config":{}})");
     CHECK(p.topics.at("good") == "/g");
     CHECK(p.topics.count("bad") == 0);
 }
@@ -445,6 +485,7 @@ struct RunRecord {
     bool teardown_ran = false;
     std::string data_topic;
     int config_x = 0;
+    nlohmann::json qos;
 };
 RunRecord g_run;
 
@@ -455,6 +496,7 @@ struct RecordingTransport : Transport {
     void subscribe(const std::string& channel, Dispatch) override {
         g_run.subscribed.push_back(channel);
     }
+    void set_publisher_qos(const nlohmann::json& qos) override { g_run.qos = qos; }
 };
 
 struct RunConfig {
@@ -498,11 +540,14 @@ struct StdinLine {
 TEST_CASE("run_fallible wires stdin topics and config, then runs the lifecycle") {
     ShutdownFlagGuard guard;
     g_run = RunRecord{};
-    StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5}})");
+    StdinLine line(
+        R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5},"qos":{"/o":{"reliability":"reliable"}}})");
 
-    run_fallible<RunModule>(std::make_unique<RecordingTransport>());
+    run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config());
 
     CHECK(g_run.config_x == 5);
+    // The launch qos reaches the transport, which is where zenoh reads it.
+    CHECK(g_run.qos == nlohmann::json::parse(R"({"/o":{"reliability":"reliable"}})"));
     CHECK(g_run.data_topic == "/d");
     CHECK(g_run.setup_ran);
     CHECK(g_run.handle_ran);
@@ -516,9 +561,10 @@ TEST_CASE("run_fallible wires stdin topics and config, then runs the lifecycle")
 TEST_CASE("run_fallible runs teardown when handle throws, and rethrows") {
     ShutdownFlagGuard guard;
     g_run = RunRecord{};
-    StdinLine line("{}");
+    StdinLine line(R"({"config":{}})");
 
-    CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>()),
+    CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>(),
+                                                       read_stdin_config()),
                     std::runtime_error);
     CHECK(g_run.teardown_ran);
 }
@@ -528,10 +574,22 @@ TEST_CASE("run_fallible rejects a config field the module never parsed") {
     g_run = RunRecord{};
     StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5,"stray":1}})");
 
-    CHECK_THROWS_AS(run_fallible<RunModule>(std::make_unique<RecordingTransport>()),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config()),
+        std::runtime_error);
     // enforce_all_consumed runs after build and before setup, so the module
     // never starts and teardown is not owed.
     CHECK_FALSE(g_run.setup_ran);
     CHECK_FALSE(g_run.teardown_ran);
+}
+
+TEST_CASE("run_fallible rejects a port the coordinator never wired") {
+    ShutdownFlagGuard guard;
+    g_run = RunRecord{};
+    StdinLine line(R"({"topics":{"data":"/d"},"config":{"x":5}})");
+
+    CHECK_THROWS_AS(
+        run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config()),
+        std::runtime_error);
+    CHECK_FALSE(g_run.setup_ran);
 }

@@ -66,11 +66,26 @@ export class RobotCarrier {
       this.dispose();
       return;
     }
+    this.#push(CONTROL_CHANNEL, payload, undefined);
+  }
+
+  /** Queue one robot-bound tx data frame (a forwarded viewer publish, its
+   * relay provenance in `meta`). Same FIFO as control: a publish can never
+   * bypass queued subscription state, and a frame that cannot be delivered
+   * fails the session. The registry bounds payload size and pending volume
+   * before queueing. */
+  sendFrame(ch: string, payload: Uint8Array, meta: Record<string, unknown>): void {
+    if (this.#disposed) return;
+    this.#push(ch, payload, meta);
+  }
+
+  #push(ch: string, payload: Uint8Array, meta: Record<string, unknown> | undefined): void {
     const header: FrameHeader = {
-      ch: CONTROL_CHANNEL,
+      ch,
       seq: ++this.#seq,
       ts: Date.now() / 1000,
       delivery: "reliable",
+      ...(meta !== undefined ? { meta } : {}),
     };
     const frame = encodeDataFrame(header, payload);
     this.#fifo.push(frame);

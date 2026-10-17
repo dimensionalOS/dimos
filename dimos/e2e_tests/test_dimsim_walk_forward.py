@@ -14,9 +14,13 @@
 
 import pytest
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
 
 @pytest.mark.self_hosted_large
-def test_walk_forward(lcm_spy, start_blueprint, human_input, dim_sim) -> None:
+def test_walk_forward(
+    lcm_spy, start_blueprint, wait_for_system_ready, human_input, dim_sim
+) -> None:
     start_blueprint(
         "run",
         "--disable",
@@ -26,11 +30,21 @@ def test_walk_forward(lcm_spy, start_blueprint, human_input, dim_sim) -> None:
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=1200.0)
+    wait_for_system_ready(timeout=300.0)
+
+    # The coordinator can be ready while DimSim is still loading its scene.
+    # Teleports sent before physics starts are discarded by the bridge.
+    lcm_spy.wait_for_message_result(
+        "/odom#geometry_msgs.PoseStamped",
+        PoseStamped,
+        predicate=lambda _: True,
+        fail_message="DimSim did not publish initial odometry",
+        timeout=300,
+    )
 
     origin_x, origin_y = 1, 2
     dim_sim.set_agent_position(origin_x, origin_y)
+    lcm_spy.wait_until_odom_position(origin_x, origin_y, threshold=0.1, timeout=30)
 
     human_input("move forward 3 meter")
 

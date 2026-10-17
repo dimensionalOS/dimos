@@ -5,10 +5,9 @@
 
 # Modules
 
-- **`VirtualMid360`** — replays the pcap (aliasing the host/lidar IPs onto a
-  dummy interface on Linux, or `lo0` on macOS).
-- **`PointLio`** — an unmodified, live Point-LIO that consumes the replay as if
-  it were real hardware.
+- **`Mid360`** — the Rust driver replaying the pcap through its own decode path.
+  No network setup and no sudo.
+- **`PointLio`** — consumes the driver's cloud and IMU streams.
 - **`PointlioRecorder`** — appends the `pointlio_odometry` / `pointlio_lidar`
   streams into the db.
 
@@ -42,13 +41,8 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 | `--rate` | `1.0` | Replay-speed multiplier |
 | `--odom-freq` | `30.0` | Point-LIO odometry rate (Hz) |
 | `--max-sensor-sec` | `0` (whole pcap) | Stop after N sensor seconds |
-| `--warmup-sec` | `4.0` | Seconds the fake lidar waits before streaming (lets Point-LIO come up) |
 | `--no-rrd` | off | Skip writing the `<db>.rrd` quick-look |
 | `--voxel` | `0.2` | Voxel size (m) for the `.rrd` aggregated map |
-| `--host-ip` | `192.168.1.5` | Host IP (override to run two replays at once) |
-| `--lidar-ip` | `192.168.1.155` | Synthetic lidar IP |
-| `--alias-iface` | `dimos-mid360` | Dummy iface the host/lidar IPs live on |
-| `--no-network-setup` | off | Don't let the module alias the NIC via sudo — you've set up the IPs + routes yourself |
 
 #### Tuning flags
 
@@ -59,10 +53,8 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 | `--cut-frame` | off | Split each sweep into time sub-frames |
 | `--cut-frame-time-interval` | `0.1` | Sub-frame interval (s) when `cut_frame` |
 | `--time-lag-imu-to-lidar` | `0.0` | IMU→lidar clock offset (s) |
-| `--lidar-type` | `avia` | Driver branch: `avia` (Livox Mid-360) / `velodyne` / `ouster` / `hesai` / `unilidar` |
 | `--scan-line` | `4` | Number of scan lines |
 | `--scan-rate` | `10` | Scan rate (Hz) |
-| `--timestamp-unit` | `nanosecond` | Per-point timestamp unit: `second` / `millisecond` / `microsecond` / `nanosecond` |
 | `--blind` | `0.5` | Spherical min range (m); nearer points dropped |
 | `--point-filter-num` | `3` | Keep every Nth raw point (1 = all) |
 | `--use-imu-as-input` | off | IMU-as-input model (default robust IMU-as-output) |
@@ -104,39 +96,26 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 | `--publish-odometry-without-downsample` | off | Publish odom per scan, no downsample |
 | `--odom-only` | off | Odometry only, skip map publishing |
 
-#### MacOS Caveats
+### Replay a pcap to a module
 
-The module aliases the synthetic IPs onto `lo0`, which needs sudo. A tty-less
-worker can't prompt, so set up the interface by hand, then pass
-`--no-network-setup`:
+The `mid360-pointlio-replay` blueprint does this from the command line:
 
 ```bash
-sudo ifconfig lo0 alias 192.168.1.5 netmask 255.255.255.0
-sudo ifconfig lo0 alias 192.168.1.155 netmask 255.255.255.0
-sudo route -n add -host 224.1.1.5 -interface lo0
-sudo route -n add -host 255.255.255.255 -interface lo0
-
-python -m dimos.hardware.sensors.lidar.pointlio.scripts.pcap_to_db \
-    --pcap "$PCAP" --no-network-setup
+DIMOS_MID360_PCAP=recordings/run1.pcap dimos run mid360-pointlio-replay
 ```
 
-### Replay a pcap to a module
+Or in Python:
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.visualization.vis_module import vis_module
 
 replay = autoconnect(
-    VirtualMid360.blueprint(
-        pcap="recordings/run1.pcap",
-        # lidar_ip="192.168.1.155",
-    ),
-    PointLio.blueprint(
-        # lidar_ip="192.168.1.155",
-    ),
+    mid360_for_pointlio(pcap="recordings/run1.pcap"),
+    PointLio.blueprint(),
     vis_module("rerun"),
 ).global_config(n_workers=3)
 ModuleCoordinator.build(replay).loop()
@@ -144,5 +123,5 @@ ModuleCoordinator.build(replay).loop()
 
 ## Notes
 
-- Replay runs in **real time** and Point-LIO is **not deterministic**, so
+- Replay runs at **capture speed** and Point-LIO is **not deterministic**, so
   successive runs differ.

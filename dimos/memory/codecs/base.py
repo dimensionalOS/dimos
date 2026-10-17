@@ -28,14 +28,28 @@ class Codec(Protocol[T]):
     def decode(self, data: bytes) -> T: ...
 
 
-def codec_for(payload_type: type[Any] | None = None) -> Codec[Any]:
-    """Auto-select codec based on payload type."""
+def codec_for(payload_type: type[Any] | None = None, sample: Any = None) -> Codec[Any]:
+    """Auto-select codec based on payload type.
+
+    ``sample`` is a first payload, when one is at hand. ``Image`` covers depth as
+    well as colour, and JPEG would destroy depth values, so a depth or 16-bit
+    sample selects lossless ``lz4+lcm`` instead.
+    """
     from dimos.memory.codecs.pickle import PickleCodec
 
     if payload_type is not None:
-        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
         if issubclass(payload_type, Image):
+            if isinstance(sample, Image) and sample.format in (
+                ImageFormat.DEPTH,
+                ImageFormat.DEPTH16,
+                ImageFormat.GRAY16,
+            ):
+                from dimos.memory.codecs.lcm import LcmCodec
+                from dimos.memory.codecs.lz4 import Lz4Codec
+
+                return Lz4Codec(LcmCodec(payload_type))
             from dimos.memory.codecs.jpeg import JpegCodec
 
             return JpegCodec()
@@ -105,6 +119,13 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory.codecs.lcm import LcmCodec
 
         return LcmCodec(resolve_payload_type(payload_module))
+    if name == "json":
+        from dimos.memory.codecs.json import JsonCodec
+
+        expected = JsonCodec.payload_type
+        if payload_module != f"{expected.__module__}.{expected.__qualname__}":
+            raise TypeError("JSON codec requires std_msgs.String")
+        return JsonCodec()
     if name == "pickle":
         from dimos.memory.codecs.pickle import PickleCodec
 

@@ -142,15 +142,16 @@ def test_streamed_path_arms_on_the_first_tick_with_a_pose():
     on the first tick that has a pose — never dropped for arriving early."""
     task = _task()
     task.on_path(straight_rotate(), t_now=0.0)
-    assert not task.is_active()  # latched, not armed
+    assert task.get_state() == "idle"  # latched, not armed
     task.compute(CoordinatorState(joints=JointStateSnapshot(), t_now=0.0, dt=_DT))
-    assert not task.is_active()  # still no pose available
+    assert task.get_state() == "idle"  # still no pose available
     task.compute(_state(0.0, 0.0, 0.0, t=_DT))
-    assert task.is_active()
+    assert task.get_state() == "tracking"
 
 
-def test_streamed_speed_applies_before_the_path():
+def test_streamed_speed_applies_until_the_path_arms():
     task = _task()
+    task.on_path(straight_rotate(), t_now=0.0)  # separate streams: speed may land second
     task.on_speed(Float32(data=0.8), t_now=0.0)
     assert task._config.speed == pytest.approx(0.8)
 

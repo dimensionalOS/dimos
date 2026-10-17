@@ -14,7 +14,6 @@
 
 from typing import TYPE_CHECKING, Any
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from reactivex.disposable import Disposable
 
@@ -47,6 +46,10 @@ class VLMAgent(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+
+        # ~2s: langchain's chat-model machinery pulls transformers+torch; deferred
+        # to keep module import (test collection, CLI startup) light.
+        from langchain.chat_models import init_chat_model
 
         if self.config.model.startswith("ollama:"):
             from dimos.agents.ollama_agent import ensure_ollama_model

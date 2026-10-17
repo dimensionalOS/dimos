@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import lz4.frame  # type: ignore[import-untyped]
 
@@ -32,6 +32,14 @@ class Lz4Codec:
     def __init__(self, inner: Codec[Any], compression_level: int = 0) -> None:
         self._inner = inner
         self._compression_level = compression_level
+
+    @property
+    def payload_type(self) -> type[Any]:
+        """Message type decoded by the wrapped storage codec."""
+        payload_type = getattr(self._inner, "payload_type", None)
+        if payload_type is None:
+            raise TypeError(f"{type(self._inner).__name__} does not declare a payload type")
+        return cast("type[Any]", payload_type)
 
     def encode(self, value: Any) -> bytes:
         raw = self._inner.encode(value)

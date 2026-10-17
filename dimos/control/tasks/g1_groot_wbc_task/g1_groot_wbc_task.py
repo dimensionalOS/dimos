@@ -125,12 +125,6 @@ G1_GROOT_KD: list[float] = [
     2.0,  # right arm
 ]
 
-# Relaxed arms-down pose. The policy treats all 14 arm defaults as zero.
-# Operators can override at runtime by publishing joint targets on the
-# arms via the coordinator's joint_command transport.
-ARM_DEFAULT_POSE: list[float] = [0.0] * 14
-
-
 # Default joint angles for all 29 G1 joints. The policy treats these as
 # its zero-offset pose.
 _DEFAULT_POSITIONS_29 = [

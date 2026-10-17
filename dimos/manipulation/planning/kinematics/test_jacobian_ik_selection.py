@@ -25,11 +25,17 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _pose(x: float = 0.0) -> PoseStamped:
@@ -65,12 +71,22 @@ class _World:
                 )
             ],
         )
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("robot.urdf"), {}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name, "revolute", CoordinateTopology.INTERVAL, -1.0, 1.0, 1.0, 2.0
+                    )
+                    for name in self.config.joint_names
+                )
+            ),
+            planning_groups=(),
+        )
 
-    def get_model_config(self) -> RobotModelConfig:
-        return self.config
-
-    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
+    def get_prepared_model(self) -> PreparedRobotModel:
+        return self.prepared
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)

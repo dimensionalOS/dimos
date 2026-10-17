@@ -26,19 +26,24 @@ import pytest
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.web.codecs import (
     MAX_ENCODED_META_BYTES,
     DecoderDef,
     EncodedPayload,
     EncoderDef,
     PublishContext,
+    decode_json_v1,
     decoder_definition,
     encode_json_v1,
     encoder_definition,
+    is_generic_lcm_encoding,
+    resolve_decoder,
     resolve_encoder,
     web_decoder,
     web_encoder,
 )
+from dimos.web.lcm_codec import check_lcm_params, encode_lcm_v1
 
 
 @dataclass(frozen=True)
@@ -312,6 +317,23 @@ def test_resolve_json_v1_whitelist_rejects(message_type: type) -> None:
         resolve_encoder("json.v1", message_type)
 
 
+def test_resolve_lcm_v1_family() -> None:
+    definition = resolve_encoder("geometry_msgs.PoseStamped.lcm.v1", PoseStamped)
+    assert definition.encode is encode_lcm_v1 and definition.takes_params is True
+    assert definition.check_params is check_lcm_params
+    with pytest.raises(ValueError, match="encodes nav_msgs.Odometry, not PoseStamped"):
+        resolve_encoder("nav_msgs.Odometry.lcm.v1", PoseStamped)
+    with pytest.raises(ValueError, match="encodes x, not dict"):
+        resolve_encoder("x.lcm.v1", dict)
+    with pytest.raises(ValueError, match="declares its own LCM fingerprint"):
+        resolve_encoder("trajectory_msgs.JointTrajectory.lcm.v1", JointTrajectory)
+    # A registered *.lcm.v1 id is its own codec, not the generic one.
+    web_encoder("t.enc.lcm.v1")(_enc_ok)
+    assert resolve_encoder("t.enc.lcm.v1", _Point).encode is _enc_ok
+    assert is_generic_lcm_encoding("t.enc.lcm.v1") is False
+    assert is_generic_lcm_encoding("geometry_msgs.PoseStamped.lcm.v1") is True
+
+
 def test_resolve_registered_type_mismatch() -> None:
     web_encoder("t.enc.mismatch.v1")(_enc_ok)
     with pytest.raises(ValueError, match="encodes _Point, not dict"):
@@ -331,6 +353,35 @@ def test_resolve_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delattr(sys.modules[__name__], "_enc_ok")
     with pytest.raises(ValueError, match="cannot be pickled by reference"):
         resolve_encoder("t.enc.unref.v1", _Point)
+
+
+def test_resolve_decoder_registered_and_generic() -> None:
+    web_decoder("t.dec.res.v1")(_dec_ok)
+    definition = resolve_decoder("t.dec.res.v1", _Point)
+    assert definition.decode is _dec_ok and definition.takes_context is False
+    for message_type in (dict, list, str, int, float, bool):
+        generic = resolve_decoder("json.v1", message_type)
+        assert generic.decode is decode_json_v1 and generic.takes_context is False
+    assert decode_json_v1({"a": [1, None]}) == {"a": [1, None]}
+
+
+def test_resolve_decoder_rejections() -> None:
+    web_decoder("t.dec.resbad.v1")(_dec_ok)
+    with pytest.raises(ValueError, match="decodes to _Point, not dict"):
+        resolve_decoder("t.dec.resbad.v1", dict)
+    with pytest.raises(ValueError, match="no decoder registered for encoding 'nope.dec.v1'"):
+        resolve_decoder("nope.dec.v1", dict)
+    # Dataclasses are excluded from generic decode on purpose: reconstructing
+    # one from untrusted browser JSON needs an explicit decoder.
+    with pytest.raises(ValueError, match="register an explicit decoder"):
+        resolve_decoder("json.v1", _Point)
+
+
+def test_resolve_decoder_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    web_decoder("t.dec.unref.v1")(_dec_ok)
+    monkeypatch.delattr(sys.modules[__name__], "_dec_ok")
+    with pytest.raises(ValueError, match="cannot be pickled by reference"):
+        resolve_decoder("t.dec.unref.v1", _Point)
 
 
 def test_encoded_payload_normalizes_bytes_like() -> None:

@@ -255,3 +255,21 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
     ramp = cloud.to_rerun(mode="points", rgb=False)
     assert ramp.colors is None
     assert ramp.class_ids is not None
+
+
+def test_seq_round_trips_through_lcm_with_and_without_intensity_and_empty() -> None:
+    seq = (3 << 16) | 5
+    pts = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    plain = PointCloud2.from_numpy(pts, frame_id="odom", timestamp=1.0)
+    with_intensity = PointCloud2.from_numpy(
+        pts, frame_id="odom", timestamp=1.0, intensities=np.array([0.5, 0.7], dtype=np.float32)
+    )
+    empty = PointCloud2.from_numpy(
+        np.zeros((0, 3), dtype=np.float32), frame_id="odom", timestamp=1.0
+    )
+    for cloud in (plain, with_intensity, empty):
+        cloud.seq = seq
+        decoded = PointCloud2.lcm_decode(cloud.lcm_encode())
+        assert decoded.seq == seq
+        assert len(decoded) == len(cloud)
+    assert PointCloud2.lcm_decode(PointCloud2.from_numpy(pts, timestamp=1.0).lcm_encode()).seq == 0

@@ -87,6 +87,10 @@ class ModuleB(Module):
     def what_is_as_name(self) -> str:
         return self.module_a.get_name()
 
+    @rpc
+    def module_a_rpc_name(self) -> str:
+        return self.module_a.get_name.remote_name
+
 
 class ModuleC(Module):
     data3: In[Data3]
@@ -271,7 +275,7 @@ def test_build_does_not_mutate_parsed_config(mocker) -> None:
     mocker.patch.object(ModuleCoordinator, "_connect_streams")
     mocker.patch("dimos.core.coordination.module_coordinator._connect_module_refs")
     mocker.patch.object(ModuleCoordinator, "build_all_modules")
-    mocker.patch.object(ModuleCoordinator, "start_all_modules")
+    mocker.patch.object(ModuleCoordinator, "start_all_modules", return_value={})
     mocker.patch("dimos.core.coordination.module_coordinator._log_blueprint_graph")
 
     coordinator = ModuleCoordinator.build(blueprint, parsed)
@@ -770,6 +774,36 @@ def test_build_with_explicit_instance_name(build_coordinator) -> None:
     assert module_b.what_is_as_name() == "A, Module A"
 
 
+def test_build_calls_remote_module_reference_over_zenoh() -> None:
+    rpc_name = "runs/run-1/hosts/host-a/modules/modulea"
+    provider_blueprint = ModuleA.blueprint(rpc_name=rpc_name)
+    provider_config = BlueprintConfigParser(provider_blueprint).parse(
+        environ={},
+        overrides={"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}},
+    )
+    consumer_blueprint = ModuleB.blueprint()
+    consumer_config = BlueprintConfigParser(consumer_blueprint).parse(
+        environ={},
+        overrides={"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}},
+    )
+
+    provider = ModuleCoordinator.build(provider_blueprint, provider_config)
+    consumer = ModuleCoordinator.build(
+        consumer_blueprint,
+        consumer_config,
+        remote_module_refs={("moduleb", "module_a"): (ModuleA, rpc_name)},
+    )
+
+    try:
+        module_b = consumer.get_instance(ModuleB)
+        assert module_b is not None
+        assert module_b.module_a_rpc_name() == rpc_name
+        assert module_b.what_is_as_name() == "A, Module A"
+    finally:
+        consumer.stop()
+        provider.stop()
+
+
 def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:
     """A coordinator with 0 initial workers auto-adds workers on load_blueprint."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
@@ -989,16 +1023,23 @@ def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
     assert dynamic_coordinator._coordinator_rpc is first_service
 
 
+def test_start_rpc_service_rejects_a_different_name_after_start(dynamic_coordinator) -> None:
+    dynamic_coordinator.start_rpc_service(name="test-coordinator")
+
+    with pytest.raises(RuntimeError, match="already running as 'test-coordinator'"):
+        dynamic_coordinator.start_rpc_service(name="another-coordinator")
+
+
 def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, mocker) -> None:
     start_rpc = mocker.patch.object(dynamic_coordinator, "start_rpc_service")
     stop = mocker.patch.object(dynamic_coordinator, "stop")
-    event = mocker.patch("dimos.core.coordination.module_coordinator.threading.Event")
-    event.return_value.wait.side_effect = KeyboardInterrupt
+    wait = mocker.patch.object(dynamic_coordinator._shutdown_event, "wait")
+    wait.side_effect = KeyboardInterrupt
 
     dynamic_coordinator.loop()
 
     start_rpc.assert_called_once_with()
-    event.return_value.wait.assert_called_once_with()
+    wait.assert_called_once_with()
     stop.assert_called_once_with()
 
 
@@ -1192,3 +1233,20 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
         wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()
+
+
+def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shutdown() (the RPC handler) releases loop(), which stops everything."""
+    coordinator = ModuleCoordinator(g=GlobalConfig())
+    monkeypatch.setattr(coordinator, "start_rpc_service", lambda: None)
+    stopped = threading.Event()
+    monkeypatch.setattr(coordinator, "stop", stopped.set)
+
+    looper = threading.Thread(target=coordinator.loop, daemon=True)
+    looper.start()
+    assert not stopped.wait(0.1)
+
+    coordinator.shutdown()
+    looper.join(timeout=5)
+    assert not looper.is_alive()
+    assert stopped.is_set()

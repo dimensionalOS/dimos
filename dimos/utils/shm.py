@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Race-free creation and attachment of named POSIX shared-memory segments.
+"""Race-free attachment to named POSIX shared-memory segments.
 
 ``SharedMemory(create=True, size=N)`` runs ``shm_open`` and *then* ``ftruncate``.
 Between the two the segment exists at size 0, so a concurrent attacher mmaps an
@@ -29,6 +29,7 @@ built by a peer with a different layout, which is a permanent error its caller m
 raise, not a race to wait out.
 """
 
+import _posixshmem
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import os
@@ -68,21 +69,22 @@ def attach_shm(name: str, *, timeout: float | None = None) -> SharedMemory:
         time.sleep(_POLL_S)
 
 
-def create_or_attach_shm(
-    name: str, size: int, *, timeout: float | None = None
-) -> tuple[SharedMemory, bool]:
-    """Create ``name`` at ``size`` (owner) or wait out its creator and attach.
-
-    Returns ``(segment, is_owner)``. Owners stay registered with the resource
-    tracker so a crash still cleans up; attachers do not, since they only close.
-    """
-    try:
-        return SharedMemory(create=True, size=size, name=name), True
-    except FileExistsError:
-        return attach_shm(name, timeout=timeout), False
-
-
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
+    # Probe with a bare fd before constructing SharedMemory: its attach path
+    # unlinks the segment whenever mmap fails with an OSError, and on darwin
+    # the zero-length mmap inside the creation window fails with exactly that
+    # (EINVAL — shm fds are not regular files there, so Python's empty-file
+    # ValueError is never reached). Constructing eagerly would therefore
+    # destroy the creator's name mid-window.
+    try:
+        fd = _posixshmem.shm_open(name if name.startswith("/") else "/" + name, os.O_RDWR, mode=0)
+    except FileNotFoundError:
+        return None, "segment does not exist"
+    try:
+        if os.fstat(fd).st_size == 0:
+            return None, "creator has not sized the segment yet"
+    finally:
+        os.close(fd)
     try:
         return unregister(SharedMemory(name=name)), ""
     except FileNotFoundError:

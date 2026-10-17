@@ -2,12 +2,13 @@
   description = "FAST-LIO2 + Livox Mid-360 native module";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    livox-sdk.url = "path:../../livox/cpp";
-    livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
-    livox-sdk.inputs.flake-utils.follows = "flake-utils";
-    livox-sdk.inputs.lcm-extended.follows = "lcm-extended";
+    nix-filter.url = "github:numtide/nix-filter";
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
+    zenoh.inputs.nixpkgs.follows = "nixpkgs";
+    zenoh.inputs.flake-utils.follows = "flake-utils";
+    nixpkgs.follows = "dimos-native-cpp/nixpkgs";
+    flake-utils.follows = "dimos-native-cpp/flake-utils";
+    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
@@ -30,7 +31,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -68,16 +69,17 @@
           inherit system;
           overlays = [ darwinDepFixes ];
         };
-        livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
-        livox-common = ../../common;
+        livox-sdk2 = import ./livox_sdk2.nix { inherit pkgs; };
 
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
           version = "0.2.0";
 
-          src = ./.;
+          src = nix-filter.lib { root = ./.; exclude = [ "build" "target" "result" "__pycache__" ]; };
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
@@ -89,6 +91,8 @@
             pkgs.boost
             pkgs.llvmPackages.openmp
             pkgs.nlohmann_json
+            zenohc
+            zenohcpp
           ];
 
           cmakeFlags = [
@@ -96,13 +100,13 @@
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
-            "-DLIVOX_COMMON_DIR=${livox-common}"
-            # The header-only SDK lives outside this dir. A git-tree flake can
-            # reach it as a path literal within the repo tree.
-            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
+            "-DDIMOS_NATIVE_CPP_DIR=${dimos-native-cpp.packages.${system}.default}"
           ];
         };
       in {
+        # Nothing to lint and no tests here yet; declared so the gate sees the flake.
+        checks.lint = pkgs.runCommand "fastlio2-lint" { } "mkdir $out";
+        checks.tests = pkgs.runCommand "fastlio2-tests" { } "mkdir $out";
         packages = {
           default = fastlio2_native;
           inherit fastlio2_native;

@@ -104,7 +104,7 @@ class HeightCostConfig(OccupancyConfig):
 
 ![Global costmap](assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
+### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/go2/replanning_a_star/module.py))
 
 The planner processes the terrain gradient and computes its own planning costmap, preferring safe free paths but willing to path aggressively through tight spaces when it has to.
 
@@ -120,7 +120,7 @@ All visualization layers shown together:
 
 ## Frontier Exploration
 
-The [`WavefrontFrontierExplorer`](/dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped. Like patrolling below, it is exposed as an agent skill: an LLM agent can call `begin_exploration` and `end_exploration`.
+The [`WavefrontFrontierExplorer`](/dimos/navigation/experimental/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped. Like patrolling below, it is exposed as an agent skill: an LLM agent can call `begin_exploration` and `end_exploration`.
 
 ## Patrolling
 
@@ -167,12 +167,12 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.svg import to_svg
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.patrolling.module import PatrollingModule
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.experimental.patrolling.module import PatrollingModule
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(

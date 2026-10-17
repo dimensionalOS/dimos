@@ -7,31 +7,69 @@
   "observation": {
     "image": {
       "stream": "color_image",
-      "field": "data"
+      "field": "data",
+      "dtype": "video",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ]
     },
     "joint_state": {
       "stream": "coordinator_joint_state",
-      "field": "position"
+      "field": "position",
+      "dtype": "float32",
+      "shape": [
+        8
+      ],
+      "names": [
+        "arm/joint1",
+        "arm/joint2",
+        "arm/joint3",
+        "arm/joint4",
+        "arm/joint5",
+        "arm/joint6",
+        "arm/joint7",
+        "arm/gripper"
+      ]
     }
   },
   "action": {
     "joint_target": {
       "stream": "coordinator_joint_state",
-      "field": "position"
+      "field": "position",
+      "dtype": "float32",
+      "shape": [
+        8
+      ],
+      "names": [
+        "arm/joint1",
+        "arm/joint2",
+        "arm/joint3",
+        "arm/joint4",
+        "arm/joint5",
+        "arm/joint6",
+        "arm/joint7",
+        "arm/gripper"
+      ]
     }
   },
   "sync": {
     "anchor": "image",
     "rate_hz": 14.0,
-    "tolerance_ms": 80.0,
-    "action_shift": 1
+    "tolerance_ms": 80.0
   },
   "output": {
     "format": "lerobot",
     "path": "data/datasets/session",
     "metadata": {
       "robot": "xarm7",
-      "default_task_label": "pick_and_place"
+      "repo_id": "dimos/example"
     }
   }
 }

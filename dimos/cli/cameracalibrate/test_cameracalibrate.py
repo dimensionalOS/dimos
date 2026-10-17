@@ -32,6 +32,7 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     write_camera_info_yaml,
 )
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 def _synthetic_chessboard_gray(
@@ -454,12 +455,12 @@ def _make_subscribe_pubsub_uri_stub(
     return _stub
 
 
+@pytest.mark.parametrize("topic_uri", ["zenoh:dimos/color_image", "jpeg_lcm:/color_image"])
 def test_capture_frames_from_topic_mocked_space_fills_target(
     monkeypatch: pytest.MonkeyPatch,
+    topic_uri: str,
 ) -> None:
     """SPACE accepts frames delivered over a fake pubsub subscription."""
-    from dimos.msgs.sensor_msgs.Image import Image
-
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -482,7 +483,7 @@ def test_capture_frames_from_topic_mocked_space_fills_target(
     monkeypatch.setattr(cv2, "waitKey", _fake_wait_key)
 
     out = capture_frames_from_topic(
-        "jpeg_lcm:/color_image",
+        topic_uri,
         3,
         cols,
         rows,
@@ -490,7 +491,7 @@ def test_capture_frames_from_topic_mocked_space_fills_target(
     )
     assert len(out) == 3
     assert all(np.array_equal(f, bgr) for f in out)
-    assert record["uri"] == "jpeg_lcm:/color_image"
+    assert record["uri"] == topic_uri
     assert record["msg_type"] is Image
     assert record["unsub_state"]["called"] is True  # type: ignore[index]
 
@@ -521,8 +522,6 @@ def test_cli_topic_source_uri_passes_through(
     tmp_path: Path,
 ) -> None:
     """``--source topic --topic <uri>`` forwards the URI verbatim to the registry."""
-    from dimos.msgs.sensor_msgs.Image import Image
-
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)

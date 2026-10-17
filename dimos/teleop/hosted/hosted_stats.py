@@ -53,7 +53,7 @@ class HostedStatsModule(Module):
 
     # RPC ref to the driver, for battery SOC pulled in the telemetry loop.
     # Optional: the xarm blueprints have no GO2Connection — soc stays None there.
-    go2: GO2Connection | None
+    go2: GO2Connection | None = None
 
     state_json: In[bytes]
     cmd_raw: In[bytes]

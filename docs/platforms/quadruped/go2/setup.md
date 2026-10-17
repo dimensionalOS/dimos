@@ -10,17 +10,10 @@ Full autonomous navigation, mapping, and agentic control on a real Go2. No ROS r
 
 ## Install
 
-First, install system dependencies for your platform:
-- [Ubuntu](/docs/installation/ubuntu.md)
-- [macOS](/docs/installation/osx.md)
-- [Nix](/docs/installation/nix.md)
-
-Then install dimOS:
+Use the [official installer](/docs/installation/index.md), then follow its environment activation command:
 
 ```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
 ## Run on Your Go2

@@ -11,16 +11,29 @@ import {
   DataFrameStreamReader,
   encodeControlFrame,
   encodeDatagram,
+  type IceServer,
+  type JsonValue,
+  MAX_PUB_DATA_BYTES,
+  MAX_SDP_LEN,
+  MAX_TOKEN_LEN,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RtcOfferMsg,
 } from "@dimos/shared";
-import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
+import {
+  type Manifest,
+  ManifestError,
+  parseManifest,
+  TRACK_ENCODING,
+} from "@dimos/shared/manifest";
 import { createDecoderRegistry, type DecoderRegistry } from "./decoders/index.ts";
-import { WatchRejectedError } from "./errors.ts";
+import { PublishError, WatchRejectedError } from "./errors.ts";
 import { registerTeleopHooks, type TeleopHooks } from "./internal/teleopMachine.ts";
+import { createPeerConnection, type PeerConnectionFactory, ViewerRtc } from "./rtc.ts";
 import { type ChannelSnapshot, ChannelStore, StatusStore } from "./store.ts";
 import {
+  backoffDelayMs,
   fetchRelayInfo,
   ReconnectingTransport,
   resolveInfoUrl,
@@ -30,6 +43,19 @@ import {
 
 const DEFAULT_UI_TICK_MS = 500;
 
+// Local safety net over the relay's own 10 s publish timeout: a wedged-but-
+// alive transport must not leak pending promises forever.
+const PUBLISH_LOCAL_TIMEOUT_MS = 20_000;
+// Local pending cap; the relay enforces its own (stricter) budgets.
+const MAX_PENDING_PUBLISHES = 64;
+// Publish values nesting deeper than this are rejected locally; the bridge
+// enforces the same cap, so both ends agree on what "too deep" means.
+const MAX_PUBLISH_DEPTH = 100;
+
+// Correlated relay codes whose outcome is genuinely unknown: the bridge may
+// have published even though no ack made it back.
+const UNKNOWN_OUTCOME_CODES = new Set(["publish_timeout", "robot_disconnected"]);
+
 export interface ConnectOptions {
   /** HTTP relay base to resolve /api/info against; default: same origin. */
   url?: string;
@@ -37,8 +63,25 @@ export interface ConnectOptions {
   robot?: string;
   /** Decoder registry, captured for the session's lifetime. */
   decoders?: DecoderRegistry;
+  /** Viewer token for a relay started with --auth-file; sent in hello. A
+   * rejected token fails the transport for good (code auth_failed). */
+  token?: string;
   /** Period of the UI snapshot tick that feeds subscribe() callbacks. */
   uiTickMs?: number;
+}
+
+/** A resolved publish: the bridge decoded the value and called the DimOS
+ * output stream. Timestamps are seconds since epoch (relay receive time and
+ * bridge publish time). */
+export interface PublishReceipt {
+  ch: string;
+  relayTs: number;
+  bridgeTs: number;
+}
+
+export interface PublishOptions {
+  /** Browser send time forwarded to the bridge's PublishContext. */
+  clientTs?: number;
 }
 
 export interface Session {
@@ -59,12 +102,64 @@ export interface Session {
    * staying desired for a later manifest.
    */
   subscribe(ch: string, cb: (snapshot: ChannelSnapshot) => void): () => void;
+  /**
+   * Publish one JSON value on a tx channel declared publish="shared".
+   * Resolves once the bridge decoded the value and called the DimOS output
+   * stream; rejects with PublishError - outcome "rejected" for definite
+   * validation failures, "unknown" when the connection died (or nothing
+   * answered) after the send. Never auto-resends: an "unknown" command may
+   * well have been published.
+   */
+  publish(ch: string, value: JsonValue, options?: PublishOptions): Promise<PublishReceipt>;
   close(): void;
 }
 
 /** Local auto-select policy: watch the robot only when it is the only one. */
 export function pickAutoWatch(robots: RobotInfo[]): RobotInfo | null {
   return robots.length === 1 ? robots[0] : null;
+}
+
+/** Random per-session publish-id prefix, so ids from independent sessions
+ * (or a reloaded page) cannot collide at the relay's per-viewer dup check. */
+function randomIdPrefix(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** First reason `v` is not a publishable JSON value, or null if it is one.
+ * Stricter than JSON.stringify on purpose: anything stringify would silently
+ * rewrite (non-finite numbers, undefined members, array holes, non-plain
+ * objects) is rejected instead. The depth cap bounds recursion (cycles
+ * included); messages are short constants that never echo the value. */
+function findNonJson(v: unknown, depth: number): string | null {
+  if (depth > MAX_PUBLISH_DEPTH) {
+    return `value nests deeper than ${MAX_PUBLISH_DEPTH} levels`;
+  }
+  if (v === null || typeof v === "boolean" || typeof v === "string") return null;
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? null : "value contains a non-finite number";
+  }
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const bad = findNonJson(item, depth + 1);
+      if (bad !== null) return bad;
+    }
+    return null;
+  }
+  if (typeof v === "object") {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      return "value contains a non-plain object";
+    }
+    // Own enumerable string-keyed values: exactly what JSON.stringify emits.
+    for (const item of Object.values(v)) {
+      const bad = findNonJson(item, depth + 1);
+      if (bad !== null) return bad;
+    }
+    return null;
+  }
+  return `value contains a non-JSON ${typeof v}`;
 }
 
 /** Structural equality over plain-JSON values (params, layout trees). Key
@@ -112,7 +207,9 @@ export function manifestsEqual(a: Manifest, b: Manifest): boolean {
       c.encoding === other.encoding &&
       c.delivery === other.delivery &&
       c.maxHz === other.maxHz &&
-      jsonEqual(c.params, other.params)
+      jsonEqual(c.params, other.params) &&
+      c.publish === other.publish &&
+      c.requiredScope === other.requiredScope
     );
   });
   const panelsEqual = a.panels.every((p, i) => {
@@ -146,6 +243,7 @@ class SessionImpl implements Session {
   readonly transport: ReconnectingTransport;
 
   #registry: DecoderRegistry;
+  #token: string | undefined;
   #ticker: ReturnType<typeof setInterval>;
   #closed = false;
 
@@ -164,6 +262,19 @@ class SessionImpl implements Session {
   #watchWaiter:
     | { id: string; resolve: (m: Manifest) => void; reject: (e: Error) => void }
     | null = null;
+
+  // Pending publishes by request id; each settles exactly once - by pub_ack,
+  // a correlated error, the local safety timer, its connection's death (the
+  // run-loop sweep), or close(). Ids are session-random + counter, bounded.
+  #pending = new Map<string, {
+    runId: number;
+    ch: string;
+    resolve: (receipt: PublishReceipt) => void;
+    reject: (error: PublishError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  #pubPrefix = randomIdPrefix();
+  #pubN = 0;
 
   // Subscription refcounts. #desired counts live subscribe() consumers per
   // channel and survives reconnects and manifest changes. #wire mirrors the
@@ -187,6 +298,23 @@ class SessionImpl implements Session {
   #teleopControl: ((msg: Msg) => void) | null = null;
   #teleopDatagram: ((msg: Msg) => void) | null = null;
   #teleopCbs = new Set<(msg: Msg) => void>();
+
+  // WebRTC: one PeerConnection per connection run, created on the first track
+  // sub. A pulled track is ingested with a rising seq (the store drops seq <=
+  // the slot's).
+  readonly #createPeerConnection: PeerConnectionFactory;
+  #iceServers: IceServer[] | null = null;
+  #rtc: ViewerRtc | null = null;
+  #rtcSeq = 0;
+  #rtcRetry: ReturnType<typeof setTimeout> | null = null;
+  #rtcFailures = 0;
+  // Channel -> the track the relay pulled, for the robot it watches for us.
+  // The store is reset whenever the producer is unconfirmed (an ambiguous
+  // robot list, a switch) while the relay keeps the watch and its pulls, so
+  // re-adopting the manifest restores them from here rather than waiting for
+  // an offer that never comes. Lives with the PeerConnection.
+  #pulled = new Map<string, { robotId: string; track: MediaStreamTrack }>();
+
   // Off the public Session on purpose (W1 is read-only): the cockpit reaches
   // these through teleopHooks() on the internal teleop entry until W9.
   readonly #teleop: TeleopHooks = {
@@ -202,7 +330,9 @@ class SessionImpl implements Session {
   constructor(options: ConnectOptions, deps: TransportDeps) {
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
+    this.#token = options.token;
     this.#pinned = options.robot ?? null;
+    this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
     const infoUrl = resolveInfoUrl(options.url);
     this.transport = new ReconnectingTransport(
       {
@@ -224,7 +354,10 @@ class SessionImpl implements Session {
     if (this.#closed) return;
     this.#closed = true;
     this.#rejectWaiter(new WatchRejectedError("closed"));
+    // A publish already sent may have been delivered; close cannot know.
+    this.#sweepPendingPublishes(null, "closed", "the session was closed");
     clearInterval(this.#ticker);
+    this.#clearRtcRetry();
     this.transport.stop();
   }
 
@@ -263,9 +396,99 @@ class SessionImpl implements Session {
       return;
     }
     this.#desired.delete(ch);
-    if (this.#wire.has(ch)) {
-      this.#wire.delete(ch);
-      this.#send?.({ t: "unsub", ch });
+    if (this.#wire.has(ch)) this.#unsub(ch);
+  }
+
+  /** Drop the relay-side interest (and its pull, for a track channel). */
+  #unsub(ch: string): void {
+    this.#wire.delete(ch);
+    this.#pulled.delete(ch);
+    this.#send?.({ t: "unsub", ch });
+  }
+
+  publish(ch: string, value: JsonValue, options?: PublishOptions): Promise<PublishReceipt> {
+    const rejectLocal = (code: string, message: string) =>
+      Promise.reject(new PublishError("rejected", code, message));
+    if (this.#closed) return rejectLocal("closed", "the session is closed");
+    // The subscription gate: a live connection whose manifest is adopted.
+    if (this.#wireRunId !== this.#runId || this.#manifest === null || this.#send === null) {
+      return rejectLocal("not_connected", "no adopted manifest on a live connection");
+    }
+    // Validate, then serialize exactly once: the bytes checked below are the
+    // bytes sent (the message carries their parse, so a getter re-reading
+    // differently cannot smuggle an unchecked value onto the wire).
+    let data: string;
+    try {
+      const bad = findNonJson(value, 0);
+      if (bad !== null) return rejectLocal("not_serializable", bad);
+      data = JSON.stringify(value);
+    } catch {
+      // A property getter threw mid-traversal or mid-stringify.
+      return rejectLocal("not_serializable", "value threw while serializing");
+    }
+    const clientTs = options?.clientTs;
+    if (clientTs !== undefined && !Number.isFinite(clientTs)) {
+      return rejectLocal("not_serializable", "clientTs must be a finite number");
+    }
+    const bytes = new TextEncoder().encode(data).byteLength;
+    if (bytes > MAX_PUB_DATA_BYTES) {
+      return rejectLocal(
+        "too_large",
+        `serialized data is ${bytes} B (limit ${MAX_PUB_DATA_BYTES})`,
+      );
+    }
+    const spec = this.#manifest.channels.find((c) => c.ch === ch);
+    if (spec === undefined) {
+      return rejectLocal("unknown_channel", `no channel ${ch} in the adopted manifest`);
+    }
+    if (spec.publish === "exclusive") {
+      return rejectLocal(
+        "exclusive_unsupported",
+        `channel ${ch} requires the exclusive publisher lease (not supported yet)`,
+      );
+    }
+    if (spec.dir !== "tx" || spec.publish !== "shared") {
+      return rejectLocal("not_publishable", `channel ${ch} does not accept generic publish`);
+    }
+    if (this.#pending.size >= MAX_PENDING_PUBLISHES) {
+      return rejectLocal("pending_limit", "too many unacknowledged publishes");
+    }
+    const id = `${this.#pubPrefix}-${++this.#pubN}`;
+    return new Promise<PublishReceipt>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        // The relay's 10 s publish_timeout normally lands first; this only
+        // fires on a wedged-but-alive transport, where nothing is provable.
+        this.#settlePub(id)?.reject(
+          new PublishError("unknown", "publish_timeout", "no acknowledgement (local timeout)"),
+        );
+      }, PUBLISH_LOCAL_TIMEOUT_MS);
+      this.#pending.set(id, { runId: this.#runId, ch, resolve, reject, timer });
+      this.#send!({
+        t: "pub",
+        id,
+        ch,
+        data: JSON.parse(data) as JsonValue,
+        ...(clientTs !== undefined ? { clientTs } : {}),
+      });
+    });
+  }
+
+  /** Remove one pending publish, its timer cleared; null if already settled. */
+  #settlePub(id: string) {
+    const pending = this.#pending.get(id);
+    if (pending === undefined) return null;
+    this.#pending.delete(id);
+    clearTimeout(pending.timer);
+    return pending;
+  }
+
+  /** Reject pending publishes with outcome "unknown" (a sent command may
+   * have been delivered): all of them (runId null, close) or one dead
+   * connection's (its run-loop exit). Never resends anything. */
+  #sweepPendingPublishes(runId: number | null, code: string, message: string): void {
+    for (const [id, pending] of [...this.#pending]) {
+      if (runId !== null && pending.runId !== runId) continue;
+      this.#settlePub(id)?.reject(new PublishError("unknown", code, message));
     }
   }
 
@@ -297,11 +520,117 @@ class SessionImpl implements Session {
     }
     this.#wire.add(ch);
     this.#send?.({ t: "sub", ch });
+    if (this.#isTrack(ch)) this.#ensureRtc();
   }
 
   #channelIsRx(ch: string): boolean {
     const spec = this.#manifest?.channels.find((c) => c.ch === ch);
     return spec !== undefined && spec.dir === "rx";
+  }
+
+  #isTrack(ch: string): boolean {
+    return this.#manifest?.channels.find((c) => c.ch === ch)?.encoding === TRACK_ENCODING;
+  }
+
+  /** Created by whichever of the first track sub and rtc_ice comes second; a
+   * pending re-offer backoff owns the next one. */
+  #ensureRtc(): void {
+    if (
+      this.#rtc !== null || this.#rtcRetry !== null || this.#iceServers === null ||
+      this.#send === null
+    ) {
+      return;
+    }
+    const runId = this.#runId;
+    const rtc: ViewerRtc = new ViewerRtc(
+      this.#createPeerConnection({ iceServers: this.#iceServers }),
+      () => this.#rtcFailed(runId, rtc, "WebRTC connection failed"),
+    );
+    this.#rtc = rtc;
+    rtc.offer()
+      .then((sdp) => {
+        if (runId !== this.#runId || this.#rtc !== rtc) return;
+        if (sdp.length > MAX_SDP_LEN) {
+          throw new Error(`offer SDP is ${sdp.length} chars (limit ${MAX_SDP_LEN})`);
+        }
+        this.#send?.({ t: "rtc_offer", sdp });
+      })
+      .catch((e) => this.#rtcFailed(runId, rtc, "WebRTC offer failed", e));
+  }
+
+  async #onRtcOffer(msg: RtcOfferMsg, runId: number): Promise<void> {
+    const rtc = this.#rtc;
+    if (rtc === null) return; // stray: no PeerConnection on this run
+    try {
+      const answer = await rtc.renegotiate(msg.sdp);
+      if (runId !== this.#runId || this.#rtc !== rtc) return;
+      if (answer.length > MAX_SDP_LEN) {
+        throw new Error(`answer SDP is ${answer.length} chars (limit ${MAX_SDP_LEN})`);
+      }
+      this.#send?.({ t: "rtc_answer", sdp: answer });
+      // Answered either way (an SFU offer must be), but a pull that lands after
+      // a watch switch names the previous robot, whose channel names collide
+      // with the new one's; the relay closes it. Pulls for the robot the relay
+      // watches for us are kept, and shown under its adopted manifest.
+      if (msg.robotId === undefined || msg.robotId !== this.#watchSentFor) return;
+      for (const { ch, mid } of msg.tracks ?? []) {
+        const track = rtc.trackFor(mid);
+        if (track === null) {
+          this.#rtcError(`no transceiver for mid ${mid} (channel ${ch})`);
+          continue;
+        }
+        this.#pulled.set(ch, { robotId: msg.robotId, track });
+      }
+      this.#restoreTracks(msg.robotId);
+    } catch (e) {
+      this.#rtcFailed(runId, rtc, "WebRTC renegotiation failed", e);
+    }
+  }
+
+  /** Put the tracks pulled for `robotId` into the store: after a pull, and
+   * after its manifest is adopted again following a store reset (an
+   * ambiguous robot list clears the producer while the relay keeps the
+   * pulls, so no new offer comes). */
+  #restoreTracks(robotId: string): void {
+    if (this.#manifest === null || this.status.get().watchedRobot?.id !== robotId) return;
+    const ts = Date.now() / 1000;
+    for (const [ch, pull] of this.#pulled) {
+      if (pull.robotId !== robotId || !this.#isTrack(ch)) continue;
+      if (this.store.get(ch)?.value === pull.track) continue;
+      this.store.ingest(ch, { ch, seq: ++this.#rtcSeq, ts, delivery: "latest" }, pull.track, true);
+    }
+  }
+
+  #rtcError(context: string, e?: unknown): void {
+    const detail = e === undefined ? "" : `: ${(e as Error)?.message ?? String(e)}`;
+    this.status.update({ lastError: { code: "rtc_failed", message: `${context}${detail}` } });
+  }
+
+  /** Drop the peer and offer again after a backoff. `rtc` null means
+   * whichever peer is current (a relay report names no local one). */
+  #rtcFailed(runId: number, rtc: ViewerRtc | null, context: string, e?: unknown): void {
+    if (runId !== this.#runId || (rtc !== null && rtc !== this.#rtc)) return; // superseded
+    this.#rtcError(context, e);
+    this.#dropRtc();
+    if (this.#rtcRetry !== null) return;
+    this.#rtcRetry = setTimeout(() => {
+      this.#rtcRetry = null;
+      if (runId === this.#runId && [...this.#wire].some((ch) => this.#isTrack(ch))) {
+        this.#ensureRtc();
+      }
+    }, backoffDelayMs(++this.#rtcFailures));
+  }
+
+  #clearRtcRetry(): void {
+    if (this.#rtcRetry !== null) clearTimeout(this.#rtcRetry);
+    this.#rtcRetry = null;
+  }
+
+  /** Close the peer; the relay's pulls on its SFU session die with it. */
+  #dropRtc(): void {
+    this.#rtc?.close();
+    this.#rtc = null;
+    this.#pulled.clear();
   }
 
   #syncDesired(): void {
@@ -310,10 +639,7 @@ class SessionImpl implements Session {
     // so the validation below surfaces unknown_channel and a later manifest
     // can re-subscribe them.
     for (const ch of [...this.#wire]) {
-      if (!this.#channelIsRx(ch)) {
-        this.#wire.delete(ch);
-        this.#send?.({ t: "unsub", ch });
-      }
+      if (!this.#channelIsRx(ch)) this.#unsub(ch);
     }
     for (const ch of this.#desired.keys()) this.#syncChannel(ch);
   }
@@ -346,10 +672,11 @@ class SessionImpl implements Session {
 
   #sendWatch(id: string): void {
     if (this.#watchSentFor !== null && this.#watchSentFor !== id) {
-      // The relay drops this viewer's subscriptions on a watch for a
-      // different robot; mirror that so the next adoption re-subscribes the
-      // desired set.
+      // The relay drops this viewer's subscriptions (and the pulls behind
+      // them) on a watch for a different robot; mirror that so the next
+      // adoption re-subscribes the desired set.
       this.#wire.clear();
+      this.#pulled.clear();
     }
     this.#watchSentFor = id;
     this.#send?.({ t: "watch", robotId: id });
@@ -359,6 +686,9 @@ class SessionImpl implements Session {
     const runId = ++this.#runId;
     this.#wire.clear();
     this.#watchSentFor = null;
+    this.#iceServers = null;
+    this.#rtcSeq = 0;
+    this.#rtcFailures = 0;
     const control = await wt.createBidirectionalStream();
     const writer = control.writable.getWriter();
     const send = async (msg: Msg) => {
@@ -374,7 +704,12 @@ class SessionImpl implements Session {
     this.#teleopDatagram = (msg) => {
       if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
     };
-    await send({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+    await send({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "viewer",
+      ...(this.#token !== undefined ? { token: this.#token } : {}),
+    });
     void this.#readUniStreams(wt, runId);
 
     const reader = control.readable.getReader();
@@ -432,6 +767,7 @@ class SessionImpl implements Session {
               this.#applyManifest(manifest);
               this.#wireRunId = runId;
               this.#syncDesired();
+              this.#restoreTracks(msg.robotId);
               if (this.#watchWaiter !== null && this.#watchWaiter.id === msg.robotId) {
                 const waiter = this.#watchWaiter;
                 this.#watchWaiter = null;
@@ -442,13 +778,58 @@ class SessionImpl implements Session {
             case "teleop_started":
               for (const cb of this.#teleopCbs) cb(msg);
               break;
+            case "rtc_ice":
+              this.#iceServers = msg.iceServers;
+              // A track sub may have beaten it.
+              if ([...this.#wire].some((ch) => this.#isTrack(ch))) this.#ensureRtc();
+              break;
+            case "rtc_answer": {
+              const rtc = this.#rtc;
+              rtc?.accept(msg.sdp).then(
+                () => {
+                  if (rtc === this.#rtc) this.#rtcFailures = 0;
+                },
+                (e) => this.#rtcFailed(runId, rtc, "WebRTC answer rejected", e),
+              );
+              break;
+            }
+            case "rtc_offer":
+              void this.#onRtcOffer(msg, runId);
+              break;
+            case "pub_ack":
+              this.#settlePub(msg.id)?.resolve({
+                ch: msg.ch,
+                relayTs: msg.relayTs,
+                bridgeTs: msg.bridgeTs,
+              });
+              break;
             case "error": {
-              if (msg.code === "version_mismatch") {
-                this.transport.fail(msg.message);
+              if (msg.requestId !== undefined) {
+                // A correlated publish failure settles its promise and never
+                // reaches the session error banner; an unknown id (already
+                // settled locally) is dropped.
+                this.#settlePub(msg.requestId)?.reject(
+                  new PublishError(
+                    UNKNOWN_OUTCOME_CODES.has(msg.code) ? "unknown" : "rejected",
+                    msg.code,
+                    msg.message,
+                  ),
+                );
+                break;
+              }
+              if (msg.code === "version_mismatch" || msg.code === "auth_failed") {
+                // Terminal on purpose: a wrong token must not retry forever.
+                this.transport.fail(msg.message, msg.code);
               } else if (msg.code === "teleop_held") {
                 // A refused lease is the teleop panel's state, not a
                 // session-level error banner.
                 for (const cb of this.#teleopCbs) cb(msg);
+              } else if (msg.code === "rtc_session_gone") {
+                // Only a fresh offer brings a new SFU session; the relay
+                // retries everything else itself.
+                this.#rtcFailed(runId, null, "WebRTC session lost", msg.message);
+              } else if (msg.code === "rtc_failed") {
+                this.status.update({ lastError: { code: "rtc_failed", message: msg.message } });
               } else {
                 this.status.update({
                   lastError: { code: "relay_error", message: `${msg.code}: ${msg.message}` },
@@ -464,6 +845,14 @@ class SessionImpl implements Session {
       }
     } catch {
       // control stream died with the connection; the transport reconnects
+    } finally {
+      // This connection can never answer its publishes; the commands may
+      // have been delivered before it died, so the outcome is unknown and
+      // nothing is ever resent.
+      this.#sweepPendingPublishes(runId, "connection_lost", "the relay connection died");
+      // The SFU session dies with the relay session; the next run offers again.
+      this.#clearRtcRetry();
+      this.#dropRtc();
     }
   }
 
@@ -547,7 +936,7 @@ class SessionImpl implements Session {
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;
     const spec = this.#manifest.channels.find((c) => c.ch === frame.header.ch);
-    const decoder = this.#registry.get(spec?.encoding);
+    const decoder = spec === undefined ? undefined : this.#registry.resolve(spec);
     let value: unknown;
     let preview: string | undefined;
     let decodeOk = true;
@@ -564,6 +953,13 @@ class SessionImpl implements Session {
 
 export function connect(options: ConnectOptions = {}, deps: TransportDeps = {}): Session {
   const session = new SessionImpl(options, deps);
-  session.transport.start();
+  if (options.token !== undefined && options.token.length > MAX_TOKEN_LEN) {
+    session.transport.fail(
+      `viewer token exceeds the ${MAX_TOKEN_LEN}-character limit`,
+      "auth_failed",
+    );
+  } else {
+    session.transport.start();
+  }
   return session;
 }

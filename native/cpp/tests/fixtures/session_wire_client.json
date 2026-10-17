@@ -1,0 +1,12 @@
+{
+  "mode": "client",
+  "connect": [
+    "tcp/192.0.2.10:7447"
+  ],
+  "listen": [],
+  "multicast": true,
+  "scout_addr": "",
+  "gossip": false,
+  "interface": "lo",
+  "connect_timeout_ms": 2000
+}

@@ -1,0 +1,35 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1029.6 294.443" data-pikchr-date="20260403102956">
+<path d="M39.9,215.622L226.5,215.622A7.5 7.5 0 0 0 234 208.122L234,129.522A7.5 7.5 0 0 0 226.5 122.022L39.9,122.022A7.5 7.5 0 0 0 32.4 129.522L32.4,208.122A7.5 7.5 0 0 0 39.9 215.622Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="133.2" y="158.742" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">modules</text>
+<text x="133.2" y="178.902" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera, planner, ...</text>
+<path d="M284.7,215.622L399.3,215.622A7.5 7.5 0 0 0 406.8 208.122L406.8,129.522A7.5 7.5 0 0 0 399.3 122.022L284.7,122.022A7.5 7.5 0 0 0 277.2 129.522L277.2,208.122A7.5 7.5 0 0 0 284.7 215.622Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="342" y="168.822" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Bridge</text>
+<polygon points="234,168.822 245.52,164.502 245.52,173.142" style="fill:rgb(255,255,255)"/>
+<polygon points="277.2,168.822 265.68,173.142 265.68,164.502" style="fill:rgb(255,255,255)"/>
+<path d="M239.76,168.822L271.44,168.822"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="143.697" y="94.6983" text-anchor="middle" font-weight="bold" fill="rgb(255,255,255)" dominant-baseline="central">Robot: dimOS runtime</text>
+<path d="M18.3,237.222L420.9,237.222A7.5 7.5 0 0 0 428.4 229.722L428.4,65.4783A7.5 7.5 0 0 0 420.9 57.9783L18.3,57.9783A7.5 7.5 0 0 0 10.8 65.4783L10.8,229.722A7.5 7.5 0 0 0 18.3 237.222Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<path d="M543.9,215.622L701.7,215.622A7.5 7.5 0 0 0 709.2 208.122L709.2,129.522A7.5 7.5 0 0 0 701.7 122.022L543.9,122.022A7.5 7.5 0 0 0 536.4 129.522L536.4,208.122A7.5 7.5 0 0 0 543.9 215.622Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="622.8" y="158.742" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Relay</text>
+<text x="622.8" y="178.902" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">PC or server</text>
+<path d="M846.3,146.843L989.7,146.843A7.5 7.5 0 0 0 997.2 139.343L997.2,82.3433A7.5 7.5 0 0 0 989.7 74.8433L846.3,74.8433A7.5 7.5 0 0 0 838.8 82.3433L838.8,139.343A7.5 7.5 0 0 0 846.3 146.843Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="918" y="110.843" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Cockpit</text>
+<text x="918" y="164.843" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">or</text>
+<path d="M846.3,262.043L989.7,262.043A7.5 7.5 0 0 0 997.2 254.543L997.2,190.343A7.5 7.5 0 0 0 989.7 182.843L846.3,182.843A7.5 7.5 0 0 0 838.8 190.343L838.8,254.543A7.5 7.5 0 0 0 846.3 262.043Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="918" y="212.363" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Your app</text>
+<text x="918" y="232.523" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">(web SDK)</text>
+<text x="885.406" y="47.52" text-anchor="middle" font-weight="bold" fill="rgb(255,255,255)" dominant-baseline="central">Browser</text>
+<path d="M824.7,283.643L1011.3,283.643A7.5 7.5 0 0 0 1018.8 276.143L1018.8,18.3A7.5 7.5 0 0 0 1011.3 10.8L824.7,10.8A7.5 7.5 0 0 0 817.2 18.3L817.2,276.143A7.5 7.5 0 0 0 824.7 283.643Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<polygon points="536.4,151.542 524.88,155.862 524.88,147.222" style="fill:rgb(255,255,255)"/>
+<path d="M428.4,151.542L530.64,151.542"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="482.4" y="139.842" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">data</text>
+<polygon points="428.4,186.102 439.92,181.782 439.92,190.422" style="fill:rgb(255,255,255)"/>
+<path d="M536.4,186.102L434.16,186.102"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="482.4" y="197.802" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">commands</text>
+<polygon points="817.2,151.542 805.68,155.862 805.68,147.222" style="fill:rgb(255,255,255)"/>
+<path d="M709.2,151.542L811.44,151.542"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="763.2" y="139.842" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">data</text>
+<polygon points="709.2,186.102 720.72,181.782 720.72,190.422" style="fill:rgb(255,255,255)"/>
+<path d="M817.2,186.102L714.96,186.102"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="763.2" y="197.802" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">commands</text>
+</svg>

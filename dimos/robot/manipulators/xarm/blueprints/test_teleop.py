@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
+import sys
+
 import pytest
+
+# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
+if sys.platform == "linux" and platform.machine() == "aarch64":
+    pytest.importorskip(
+        "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
+    )
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
@@ -22,7 +31,7 @@ from dimos.manipulation.manipulation_module import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
-from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
+from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
@@ -55,7 +64,7 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     [
         keyboard_teleop_xarm6,
         keyboard_teleop_xarm7,
-        xarm_perception,
+        xarm_grasp,
         xarm_perception_sim,
     ],
 )

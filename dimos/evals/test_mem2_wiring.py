@@ -12,33 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for the memory <-> EvalCase connection.
+"""Integration tests for the memory <-> eval connection.
 
-Passive: a case's context Selects pull real Streams from a recording, the
-runner encodes them, and the *actual observation data* (image blocks, pose
-text) reaches the model prompt.
+Frozen: a case's ``Dataset.config.select`` pulls real Streams from a recording, the
+``QuestionAnswer`` agent encodes them, and the *actual observation data*
+(image blocks, pose text) reaches the model prompt.
 
-Interactive: a case's score callable reads the *live* store while a writer is
-appending — the mem2 analogue of a robot's Recorder running mid-task.
+Live: the environment's recording is written while the agent acts (the
+Recorder's role); the grader reads the whole history afterwards.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-import threading
-import time
-from typing import Any
 
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
+from dimos.evals.agents.base import Agent
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.environments.dataset import Dataset
 from dimos.evals.runner import EvalRunner
-from dimos.evals.scorers import final, first_number, ramp, within
-from dimos.evals.types import InteractiveEval, PassiveEval
+from dimos.evals.scorers import first_number, ramp, within
+from dimos.evals.types import (
+    EvalCase,
+    Outcome,
+    RunningEnvironment,
+    Trajectory,
+    recording,
+)
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -53,41 +59,15 @@ def _pose(x: float, y: float) -> PoseStamped:
     )
 
 
-def _open_store(path: Path) -> Any:
-    from dimos.memory.store.sqlite import SqliteStore
-
-    try:
-        return SqliteStore(path=str(path))
-    except Exception as e:  # pragma: no cover — sqlite-vec unavailable platforms
-        pytest.skip(f"SqliteStore unavailable: {e}")
+@pytest.fixture
+def store(tmp_path: Path):
+    with SqliteStore(path=str(tmp_path / "rec.db")) as store:
+        yield store
 
 
-class SpyChat(BaseChatModel):
-    """Captures the exact messages the runner sends; replies with a constant."""
-
-    reply: str = "42"
-    seen: list[list[BaseMessage]] = []
-
-    @property
-    def _llm_type(self) -> str:
-        return "spy"
-
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        self.seen.append(messages)
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
-
-
-# -- passive: recording -> Select -> encode -> prompt --------------------------------
-
-
-def test_passive_streams_reach_the_prompt(tmp_path: Path) -> None:
-    store = _open_store(tmp_path / "rec.db")
+def test_selected_streams_reach_the_prompt(
+    tmp_path: Path, store: SqliteStore, mocker: MockerFixture
+) -> None:
     odom = store.stream("odom", PoseStamped)
     for i in range(20):
         odom.append(_pose(float(i), 2.5), ts=1000.0 + i)
@@ -95,114 +75,91 @@ def test_passive_streams_reach_the_prompt(tmp_path: Path) -> None:
     images = store.stream("color_image", Image)
     for i in range(3):
         images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
-    store.stop()
 
-    case = PassiveEval(
+    case = EvalCase(
         id="wiring",
         inputs="how far along x did you travel?",
-        expected=19.0,
-        parse=first_number,
-        score=within(1.0),
-        context=(
-            lambda s: s.streams.odom.range_time(0, 100),
-            lambda s: s.streams.color_image.limit(2),
+        environment=Dataset(
+            str(tmp_path / "rec.db"),
+            select=(lambda s: s.streams.odom, lambda s: s.streams.color_image.limit(2)),
         ),
-        dataset=str(tmp_path / "rec.db"),
+        grade=lambda o: within(1.0)(19.0, first_number(o.trajectory.final_answer)),
     )
 
-    spy = SpyChat(reply="19")
-    spy.seen.clear()
-    runner = EvalRunner(chat_model=spy, out_dir=tmp_path / "evals")
-    results = runner.run([case])
+    chat = FakeListChatModel(responses=["19"])
+    generate = mocker.spy(FakeListChatModel, "generate")
+    results = EvalRunner(out_dir=tmp_path / "evals").run([case], QuestionAnswer(chat_model=chat))
 
     assert results[0].passed, results[0]
-    blocks = [b for m in spy.seen[0] for b in (m.content if isinstance(m.content, list) else [])]
+    _, (messages,) = generate.call_args.args
+    blocks = messages[-1].content
+    assert isinstance(blocks, list)
     image_blocks = [b for b in blocks if b.get("type") == "image_url"]
     text = " ".join(b["text"] for b in blocks if b.get("type") == "text")
-    # the actual observation data crossed from mem2 into the prompt:
+    # the actual observation data crossed from memory into the prompt:
     assert len(image_blocks) == 2, "both selected image observations should be encoded"
     assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert "pos=[0.000, 2.500" in text.replace("  ", " ") or "0.000" in text
-    assert "19.000" in text or "19.0" in text, "last odom pose must reach the prompt"
+    assert str(_pose(19.0, 2.5)) in text, "last odom pose must reach the prompt"
     assert case.inputs in text
 
 
-def test_passive_context_budget_downsamples_not_truncates(tmp_path: Path) -> None:
-    store = _open_store(tmp_path / "rec.db")
+@pytest.mark.parametrize(
+    ("frames_per_stream", "positions"), [(1, [0]), (3, [0, 2, 4]), (8, [0, 1, 2, 3, 4])]
+)
+def test_frames_per_stream_downsamples_not_truncates(
+    tmp_path: Path,
+    store: SqliteStore,
+    frames_per_stream: int,
+    positions: list[int],
+    mocker: MockerFixture,
+) -> None:
     odom = store.stream("odom", PoseStamped)
-    for i in range(100):
+    for i in range(5):
         odom.append(_pose(float(i), 0.0), ts=1000.0 + i)
-    store.stop()
 
-    runner = EvalRunner(context_budget=5, out_dir=tmp_path / "evals")
-    reopened = runner.open_dataset(str(tmp_path / "rec.db"))
-    try:
-        blocks = runner.encode(reopened.streams.odom)
-    finally:
-        reopened.stop()
-    texts = [b["text"] for b in blocks[1:]]  # skip header
-    assert len(texts) == 5
-    assert "0.000" in texts[0] and "99.000" in texts[-1], "spread must cover the whole window"
-
-
-# -- interactive: live store -> score sampling ----------------------------------------
-
-
-def test_interactive_scores_live_store_while_writing(tmp_path: Path) -> None:
-    """A writer thread plays the Recorder role: the case's score callable must
-    see fresh observations appear in the live store as they are appended."""
-    db = tmp_path / "live.db"
-    store = _open_store(db)
-    odom = store.stream("odom", PoseStamped)
-    odom.append(_pose(5.0, 0.0), ts=time.time())  # robot starts 5m from goal
-
-    stop = threading.Event()
-
-    def writer() -> None:
-        for i in range(1, 26):
-            if stop.is_set():
-                return
-            odom.append(_pose(max(0.0, 5.0 - i * 0.2), 0.0), ts=time.time())
-            time.sleep(0.05)
-
-    thread = threading.Thread(target=writer)
-
-    class NoEnvRunner(EvalRunner):
-        """Rig with the sim/MCP environment stubbed out — mem2 path stays real."""
-
-        def check_env(self, case: InteractiveEval) -> None:
-            pass
-
-        def setup_env(self, case: InteractiveEval) -> None:
-            thread.start()
-
-        def instruct(self, text: str) -> None:
-            pass
-
-    case = InteractiveEval(
-        id="live_wiring",
-        inputs="go to the goal",
-        score=lambda s: ramp(abs(s.streams.odom.last().data.position.x), band=2.0),
-        aggregate=final,
-        interval_s=0.1,
-        timeout_s=10.0,
-        simulator="",
+    chat = FakeListChatModel(responses=["42"])
+    generate = mocker.spy(FakeListChatModel, "generate")
+    env = RunningEnvironment(mcp_url="", streams=(odom,), artifacts={})
+    QuestionAnswer(chat_model=chat, frames_per_stream=frames_per_stream).run(
+        "?", env, tmp_path, timeout_s=60.0
     )
 
-    runner = NoEnvRunner(live_db=str(db), out_dir=tmp_path / "evals")
-    try:
-        results = runner.run([case])
-    finally:
-        stop.set()
-        if thread.ident is not None:
-            thread.join(timeout=5.0)
-        store.stop()
+    _, (messages,) = generate.call_args.args
+    content = messages[-1].content
+    assert isinstance(content, list)
+    stamped = [
+        block["text"]
+        for block in content
+        if block["type"] == "text" and block["text"].startswith("[t=")
+    ]
+    assert stamped == [f"[t={float(i):.1f}s] {_pose(float(i), 0.0)}" for i in positions]
 
-    r = results[0]
-    assert not r.error, r.error
-    assert len(r.series) >= 3, "sampler must observe multiple live states"
-    scores = [s for _, s in r.series]
-    assert scores[0] < 0.9, "first sample sees the robot far from the goal"
-    assert scores[-1] >= 0.99, "last sample sees the robot arrive (live data flowed)"
-    assert r.score >= 0.99  # aggregate=final
-    assert scores == sorted(scores), "monotonic approach must be visible in the series"
+
+def test_grader_reads_the_history_the_environment_recorded(
+    tmp_path: Path, store: SqliteStore
+) -> None:
+    """Grading sees the initial pose and every pose recorded during agent execution."""
+    odom = store.stream("odom", PoseStamped)
+    odom.append(_pose(5.0, 0.0), ts=1000.0)
+
+    class RecordingAgent(Agent):
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            for i, x in enumerate((2.0, 1.0, 0.0), start=1):
+                odom.append(_pose(x, 0.0), ts=1000.0 + i)
+            return TrajectoryBuilder(inputs, name="none").build("answer")
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as rec:
+            poses = [obs.data.position.x for obs in rec.streams.odom]
+        assert poses == [5.0, 2.0, 1.0, 0.0]
+        return ramp(abs(poses[-1]), band=2.0)
+
+    case = EvalCase(
+        id="live", inputs="go to the goal", environment=Dataset(store.config.path), grade=grade
+    )
+    result = EvalRunner(out_dir=tmp_path / "evals").run([case], RecordingAgent())[0]
+
+    assert not result.error, result.error
+    assert result.score == 1.0

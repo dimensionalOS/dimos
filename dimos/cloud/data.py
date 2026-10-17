@@ -28,18 +28,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
+import sys
 import tempfile
 import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
-from dimos.cloud import codecs
+from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.core.run_registry import blueprint_from_run_id
+from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -72,11 +74,19 @@ class DataApi:
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
 
+    def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+        return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
+
+    def confirm_video(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
+
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
 
-    def fetch(self, url: str, dst: Path) -> None:
-        self.t.download(url, dst)
+    def fetch(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        self.t.download(url, dst, progress)
 
 
 class MultipartBackend:
@@ -120,60 +130,140 @@ class MultipartBackend:
         if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
         with self._staging(path) as tmp:
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+            # A file already carrying the codec's suffix uploads as-is; it must not be
+            # stamped, or pull would decompress bytes we never compressed.
+            compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
+            if compress:
                 _require_space(Path(tmp), path.stat().st_size)
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
                 tick("compress", 0, 0)
                 codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
             size = artifact.stat().st_size
-            create = self.api.create(
+            spec = dict(
                 filename=artifact.name,
                 size=size,
                 sha256=_sha256(artifact),
                 kind=kind,
-                content_encoding=self.codec_id or None,
+                content_encoding=self.codec_id if compress else None,
                 robot_id=robot_id,
                 manifest=manifest,
                 part_size=part_size,
             )
+            create = self.api.create(**spec)
             if create["state"] == "complete":
-                return {**create, "skipped": True}
+                # already uploaded: (re)send the preview, so a failed send is repaired
+                # by simply running the upload again
+                return {
+                    **create,
+                    "skipped": True,
+                    "preview": self._preview(create["upload_id"], path, Path(tmp))
+                    if manifest
+                    else None,
+                }
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
             done = min(len(have) * ps, size)
             tick("upload", done, size)
+            urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
             with artifact.open("rb") as f:
-                for part in create["part_urls"]:
-                    if part["part_number"] in have:
+                for n in sorted(urls):
+                    if n in have:
                         continue
-                    f.seek((part["part_number"] - 1) * ps)
+                    f.seek((n - 1) * ps)
                     chunk = f.read(ps)
-                    self._retry(
-                        functools.partial(self.api.put_part, part["url"], chunk),
-                        f"part {part['part_number']}",
-                    )
+                    try:
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
+                    except RuntimeError as e:
+                        if "403" not in str(e):
+                            raise
+                        # Part URLs are presigned at create and share one expiry
+                        # clock; an upload slower than the TTL outlives them and
+                        # S3 answers 403. create is idempotent by sha256 and
+                        # re-signs every URL.
+                        fresh = self.api.create(**spec)
+                        if fresh["state"] == "complete":
+                            return {**fresh, "skipped": True}
+                        urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
                     done += len(chunk)
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
-            return {**done, "upload_id": uid, "skipped": False}
+            return {
+                **done,
+                "upload_id": uid,
+                "skipped": False,
+                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+            }
 
-    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path:
+    def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
+        """The console's spatial preview, built here while the recording is at hand.
+        Built from a copy: the store opens read-write (WAL), and the user's recording
+        must stay byte-identical to what was uploaded. Best effort: the upload stands
+        without it."""
+        try:
+            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
+            shutil.copyfile(path, copy)
+            note = ""
+            with open_store(copy) as store:
+                doc = preview.build(store)
+                try:  # the preview stands without its clip
+                    video = preview.timelapse(store, clip) if doc is not None else None
+                except Exception as e:
+                    video, note = None, f" (no timelapse: {e})"
+            if doc is None:
+                return "none (no lidar, camera or odometry)"
+            if video:
+                doc["video"] = video
+            sent = self.api.put_preview(upload_id, doc)
+            if not (video and sent.get("video_url")):
+                return "sent" + note
+            self.api.put_part(sent["video_url"], clip.read_bytes())
+            self.api.confirm_video(upload_id)  # the console links the clip only after this
+            return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
+        except Exception as e:
+            return f"failed: {e}"
+
+    def pull(
+        self,
+        upload_id: str,
+        dest: Path | None,
+        tag: str = "",
+        progress: Progress | None = None,
+        size: int = 0,
+    ) -> Path:
+        tick = progress or (lambda phase, done, total: None)
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
+            if size:
+                # wire and decompressed copies coexist in staging before the move
+                _require_space(Path(tmp), size * 2 if wire else size)
             raw = Path(tmp) / "wire"
-            self._retry(functools.partial(self.api.fetch, d["url"], raw), "download")
+            tick("download", 0, 0)
+            self._retry(
+                functools.partial(
+                    self.api.fetch, d["url"], raw, lambda done, total: tick("download", done, total)
+                ),
+                "download",
+            )
+            tick("verify", 0, 0)
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            plain = Path(tmp) / "plain"
-            codecs.decompress(wire, raw, plain) if wire else raw.rename(plain)
+            if wire:
+                tick("decompress", 0, 0)
+                codecs.decompress(wire, raw, plain := Path(tmp) / "plain")
+            else:
+                raw.rename(plain := Path(tmp) / "plain")
             _move_into_place(plain, out)
         return out
 
@@ -241,9 +331,17 @@ class CloudData:
             raise RuntimeError(f"ambiguous id prefix {prefix!r}")
         return hits[0]
 
-    def pull(self, upload_id: str | None, dest: Path | None = None) -> Path:
+    def pull(
+        self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
+    ) -> Path:
         row = self.resolve(upload_id)
-        return self.backend.pull(str(row["id"]), dest, tag=_tag(row))
+        return self.backend.pull(
+            str(row["id"]),
+            dest,
+            tag=_tag(row),
+            progress=progress,
+            size=int(row.get("size") or 0),
+        )
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()
@@ -289,13 +387,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
-    starting rather than at 99% of a 100 GB transfer."""
+    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
-            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage the "
-            "compressed copy — set dimos_staging_dir to a larger partition or upload with dimos_upload_codec=''"
+            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
+            "set dimos_staging_dir to a larger partition"
         )
 
 
@@ -355,11 +453,16 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
-    return m.group(1) if m else None
+    """Run dirs are named after their run ID (generate_run_id)."""
+    return blueprint_from_run_id(path.parent.name)
 
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+        if sys.version_info >= (3, 11):
+            return hashlib.file_digest(f, "sha256").hexdigest()
+        # TODO(PY311): drop this fallback for hashlib.file_digest.
+        digest = hashlib.sha256()
+        while chunk := f.read(2**20):
+            digest.update(chunk)
+        return digest.hexdigest()

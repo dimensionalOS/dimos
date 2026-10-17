@@ -42,34 +42,21 @@ def depth_image_to_point_cloud(
     Returns:
         numpy array of 3D points in world coordinates, shape (N, 3)
     """
-    import open3d as o3d  # type: ignore[import-untyped]
-
     height, width = depth_image.shape
 
-    # Calculate camera intrinsics similar to StackOverflow approach
     fovy = math.radians(fov_degrees)
     f = height / (2 * math.tan(fovy / 2))  # focal length in pixels
     cx = width / 2  # principal point x
     cy = height / 2  # principal point y
 
-    # Create Open3D camera intrinsics
-    cam_intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, f, f, cx, cy)
-
-    # Convert numpy depth array to Open3D Image
-    o3d_depth = o3d.geometry.Image(depth_image.astype(np.float32))
-
-    # Create point cloud from depth image using Open3D
-    o3d_cloud = o3d.geometry.PointCloud.create_from_depth_image(
-        o3d_depth,
-        cam_intrinsics,
-        depth_scale=1.0,
-    )
-
-    # Convert Open3D point cloud to numpy array
-    camera_points: NDArray[Any] = np.asarray(o3d_cloud.points)
-
-    if camera_points.size == 0:
+    # Pinhole back-projection, the same as open3d's create_from_depth_image on a
+    # float depth image: every pixel with d > 0 maps to ((u - cx) d / f, (v - cy) d / f, d).
+    depth = depth_image.astype(np.float32)
+    v, u = np.nonzero(depth > 0)
+    if u.size == 0:
         return np.array([]).reshape(0, 3)
+    d = depth[v, u].astype(np.float64)
+    camera_points: NDArray[Any] = np.column_stack(((u - cx) * d / f, (v - cy) * d / f, d))
 
     # Flip y and z axes
     camera_points[:, 1] = -camera_points[:, 1]
@@ -91,3 +78,23 @@ def depth_image_to_point_cloud(
     world_points: NDArray[Any] = (camera_mat @ camera_points.T).T + camera_pos
 
     return world_points
+
+
+def voxel_down_sample(points: NDArray[Any], voxel_size: float) -> NDArray[Any]:
+    """Centroid of the points in each voxel.
+
+    Uses open3d's voxel grid (origin at ``min_bound - voxel_size / 2``), so the
+    result matches ``PointCloud.voxel_down_sample`` without importing open3d.
+    """
+    if len(points) == 0:
+        return np.array([]).reshape(0, 3)
+    min_bound = points.min(axis=0) - voxel_size * 0.5
+    index = np.floor((points - min_bound) / voxel_size).astype(np.int64)
+    dims = index.max(axis=0) + 1
+    key = (index[:, 0] * dims[1] + index[:, 1]) * dims[2] + index[:, 2]
+    _, inverse = np.unique(key, return_inverse=True)
+    counts = np.bincount(inverse)
+    centroids = np.empty((counts.size, 3), dtype=np.float64)
+    for axis in range(3):
+        centroids[:, axis] = np.bincount(inverse, weights=points[:, axis]) / counts
+    return centroids

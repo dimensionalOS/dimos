@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dimos-trajectory-follower"
+version = "0.1.0"
+
+[tool.maturin]
+module-name = "dimos_trajectory_follower"
+# The extension lives behind a feature: the default build is the plain crate the native module uses.
+features = ["python"]

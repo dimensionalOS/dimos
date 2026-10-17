@@ -32,8 +32,10 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationStateFrame,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
@@ -71,9 +73,10 @@ class WorldMonitor:
         # Keep renderer mutations and periodic publishes ordered.  Cancellation is
         # deliberately issued outside this lock so it can interrupt an animation.
         self._visualization_lock = threading.RLock()
-        self._model_config: RobotModelConfig | None = None
+        self._prepared_model: PreparedRobotModel | None = None
         self._planning_groups = PlanningGroupRegistry()
         self._state_monitor: RobotStateMonitor | None = None
+        self._latest_joint_state: JointState | None = None
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
@@ -84,12 +87,13 @@ class WorldMonitor:
     def load_model(self, config: RobotModelConfig) -> None:
         """Load the one logical robot model."""
         with self._lock:
-            if self._model_config is not None:
+            if self._prepared_model is not None:
                 raise ValueError("A model is already loaded")
             self._validate_planning_group_config(config)
-            self._world.load_model(config)
-            self._model_config = config
-            self._planning_groups.add_model(config)
+            prepared = prepare_robot_model(config)
+            self._world.load_model(prepared)
+            self._prepared_model = prepared
+            self._planning_groups = PlanningGroupRegistry(config.planning_groups)
 
     @property
     def planning_groups(self) -> PlanningGroupRegistry:
@@ -100,21 +104,23 @@ class WorldMonitor:
         """Return a stable metadata snapshot of the initialized planning scene."""
         with self._lock:
             return PlanningSceneInfo(
-                model=self.get_model_config(),
+                model=self.get_prepared_model(),
                 planning_groups=tuple(self._planning_groups.list()),
             )
 
     def get_model_config(self) -> RobotModelConfig:
         """Get the configured model."""
         with self._lock:
-            if self._model_config is None:
+            if self._prepared_model is None:
                 raise RuntimeError("Model is not loaded")
-            return self._model_config
+            return self._prepared_model.config
 
-    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get model joint limits."""
+    def get_prepared_model(self) -> PreparedRobotModel:
+        """Get the immutable prepared model."""
         with self._lock:
-            return self._world.get_joint_limits()
+            if self._prepared_model is None:
+                raise RuntimeError("Model is not loaded")
+            return self._prepared_model
 
     # Obstacle Management
 
@@ -176,6 +182,21 @@ class WorldMonitor:
                 except Exception:
                     logger.exception("Obstacle visualization clear failed")
 
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Forward display-only grasp proposals to the visualization backend.
+
+        Proposals are not planning geometry, so nothing reaches the world; the
+        lock is still taken because the backend is shared with obstacle and
+        preview rendering.
+        """
+        with self._lock:
+            if self._visualization is None:
+                return
+            try:
+                self._visualization.show_grasp_proposals(candidates)
+            except Exception:
+                logger.exception("Grasp proposal visualization failed")
+
     # Monitor Control
 
     def start_state_monitor(self) -> None:
@@ -190,6 +211,13 @@ class WorldMonitor:
                 lock=self._lock,
                 joint_names=config.joint_names,
             )
+            self._latest_joint_state = None
+
+            def record_state(state: JointState) -> None:
+                # RobotStateMonitor invokes callbacks under our shared lock.
+                self._latest_joint_state = JointState(state)
+
+            monitor.add_state_callback(record_state)
             monitor.start()
             self._state_monitor = monitor
 
@@ -302,18 +330,10 @@ class WorldMonitor:
 
     def get_current_joint_state(self) -> JointState | None:
         """Get current joint state. Returns None if not yet received."""
-        if self._state_monitor is not None:
-            positions = self._state_monitor.get_current_positions()
-            velocities = self._state_monitor.get_current_velocities()
-            if positions is not None:
-                return JointState(
-                    name=self.get_model_config().joint_names,
-                    position=positions.tolist(),
-                    velocity=velocities.tolist() if velocities is not None else [],
-                )
-
-        # Fall back to world's live context
         with self._lock:
+            if self._state_monitor is not None:
+                return JointState(self._latest_joint_state) if self._latest_joint_state else None
+            # Fall back to world's live context when no monitor is running.
             ctx = self._world.get_live_context()
             return self._world.get_joint_state(ctx)
 
@@ -397,7 +417,7 @@ class WorldMonitor:
 
         Args:
             path: List of JointState waypoints
-            step_size: Max step size for interpolation (radians)
+            step_size: Max step size for interpolation in native joint coordinates
 
         Returns:
             True if entire path is collision-free
@@ -440,7 +460,9 @@ class WorldMonitor:
                     raise ValueError("Current model state is unavailable")
             self._world.set_joint_state(ctx, joint_state)
 
-            return self._world.get_group_ee_pose(ctx, group_id)
+            pose = self._world.get_group_ee_pose(ctx, group_id)
+            pose.ts = joint_state.ts
+            return pose
 
     def get_link_pose(
         self, link_name: str, joint_state: JointState | None = None
@@ -454,8 +476,9 @@ class WorldMonitor:
         with self._world.scratch_context() as ctx:
             if joint_state is None:
                 joint_state = self.get_current_joint_state()
-            if joint_state is not None:
-                self._world.set_joint_state(ctx, joint_state)
+            if joint_state is None:
+                return None
+            self._world.set_joint_state(ctx, joint_state)
             try:
                 mat = self._world.get_link_pose(ctx, link_name)
             except KeyError:
@@ -466,6 +489,7 @@ class WorldMonitor:
             rot = mat[:3, :3]
             quat = Quaternion.from_rotation_matrix(rot)
             return PoseStamped(
+                ts=joint_state.ts,
                 frame_id="world",
                 position=[float(pos[0]), float(pos[1]), float(pos[2])],
                 orientation=[float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
@@ -503,7 +527,7 @@ class WorldMonitor:
             if attached_visualization is not None:
                 session = VisualizationSession(
                     scene=PlanningSceneInfo(
-                        model=self.get_model_config(),
+                        model=self.get_prepared_model(),
                         planning_groups=tuple(self._planning_groups.list()),
                     ),
                     operator=operator,

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 import struct
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
     from rerun._baseclasses import Archetype
 
+    from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -74,19 +75,27 @@ def register_colormap_annotation(name: str = "turbo") -> None:
 
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
+class SectorJson(TypedDict):
+    clear_m: float
+    state: str
+
+
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
+    seq: int = 0
 
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
+        seq: int = 0,
     ) -> None:
         import open3d as o3d  # type: ignore[import-untyped]
 
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
+        self.seq = seq
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:
@@ -189,6 +198,7 @@ class PointCloud2(Timestamped):
         offset_times: np.ndarray | None = None,
         tags: np.ndarray | None = None,
         lines: np.ndarray | None = None,
+        stamps: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -201,6 +211,8 @@ class PointCloud2(Timestamped):
                 offsets in nanoseconds relative to the header stamp
             tags: Optional (N,) uint8 array of per-point sensor tag bytes
             lines: Optional (N,) uint8 array of per-point laser line numbers
+            stamps: Optional (N,) float64 array of per-point capture times in
+                absolute seconds. In-memory only, not encoded on the wire.
 
         Returns:
             PointCloud2 instance
@@ -213,6 +225,7 @@ class PointCloud2(Timestamped):
             ("offset_times", offset_times),
             ("tags", tags),
             ("lines", lines),
+            ("stamps", stamps),
         ):
             if values is not None and len(values) != len(points):
                 raise ValueError(f"{name} has {len(values)} entries for {len(points)} points")
@@ -232,6 +245,10 @@ class PointCloud2(Timestamped):
         if lines is not None:
             pcd_t.point["lines"] = o3c.Tensor(
                 lines.astype(np.uint8).reshape(-1, 1), dtype=o3c.uint8
+            )
+        if stamps is not None:
+            pcd_t.point["stamps"] = o3c.Tensor(
+                stamps.astype(np.float64).reshape(-1, 1), dtype=o3c.float64
             )
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
@@ -484,6 +501,10 @@ class PointCloud2(Timestamped):
         """Per-point laser line numbers as flat uint8, or None if absent."""
         return self._per_point_field("lines", np.uint8)
 
+    def stamps_f64(self) -> np.ndarray | None:
+        """Per-point capture times (absolute seconds) as flat float64, or None if absent."""
+        return self._per_point_field("stamps", np.float64)
+
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
@@ -529,7 +550,7 @@ class PointCloud2(Timestamped):
 
         # Header
         msg.header = Header()
-        msg.header.seq = 0
+        msg.header.seq = self.seq
         msg.header.frame_id = frame_id or self.frame_id
 
         msg.header.stamp.sec = int(self.ts)
@@ -664,6 +685,7 @@ class PointCloud2(Timestamped):
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
                 if hasattr(msg, "header") and msg.header.stamp.sec > 0
                 else None,
+                seq=msg.header.seq if hasattr(msg, "header") else 0,
             )
 
         # Parse field offsets. The message is self-describing; a known field is
@@ -804,6 +826,7 @@ class PointCloud2(Timestamped):
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
             else None,
+            seq=msg.header.seq if hasattr(msg, "header") else 0,
         )
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]
@@ -997,6 +1020,41 @@ class PointCloud2(Timestamped):
             frame_id=self.frame_id,
             timestamp=self.ts,
         )
+
+    def to_json(
+        self,
+        origin: Pose | None = None,
+        *,
+        sectors: tuple[str, ...],
+        z_min: float = -0.2,
+        z_max: float = 0.8,
+        max_range: float = 5.0,
+    ) -> dict[str, SectorJson]:
+        """Nearest obstacle per angular sector around ``origin`` (None: cloud already in the robot frame).
+
+        ``sectors`` names equal angular bins counter-clockwise from ahead. The z band is
+        relative to the origin. ``state`` is blocked (< 0.5 m), tight (< 1 m) or clear.
+        """
+        pts = self.points_f32().astype(np.float64)
+        if origin is not None:
+            pts = pts - np.array([origin.x, origin.y, origin.z])
+            c, s = np.cos(-origin.yaw), np.sin(-origin.yaw)
+            pts = np.column_stack(
+                (c * pts[:, 0] - s * pts[:, 1], s * pts[:, 0] + c * pts[:, 1], pts[:, 2])
+            )
+        r = np.hypot(pts[:, 0], pts[:, 1])
+        keep = (pts[:, 2] > z_min) & (pts[:, 2] < z_max) & (r > 0.05) & (r < max_range)
+        pts, r = pts[keep], r[keep]
+        n = len(sectors)
+        sector = np.round(np.arctan2(pts[:, 1], pts[:, 0]) / (2 * np.pi / n)).astype(int) % n
+        out: dict[str, SectorJson] = {}
+        for i, name in enumerate(sectors):
+            clear_m = float(r[sector == i].min()) if (sector == i).any() else max_range
+            out[name] = {
+                "clear_m": round(clear_m, 2),
+                "state": "blocked" if clear_m < 0.5 else "tight" if clear_m < 1.0 else "clear",
+            }
+        return out
 
     def __repr__(self) -> str:
         """String representation."""

@@ -31,6 +31,7 @@ try:
 
     _USE_FASTER_WHISPER = False
 except ImportError:
+    whisper = None
     try:
         from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
@@ -40,11 +41,8 @@ except ImportError:
         )
         _USE_FASTER_WHISPER = True
     except ImportError:
-        raise ImportError(
-            "No whisper backend found. "
-            "Install faster-whisper (pip install faster-whisper) "
-            "or openai-whisper (pip install dimos[whisper])."
-        )
+        # No backend: importing stays possible, WhisperNode() raises.
+        _USE_FASTER_WHISPER = False
 
 
 class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
@@ -67,6 +65,12 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             modelopts = {k: v for k, v in modelopts.items() if k != "fp16"}
             self.modelopts = modelopts
             self.model = WhisperModel(model, device="auto", compute_type=compute_type)
+        elif whisper is None:
+            raise ImportError(
+                "No whisper backend found. "
+                "Install faster-whisper (pip install faster-whisper) "
+                "or openai-whisper (pip install dimos[agents])."
+            )
         else:
             self.modelopts = modelopts
             self.model = whisper.load_model(model)
@@ -109,9 +113,10 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
                         result = self.model.transcribe(event.data.flatten(), **self.modelopts)
                         text = result["text"].strip()
                     observer.on_next(text)
-                except Exception as e:
-                    logger.error(f"Error processing audio event: {e}")
-                    observer.on_error(e)
+                except Exception:
+                    # A bad clip or transient model failure must not terminate
+                    # the observable and silently disable every later utterance.
+                    logger.exception("Error processing audio event")
 
             # Set up subscription to audio source
             subscription = self.audio_observable.subscribe(

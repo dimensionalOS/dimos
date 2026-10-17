@@ -26,12 +26,13 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 def vis_module(
     viewer_backend: ViewerBackend,
     rerun_config: dict[str, Any] | None = None,
+    websocket_vis: bool = False,
 ) -> Blueprint:
     """Create a visualization blueprint based on the selected viewer backend.
 
-    Bundles the Rerun viewer module together with
-    the ``WebsocketVisModule`` and ``RerunWebSocketServer`` so that the web
-    dashboard and remote viewer connections work out of the box.
+    Bundles the Rerun viewer module together with the ``RerunWebSocketServer``
+    so that remote viewer clicks and teleop work out of the box. ``websocket_vis``
+    adds the browser command center on port 7779.
 
     Example usage::
 
@@ -61,16 +62,18 @@ def vis_module(
             rerun_config.setdefault("pubsubs", [LCM()])
             rerun_config.setdefault("rerun_open", global_config.rerun_open)
             rerun_config.setdefault("rerun_web", global_config.rerun_web)
+            rerun_config.setdefault("rerun_save", global_config.rerun_save)
             bundle = autoconnect(
                 RerunBridgeModule.blueprint(
                     **rerun_config,
                 ),
                 RerunWebSocketServer.blueprint(),
-                WebsocketVisModule.blueprint(),
             )
         case "none":
-            bundle = autoconnect(WebsocketVisModule.blueprint())
+            bundle = autoconnect()
         case _:
             valid = ", ".join(get_args(ViewerBackend))
             raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")
+    if websocket_vis:
+        bundle = autoconnect(bundle, WebsocketVisModule.blueprint())
     return bundle

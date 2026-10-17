@@ -150,6 +150,11 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
+        # A latched path counts: the tick loop only calls compute() on active
+        # tasks, and compute() is what arms it.
+        return self._running() or self._pending_path is not None
+
+    def _running(self) -> bool:
         return self._state in ("tracking", "settling", "stopping")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
@@ -160,7 +165,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
             if armed is not None:
                 path, self._pending_path = self._pending_path, None
                 self.start_path(path, _pose_stamped(armed))
-        if not self.is_active() or self._reference is None:
+        if not self._running() or self._reference is None:
             return None
 
         pose = self._read_pose(state)
@@ -190,6 +195,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         if joints & self._joint_names and self.is_active():
             logger.warning(f"HolonomicPoseFollowerTask '{self._name}' preempted by {by_task}")
             self._state = "aborted"
+            self._pending_path = None
 
     # Control law
 
@@ -434,7 +440,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self.set_speed(float(msg.data))
 
     def set_speed(self, speed: float) -> None:
-        if self.is_active():
+        if self._running():
             logger.warning(
                 f"HolonomicPoseFollowerTask '{self._name}': ignoring set_speed while active"
             )
@@ -456,7 +462,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
     ) -> bool:
         """Override per-run knobs before start_path. Unknown kwargs are accepted
         so callers built for a sibling follower's signature work unchanged."""
-        if self.is_active():
+        if self._running():
             logger.warning(
                 f"HolonomicPoseFollowerTask '{self._name}': cannot configure while active"
             )
@@ -488,10 +494,11 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         if not self.is_active():
             return False
         self._state = "aborted"
+        self._pending_path = None
         return True
 
     def reset(self) -> bool:
-        if self.is_active():
+        if self._running():
             return False
         self._state = "idle"
         self._reference = None

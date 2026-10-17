@@ -30,6 +30,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
 4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1`. The tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.
+5. The bot also force-pushes the `latest` branch to the release commit. Pre-releases (`a`, `b`, `rc` or `dev` versions) leave it unchanged.
 
 ## 3. Cleanup
 

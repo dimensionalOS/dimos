@@ -20,25 +20,57 @@ import struct
 import subprocess
 import sys
 
+from dimos_lcm import (
+    geometry_msgs as lcm_geometry_msgs,
+    visualization_msgs as lcm_visualization_msgs,
+)
+from dimos_lcm.std_msgs import Bool
+from langchain_core.messages import BaseMessage
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.web.cockpit import (
     Channel,
     ChannelRequest,
+    Chat,
     Col,
     Map2D,
+    Map3D,
     Panel,
     Row,
+    Stats,
     Teleop,
     Video,
     cockpit,
 )
-from dimos.web.codecs import EncodedPayload, encode_json_v1, web_encoder
-from dimos.web.relay_bridge.manifest import parse_manifest
+from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
+from dimos.web.lcm_codec import encode_lcm_v1, export_schema
+from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
+from dimos.web.relay_bridge.builtin_codecs import (
+    decode_bool,
+    decode_point,
+    decode_text,
+    encode_path,
+    encode_stats,
+    encode_voxels,
+)
+from dimos.web.relay_bridge.chat_codec import encode_chat
+from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
     PROTOCOL_VERSION,
@@ -67,6 +99,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 30.0,
             "params": {"quality": 75},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "odom",
@@ -75,6 +109,8 @@ GO2_MANIFEST = {
             "delivery": "reliable",
             "maxHz": 20.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "global_costmap",
@@ -83,6 +119,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 5.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "tele_cmd_vel",
@@ -91,6 +129,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 15.0,
             "params": {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0},
+            "publish": "none",
+            "requiredScope": None,
         },
     ],
     "panels": [
@@ -204,6 +244,7 @@ def test_pages_get_ids_after_the_grid() -> None:
         lambda: Video("color_image", quality=True),
         lambda: Map2D(costmap=""),
         lambda: Map2D(costmap_hz=-5.0),
+        lambda: Map2D(click=""),
         lambda: Teleop(stream=""),
         lambda: Teleop(max_linear=0),
         lambda: Teleop(boost=-2.0),
@@ -224,6 +265,7 @@ def test_pages_get_ids_after_the_grid() -> None:
         "video_quality_bool",
         "map2d_empty_costmap",
         "map2d_negative_rate",
+        "map2d_empty_click",
         "teleop_empty_stream",
         "teleop_zero_linear",
         "teleop_negative_boost",
@@ -272,18 +314,46 @@ def _encode_path_xy(msg: Path) -> EncodedPayload:
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 
-def test_channel_tx_rejected_until_publish_ticket() -> None:
-    with pytest.raises(ValueError, match="publish ticket"):
-        Channel("goal", dict, dir="tx")
+def test_channel_shared_tx_accepted() -> None:
+    channel = Channel(
+        "human_input",
+        str,
+        dir="tx",
+        encoding="text.json.v1",
+        publish="shared",
+        required_scope="chat:send",
+    )
+    assert channel.publish == "shared"
+    assert channel.required_scope == "chat:send"
+    # required_scope stays optional.
+    assert Channel("goal", dict, dir="tx", publish="shared").required_scope is None
 
 
-def test_channel_rx_publish_policy() -> None:
+def test_channel_publish_policy_rules() -> None:
+    # rx channels never declare a policy or scope.
     with pytest.raises(ValueError, match="publish='none'"):
         Channel("note", dict, publish="shared")
-    with pytest.raises(ValueError, match="publish='none'"):
-        Channel("note", dict, publish="exclusive")
-    with pytest.raises(ValueError, match="required_scope"):
+    with pytest.raises(ValueError, match="required_scope needs a publish policy"):
         Channel("note", dict, required_scope="chat:send")
+    # Exclusive arrives with the lease ticket.
+    with pytest.raises(ValueError, match=r"\(W8\)"):
+        Channel("goal", dict, dir="tx", publish="exclusive")
+    # publish="none" tx streams are the specialized protocol paths (teleop).
+    with pytest.raises(ValueError, match="specialized protocol paths"):
+        Channel("goal", dict, dir="tx")
+    # Generic publish is reliable-only.
+    with pytest.raises(ValueError, match="delivery='reliable'"):
+        Channel("goal", dict, dir="tx", publish="shared", delivery="latest")
+    # Pacing and replay are bridge-side rx behaviours.
+    with pytest.raises(ValueError, match="paced applies to rx"):
+        Channel("goal", dict, dir="tx", publish="shared", paced=True)
+    with pytest.raises(ValueError, match="resend_on_subscribe applies to rx"):
+        Channel("goal", dict, dir="tx", publish="shared", resend_on_subscribe=True)
+    # Scope uses the manifest id bound.
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="")
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="x" * 65)
 
 
 def test_channel_message_type_must_be_a_class() -> None:
@@ -412,6 +482,316 @@ def test_channels_only_blueprint() -> None:
     assert ratom.kwargs["manifest"] == manifest
 
 
+def test_publish_tx_channel_blueprint() -> None:
+    blueprint = cockpit(
+        channels=[
+            Channel(
+                "human_input",
+                str,
+                dir="tx",
+                encoding="text.json.v1",
+                publish="shared",
+                required_scope="chat:send",
+                max_hz=2.0,
+            ),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    assert channel["dir"] == "tx" and channel["delivery"] == "reliable"
+    assert channel["publish"] == "shared" and channel["requiredScope"] == "chat:send"
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Publish streams ride a generated subclass with a typed Out port.
+    assert issubclass(atom.module, RelayBridgeModule) and atom.module is not RelayBridgeModule
+    assert any(
+        s.name == "human_input" and s.type is str and s.direction == "out" for s in atom.streams
+    )
+    (spec,) = atom.kwargs["channels"]
+    assert spec.dir == "tx" and spec.publish == "shared" and spec.required_scope == "chat:send"
+    assert spec.decoder is decode_text and spec.decoder_takes_context is False
+    assert spec.encoder is None
+    # Blueprint kwargs cross the forkserver Pipe: the by-reference decoder
+    # must survive pickling.
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert ratom.module is atom.module
+    assert ratom.kwargs["channels"][0].decoder is decode_text
+
+
+def test_chat_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Chat())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["publish"])
+        for c in manifest["channels"]
+    ] == [
+        ("agent", "rx", "chat.json.v1", "reliable", "none"),
+        ("agent_idle", "rx", "json.v1", "latest", "none"),
+        ("human_input", "tx", "text.json.v1", "reliable", "shared"),
+        ("audio_in", "tx", "audio.json.v1", "reliable", "shared"),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "chat"
+    assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The agent and mic streams ride a generated subclass whose ports
+    # autoconnect to McpClient's and VoiceInput's by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("agent", "in")] is BaseMessage
+    assert ports[("agent_idle", "in")] is bool
+    assert ports[("human_input", "out")] is str
+    assert ports[("audio_in", "out")] is AudioChunk
+    specs = {s.ch: s for s in atom.kwargs["channels"]}
+    assert specs["agent"].encoder is encode_chat and specs["agent"].paced
+    assert specs["agent_idle"].paced
+    assert specs["human_input"].decoder is decode_text
+    assert specs["audio_in"].decoder is decode_audio_chunk
+    assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["audio_in"] is decode_audio_chunk
+    # Pacing is the chat panel's, not the stream's: the same streams declared
+    # by hand are sampled like any channel.
+    (atom,) = cockpit(channels=[Channel("agent", BaseMessage, encoding="chat.json.v1")]).blueprints
+    assert not atom.kwargs["channels"][0].paced
+    (atom,) = cockpit(
+        channels=[Channel("agent", BaseMessage, encoding="chat.json.v1", paced=True)]
+    ).blueprints
+    assert atom.kwargs["channels"][0].paced
+
+
+def test_chat_panel_declarations_merge_or_conflict() -> None:
+    with pytest.raises(ValueError, match="conflicting declarations for stream 'agent'"):
+        cockpit(layout=Chat(), channels=[Channel("agent", dict, encoding="chat.json.v1")])
+    (atom,) = cockpit(
+        layout=Chat(),
+        channels=[Channel("agent", BaseMessage, encoding="chat.json.v1", max_hz=50.0)],
+    ).blueprints
+    agent = next(c for c in atom.kwargs["manifest"]["channels"] if c["ch"] == "agent")
+    assert agent["maxHz"] == 50.0
+    assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
+
+
+def test_map2d_nav_channels_blueprint() -> None:
+    blueprint = cockpit(layout=Map2D(path="path", click="clicked_point", stop="stop_movement"))
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["publish"])
+        for c in manifest["channels"]
+    ] == [
+        ("odom", "rx", "pose.json.v1", "reliable", 20.0, "none"),
+        ("global_costmap", "rx", "costmap.zlib.v1", "latest", 5.0, "none"),
+        ("path", "rx", "path.json.v1", "latest", 10.0, "none"),
+        ("clicked_point", "tx", "point.json.v1", "reliable", 5.0, "shared"),
+        ("stop_movement", "tx", "bool.json.v1", "reliable", 5.0, "shared"),
+    ]
+    (panel,) = manifest["panels"]
+    # The map2d slots stay costmap + pose; the nav streams ride the params.
+    assert panel["channels"] == ["global_costmap", "odom"]
+    assert panel["params"] == {"path": "path", "click": "clicked_point", "stop": "stop_movement"}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Generated ports autoconnect to the planner's by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("path", "in")] is Path
+    assert ports[("clicked_point", "out")] is PointStamped
+    assert ports[("stop_movement", "out")] is Bool
+    specs = {s.ch: s for s in atom.kwargs["channels"]}
+    assert specs["path"].encoder is encode_path
+    assert specs["path"].paced and specs["path"].resend_on_subscribe
+    assert specs["clicked_point"].decoder is decode_point
+    assert specs["stop_movement"].decoder is decode_bool
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["clicked_point"] is decode_point
+
+
+def test_map3d_blueprint() -> None:
+    blueprint = cockpit(layout=Map3D())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["params"])
+        for c in manifest["channels"]
+    ] == [
+        ("odom", "rx", "pose.json.v1", "reliable", 20.0, {}),
+        ("global_map", "rx", "voxels.zlib.v1", "latest", 1.0, {"res": 0.05}),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "map3d"
+    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["params"] == {}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The map is a generated port, wired to the mapper's global_map by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("global_map", "in")] is PointCloud2
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.encoder is encode_voxels
+    assert spec.resend_on_subscribe and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["global_map"] is encode_voxels
+
+
+def test_map3d_without_pose_binds_one_slot() -> None:
+    (atom,) = cockpit(layout=Map3D(pose=None)).blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [c["ch"] for c in manifest["channels"]] == ["global_map"]
+    assert manifest["panels"][0]["channels"] == ["global_map"]
+    assert parse_manifest(manifest).model_dump() == manifest
+
+
+def test_map3d_explicit_declaration_merges_rate_and_keeps_resend() -> None:
+    (atom,) = cockpit(
+        layout=Map3D(res=0.1),
+        channels=[
+            Channel(
+                "global_map",
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=2.0,
+                params={"res": 0.1},
+            )
+        ],
+    ).blueprints
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.max_hz == 2.0
+    assert dict(spec.params) == {"res": 0.1}
+    assert spec.resend_on_subscribe
+
+
+def test_map3d_conflicting_res_raises() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'global_map'"):
+        cockpit(
+            layout=Map3D(res=0.1),
+            channels=[
+                Channel(
+                    "global_map",
+                    PointCloud2,
+                    encoding="voxels.zlib.v1",
+                    delivery="latest",
+                    params={"res": 0.05},
+                )
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"res": 0},
+        {"res": -0.05},
+        {"res": float("nan")},
+        {"res": "0.05"},
+        {"max_hz": 0},
+        {"pose_hz": -1.0},
+        {"cloud": ""},
+        {"pose": ""},
+    ],
+)
+def test_map3d_rejects_bad_arguments(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        Map3D(**kwargs)  # type: ignore[arg-type]
+
+
+def test_map2d_path_flags_survive_an_explicit_declaration() -> None:
+    (atom,) = cockpit(
+        layout=Map2D(path="path"),
+        channels=[Channel("path", Path, encoding="path.json.v1", delivery="latest", max_hz=20.0)],
+    ).blueprints
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "path")
+    assert spec.max_hz == 20.0
+    assert spec.paced and spec.resend_on_subscribe
+
+
+def test_stats_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Video("color_image"), pages=[Stats()])
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert manifest["channels"][1] == {
+        "ch": "resource_stats",
+        "dir": "rx",
+        "encoding": "stats.json.v1",
+        "delivery": "latest",
+        "maxHz": 2.0,
+        "params": {},
+        "publish": "none",
+        "requiredScope": None,
+    }
+    assert manifest["panels"][1] == {
+        "id": "p1",
+        "kind": "stats",
+        "title": "Stats",
+        "channels": ["resource_stats"],
+        "params": {},
+    }
+    assert manifest["pages"] == ["p1"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The producer is the coordinator's resource monitor, not a module: the
+    # generated In[dict] port autoconnects to its pickled /resource_stats
+    # topic by name.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("resource_stats", "in")] is dict
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "resource_stats")
+    assert spec.encoder is encode_stats and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["resource_stats"] is encode_stats
+
+
+def test_stats_panel_switches_stats_publishing_on() -> None:
+    # The resource monitor only runs under GlobalConfig.dtop: the panel flips
+    # it, composition keeps it, and the CLI's own sources still win.
+    blueprint = cockpit(layout=Stats())
+    assert dict(blueprint.global_config_overrides) == {"dtop": True}
+    composed = autoconnect(blueprint).global_config(n_workers=9)
+    assert dict(composed.global_config_overrides) == {"dtop": True, "n_workers": 9}
+    assert dict(cockpit(layout=Video("color_image")).global_config_overrides) == {}
+    parser = BlueprintConfigParser(blueprint)
+    assert parser.parse(environ={}).global_config["dtop"] is True
+    parsed = parser.parse(environ={}, global_overrides={"dtop": False})
+    assert parsed.global_config["dtop"] is False
+
+
+def test_publish_tx_generic_json_and_dataclass_rejection() -> None:
+    (atom,) = cockpit(channels=[Channel("counter", int, dir="tx", publish="shared")]).blueprints
+    (spec,) = atom.kwargs["channels"]
+    assert spec.decoder is decode_json_v1 and spec.decoder_takes_context is False
+    # Reconstructing a dataclass from untrusted browser JSON needs an
+    # explicit decoder (narrower than the encoder side).
+    with pytest.raises(ValueError, match="register an explicit decoder"):
+        cockpit(channels=[Channel("ops_note", _OpsNote, dir="tx", publish="shared")])
+
+
+def test_publish_tx_codec_errors() -> None:
+    with pytest.raises(ValueError, match=r"@web_decoder\('goal.json.v1'\)"):
+        cockpit(
+            channels=[Channel("goal", dict, dir="tx", encoding="goal.json.v1", publish="shared")]
+        )
+    with pytest.raises(ValueError, match="decodes to str, not int"):
+        cockpit(
+            channels=[
+                Channel("human_input", int, dir="tx", encoding="text.json.v1", publish="shared")
+            ]
+        )
+    # Non-JSON-family encodings fail the manifest's invalid_publish rule.
+    with pytest.raises(ManifestError, match="invalid_publish"):
+        cockpit(channels=[Channel("blob", bytes, dir="tx", encoding="blob.v1", publish="shared")])
+
+
+def test_publish_channel_conflicts_with_teleop_panel() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'tele_cmd_vel'"):
+        cockpit(
+            layout=Teleop(),
+            channels=[
+                Channel("tele_cmd_vel", Twist, dir="tx", encoding="twist.json.v1", publish="shared")
+            ],
+        )
+
+
 def test_default_path_channels_kwarg_matches_manifest() -> None:
     (atom,) = cockpit().blueprints
     assert atom.module is RelayBridgeModule
@@ -456,7 +836,7 @@ def test_explicit_channel_merges_with_panel_request() -> None:
     "channel",
     [
         Channel("front_cam", Image, encoding="jpeg.v1", delivery="latest", params={"quality": 90}),
-        Channel("front_cam", Image),
+        Channel("front_cam", Image, encoding="json.v1"),
         Channel(
             "front_cam", Image, encoding="jpeg.v1", delivery="reliable", params={"quality": 60}
         ),
@@ -471,7 +851,9 @@ def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
 def test_builtin_stream_type_and_table_mismatches() -> None:
     with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
         cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
-    with pytest.raises(ValueError, match="'odom' encodes pose.json.v1, not json.v1"):
+    with pytest.raises(
+        ValueError, match="'odom' encodes pose.json.v1, not geometry_msgs.PoseStamped.lcm.v1"
+    ):
         cockpit(channels=[Channel("odom", PoseStamped)])
     with pytest.raises(ValueError, match="'odom' delivers reliable, not latest"):
         cockpit(channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", delivery="latest")])
@@ -483,7 +865,131 @@ def test_json_v1_requires_explicit_codec_for_large_types() -> None:
     with pytest.raises(
         ValueError, match=r"'snapshot'.*Image.*not supported by json\.v1.*@web_encoder"
     ):
-        cockpit(channels=[Channel("snapshot", Image)])
+        cockpit(channels=[Channel("snapshot", Image, encoding="json.v1")])
+
+
+def test_image_has_no_default_encoding() -> None:
+    # Raw pixels are never the default; the error points at the codec to use.
+    with pytest.raises(
+        ValueError, match=r"sensor_msgs\.Image has no default web encoding.*jpeg\.v1"
+    ):
+        Channel("snapshot", Image)
+
+
+def test_channel_default_encoding_by_type() -> None:
+    assert Channel("pose", PoseStamped).encoding == "geometry_msgs.PoseStamped.lcm.v1"
+    # Transform's wire format is a one-element TFMessage, and so is its id.
+    assert Channel("tf", Transform).encoding == "tf2_msgs.TFMessage.lcm.v1"
+    assert Channel("note", dict).encoding == "json.v1"
+    assert Channel("ops_note", _OpsNote).encoding == "json.v1"
+    assert Channel("pose_in", PoseStamped, dir="tx", publish="shared").encoding == "json.v1"
+    assert Channel("odom", PoseStamped, encoding="pose.json.v1").encoding == "pose.json.v1"
+
+
+def test_lcm_channel_blueprint() -> None:
+    blueprint = cockpit(channels=[Channel("pose", PoseStamped, max_hz=20.0)])
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    schema = export_schema(lcm_geometry_msgs.PoseStamped)
+    assert channel["encoding"] == "geometry_msgs.PoseStamped.lcm.v1"
+    assert channel["params"] == {"lcm": schema}
+    assert schema["type"] == "geometry_msgs.PoseStamped" and schema["fp"] == "6a82696458c279a0"
+    assert "std_msgs.Header" in schema["structs"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    (spec,) = atom.kwargs["channels"]
+    assert spec.encoder is encode_lcm_v1 and spec.encoder_takes_params is True
+    assert spec.params["lcm"]["fp"] == "6a82696458c279a0"
+    assert any(
+        s.name == "pose" and s.type is PoseStamped and s.direction == "in" for s in atom.streams
+    )
+    restored = pickle.loads(pickle.dumps(blueprint))
+    assert restored.blueprints[0].kwargs["channels"][0].encoder is encode_lcm_v1
+
+
+def test_generated_class_channel_uses_its_canonical_name() -> None:
+    # The generated class's own msg_name is bare ("MarkerArray"); the id and
+    # the schema use the package-qualified name, default or explicit.
+    markers = lcm_visualization_msgs.MarkerArray
+    blueprint = cockpit(
+        channels=[
+            Channel("markers", markers),
+            Channel("markers_too", markers, encoding="visualization_msgs.MarkerArray.lcm.v1"),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    for wire in atom.kwargs["manifest"]["channels"]:
+        assert wire["encoding"] == "visualization_msgs.MarkerArray.lcm.v1"
+        assert wire["params"]["lcm"]["type"] == "visualization_msgs.MarkerArray"
+    assert all(spec.encoder is encode_lcm_v1 for spec in atom.kwargs["channels"])
+
+
+def test_lcm_schema_joins_user_params_in_the_request_only() -> None:
+    channel = Channel("pose", PoseStamped, params={"note": "x"})
+    assert dict(channel.params) == {"note": "x"}
+    (wire,) = cockpit(channels=[channel]).blueprints[0].kwargs["manifest"]["channels"]
+    assert wire["params"]["note"] == "x" and wire["params"]["lcm"]["fp"] == "6a82696458c279a0"
+    with pytest.raises(ValueError, match="'pose': params key 'lcm' is reserved"):
+        cockpit(channels=[Channel("pose", PoseStamped, params={"lcm": {}})])
+
+
+@pytest.mark.parametrize(
+    ("channel", "match"),
+    [
+        (
+            Channel("pose", PoseStamped, encoding="nav_msgs.Odometry.lcm.v1"),
+            r"'pose': encoding 'nav_msgs\.Odometry\.lcm\.v1' encodes nav_msgs\.Odometry, "
+            r"not PoseStamped",
+        ),
+        (
+            Channel("note", dict, encoding="geometry_msgs.PoseStamped.lcm.v1"),
+            r"'note': builtins\.dict is not a DimOS message",
+        ),
+        (Channel("traj", JointTrajectory), r"'traj': .*declares its own LCM fingerprint"),
+        (Channel("motors", MotorCommandArray), r"'motors': .*dimos_lcm.*@web_encoder"),
+        (Channel("poses", bytes), r"'poses': .*not supported by json\.v1"),
+    ],
+    ids=["id_type_mismatch", "lcm_id_on_dict", "foreign_fingerprint", "no_schema", "no_lcm"],
+)
+def test_lcm_encoding_errors(channel: Channel, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        cockpit(channels=[channel])
+
+
+@web_encoder("t.ck.lcm.v1")
+def _encode_note_lcm(msg: _OpsNote) -> bytes:
+    return msg.text.encode()
+
+
+def test_user_registered_lcm_v1_encoding_wins() -> None:
+    # An explicit @web_encoder with an *.lcm.v1 id is its own codec: no schema
+    # injected, no reserved params key.
+    channel = Channel("ops_note", _OpsNote, encoding="t.ck.lcm.v1", params={"lcm": 1})
+    (atom,) = cockpit(channels=[channel]).blueprints
+    (wire,) = atom.kwargs["manifest"]["channels"]
+    assert wire["params"] == {"lcm": 1}
+    (spec,) = atom.kwargs["channels"]
+    assert spec.encoder is _encode_note_lcm and spec.encoder_takes_params is False
+
+
+def test_lcm_channels_fit_the_control_payload_cap() -> None:
+    # Every LCM channel adds its schema (150 B to 1.5 KB) to the hello frame.
+    channels = [
+        Channel("odometry", Odometry),
+        Channel("lidar", PointCloud2, max_hz=5.0),
+        Channel("tf", TFMessage),
+        Channel("joints", JointState),
+        Channel("imu", Imu),
+        Channel("local_costmap", OccupancyGrid, max_hz=2.0),
+    ]
+    hello = Hello(
+        v=PROTOCOL_VERSION,
+        role="robot",
+        robot=RobotInfo(id="go2", name="go2", model="unitree_go2"),
+        manifest=cockpit(layout=GO2_LAYOUT, channels=channels).blueprints[0].kwargs["manifest"],
+    )
+    size = len(encode_datagram(hello))
+    assert size <= MAX_CONTROL_PAYLOAD_BYTES, f"hello with six LCM channels is {size} B"
 
 
 def test_unregistered_custom_encoding_names_the_decorator() -> None:
@@ -519,10 +1025,11 @@ def test_reserved_stream_names_rejected(stream: str) -> None:
         cockpit(channels=[Channel(stream, dict)])
 
 
-def test_channel_ordering_builtins_then_customs() -> None:
+def test_channel_ordering_builtins_then_customs_then_publish() -> None:
     blueprint = cockpit(
         layout=GO2_LAYOUT,
         channels=[
+            Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
             Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
             Channel("ops_note", _OpsNote),
         ],
@@ -535,15 +1042,18 @@ def test_channel_ordering_builtins_then_customs() -> None:
         "target_pose",
         "ops_note",
         "tele_cmd_vel",
+        "human_input",
     ]
 
 
 def test_import_stays_light() -> None:
-    # The authoring surface must be importable without the [web] extra:
-    # neither the bridge module nor aioquic may load until cockpit() runs.
+    # The authoring surface must be importable without the [web] extra
+    # (neither the bridge module nor aioquic may load until cockpit() runs)
+    # and without the [agents] extra (langchain is the Chat panel's, on use).
     code = (
         "import sys; import dimos.web.cockpit; "
         "assert 'dimos.web.relay_bridge.relay_bridge_module' not in sys.modules; "
-        "assert 'aioquic' not in sys.modules"
+        "assert 'aioquic' not in sys.modules; "
+        "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)

@@ -31,6 +31,7 @@ import hashlib
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -96,6 +97,10 @@ SEQ_IMU = 7
 SEQ_KP_CMD = 8
 SEQ_KD_CMD = 9
 SEQ_TAU_CMD = 10
+# Not a counter: CLOCK_MONOTONIC ns of the writer's last joint-state write.
+# The clock is shared by every process on the host, so readers compare it
+# directly against their own time.monotonic_ns().
+SEQ_STATE_TIME_NS = 11
 
 # Control indices.
 CTRL_READY = 0
@@ -103,6 +108,9 @@ CTRL_STOP = 1
 CTRL_COMMAND_MODE = 2
 CTRL_NUM_JOINTS = 3
 CTRL_ARM_JOINTS = 4
+
+# Joint state that stops advancing for this long belongs to a dead or orphaned simulator.
+STATE_STALE_TIMEOUT_S = 5.0
 
 # Command modes.
 CMD_MODE_POSITION = 0
@@ -189,9 +197,13 @@ class ManipShmSet:
 
     @classmethod
     def attach(cls, key: str) -> ManipShmSet:
-        """Attach to existing SHM buffers created by the sim side."""
+        """Attach to existing SHM buffers created by the sim side.
+
+        seq and ctl go first because create() replaces them last: a fresh seq
+        means every buffer attached after it is fresh too.
+        """
         buffers: dict[str, SharedMemory] = {}
-        for buffer_name in _shm_sizes:
+        for buffer_name in ("seq", "ctl", *(n for n in _shm_sizes if n not in ("seq", "ctl"))):
             name = _buffer_name(key, buffer_name)
             buffers[buffer_name] = attach_shm(name, timeout=_ATTACH_WINDOW_S)
         return cls(**buffers)
@@ -233,7 +245,7 @@ class ManipShmWriter:
         pos_arr[:n] = positions[:n]
         vel_arr[:n] = velocities[:n]
         eff_arr[:n] = efforts[:n]
-        self._increment_seq(SEQ_POSITIONS)
+        self._mark_joint_state()
         self._increment_seq(SEQ_VELOCITIES)
         self._increment_seq(SEQ_EFFORTS)
 
@@ -353,6 +365,11 @@ class ManipShmWriter:
     def _control(self) -> NDArray[np.int32]:
         return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.ctl.buf)
 
+    def _mark_joint_state(self) -> None:
+        self._increment_seq(SEQ_POSITIONS)
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
+        seq_arr[SEQ_STATE_TIME_NS] = time.monotonic_ns()
+
     def _increment_seq(self, index: int) -> None:
         seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         seq_arr[index] += 1
@@ -373,6 +390,40 @@ class ManipShmReader:
 
     def __init__(self, key: str) -> None:
         self.shm = ManipShmSet.attach(key)
+
+    @classmethod
+    def wait_for_live(
+        cls,
+        key: str,
+        *,
+        attach_timeout_s: float,
+        ready_timeout_s: float,
+        poll_s: float,
+        probe_timeout_s: float = 0.2,
+    ) -> ManipShmReader | None:
+        attach_deadline = time.monotonic() + attach_timeout_s
+        ready_deadline: float | None = None
+        while True:
+            deadline = ready_deadline or attach_deadline
+            if time.monotonic() > deadline:
+                return None
+            try:
+                candidate = cls(key)
+            except FileNotFoundError:
+                time.sleep(poll_s)
+                continue
+            if ready_deadline is None:
+                ready_deadline = time.monotonic() + ready_timeout_s
+            initial_seq = candidate.position_sequence()
+            probe_deadline = min(ready_deadline, time.monotonic() + probe_timeout_s)
+            while time.monotonic() <= probe_deadline:
+                current_seq = candidate.position_sequence()
+                if candidate.is_ready() and current_seq != initial_seq:
+                    return candidate
+                if candidate.should_stop():
+                    break
+                time.sleep(poll_s)
+            candidate.cleanup()
 
     def read_positions(self, num_joints: int) -> list[float]:
         arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.pos.buf)
@@ -499,6 +550,21 @@ class ManipShmReader:
     def is_ready(self) -> bool:
         return bool(self._control()[CTRL_READY] == 1)
 
+    def position_sequence(self) -> int:
+        return self._get_seq(SEQ_POSITIONS)
+
+    def is_live(self, stale_after_s: float | None = None) -> bool:
+        if self.should_stop():
+            return False
+        written_ns = self._get_seq(SEQ_STATE_TIME_NS)
+        if written_ns == 0:
+            return False
+        limit = STATE_STALE_TIMEOUT_S if stale_after_s is None else stale_after_s
+        return time.monotonic_ns() - written_ns <= limit * 1e9
+
+    def should_stop(self) -> bool:
+        return bool(self._control()[CTRL_STOP] == 1)
+
     def num_joints(self) -> int:
         return int(self._control()[CTRL_NUM_JOINTS])
 
@@ -526,3 +592,7 @@ class ManipShmReader:
     def _increment_seq(self, index: int) -> None:
         seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         seq_arr[index] += 1
+
+    def _get_seq(self, index: int) -> int:
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
+        return int(seq_arr[index])

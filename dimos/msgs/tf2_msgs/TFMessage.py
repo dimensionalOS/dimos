@@ -25,7 +25,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from dimos.visualization.rerun.bridge import RerunMulti
+    from rerun._baseclasses import Archetype
 
 DEFAULT_LINKS_ROOT = "tf_links"
 DEFAULT_TF_ROOT = "world/tf"
@@ -176,7 +176,7 @@ class TFMessage:
             )
         return "\n".join(lines)
 
-    def to_rerun(self, tree: TfFrameTree | None = None) -> RerunMulti:
+    def to_rerun(self, tree: TfFrameTree | None = None) -> list[tuple[str, Archetype]]:
         """Convert to (entity_path, archetype) pairs to log to rerun.
 
         Pass a TfFrameTree to also nest a triad per frame under its ancestors,
@@ -184,7 +184,7 @@ class TFMessage:
         """
         import rerun as rr
 
-        results: RerunMulti = []
+        results: list[tuple[str, Archetype]] = []
         for transform in self.transforms:
             path = f"{DEFAULT_LINKS_ROOT}/{rr.escape_entity_path_part(transform.child_frame_id)}"
             results.append((path, transform.to_rerun()))

@@ -56,6 +56,8 @@ from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
+from dimos.cli.commands.graph import graph
+from dimos.cli.commands.host import host_app
 from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
@@ -66,6 +68,7 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
+from dimos.core.global_config import ENV_FILE
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
@@ -73,10 +76,11 @@ main = typer.Typer(
     no_args_is_help=True,
 )
 
-load_dotenv()
+if ENV_FILE is not None:
+    load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
-RECORDERS = ("sqlite",)
+RECORDERS = ("sqlite", "mcap")
 
 # Flags with an optional value; bare `--flag` means the first choice.
 OPTIONAL_VALUE_FLAGS = {
@@ -115,6 +119,7 @@ main.command()(status)
 main.command()(stop)
 main.command("log")(log_cmd)
 main.add_typer(mcp_app, name="mcp")
+main.add_typer(host_app, name="host")
 main.command("agent-send")(agent_send_cmd)
 main.command()(restart)
 main.command()(show_config)
@@ -127,6 +132,7 @@ main.command(
     }
 )(bake)
 main.command(name="list")(list_blueprints)
+main.command()(graph)
 main.command()(docs)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
@@ -135,10 +141,6 @@ main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(top)
 main.add_typer(topic_app, name="topic")
 main.add_typer(map_app, name="map")
-
-from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
-
-main.add_typer(nav_eval_app, name="nav-eval")
 main.add_typer(dataprep_app, name="dataprep")
 
 from dimos.memory.cli.app import mem_app

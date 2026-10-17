@@ -5,6 +5,8 @@ odometry streaming.
 
 ## Install
 
+Set up dimOS with the [official installer](/docs/installation/index.md) in developer mode, then add the Spot extra to that checkout:
+
 ```bash
 uv sync --extra spot
 ```
@@ -58,5 +60,5 @@ Spot support is experimental and lives in `dimos/experimental/robot/bosdyn/spot/
 
 - [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md): LCM, SHM, DDS
+- [Transports](/docs/usage/transports/index.md): Zenoh, LCM, DDS
 - [Blueprints](/docs/usage/blueprints.md): composing modules

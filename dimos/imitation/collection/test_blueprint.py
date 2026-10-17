@@ -18,20 +18,40 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
-    learning_collect_quest_piper,
-    learning_collect_quest_xarm7,
+    learning_collect_webxr_piper,
+    learning_collect_webxr_xarm7,
 )
-from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.episode_monitor import (
+    EpisodeMonitorModule,
+    EpisodeMonitorModuleConfig,
+)
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper, unitree_g1_teleop],
+)
+def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint) -> None:
+    monitor = next(
+        atom for atom in blueprint.active_blueprints if atom.module is EpisodeMonitorModule
+    )
+    config = EpisodeMonitorModuleConfig(**monitor.kwargs)
+
+    assert config.task.strip()
+    assert any(
+        stream.name == "teleop_buttons" and stream.direction == "in" for stream in monitor.streams
+    )
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
     recorder = next(atom for atom in blueprint.blueprints if atom.module is CollectionRecorder)
@@ -46,7 +66,7 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[0].module is CollectionRecorder
@@ -54,7 +74,7 @@ def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
@@ -62,14 +82,14 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
-def test_collection_status_is_wired_to_quest_hud(blueprint: Blueprint) -> None:
+def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
     hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
-    assert status.type.__name__ == "EpisodeStatus"
+    assert status.type.__name__ == "String"
 
 
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
@@ -82,7 +102,7 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [learning_collect_quest_xarm7, learning_collect_quest_piper])
+@pytest.mark.parametrize("blueprint", [learning_collect_webxr_xarm7, learning_collect_webxr_piper])
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
 

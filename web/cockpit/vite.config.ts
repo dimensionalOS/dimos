@@ -32,7 +32,12 @@ export default defineConfig({
     proxy: { "/api": "http://127.0.0.1:7780" },
     fs: { allow: [webRoot] },
   },
-  build: { target: "es2022" },
+  build: {
+    target: "es2022",
+    // The map3d panel's three.js chunk (voxelScene.ts, a dynamic import) is
+    // ~540 kB minified by design; the main bundle stays under the default.
+    chunkSizeWarningLimit: 600,
+  },
   test: {
     // UI tests (.test.tsx) opt into happy-dom per file via
     // @vitest-environment; everything else stays on node.

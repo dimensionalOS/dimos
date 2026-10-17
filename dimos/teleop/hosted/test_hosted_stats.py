@@ -46,6 +46,18 @@ def _cmd(vx: float = 0.3, ts: float = 123.0) -> bytes:
     return TwistStamped(ts=ts, linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, 0)).lcm_encode()
 
 
+def test_telemetry_without_go2(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
+    module = HostedStatsModule()
+    module._on_robot_state(b'{"robot_type": "arm"}')
+
+    payload = module._telemetry_payload()
+
+    assert payload["soc"] is None
+    assert payload["state"] == {"robot_type": "arm"}
+    assert payload["type"] == "robot_telemetry"
+
+
 def test_cmd_raw_republishes_stamped_for_recorder(module: HostedStatsModule) -> None:
     # Regression: the raw cmd tap must re-publish the decoded TwistStamped on
     # cmd_vel_stamped so the recorder gets a drive trace (was silently dropped).

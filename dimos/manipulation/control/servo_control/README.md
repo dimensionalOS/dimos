@@ -85,11 +85,11 @@ controller = CartesianMotionController(
     )
 )
 
-# 3. Set up topic connections (shared memory)
-from dimos.core.transport import pSHMTransport
+# 3. Set up topic connections using the configured backend
+from dimos.core.transport_factory import make_transport
 
-transport_joint_state = pSHMTransport("joint_state")
-transport_joint_cmd = pSHMTransport("joint_cmd")
+transport_joint_state = make_transport("joint_state")
+transport_joint_cmd = make_transport("joint_cmd")
 
 arm_driver.joint_state.connection = transport_joint_state
 controller.joint_state.connection = transport_joint_state

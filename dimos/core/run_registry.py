@@ -21,16 +21,37 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.global_config import SECRET_CONFIG_FIELDS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 REGISTRY_DIR = STATE_DIR / "runs"
+
+
+def _config_field_name(option: str) -> str:
+    return option.removeprefix("--").rsplit(".", 1)[-1].replace("-", "_")
+
+
+def _without_secret_options(argv: list[str]) -> list[str]:
+    safe: list[str] = []
+    skip_value = False
+    for arg in argv:
+        if skip_value:
+            skip_value = False
+            continue
+        option, separator, _value = arg.partition("=")
+        if option.startswith("--") and _config_field_name(option) in SECRET_CONFIG_FIELDS:
+            skip_value = separator == ""
+            continue
+        safe.append(arg)
+    return safe
 
 
 @dataclass
@@ -45,6 +66,14 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.config_overrides = {
+            key: value
+            for key, value in self.config_overrides.items()
+            if _config_field_name(key) not in SECRET_CONFIG_FIELDS
+        }
+        self.original_argv = _without_secret_options(self.original_argv)
 
     @property
     def registry_path(self) -> Path:
@@ -70,10 +99,23 @@ class RunEntry:
 
 
 def generate_run_id(blueprint: str) -> str:
-    """Generate a human-readable, timestamp-prefixed run ID."""
+    """Generate a human-readable run ID: ``<stamp>-<4 hex>-<blueprint>``.
+
+    The token keeps parallel runs of one blueprint, started in the same second,
+    out of each other's recording and log folders.
+    """
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-    return f"{ts}-{safe_name}"
+    return f"{ts}-{secrets.token_hex(2)}-{safe_name}"
+
+
+def blueprint_from_run_id(run_id: str) -> str | None:
+    """The blueprint name in a run ID, or None if it is not one.
+
+    Also reads IDs from before the token, ``<stamp>-<blueprint>``.
+    """
+    m = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
+    return m.group(1) if m else None
 
 
 def is_pid_alive(pid: int) -> bool:

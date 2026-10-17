@@ -15,71 +15,81 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import math
-import pickle
+import re
 import threading
 from typing import Any
 
-import lcm
-
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.service.lcmservice import LCMService
+from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
 from dimos.utils.testing.waiting import wait_until
 
 
-class LcmSpy(LCMService):
-    l: lcm.LCM
+class LcmSpy:
+    """Sniffs every message on the active transport's bus.
+
+    Topics are named the LCM way (`/odom#geometry_msgs.PoseStamped`);
+    `transport_topic` maps them to the running backend's wire name.
+    """
+
     messages: dict[str, list[bytes]]
+    _bus: LCMPubSubBase | ZenohPubSubBase
+    _everything: ZenohTopic
+    _unsubscribe: Callable[[], None]
     _messages_lock: threading.Lock
-    _saved_topics: set[str]
+    _saved_topics: dict[str, str]
     _saved_topics_lock: threading.Lock
     _topic_listeners: dict[str, list[Callable[[bytes], None]]]
     _topic_listeners_lock: threading.Lock
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.l = lcm.LCM()
+    def __init__(self) -> None:
+        zenoh = global_config.transport == "zenoh"
+        self._bus = ZenohPubSubBase() if zenoh else LCMPubSubBase()
+        self._everything = ZenohTopic("dimos/**") if zenoh else ZenohTopic(re.compile(".*"))
         self.messages = {}
         self._messages_lock = threading.Lock()
-        self._saved_topics = set()
+        self._saved_topics = {}
         self._saved_topics_lock = threading.Lock()
         self._topic_listeners = {}
         self._topic_listeners_lock = threading.Lock()
 
     def start(self) -> None:
-        super().start()
-        if self.l:
-            self.l.subscribe(".*", self.msg)
+        self._bus.start()
+        self._unsubscribe = self._bus.subscribe(self._everything, self._on_message)
 
     def stop(self) -> None:
-        super().stop()
+        self._unsubscribe()
+        self._bus.stop()
 
-    def msg(self, topic: str, data: bytes) -> None:
+    def _on_message(self, data: bytes, topic: Topic) -> None:
+        wire = str(topic)
         with self._saved_topics_lock:
-            if topic in self._saved_topics:
-                with self._messages_lock:
-                    self.messages.setdefault(topic, []).append(data)
+            channel = self._saved_topics.get(wire)
+
+        if channel is not None:
+            with self._messages_lock:
+                self.messages.setdefault(channel, []).append(data)
 
         with self._topic_listeners_lock:
-            listeners = self._topic_listeners.get(topic)
+            listeners = self._topic_listeners.get(wire)
             if listeners:
                 for listener in listeners:
                     listener(data)
 
-    def publish(self, topic: str, msg: Any) -> None:
-        self.l.publish(topic, msg.lcm_encode())
-
     def save_topic(self, topic: str) -> None:
         with self._saved_topics_lock:
-            self._saved_topics.add(topic)
+            self._saved_topics[transport_topic(topic)] = topic
 
     def register_topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> None:
         with self._topic_listeners_lock:
-            self._topic_listeners.setdefault(topic, []).append(listener)
+            self._topic_listeners.setdefault(transport_topic(topic), []).append(listener)
 
     def unregister_topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> None:
         with self._topic_listeners_lock:
-            self._topic_listeners[topic].remove(listener)
+            self._topic_listeners[transport_topic(topic)].remove(listener)
 
     @contextmanager
     def topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> Iterator[None]:
@@ -99,40 +109,6 @@ class LcmSpy(LCMService):
             timeout=timeout,
             message=f"Timeout waiting for topic {topic}",
         )
-
-    def wait_for_saved_topic_content(
-        self, topic: str, content_contains: bytes, timeout: float = 30.0
-    ) -> None:
-        def condition() -> bool:
-            with self._messages_lock:
-                return any(content_contains in msg for msg in self.messages.get(topic, []))
-
-        wait_until(
-            condition,
-            timeout=timeout,
-            message=f"Timeout waiting for '{topic}' to contain '{content_contains!r}'",
-        )
-
-    def wait_for_message_pickle_result(
-        self,
-        topic: str,
-        predicate: Callable[[Any], bool],
-        fail_message: str,
-        timeout: float = 30.0,
-    ) -> None:
-        event = threading.Event()
-
-        def listener(msg: bytes) -> None:
-            data = pickle.loads(msg)
-            if predicate(data["res"]):
-                event.set()
-
-        with self.topic_listener(topic, listener):
-            wait_until(
-                event.is_set,
-                timeout=timeout,
-                message=fail_message,
-            )
 
     def wait_for_message_result(
         self,

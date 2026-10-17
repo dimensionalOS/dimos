@@ -32,7 +32,7 @@ class PlanningGroupDefinition:
     """Model-level declaration of a planning group.
 
     Joint names are exact canonical model names. The definition is safe to store on
-    ``RobotModelConfig`` and is not bound to any runtime world robot ID.
+    ``RobotModelConfig`` and is selected directly by its declared name.
     """
 
     name: str

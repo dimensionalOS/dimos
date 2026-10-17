@@ -23,21 +23,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dimos.utils.logging_config import setup_logger
-
-from .temporal_utils.parsers import parse_window_response
-from .temporal_utils.prompts import (
+from dimos.perception.experimental.temporal_memory.temporal_utils.parsers import (
+    parse_window_response,
+)
+from dimos.perception.experimental.temporal_memory.temporal_utils.prompts import (
     build_query_prompt,
     build_summary_prompt,
     build_window_prompt,
     get_structured_output_format,
 )
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
-
-    from .frame_window_accumulator import Frame
+    from dimos.perception.experimental.temporal_memory.frame_window_accumulator import Frame
 
 logger = setup_logger()
 

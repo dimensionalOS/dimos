@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any
 
 from click import unstyle
 import pytest
@@ -49,9 +50,12 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
+    assert "--quality-window" in output
+    assert "--min-brightness" in output
+    assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
-    assert "absent or empty" in output
+    assert "absent or" in output and "empty" in output
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
@@ -154,6 +158,52 @@ def test_vqa_generate_cli_accepts_frame_range(
     ]
 
 
+def test_vqa_generate_cli_accepts_quality_window_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--start",
+            "0",
+            "--stop",
+            "100",
+            "--quality-window",
+            "0.5",
+            "--min-brightness",
+            "0.1",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=100,
+            quality_window=0.5,
+            min_brightness=0.1,
+            output=tmp_path,
+        )
+    ]
+
+
 def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_generate(
         request: GenerationRequest, config: VqaGenerationConfig | None = None
@@ -188,14 +238,33 @@ def test_vqa_run_cli_formats_dataset_errors(
 
 
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "cases.jsonl").write_text('{"id":"q","image":"assets/q.png"}\n')
+    (tmp_path / "labels.jsonl").write_text('{"id":"q","answer":"yes"}\n')
+    (assets / "q.png").write_bytes(b"image")
+
     class FakeRunner:
         def __init__(self, **kwargs: object) -> None:
-            assert kwargs == {"model": "test-model"}
+            assert kwargs == {}
             self.run_dir = tmp_path / "results"
 
-        def run(self, cases: object) -> list[EvalResult]:
+        def run(self, cases: object, agent: Any, *, provenance: dict[str, Any]) -> list[EvalResult]:
             assert cases == ("case",)
-            return [EvalResult(case_id="q", outputs="yes", score=1.0, passed=True)]
+            assert agent.config.model == "test-model"
+            assert type(agent).__name__ == "QuestionAnswer"
+            assert provenance["source"]["kind"] == "vqa_dataset"
+            assert provenance["source"]["path"] == str(tmp_path.resolve())
+            assert set(provenance["source"]["fingerprints"]) == {
+                "cases.jsonl",
+                "labels.jsonl",
+                "assets/q.png",
+            }
+            assert provenance["agent"] == {
+                "module": "dimos.evals.agents.question_answer",
+                "kwargs": {"model": "test-model"},
+            }
+            return [EvalResult(case_id="q", final_answer="yes", score=1.0, passed=True)]
 
     monkeypatch.setattr(suite_module, "load_suite", lambda dataset: ("case",))
     monkeypatch.setattr(runner_module, "EvalRunner", FakeRunner)
@@ -208,3 +277,20 @@ def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_
     assert result.exit_code == 0
     assert "PASS" in result.stdout
     assert "mean 1.00" in result.stdout
+
+
+def test_vqa_source_fingerprints_change_with_reload_inputs(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "cases.jsonl").write_text("cases")
+    (tmp_path / "labels.jsonl").write_text("labels")
+    image = assets / "frame.png"
+    image.write_bytes(b"first")
+
+    before = suite_module.source_record(tmp_path)
+    image.write_bytes(b"second")
+    after = suite_module.source_record(tmp_path)
+
+    assert before["path"] == str(tmp_path.resolve())
+    assert set(before["fingerprints"]) == {"cases.jsonl", "labels.jsonl", "assets/frame.png"}
+    assert before["fingerprints"]["assets/frame.png"] != after["fingerprints"]["assets/frame.png"]

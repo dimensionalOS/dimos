@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pubsub URI registry: ``"<proto>:<topic>[#<msg_type>]"`` -> started ``PubSubTransport``.
+"""Pubsub URI registry: ``"<proto>:<topic>[#<msg_type>]"`` -> ``PubSubTransport``.
 
 Maps user-facing protocol names onto the concrete transport classes in
 ``dimos.core.transport``. Used by CLIs and config files that need to accept
@@ -22,15 +22,15 @@ URI grammar::
 
     <proto>:<topic>[#<msg_type>]
 
-- ``<proto>``: registry key, e.g. ``lcm``, ``jpeg_lcm``, ``plcm``, ``pshm``,
-  ``shm``, ``jpeg_shm``.
+- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
 - ``<msg_type>``: optional ``module.ClassName`` resolved via
   ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
 
-Typed protos (``lcm``, ``jpeg_lcm``) require a message type — either from the
-``#``-suffix or the ``msg_type`` kwarg. Pickled / self-describing protos
-(``plcm``, ``pshm``, ``shm``, ``jpeg_shm``) don't.
+Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
+the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``)
+don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
+the typed transport appends the message type to the wire key.
 """
 
 from __future__ import annotations
@@ -68,34 +68,26 @@ def _make_plcm(topic: str, msg_type: type | None) -> Any:
     return pLCMTransport(topic)
 
 
-def _make_pshm(topic: str, msg_type: type | None) -> Any:
-    # pickled shared memory: same shape as plcm but over /dev/shm.
-    from dimos.core.transport import pSHMTransport
+def _make_zenoh(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError("proto 'zenoh' requires a message type (URI '#suffix' or msg_type kwarg)")
+    from dimos.core.transport import ZenohTransport
 
-    return pSHMTransport(topic)
-
-
-def _make_shm(topic: str, msg_type: type | None) -> Any:
-    # raw-bytes shared memory: subscribers receive bytes; caller decodes.
-    from dimos.core.transport import SHMTransport
-
-    return SHMTransport(topic)
+    return ZenohTransport(topic, msg_type)
 
 
-def _make_jpeg_shm(topic: str, msg_type: type | None) -> Any:
-    # JPEG-encoded shared memory: subscribers receive decoded Image objects.
-    from dimos.core.transport import JpegShmTransport
+def _make_pzenoh(topic: str, msg_type: type | None) -> Any:
+    from dimos.core.transport import pZenohTransport
 
-    return JpegShmTransport(topic)
+    return pZenohTransport(topic)
 
 
 _REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
     "lcm": _make_lcm,
     "jpeg_lcm": _make_jpeg_lcm,
     "plcm": _make_plcm,
-    "pshm": _make_pshm,
-    "shm": _make_shm,
-    "jpeg_shm": _make_jpeg_shm,
+    "zenoh": _make_zenoh,
+    "pzenoh": _make_pzenoh,
 }
 
 

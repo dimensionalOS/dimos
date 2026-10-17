@@ -154,3 +154,41 @@ Deno.test("carrier: an over-cap control payload fails the session, nothing queue
   assertEquals(sink.streamsOpened, 0);
   assertEquals(carrier.stats().sent, 0);
 });
+
+Deno.test("carrier: publishes share the FIFO with control, in order, meta intact", async () => {
+  const sink = new FakeCarrierSink();
+  const carrier = new RobotCarrier(sink);
+  const payload = new TextEncoder().encode('{"text":"salut β"}');
+  carrier.sendControl(subs(1, "odom"));
+  carrier.sendFrame("human_input", payload, { id: "p1", principal: "local", relayTs: 1.5 });
+  carrier.sendControl(subs(2));
+  await tick();
+  const reader = new DataFrameStreamReader();
+  const frames = sink.written.flatMap((chunk) => reader.push(chunk));
+  // One stream, one seq space: a publish can never bypass queued control.
+  assertEquals(frames.map((f) => [f.header.ch, f.header.seq]), [
+    [CONTROL_CHANNEL, 1],
+    ["human_input", 2],
+    [CONTROL_CHANNEL, 3],
+  ]);
+  assertEquals(frames[1].header.delivery, "reliable");
+  assertEquals(frames[1].header.meta, { id: "p1", principal: "local", relayTs: 1.5 });
+  assertEquals(frames[1].payload, payload);
+  assertEquals(carrier.stats().sent, 3);
+});
+
+Deno.test("carrier: publish frames count toward the overflow caps", async () => {
+  const sink = new FakeCarrierSink(false);
+  const carrier = new RobotCarrier(sink);
+  // 32 KiB payloads: the byte cap (4 MiB) trips long before the frame cap.
+  const payload = new Uint8Array(32 * 1024);
+  for (let i = 0; i < 200 && sink.fails === 0; i++) {
+    carrier.sendFrame("human_input", payload, { id: `p${i}` });
+  }
+  await tick();
+  assertEquals(sink.fails, 1);
+  assertEquals(sink.failed, "carrier overflow");
+  carrier.sendFrame("human_input", payload, { id: "late" });
+  await tick();
+  assertEquals(sink.fails, 1); // disposed: later sends are no-ops
+});

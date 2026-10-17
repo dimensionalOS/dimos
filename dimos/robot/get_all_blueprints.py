@@ -28,6 +28,20 @@ from dimos.robot.external_blueprints import (
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
+# Optional dependencies that are allowed to be missing
+OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
+OPTIONAL_ERROR_SUBSTRINGS = {
+    "Unable to locate turbojpeg library automatically",
+    "ZED SDK not installed",
+    "Descriptors cannot be created directly",
+    # cockpit() blueprints without the [web] extra installed.
+    "needs the web extra",
+}
+
+
+class OptionalDependencyError(ImportError):
+    """A blueprint could not import because an optional dependency is missing."""
+
 
 def class_name_to_registry_key(class_name: str) -> str:
     """Convert a CamelCase class name to its kebab-case registry key."""
@@ -50,6 +64,21 @@ def get_blueprint_by_name(name: str) -> Blueprint:
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
     return getattr(module, attr)  # type: ignore[no-any-return]
+
+
+def load_blueprint(name: str) -> Blueprint:
+    """The named blueprint. Raises OptionalDependencyError when its extras are absent."""
+    try:
+        return get_blueprint_by_name(name)
+    except ModuleNotFoundError as e:
+        if e.name in OPTIONAL_DEPENDENCIES:
+            raise OptionalDependencyError(str(e.name)) from e
+        raise
+    except Exception as e:
+        message = str(e)
+        if any(substring in message for substring in OPTIONAL_ERROR_SUBSTRINGS):
+            raise OptionalDependencyError(message) from e
+        raise
 
 
 def get_module_by_name(name: str) -> Blueprint:

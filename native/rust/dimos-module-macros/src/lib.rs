@@ -235,6 +235,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let mut setup_method: Option<Ident> = None;
+    let mut handle_method: Option<Ident> = None;
     let mut teardown_method: Option<Ident> = None;
     let mut registry_name: Option<syn::LitStr> = None;
     for attr in &input.attrs {
@@ -242,6 +243,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("setup") {
                     setup_method = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("handle") {
+                    handle_method = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("teardown") {
                     teardown_method = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("name") {
@@ -249,7 +252,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 } else {
                     return Err(meta.error(
                         "unrecognized #[module] argument; expected `setup = ...`, \
-                         `teardown = ...` or `name = \"...\"`",
+                         `handle = ...`, `teardown = ...` or `name = \"...\"`",
                     ));
                 }
                 Ok(())
@@ -346,7 +349,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
 
-    let handle_body = if handled_fields.is_empty() {
+    let handle_body = if let Some(method) = &handle_method {
+        if !handled_fields.is_empty() {
+            return Err(syn::Error::new_spanned(
+                &input,
+                "`handle = ...` cannot be combined with input handler ports",
+            ));
+        }
+        quote!(self.#method().await)
+    } else if handled_fields.is_empty() {
         quote!(::std::future::pending::<()>().await)
     } else {
         let handle_arms = handled_fields.iter().map(|(name, handler)| {

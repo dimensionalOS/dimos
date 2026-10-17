@@ -15,7 +15,7 @@
 """``--record``: subscribe to every stream transport in the blueprint and write one store.
 
 Runs in the ``dimos run`` process. Each stream is tapped on its own transport (LCM,
-Zenoh, SHM, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
+Zenoh, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
 run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
 Poses are not resolved here; ``tf`` is recorded like any other stream and
 ``dimos map pose-fill`` derives poses on read.
@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
@@ -74,23 +75,32 @@ class TransportRecorder:
     Transport callbacks only enqueue; one writer thread does the encoding and SQLite
     work, so a slow append never stalls a transport's handler thread. When the queue
     is full the message is dropped and counted.
+
+    A stream is opened on its first message, so its codec can depend on what the
+    stream carries: depth images are stored losslessly, colour images as JPEG.
     """
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._topics = topics
-        self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
+        self._queue: queue.Queue[tuple[str, type, Any, float] | None] = queue.Queue(queue_size)
+        self._streams: dict[str, Stream[Any]] = {}
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
         self._writer.start()
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            stream, msg, ts = item
+            name, stream_type, msg, ts = item
             try:
+                stream = self._streams.get(name)
+                if stream is None:
+                    codec = codec_for(stream_type, sample=msg)
+                    stream = self.store.stream(name, stream_type, codec=codec)
+                    self._streams[name] = stream
                 stream.append(msg, ts=ts)
             except Exception:
-                logger.exception("--record: failed to append to %s", stream)
+                logger.exception("--record: failed to append to %s", name)
 
     def close(self) -> None:
         """Flush queued messages and stop the writer."""
@@ -108,11 +118,11 @@ class TransportRecorder:
         if not hasattr(stream_type, "lcm_encode"):
             logger.info("--record: %s (%s) is not a dimos message type, skipped", name, stream_type)
             return None
-        stream: Stream[Any] = self.store.stream(name, stream_type)
 
         def on_msg(msg: Any) -> None:
             try:
-                self._queue.put_nowait((stream, msg, getattr(msg, "ts", None) or time.time()))
+                ts = getattr(msg, "ts", None) or time.time()
+                self._queue.put_nowait((name, stream_type, msg, ts))
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:
@@ -123,18 +133,36 @@ class TransportRecorder:
 
 
 @contextmanager
-def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator[None]:
+def recording(
+    transports: Mapping[tuple[str, type], Transport[Any]],
+) -> Iterator[None]:
     """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
         yield
         return
     check_topics(global_config.record_topics, {n for n, _ in transports})
+    if global_config.record_engine == "rust":
+        from dimos.experimental.memory.rust_cli_recorder import (
+            RustRecordingSession,
+            make_plan,
+        )
+
+        session = RustRecordingSession(make_plan(dict(transports)))
+        session.start()
+        try:
+            yield
+        finally:
+            session.stop()
+        return
+
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
     recorder = TransportRecorder(store, global_config.record_topics)
     unsubscribes = [
-        u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
+        unsubscribe
+        for (name, payload_type), transport in transports.items()
+        if (unsubscribe := recorder.tap(name, payload_type, transport)) is not None
     ]
     logger.info("Recording to %s", path)
     try:

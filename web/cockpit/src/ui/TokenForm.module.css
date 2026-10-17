@@ -1,0 +1,52 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2rem auto;
+  max-width: 360px;
+  width: 100%;
+}
+
+.hint {
+  color: var(--fg-muted);
+  margin: 0;
+  text-align: center;
+}
+
+.message {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 0 0 4px;
+  text-align: center;
+}
+
+.input {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-family: var(--font-mono);
+  padding: 6px 10px;
+  transition: border-color var(--dur), box-shadow var(--dur);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
+
+.connect {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-s);
+  color: var(--on-accent);
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 10px;
+  transition: opacity var(--dur);
+}
+
+.connect:disabled {
+  cursor: default;
+  opacity: 0.4;
+}

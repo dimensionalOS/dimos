@@ -1,29 +1,28 @@
-## Contribution path
+## Why do we need this?
 
-<!-- See CONTRIBUTING.md. Small, safe changes can skip the issue. -->
+<!-- What problem does this solve? -->
+<!-- Alternatively, link to the issue if it's explained there. -->
 
-- Small, safe change that does not need a tracking issue
-- Linked issue or discussion: DIM-XXX / #XXX / URL
-
-## Problem
-
-<!-- What feature are you adding or fixing? -->
-
-## Solution
+## What is this feature?
 
 <!-- What you changed and why this approach -->
 <!-- Key design decisions / tradeoffs -->
-<!-- Keep it high-signal; deep planning belongs in the issue. -->
 
-## How to Test
+## How to manually run this
 
-<!-- Oneliner required to run the actual feature -->
-<!-- for example `dimos run unitree-go2-myfeature` -->
+<!-- What commands do I run to manually verify this feature? -->
+<!-- Here is an example if your feature added better traversal through unknown areas:
+        Run `dimos run unitree-go2-myfeature`
+        In rerun, click on a far away region.
+        The robot should travel without detouring much.
+-->
+<!-- If you leave this empty, your PR will very likely be closed. -->
+<!-- DO NOT post pytest commands. -->
 
-## AI assistance
+## Which issue(s) does this PR close?
 
-<!-- Required by AI_POLICY.md. Name the tool and the model (e.g. "Claude Code with Opus 4.8") and how much they were involved. Write "None" if unassisted. -->
-<!-- You should understand every line of code in your PR -->
+<!-- Usage: "Fixes DIM-XXX / #XXX / URL" -->
+Fixes
 
 ## Checklist
 

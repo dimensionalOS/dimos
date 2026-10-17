@@ -14,17 +14,42 @@
 
 """Module introspection data structures."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from dimos.core.stream import StreamDirection
 
 # Internal RPCs to hide from io() output
+# Every module has these; io() shows what a module adds.
 INTERNAL_RPCS = {
+    "build",
     "dynamic_skills",
+    "get_skills",
+    "get_stream_descriptors",
+    "peek_stream",
+    "set_module_ref",
+    "set_transport",
     "skills",
+    "start",
+    "stop",
     "_io_instance",
 }
+
+
+class StreamDescriptor(NamedTuple):
+    """Wire metadata with the message type and transport in an opaque pickle."""
+
+    module: str
+    name: str
+    direction: StreamDirection
+    type_name: str
+    channel: str
+    transport: bytes
 
 
 @dataclass
@@ -33,6 +58,9 @@ class StreamInfo:
 
     name: str
     type_name: str
+    module_name: str | None = None
+    direction: StreamDirection | None = None
+    channel: str | None = None
 
 
 @dataclass

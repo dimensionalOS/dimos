@@ -33,6 +33,8 @@ from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
+    lite6_hardware,
+    make_lite6_model_config,
     make_xarm6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
@@ -103,6 +105,40 @@ keyboard_teleop_xarm7 = autoconnect(
     ),
     ManipulationModule.blueprint(
         model=make_xarm7_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+        ),
+        visualization={"backend": "viser"},
+    ),
+)
+
+_lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
+
+keyboard_teleop_lite6 = autoconnect(
+    KeyboardTeleopModule.blueprint(),
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_lite6_hw],
+        tasks=[
+            eef_twist_task(
+                _lite6_hw,
+                robot_model=make_lite6_model_config(add_gripper=False),
+                target_frame="link6",
+                timeout=0.0,
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+    ),
+    ManipulationModule.blueprint(
+        model=make_lite6_model_config(
             add_gripper=True,
             gripper_hardware_id="arm",
         ),

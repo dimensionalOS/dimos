@@ -1,0 +1,19 @@
+# Replaces the repo-root .dockerignore for docker/evals/Dockerfile (BuildKit
+# prefers <Dockerfile>.dockerignore). The root one drops package.json and *.png,
+# which the DimSim frontend build needs. Allowlist what the image uses.
+*
+!dimos
+!misc/DimSim
+!docker/evals
+!pyproject.toml
+!uv.lock
+!setup.py
+!README.md
+!default.env
+!assets/agent/prompt.txt
+**/__pycache__
+**/.venv
+**/*.pyc
+misc/DimSim/node_modules
+misc/DimSim/dist
+dimos/**/*.so

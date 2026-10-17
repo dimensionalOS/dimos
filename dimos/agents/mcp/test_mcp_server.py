@@ -138,7 +138,7 @@ def test_mcp_module_handles_errors() -> None:
     assert "ok_skill" in tool_names
     assert "fail_skill" in tool_names
 
-    # Error skill returns error text
+    # A raised skill error is a failed tool call carrying the exception text.
     response = asyncio.run(
         handle_request(
             {"method": "tools/call", "id": 2, "params": {"name": "fail_skill", "arguments": {}}},
@@ -147,8 +147,22 @@ def test_mcp_module_handles_errors() -> None:
         )
     )
     assert response is not None
-    assert "Error running tool" in response["result"]["content"][0]["text"]
-    assert "boom" in response["result"]["content"][0]["text"]
+    assert response["result"]["isError"] is True
+    text = response["result"]["content"][0]["text"]
+    assert "Error running tool 'fail_skill'" in text
+    assert "RuntimeError: boom" in text
+
+    # A skill that returns is not flagged.
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 4, "params": {"name": "ok_skill", "arguments": {}}},
+            skills,
+            rpc_calls,
+        )
+    )
+    assert response is not None
+    assert "isError" not in response["result"]
+    assert response["result"]["content"][0]["text"] == "done"
 
     # Unknown skill returns not found
     response = asyncio.run(
