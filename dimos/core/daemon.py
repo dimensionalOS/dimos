@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+DAEMON_STATUS_FD_ENV = "_DIMOS_DAEMON_STATUS_FD"
+
 
 def health_check(coordinator: ModuleCoordinator) -> bool:
     """Verify all coordinator workers are alive after build.
@@ -56,12 +58,31 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     The grandchild keeps the launcher's stdio so startup output still reaches
     the terminal; it must call ``redirect_stdio_to_devnull`` and
     ``write_daemon_status`` once startup succeeds or fails.
+
+    On macOS the grandchild re-execs the CLI before building. Native imports
+    can initialize CoreFoundation, which is unsafe in a forked interpreter
+    even if no transport sessions have been opened.
     """
+    inherited_fd = os.environ.pop(DAEMON_STATUS_FD_ENV, None)
+    if inherited_fd is not None:
+        write_fd = int(inherited_fd)
+        # Keep the pipe across this exec only, not later worker/watchdog execs.
+        os.set_inheritable(write_fd, False)
+        return 0, write_fd
+
     log_dir.mkdir(parents=True, exist_ok=True)
     # Anything buffered would otherwise be flushed by both processes.
     sys.stdout.flush()
     sys.stderr.flush()
     read_fd, write_fd = os.pipe()
+
+    exec_env = None
+    exec_argv = None
+    if sys.platform == "darwin":
+        os.set_inheritable(write_fd, True)
+        exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
+        # Preserve interpreter flags and both console-script/python -m entry.
+        exec_argv = [sys.executable, *sys.orig_argv[1:]]
 
     pid = os.fork()
     if pid > 0:
@@ -75,6 +96,8 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Second fork — can never reacquire a controlling terminal
     if os.fork() > 0:
         os._exit(0)
+    if exec_env is not None and exec_argv is not None:
+        os.execve(sys.executable, exec_argv, exec_env)
     return 0, write_fd
 
 
