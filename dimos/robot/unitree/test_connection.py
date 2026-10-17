@@ -18,6 +18,7 @@ Pure-Python test suite with no hardware or network. Covers connect() error propa
 aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
@@ -165,3 +166,19 @@ def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyP
     """The key enters via GlobalConfig, read from the UNITREE_AES_128_KEY env var."""
     monkeypatch.setenv("UNITREE_AES_128_KEY", "ee" * 16)
     assert GlobalConfig().unitree_aes_128_key == "ee" * 16
+
+
+def test_publish_request_raises_when_the_robot_never_answers(
+    built_connection: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request with no reply must fail instead of blocking the caller forever."""
+    conn, driver = built_connection
+
+    async def never(*_args: Any, **_kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    driver.datachannel.pub_sub.publish_request_new = never
+    monkeypatch.setattr(conn_mod, "REQUEST_TIMEOUT_S", 0.05)
+
+    with pytest.raises(TimeoutError, match="no reply from the robot for rt/api/sport/request"):
+        conn.publish_request("rt/api/sport/request", {"api_id": 1})
