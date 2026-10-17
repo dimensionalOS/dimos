@@ -71,6 +71,7 @@
   "domain_id": 0,
   "lidar_on": true,
   "lidar_raw_on": false,
+  "obstacle_avoidance": true,
   "lowstate_on": true,
   "lowstate_hz": 50.0,
   "video_on": true,

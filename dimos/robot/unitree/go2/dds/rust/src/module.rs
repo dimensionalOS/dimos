@@ -104,6 +104,8 @@ pub struct Config {
     pub lidar_on: bool,
     /// Also the undeskewed sensor-frame cloud and the L1's own IMU.
     pub lidar_raw_on: bool,
+    /// The robot's built-in obstacle avoidance, applied at start.
+    pub obstacle_avoidance: bool,
     /// Body joint states, IMU and battery off `rt/lowstate`, decimated to `lowstate_hz`.
     pub lowstate_on: bool,
     #[validate(range(exclusive_min = 0.0))]
@@ -231,6 +233,10 @@ fn on_off(arg: &str) -> Option<bool> {
     }
 }
 
+fn avoid_enable(on: bool) -> String {
+    format!("{{\"enable\":{}}}", on as i64)
+}
+
 /// The `command` vocabulary: `<verb>` or `<verb> <arg>`, case-insensitive.
 pub fn parse_verb(verb: &str) -> Option<Vec<Cmd>> {
     let v = verb.trim().to_ascii_lowercase();
@@ -247,7 +253,7 @@ pub fn parse_verb(verb: &str) -> Option<Vec<Cmd>> {
         "obstacle-avoidance" => vec![Cmd::Request {
             topic: topics::OBSTACLES_AVOID_REQUEST,
             api_id: topics::OBSTACLE_AVOID_ENABLE,
-            parameter: format!("{{\"enable\":{}}}", on_off(arg)? as i64),
+            parameter: avoid_enable(on_off(arg)?),
         }],
         "joystick" => vec![sport(
             topics::sport::SWITCH_JOYSTICK,
@@ -801,7 +807,17 @@ impl DdsLoop {
         });
         std::thread::sleep(DISCOVERY_SETTLE);
         set_lidar(&mut switch, c.lidar_on);
-        info!(iface = %c.iface, tf_root = %c.tf_root, "dds up");
+        request(
+            &mut obstacle,
+            topics::OBSTACLE_AVOID_ENABLE,
+            avoid_enable(c.obstacle_avoidance),
+        );
+        info!(
+            iface = %c.iface,
+            tf_root = %c.tf_root,
+            obstacle_avoidance = c.obstacle_avoidance,
+            "dds up"
+        );
 
         let mut odom_buf = SampleBuffer::<types::Odometry>::new(64);
         let mut cloud_buf = SampleBuffer::<types::PointCloud2>::new(8);

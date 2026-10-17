@@ -77,6 +77,7 @@ go2_dds_nav = autoconnect(
     zenoh_connect="tcp/127.0.0.1:7447",
     n_workers=11,
     robot_model="unitree_go2",
+    obstacle_avoidance=False,
 )
 
 # h264 lands here off `video`; jpeg is redirected onto it, whichever the robot serves
