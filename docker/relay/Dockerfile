@@ -6,6 +6,10 @@ FROM denoland/deno:2.6.10
 
 # A server has no use for the daily version check against dl.deno.land.
 ENV DENO_NO_UPDATE_CHECK=1
+# glibc malloc keeps freed connection buffers in its arenas and the relay's
+# RSS creeps for half an hour after viewers churn; trimming keeps it flat
+# (dimos/web/relay_bridge/relay_process.py, RELAY_GLIBC_TUNABLES).
+ENV GLIBC_TUNABLES=glibc.malloc.trim_threshold=131072:glibc.malloc.mmap_threshold=131072:glibc.malloc.top_pad=0
 WORKDIR /app/web
 # The build context is the repo root; Dockerfile.dockerignore next to this
 # file narrows it to web/ (the root .dockerignore would drop package.json).

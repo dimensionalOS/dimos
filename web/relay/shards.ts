@@ -47,7 +47,15 @@ export interface SpawnedShards {
 // and how it prints. Everything else is dropped, loader variables above all
 // (LD_LIBRARY_PATH, LD_PRELOAD), which Deno refuses to pass through a
 // scoped --allow-run; reading these needs --allow-env for their names.
-const CHILD_ENV_NAMES = ["HOME", "DENO_DIR", "XDG_CACHE_HOME", "PATH", "NO_COLOR", "TMPDIR"];
+const CHILD_ENV_NAMES = [
+  "HOME",
+  "DENO_DIR",
+  "XDG_CACHE_HOME",
+  "PATH",
+  "NO_COLOR",
+  "TMPDIR",
+  "GLIBC_TUNABLES", // the launcher's malloc trimming (relay_process.py)
+];
 
 function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};

@@ -47,6 +47,7 @@ import copy
 from dataclasses import dataclass, field, replace
 import functools
 import importlib.util
+import math
 from pathlib import Path
 import threading
 import time
@@ -67,7 +68,7 @@ from dimos.web.codecs import EncodedPayload, encoder_definition
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
-from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
+from dimos.web.relay_bridge import builtin_codecs
 from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -145,6 +146,10 @@ _ENCODE_ERROR_LOG_S = 5.0
 _RTC_ANSWER_TIMEOUT_S = 15.0
 # The relay's rate feedback never samples a channel under this.
 _RATE_FLOOR_HZ = 0.5
+# A rate-capped jpeg.v1 channel also sends smaller frames, so the link that
+# set the cap carries more of them: the quality falls with the square root
+# of the cap's share of max_hz, never under this.
+_RATE_QUALITY_FLOOR = 30
 
 # Encodings whose live frames are encoded on a worker thread (latest wins,
 # one encode per channel at a time) instead of the transport thread, as
@@ -259,6 +264,8 @@ class RelayBridgeModule(Module):
         # (_reconcile, rate gates, encode counters) never sees them.
         self._publish: PublishHandler | None = None
         self._min_interval: dict[str, float] = {}
+        # The relay's rate cap as a share of max_hz per channel (1 = none).
+        self._rate_scale: dict[str, float] = {}
         # Per-channel sampling schedule (next due time) for the maxHz gate.
         self._next_due: dict[str, float] = {}
         # Last "encoder failed" log time per channel: a broken encoder on a
@@ -605,8 +612,13 @@ class RelayBridgeModule(Module):
         once per channel per _ENCODE_ERROR_LOG_INTERVAL_S)."""
         assert spec.encoder is not None
         now = time.monotonic()
+        params = spec.params
+        scale = self._rate_scale.get(spec.ch, 1.0)
+        if scale < 1.0 and spec.encoding == "jpeg.v1" and spec.encoder_takes_params:
+            base = params.get("quality", builtin_codecs.DEFAULT_JPEG_QUALITY)
+            params = {**params, "quality": max(_RATE_QUALITY_FLOOR, round(base * math.sqrt(scale)))}
         try:
-            out = spec.encoder(msg, spec.params) if spec.encoder_takes_params else spec.encoder(msg)
+            out = spec.encoder(msg, params) if spec.encoder_takes_params else spec.encoder(msg)
         except Exception:
             if passes_rate_gate(self._encode_error_logged, spec.ch, now, _ENCODE_ERROR_LOG_S):
                 logger.exception(f"relay bridge: encoding {spec.ch} failed")
@@ -826,6 +838,7 @@ class RelayBridgeModule(Module):
         hz = min(spec.max_hz, max(float(msg.hz), _RATE_FLOOR_HZ))
         was_capped = self._min_interval.get(spec.ch, 0.0) > 1.0 / spec.max_hz + 1e-9
         self._min_interval[spec.ch] = 1.0 / hz
+        self._rate_scale[spec.ch] = hz / spec.max_hz
         if hz < spec.max_hz and not was_capped:
             logger.info(
                 f"relay bridge: {spec.ch} capped at {hz:.1f} Hz (the slowest viewer's rate)"
