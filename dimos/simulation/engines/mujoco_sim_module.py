@@ -26,6 +26,7 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 from pathlib import Path
 import threading
@@ -133,6 +134,148 @@ def _imu_from_mujoco_wxyz(
         frame_id=frame_id,
         ts=ts,
     )
+
+
+class MujocoSimulation:
+    """RPC-free engine lifecycle and camera I/O shared by the module and trusted hosts.
+
+    This owns no DimOS transport, SHM bridge, reset endpoint or object-TF publisher.
+    Callers explicitly install their control/evidence hooks on ``engine``.
+    """
+
+    def __init__(self, **engine_kwargs: Any) -> None:
+        self.engine = MujocoEngine(**engine_kwargs)
+        self._stop_event = threading.Event()
+        self._publish_thread: threading.Thread | None = None
+        self.error = ""
+        self._stopped = False
+
+    def start(
+        self,
+        camera_name: str,
+        fps: float,
+        on_frame: Callable[[CameraFrame], None],
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        self._stopped = False
+        self.error = ""
+        if not self.engine.connect():
+            raise RuntimeError("MuJoCo engine failed to connect")
+        if stop_event is not None:
+            self._stop_event = stop_event
+        self._stop_event.clear()
+
+        def publish() -> None:
+            try:
+                self.poll_camera(self.engine, camera_name, fps, self._stop_event, on_frame)
+            except Exception as exc:
+                self.error = str(exc)
+                logger.error("MuJoCo camera publication failed", error=self.error)
+
+        self._publish_thread = threading.Thread(
+            target=publish, daemon=True, name="MujocoSimPublish"
+        )
+        self._publish_thread.start()
+
+    def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stop_event.set()
+        if self._publish_thread is not None:
+            self._publish_thread.join(timeout=2.0)
+            if self._publish_thread.is_alive():
+                raise RuntimeError("MuJoCo camera publisher did not stop")
+            self._publish_thread = None
+        self.engine.disconnect()
+        self._stopped = True
+
+    @staticmethod
+    def poll_camera(
+        engine: MujocoEngine,
+        camera_name: str,
+        fps: float,
+        stop: threading.Event,
+        on_frame: Callable[[CameraFrame], None],
+    ) -> None:
+        interval = 1.0 / fps
+        last_timestamp = 0.0
+        deadline = time.monotonic() + 30.0
+        while not stop.is_set() and not engine.connected:
+            if time.monotonic() > deadline:
+                raise RuntimeError("Timed out waiting for MuJoCo engine")
+            stop.wait(timeout=0.1)
+        while not stop.is_set():
+            started = time.monotonic()
+            frame = engine.read_camera(camera_name)
+            if frame is None or frame.timestamp <= last_timestamp:
+                stop.wait(timeout=interval * 0.5)
+                continue
+            last_timestamp = frame.timestamp
+            on_frame(frame)
+            stop.wait(timeout=max(0.0, interval - (time.monotonic() - started)))
+
+    @staticmethod
+    def camera_info(fovy: float, width: int, height: int, frame_id: str) -> CameraInfo:
+        focal = height / (2.0 * math.tan(math.radians(fovy) / 2.0))
+        return CameraInfo.from_intrinsics(
+            fx=focal,
+            fy=focal,
+            cx=width / 2.0,
+            cy=height / 2.0,
+            width=width,
+            height=height,
+            frame_id=frame_id,
+        )
+
+    @staticmethod
+    def camera_transforms(
+        frame: CameraFrame,
+        camera_name: str,
+        base_frame: str,
+        ts: float,
+        *,
+        require_relative: bool = False,
+    ) -> list[Transform]:
+        camera = _pose_matrix(frame.cam_pos, frame.cam_mat.reshape(3, 3))
+        optical = _pose_matrix(frame.cam_pos, frame.cam_mat.reshape(3, 3) @ _RX180.as_matrix())
+        parent = "world"
+        if frame.base_pos is not None and frame.base_mat is not None:
+            inverse = np.linalg.inv(_pose_matrix(frame.base_pos, frame.base_mat))
+            camera = inverse @ camera
+            optical = inverse @ optical
+            parent = base_frame
+        elif require_relative:
+            raise RuntimeError("Missing robot-relative camera calibration")
+        return [
+            _transform_from_matrix(
+                optical,
+                frame_id=parent,
+                child_frame_id=f"{camera_name}_{kind}_optical_frame",
+                ts=ts,
+            )
+            for kind in ("color", "depth")
+        ] + [
+            _transform_from_matrix(
+                camera, frame_id=parent, child_frame_id=f"{camera_name}_link", ts=ts
+            )
+        ]
+
+    @staticmethod
+    def camera_images(frame: CameraFrame, camera_name: str) -> tuple[Image, Image]:
+        return (
+            Image(
+                data=frame.rgb,
+                format=ImageFormat.RGB,
+                frame_id=f"{camera_name}_color_optical_frame",
+                ts=frame.timestamp,
+            ),
+            Image(
+                data=frame.depth,
+                format=ImageFormat.DEPTH,
+                frame_id=f"{camera_name}_depth_optical_frame",
+                ts=frame.timestamp,
+            ),
+        )
 
 
 class _WholeBodySimHooks:
@@ -337,6 +480,7 @@ class MujocoSimModule(
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._simulation: MujocoSimulation | None = None
         self._engine: MujocoEngine | None = None
         self._shm: ManipShmWriter | None = None
         self._sim_hooks: _WholeBodySimHooks | None = None
@@ -344,7 +488,6 @@ class MujocoSimModule(
         self._gripper_ctrl_range: tuple[float, float] = (0.0, 1.0)
         self._gripper_joint_range: tuple[float, float] = (0.0, 1.0)
         self._stop_event = threading.Event()
-        self._publish_thread: threading.Thread | None = None
         self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
@@ -505,7 +648,8 @@ class MujocoSimModule(
             engine_kwargs["spawn_xy"] = self.config.spawn_xy
             engine_kwargs["spawn_z"] = self.config.spawn_z
             engine_kwargs["spawn_yaw"] = self.config.spawn_yaw
-        self._engine = MujocoEngine(**engine_kwargs)
+        self._simulation = MujocoSimulation(**engine_kwargs)
+        self._engine = self._simulation.engine
 
         # Detect gripper (extra joint beyond dof).
         dof = self.config.dof
@@ -566,18 +710,11 @@ class MujocoSimModule(
             after=self._publish_shm_and_lcm,
         )
 
-        # Start physics (sim thread spawned inside engine.connect()).
-        if not self._engine.connect():
-            raise RuntimeError("MujocoSimModule: engine.connect() failed")
-
-        # Camera intrinsics.
-        self._build_camera_info()
-
-        self._stop_event.clear()
-        self._publish_thread = threading.Thread(
-            target=self._publish_loop, daemon=True, name="MujocoSimPublish"
+        # Both trusted hosts and the module share the RPC-free engine/camera lifecycle.
+        self._simulation.start(
+            self.config.camera_name, self.config.fps, self._publish_frame, self._stop_event
         )
-        self._publish_thread.start()
+        self._build_camera_info()
 
         # Periodic camera_info publishing.
         interval_sec = 1.0 / self.config.camera_info_fps
@@ -672,14 +809,14 @@ class MujocoSimModule(
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
-        if self._publish_thread and self._publish_thread.is_alive():
-            self._publish_thread.join(timeout=2.0)
-        self._publish_thread = None
-
         errors: list[tuple[str, BaseException]] = []
         if self._engine is not None:
             try:
-                self._engine.disconnect()
+                if self._simulation is not None:
+                    self._simulation.stop()
+                    self._simulation = None
+                else:
+                    self._engine.disconnect()
                 self._engine = None
             except Exception as exc:
                 logger.error("engine.disconnect() failed", error=str(exc))
@@ -856,97 +993,21 @@ class MujocoSimModule(
         if fovy_deg is None:
             logger.error("Camera not found in MJCF", camera_name=self.config.camera_name)
             return
-        h = self.config.height
-        w = self.config.width
-        fovy_rad = math.radians(fovy_deg)
-        fy = h / (2.0 * math.tan(fovy_rad / 2.0))
-        fx = fy  # square pixels
-        camera_info = CameraInfo.from_intrinsics(
-            fx=fx,
-            fy=fy,
-            cx=w / 2.0,
-            cy=h / 2.0,
-            width=w,
-            height=h,
-            frame_id=self._color_optical_frame,
+        camera_info = MujocoSimulation.camera_info(
+            fovy_deg, self.config.width, self.config.height, self._color_optical_frame
         )
         with self._state_lock:
             self._camera_info_base = camera_info
 
-    def _publish_loop(self) -> None:
-        """Poll engine for rendered frames and publish at configured FPS."""
-        engine = self._engine
-        if engine is None:
-            return
-
-        interval = 1.0 / self.config.fps
-        last_timestamp = 0.0
-        published_count = 0
-
-        # Wait for engine to actually be connected (sim thread may take a tick).
-        deadline = time.monotonic() + 30.0
-        while not self._stop_event.is_set() and not engine.connected:
-            if time.monotonic() > deadline:
-                logger.error("MujocoSimModule: timed out waiting for engine to connect")
-                return
-            self._stop_event.wait(timeout=0.1)
-
-        if self._stop_event.is_set():
-            return
-
-        while not self._stop_event.is_set():
-            loop_start = time.monotonic()
-            try:
-                frame = engine.read_camera(self.config.camera_name)
-            except RuntimeError as exc:
-                logger.error(
-                    "MuJoCo render failed; stopping publish loop",
-                    camera_name=self.config.camera_name,
-                    error=str(exc),
-                    exc_info=True,
-                )
-                return
-
-            if frame is None or frame.timestamp <= last_timestamp:
-                self._stop_event.wait(timeout=interval * 0.5)
-                continue
-            last_timestamp = frame.timestamp
-            ts = frame.timestamp
-            with self._state_lock:
-                self._latest_frame_ts = ts
-
-            if self.config.enable_color:
-                color_img = Image(
-                    data=frame.rgb,
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
-                )
-                self.color_image.publish(color_img)
-
-            if self.config.enable_depth:
-                depth_img = Image(
-                    data=frame.depth,
-                    format=ImageFormat.DEPTH,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
-                )
-                self.depth_image.publish(depth_img)
-
-            self._publish_tf(ts, frame)
-
-            published_count += 1
-            if published_count == 1:
-                logger.info(
-                    "MujocoSimModule first frame published",
-                    rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
-                )
-
-            elapsed = time.monotonic() - loop_start
-            sleep_time = interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+    def _publish_frame(self, frame: CameraFrame) -> None:
+        with self._state_lock:
+            self._latest_frame_ts = frame.timestamp
+        color, depth = MujocoSimulation.camera_images(frame, self.config.camera_name)
+        if self.config.enable_color:
+            self.color_image.publish(color)
+        if self.config.enable_depth:
+            self.depth_image.publish(depth)
+        self._publish_tf(frame.timestamp, frame)
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
@@ -970,37 +1031,10 @@ class MujocoSimModule(
     def _publish_tf(self, ts: float, frame: CameraFrame | None) -> None:
         if frame is None:
             return
-        mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
-        optical_rot = mj_rot * _RX180
-        camera_transform = _pose_matrix(frame.cam_pos, mj_rot.as_matrix())
-        optical_transform = _pose_matrix(frame.cam_pos, optical_rot.as_matrix())
-        parent_frame = "world"
-        if frame.base_pos is not None and frame.base_mat is not None:
-            parent_frame = self.config.base_frame_id
-            base_transform = _pose_matrix(frame.base_pos, frame.base_mat)
-            inv_base_transform = np.linalg.inv(base_transform)
-            camera_transform = inv_base_transform @ camera_transform
-            optical_transform = inv_base_transform @ optical_transform
-
         self.tf.publish(
             TFMessage(
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._color_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._depth_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    camera_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._camera_link,
-                    ts=ts,
+                *MujocoSimulation.camera_transforms(
+                    frame, self.config.camera_name, self.config.base_frame_id, ts
                 ),
                 *self._body_transforms(),
             )
