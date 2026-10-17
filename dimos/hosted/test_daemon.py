@@ -89,7 +89,7 @@ def test_describe_reports_available_host(host_setup: dict[str, Any]) -> None:
     descriptor = host_setup["daemon"].describe()
 
     assert descriptor.host_id == "host-1"
-    assert descriptor.tags == frozenset({"gpu"})
+    assert descriptor.tags == {"gpu": ""}
     assert descriptor.versions == {"protocol": 1}
     assert descriptor.state == "available"
     assert descriptor.active_run_ids == ()
@@ -223,6 +223,19 @@ def test_start_reports_child_failure(host_setup: dict[str, Any]) -> None:
     host_setup["kill"].assert_called_once_with(fragment.run_id)
 
 
+def test_close_if_idle_refuses_starts_only_when_idle(host_setup: dict[str, Any]) -> None:
+    daemon = host_setup["daemon"]
+    fragment = host_setup["fragment"]
+    epoch = daemon.describe().epoch
+    daemon.start(epoch, fragment)
+    assert not daemon.close_if_idle()
+
+    idle = HostDaemon("host-1", log_root=host_setup["daemon"]._log_root)
+    assert idle.close_if_idle()
+    with pytest.raises(RuntimeError, match="relinking"):
+        idle.start(idle.describe().epoch, fragment)
+
+
 def test_stop_releases_host(host_setup: dict[str, Any]) -> None:
     daemon = host_setup["daemon"]
     fragment = host_setup["fragment"]
@@ -346,6 +359,7 @@ def test_run_fragment_passes_remote_module_targets_to_coordinator(
     mocker.patch("dimos.hosted.daemon.threading.Event", return_value=stop_requested)
     mocker.patch("dimos.hosted.daemon.signal.signal")
     mocker.patch("dimos.hosted.daemon.set_run_log_dir")
+    mocker.patch("dimos.hosted.daemon.with_host_config", side_effect=lambda _bp, c: c)
     ready = mocker.MagicMock()
 
     _run_fragment(fragment, tmp_path, ready)

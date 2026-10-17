@@ -93,6 +93,8 @@ class HostedPlacement:
     module_names: tuple[str, ...]
     host: str | None | _HostSelection = _ANY_HOST
     tags: frozenset[str] = frozenset()
+    # Among matching Hosts, the one with the highest value of this numeric tag.
+    prefer: str | None = None
 
     def __post_init__(self) -> None:
         if not self.module_names:
@@ -270,12 +272,15 @@ class Blueprint:
         *,
         host: str | None | _HostSelection = _ANY_HOST,
         tags: Iterable[str] = (),
+        prefer: str | None = None,
     ) -> "Blueprint":
         """Schedule this Blueprint fragment as one placement unit.
 
         With no selector, ``hosted()`` chooses any available remote Host. An
-        exact Host name/ID and required Host tags may narrow the candidates.
-        Passing ``host=None`` constrains the fragment to the controlling machine.
+        exact Host name/ID and required Host tags (``key`` or ``key=value``) may
+        narrow the candidates; ``prefer`` picks the one with the highest value of
+        that numeric tag, e.g. ``prefer="gpu_tflops"``. Passing ``host=None``
+        constrains the fragment to the controlling machine.
         """
         if not self.blueprints:
             raise ValueError("hosted() requires at least one module")
@@ -298,6 +303,7 @@ class Blueprint:
             module_names=tuple(atom.name for atom in self.blueprints),
             host=host,
             tags=tag_set,
+            prefer=prefer,
         )
         return replace(self, hosted_placements=(*self.hosted_placements, placement))
 

@@ -130,8 +130,8 @@ class ModuleCoordinator(Resource):
 
     def start_rpc_service(self, *, name: str | None = None) -> None:
         """Expose the coordinator's API as RPC methods under an optional name."""
-        if not self._global_config.serve_coordinator_rpc:
-            # Deliberate: the name is bus-wide, and this stack shares the bus with
+        if name is None and not self._global_config.serve_coordinator_rpc:
+            # Deliberate: the default name is bus-wide, and this stack shares the bus with
             # one that owns it. Costs remote introspection of THIS stack, nothing else.
             logger.info("serve_coordinator_rpc is off; not claiming the Coordinator name")
             return
@@ -426,7 +426,6 @@ class ModuleCoordinator(Resource):
                 coordinator,
                 remote_module_refs=remote_ref_proxies,
             )
-
             t2 = time.perf_counter()
             coordinator.build_all_modules()
             t3 = time.perf_counter()

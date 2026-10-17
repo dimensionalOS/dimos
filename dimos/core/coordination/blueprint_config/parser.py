@@ -145,6 +145,13 @@ class BlueprintConfigParser:
             deep_merge(values, normalize_mapping_keys(global_overrides))
         return validate_global_values(values)
 
+    def environment_module_fields(self, environ: Mapping[str, str]) -> dict[str, set[str]]:
+        """The module fields ``environ`` itself sets, per module instance."""
+        schema = self._get_schema()
+        module_values: dict[str, dict[str, Any]] = {m.atom.name: {} for m in schema.modules}
+        merge_environment(module_values, {}, {}, configuration_environment(environ), schema)
+        return {name: set(values) for name, values in module_values.items()}
+
     def parse(
         self,
         cli_tokens: Iterable[str] = (),

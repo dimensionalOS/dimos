@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+import contextlib
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from importlib.metadata import version as package_version
 import multiprocessing
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
@@ -24,29 +28,113 @@ import os
 from pathlib import Path
 import signal
 import socket
+import subprocess
+import sys
 import threading
-from typing import Literal
+import time
+import traceback
+from typing import TYPE_CHECKING, Any, Literal
 import uuid
 
-from dimos.constants import STATE_DIR
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.global_config import ENV_FILE
 from dimos.hosted.fragment import (
     FRAGMENT_FORMAT,
     FRAGMENT_SCHEMA_VERSION,
     HostFragment,
     run_coordinator_rpc_name,
+    with_host_config,
 )
+from dimos.hosted.tags import as_tags
 from dimos.utils.logging_config import set_run_log_dir
 
-HostState = Literal["available", "starting", "running", "stopping", "failed"]
+if TYPE_CHECKING:
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
+
+# unresponsive: live but did not describe itself in time.
+HostState = Literal["available", "starting", "running", "stopping", "failed", "unresponsive"]
 
 HOST_PROTOCOL_VERSION = 2
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
 HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
+# Every output line of a fragment, published while its run's controller listens.
+RUN_LOG_KEY = "dimos/runs/{run_id}/logs/{host}"
 DEFAULT_STARTUP_TIMEOUT = 60.0
 DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
+# The daemon is its machine's zenoh router, on zenoh's own port.
+DEFAULT_LISTEN = "tcp/0.0.0.0:7447"
+# Hosts scout each other on their own multicast group, apart from any other zenoh fabric.
+DIMOS_SCOUT_ADDR = "224.0.0.224:7449"
+
+
+class HostConfig(BaseSettings):
+    """`dimos host serve` settings, also set by HOST__<FIELD> in the environment or .env."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="HOST__", env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    name: str = Field(default_factory=socket.gethostname)
+    # Comma-separated tags, key or key=value, added to the auto-detected ones.
+    tags: str = ""
+    # Taken: the next free port up is used instead.
+    listen: str = DEFAULT_LISTEN
+    # Comma-separated routers this one always links to.
+    connect: str = ""
+    # Find other Hosts by scouting and the Go2 LAN probe, and link to them.
+    autodiscovery: bool = True
+    discovery_interval: float = Field(default=10.0, gt=0)
+    scout_addr: str = DIMOS_SCOUT_ADDR
+    # Empty scouts every interface.
+    scout_interface: str = ""
+
+
+def split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+# Fallback ports start past 7448 (raw-robot-bridge) and 7449 (the scout group).
+FALLBACK_PORT = 7450
+
+
+def port_free(host: str, port: int) -> bool:
+    bind_host = host.strip("[]") or "0.0.0.0"
+    with socket.socket(socket.AF_INET6 if ":" in bind_host else socket.AF_INET) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((bind_host, port))
+        except OSError:
+            return False
+    return True
+
+
+def free_listen(endpoint: str, fallback: int = FALLBACK_PORT, tries: int = 10) -> str:
+    """``endpoint`` if its port is free, else the same host on the first free fallback port."""
+    protocol, _, address = endpoint.partition("/")
+    host, _, port = address.rpartition(":")
+    for candidate in (int(port), *range(fallback, fallback + tries)):
+        if port_free(host, candidate):
+            return f"{protocol}/{host}:{candidate}"
+    raise OSError(f"No free port for {endpoint} in {port} or {fallback}..{fallback + tries - 1}")
+
+
+def code_revision() -> str:
+    """Commit of the dimos checkout this process runs, else the installed package version."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(DIMOS_PROJECT_ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return package_version("dimos")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +142,14 @@ class HostDescriptor:
     host_id: str
     epoch: str
     name: str
-    tags: frozenset[str]
+    # Key/value facts; a bare tag has an empty value.
+    tags: Mapping[str, str]
     versions: dict[str, str | int]
     state: HostState
     active_run_ids: tuple[str, ...]
+    # The zid of the router this Host serves, and that router's listen endpoints.
+    router_zid: str = ""
+    listen: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,15 +179,28 @@ class HostDaemon:
         host_id: str,
         *,
         name: str | None = None,
-        tags: set[str] | frozenset[str] = frozenset(),
+        tags: Mapping[str, str] | Iterable[str] = (),
         versions: dict[str, str | int] | None = None,
         log_root: Path = DEFAULT_LOG_ROOT,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         stop_timeout: float = DEFAULT_STOP_TIMEOUT,
+        listen: Sequence[str] = (DEFAULT_LISTEN,),
+        connect: Sequence[str] = (),
+        autodiscovery: bool = False,
+        scout_addr: str = DIMOS_SCOUT_ADDR,
+        scout_interface: str = "",
     ) -> None:
+        if not listen:
+            raise ValueError("HostDaemon is a zenoh router and needs a listen endpoint")
         self._host_id = host_id
+        self.listen = list(listen)
+        self.connect = list(connect)
+        self.autodiscovery = autodiscovery
+        self.scout_addr = scout_addr
+        self.scout_interface = scout_interface
+        self.router_zid = ""
         self._name = name or socket.gethostname()
-        self._tags = frozenset(tags)
+        self._tags = as_tags(tags)
         self._versions = dict(versions or {})
         self._log_root = log_root
         self._startup_timeout = startup_timeout
@@ -104,6 +209,66 @@ class HostDaemon:
         self._epoch = uuid.uuid4().hex
         self._deployments: dict[str, _Deployment] = {}
         self._lock = threading.RLock()
+        self._closing = False
+
+    @property
+    def client_endpoint(self) -> str:
+        """The locator this daemon's fragments dial, its first listener on loopback."""
+        protocol, _, address = self.listen[0].partition("/")
+        host, _, port = address.rpartition(":")
+        if not port or port == "0":
+            raise ValueError(f"Listen endpoint {self.listen[0]!r} needs a fixed port")
+        if host in ("0.0.0.0", "[::]", ""):
+            host = "127.0.0.1"
+        return f"{protocol}/{host}:{port}"
+
+    def fragment_global_overrides(self) -> dict[str, Any]:
+        """Run every fragment's sessions as zenoh clients of this daemon's router."""
+        return {
+            "zenoh_mode": "client",
+            "zenoh_connect": self.client_endpoint,
+            "zenoh_multicast": False,
+            "zenoh_scouting": False,
+        }
+
+    @contextmanager
+    def serve(self) -> Iterator[ZenohRPC]:
+        """Open this machine's zenoh router and serve the Host control plane on it."""
+        from dimos.protocol.rpc.zenohrpc import ZenohRPC
+        from dimos.protocol.service.zenohservice import ZenohSessionPool
+
+        pool = ZenohSessionPool()
+        # connect_timeout 0: zenoh keeps redialing absent routers in the background.
+        rpc = ZenohRPC(
+            session_pool=pool,
+            mode="router",
+            listen=self.listen,
+            connect=self.connect,
+            multicast=self.autodiscovery,
+            scouting=self.autodiscovery,
+            scouting_interface=self.scout_interface,
+            scout_addr=self.scout_addr,
+            router_autoconnect=self.autodiscovery,
+            connect_timeout=0,
+            adminspace=True,
+        )
+        self._closing = False
+        with ExitStack() as cleanup:
+            cleanup.callback(pool.close_all)
+            cleanup.callback(self.shutdown)
+            rpc.start()
+            cleanup.callback(rpc.stop)
+            self.router_zid = str(rpc.session.zid())
+            control_name = HOST_CONTROL_RPC_NAME.format(host_id=self._host_id)
+            rpc.serve_rpc(self.describe, f"{control_name}/describe")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.start, f"{control_name}/start")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.status, f"{control_name}/status")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.stop, f"{control_name}/stop")  # type: ignore[arg-type]
+            token = rpc.session.liveliness().declare_token(
+                HOST_LIVELINESS_KEY.format(host_id=self._host_id)
+            )
+            cleanup.callback(token.undeclare)
+            yield rpc
 
     def describe(self) -> HostDescriptor:
         with self._lock:
@@ -112,17 +277,28 @@ class HostDaemon:
                 host_id=self._host_id,
                 epoch=self._epoch,
                 name=self._name,
-                tags=self._tags,
+                tags=dict(self._tags),
                 versions=dict(self._versions),
                 state=self._host_state_locked(),
                 active_run_ids=tuple(sorted(self._deployments)),
+                router_zid=self.router_zid,
+                listen=tuple(self.listen),
             )
+
+    def close_if_idle(self) -> bool:
+        """Refuse further starts if no run is active; True when it did."""
+        with self._lock:
+            self._refresh_locked()
+            self._closing = not self._deployments
+            return self._closing
 
     def start(self, epoch: str, fragment: HostFragment) -> DeploymentStatus:
         self._check_epoch(epoch)
         self._check_fragment(fragment)
 
         with self._lock:
+            if self._closing:
+                raise RuntimeError("Host is relinking; retry the start")
             self._refresh_locked()
             existing = self._deployments.get(fragment.run_id)
             if existing is not None:
@@ -140,7 +316,13 @@ class HostDaemon:
             receive_ready, send_ready = self._process_context.Pipe(duplex=False)
             process = self._process_context.Process(
                 target=_run_fragment,
-                args=(fragment, log_dir, send_ready),
+                args=(
+                    fragment,
+                    log_dir,
+                    send_ready,
+                    self.fragment_global_overrides(),
+                    RUN_LOG_KEY.format(run_id=fragment.run_id, host=self._name),
+                ),
                 daemon=False,
             )
             deployment = _Deployment(fragment, "starting", log_dir, process)
@@ -296,8 +478,16 @@ def _terminate(process: BaseProcess, timeout: float) -> None:
         process.join(timeout=timeout)
 
 
-def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> None:
+def _run_fragment(
+    fragment: HostFragment,
+    log_dir: Path,
+    ready: Connection,
+    global_overrides: dict[str, Any] | None = None,
+    log_key: str | None = None,
+) -> None:
     os.environ[DIMOS_RUN_ID_ENV] = fragment.run_id
+    if log_key is not None and global_overrides:
+        _publish_output(log_key, str(global_overrides["zenoh_connect"]))
     set_run_log_dir(log_dir)
     stop_requested = threading.Event()
     coordinator: ModuleCoordinator | None = None
@@ -316,9 +506,12 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
             )
             for reference in payload.remote_module_references
         }
+        config = with_host_config(payload.blueprint, payload.config)
+        if global_overrides:
+            config = config.subset_for(payload.blueprint, global_overrides=global_overrides)
         coordinator = ModuleCoordinator.build(
             payload.blueprint,
-            payload.config,
+            config,
             remote_module_refs=remote_module_refs,
         )
         coordinator.start_rpc_service(
@@ -329,6 +522,7 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
         ready.send((True, None))
         stop_requested.wait()
     except Exception as exc:
+        traceback.print_exc()
         try:
             ready.send((False, str(exc)))
         except (BrokenPipeError, OSError):
@@ -337,3 +531,39 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
         ready.close()
         if coordinator is not None:
             coordinator.stop()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # ponytail: fixed grace for the tee thread to publish the last lines.
+        time.sleep(0.3)
+
+
+def _publish_output(key: str, router: str) -> None:
+    """Tee this process's stdout and stderr, inherited by every worker, onto ``key``.
+
+    Runs before any worker exists, so the forkserver and its workers write into the pipe.
+    The original output (journal or log file) still gets every line.
+    """
+    from dimos.protocol.service.zenohservice import ZenohConfig, default_session_pool
+
+    session = default_session_pool.acquire(
+        ZenohConfig(mode="client", connect=[router], multicast=False, scouting=False)
+    )
+    publisher = session.declare_publisher(key)
+    original = os.dup(1)
+    read_end, write_end = os.pipe()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(write_end, 1)
+    os.dup2(write_end, 2)
+    os.close(write_end)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
+    def tee() -> None:
+        with os.fdopen(read_end, "rb") as lines:
+            for line in lines:
+                os.write(original, line)
+                with contextlib.suppress(Exception):
+                    publisher.put(line)
+
+    threading.Thread(target=tee, name="fragment-log-tee", daemon=True).start()

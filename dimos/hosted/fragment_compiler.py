@@ -43,6 +43,7 @@ from dimos.hosted.fragment import (
     run_stream_base_topic,
     run_stream_key,
 )
+from dimos.hosted.tags import as_tags, missing
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 
 HOSTED_GLOBAL_OVERRIDES: Mapping[str, Any] = MappingProxyType({"transport": "zenoh"})
@@ -348,7 +349,25 @@ def _select_host_for_unit(
             f"Discovered: {discovered or 'none'}"
         )
 
-    return min(accepted, key=lambda host: (commitments[host.host_id], host.host_id)).host_id
+    prefer = next((c.prefer for c in constraints if c.prefer), None)
+    return min(
+        accepted,
+        key=lambda host: (
+            -_numeric_tag(host, prefer),
+            commitments[host.host_id],
+            host.host_id,
+        ),
+    ).host_id
+
+
+def _numeric_tag(host: HostDescriptor, key: str | None) -> float:
+    """The tag as a number for ``prefer`` ranking; absent or non-numeric ranks last."""
+    if key is None:
+        return 0.0
+    try:
+        return float(as_tags(host.tags)[key])
+    except (KeyError, ValueError):
+        return float("-inf")
 
 
 def _host_rejection_reasons(
@@ -359,8 +378,8 @@ def _host_rejection_reasons(
     reasons: list[str] = []
     if descriptor.state not in _SCHEDULABLE_HOST_STATES:
         reasons.append(f"state is {descriptor.state}")
-    if missing_tags := required_tags - descriptor.tags:
-        reasons.append(f"missing tags {sorted(missing_tags)}")
+    if missing_tags := missing(descriptor.tags, required_tags):
+        reasons.append(f"missing tags {missing_tags}")
     host_revision = descriptor.versions.get(
         "application_revision", descriptor.versions.get("dimos")
     )

@@ -80,8 +80,20 @@ def test_named_topics_become_one_key_each(make_bridge: Callable[..., RerunBridge
     pubsub = FakeZenoh()
     make_bridge(topics=["tf", "/local_map"])._subscribe(pubsub)
     # The trailing wildcard is the key's type segment, resolved per sample.
-    assert pubsub.keys == ["dimos/tf/*", "dimos/local_map/*"]
+    assert pubsub.keys == [
+        "dimos/tf/*",
+        "dimos/runs/*/streams/tf/*",
+        "dimos/local_map/*",
+        "dimos/runs/*/streams/local_map/*",
+    ]
     assert not pubsub.subscribed_all
+
+
+def test_a_hosted_run_scoped_topic_lands_on_the_plain_entity(
+    make_bridge: Callable[..., RerunBridgeModule],
+) -> None:
+    topic = ZenohTopic(topic="dimos/runs/r1/streams/map_regions", lcm_type=PointCloud2)
+    assert make_bridge()._get_entity_path(topic) == "world/map_regions"
 
 
 def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModule]) -> None:

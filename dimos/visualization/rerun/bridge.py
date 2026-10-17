@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import field
 import functools
 import os
+import re
 import shutil
 import signal
 import socket
@@ -92,6 +93,9 @@ if TYPE_CHECKING:
 # as well as pubsubs={} to specify which protocols to listen to.
 
 logger = setup_logger()
+
+# a hosted run's Host-crossing stream key, dimos/runs/<run>/streams/<name>
+_RUN_SCOPE = re.compile(r"^runs/[^/]+/streams/")
 
 
 class RerunEntry(NamedTuple):
@@ -417,7 +421,7 @@ class RerunBridgeModule(Module):
         topic_str = topic_str.split("#")[0]
         # Strip Zenoh key prefix (dimos/) to match LCM entity paths
         if topic_str.startswith("dimos/"):
-            topic_str = "/" + topic_str.removeprefix("dimos/")
+            topic_str = "/" + _RUN_SCOPE.sub("", topic_str.removeprefix("dimos/"))
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
@@ -591,9 +595,11 @@ class RerunBridgeModule(Module):
             return pubsub.subscribe_all(self._on_message)
 
         # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+        # a hosted run scopes a stream crossing Hosts under dimos/runs/<run>/streams/
         unsubs = [
-            pubsub.subscribe(ZenohTopic(f"dimos/{name.strip('/')}/*"), self._on_message)  # type: ignore[arg-type]
+            pubsub.subscribe(ZenohTopic(f"dimos/{scope}{name.strip('/')}/*"), self._on_message)  # type: ignore[arg-type]
             for name in self.config.topics
+            for scope in ("", "runs/*/streams/")
         ]
         logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
 
