@@ -183,6 +183,20 @@ scale into a native time-optimal planning request before its timestamps are
 generated. Cartesian output is sampled every 50 ms; the control coordinator
 interpolates it at execution rate.
 
+The **Zero** button under **Actions** plans and immediately moves every joint in
+the selected planning groups to `0.0`, using **Next plan speed**. Select several
+groups, for example both OpenYAM arms, to zero them together; joints outside the
+selected groups, such as grippers, are unchanged. Zero uses joint-space planning
+even if Cartesian mode was selected. It is not Home, a calibration reset, or a
+guarantee that the zero pose is collision-free. Zero does not bypass the normal
+collision, joint-limit, or coordinator checks; planning failures and execution
+rejections are reported in the status panel.
+
+Release teleop before pressing Zero: manual control retains its higher priority.
+**Cancel** remains available during planning and execution. Changing the target
+or group selection while Zero is planning prevents its automatic dispatch.
+`zero=True` means execution was accepted, not that hardware has reached zero.
+
 RoboPlan shortens native joint-space RRT paths by default. Configure or disable
 the backend's best-effort shortcutting pass with nested planner options:
 

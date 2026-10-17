@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Barrier, Lock
 import time
@@ -24,6 +24,8 @@ import time
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
+from viser import GuiMarkdownHandle
 
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
@@ -57,6 +59,7 @@ from dimos.manipulation.visualization.viser.state import (
     OperationWorker,
     PanelPlanState,
     PanelRuntime,
+    PlanningMode,
     PlanStatus,
     TargetEvaluationWorker,
     TargetStatus,
@@ -125,6 +128,9 @@ class FakeOperator:
 
     def status(self) -> OperatorStatus:
         return OperatorStatus(state="IDLE", error="", has_plan=False)
+
+    def is_state_stale(self, max_age: float = 1.0) -> bool:
+        return False
 
     def get_init_joints(self) -> None:
         return None
@@ -743,6 +749,7 @@ def test_gui_cancelled_planning_clears_active_plan_state(monkeypatch: pytest.Mon
     ("submit", "expected_error"),
     [
         ("_submit_plan", "Cannot plan until target is feasible and manipulation is idle"),
+        ("_submit_zero", "Zero requires selected groups, fresh telemetry and idle motion"),
         ("_submit_preview", "No fresh plan to preview"),
         (
             "_submit_execute",
@@ -807,3 +814,190 @@ def test_execute_rejection_reports_coordinator_reason(executable_gui, module_fac
         status="REJECTED",
         reason=reason,
     )
+
+
+@pytest.fixture
+def zero_gui(executable_gui, mocker):
+    gui, submissions, _execute = executable_gui
+    groups = (
+        planning_group("left_arm", ("left/j2", "left/j1")),
+        planning_group("right_arm", ("right/j1",)),
+    )
+    names = ["left/j1", "left/j2", "right/j1", "base/x"]
+    gui.scene_info = PlanningSceneInfo(
+        model=replace(
+            gui.scene_info.model,
+            config=gui.get_model_config().model_copy(
+                update={"joint_names": names, "home_joints": [0.5] * len(names)}
+            ),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name, "revolute", CoordinateTopology.INTERVAL, -3.14, 3.14, 1.0, 1.0
+                    )
+                    for name in names
+                )
+            ),
+            planning_groups=groups,
+        ),
+        planning_groups=groups,
+    )
+    gui._scene_groups_by_id = {group.id: group for group in groups}
+    gui._joint_sliders = {
+        (group.id, name): FakeNumericHandle(0.5) for group in groups for name in group.joint_names
+    }
+    mocker.patch.object(
+        gui,
+        "get_current_joint_state",
+        return_value=JointState(name=names, position=[0.5] * len(names)),
+    )
+    mocker.patch.object(gui._worker, "submit")
+    plan = replace(gui.state.plan_state.plan, plan_id="zero-plan")
+    planning = mocker.patch.object(gui.operator, "plan_to_joints", create=True, return_value=plan)
+    execute = mocker.patch.object(gui.operator, "execute_pending", create=True, return_value=True)
+    gui.state.selected_group_ids = ("left_arm",)
+    return gui, submissions, planning, execute
+
+
+@pytest.mark.parametrize(
+    ("group_ids", "expected_names"),
+    [
+        (("left_arm",), ["left/j2", "left/j1"]),
+        (("right_arm", "left_arm"), ["right/j1", "left/j2", "left/j1"]),
+    ],
+)
+def test_zero_plans_and_moves_only_selected_canonical_joints(zero_gui, group_ids, expected_names):
+    gui, submissions, planning, execute = zero_gui
+    gui.state.selected_group_ids = group_ids
+    gui.state.planning_mode = PlanningMode.CARTESIAN_SPACE
+    gui.state.target_status = TargetStatus.INFEASIBLE
+    gui._submit_zero()
+
+    assert gui.state.action_status is ActionStatus.RUNNING
+    assert gui.state.plan_state.plan is None
+    execute.assert_not_called()
+    submissions[0]()
+
+    request = planning.call_args.args[0]
+    assert request.group_ids == group_ids
+    assert request.target.name == expected_names
+    assert request.target.position == [0.0] * len(expected_names)
+    execute.assert_called_once_with(planning.return_value)
+    assert gui.state.last_result == "zero=True"
+
+
+@pytest.mark.parametrize(
+    ("cancel_at", "plan_calls"), [("setup", 0), ("queued", 0), ("planning", 1), ("dispatch", 1)]
+)
+def test_cancel_at_any_stage_stops_zero(zero_gui, mocker, cancel_at, plan_calls):
+    gui, submissions, planning, execute = zero_gui
+    mocker.patch.object(gui, "_restart_operation_worker")
+    apply_preset, plan = gui._apply_preset, planning.return_value
+
+    def cancel_during_setup(preset):
+        apply_preset(preset)
+        gui._submit_cancel()
+
+    def cancel_during_planning(_request):
+        gui._submit_cancel()
+        return plan
+
+    def check_freshness(_max_age):
+        if planning.called:
+            gui._submit_cancel()
+        return False
+
+    if cancel_at == "setup":
+        mocker.patch.object(gui, "_apply_preset", side_effect=cancel_during_setup)
+    elif cancel_at == "planning":
+        planning.side_effect = cancel_during_planning
+    elif cancel_at == "dispatch":
+        mocker.patch.object(gui.operator, "is_state_stale", side_effect=check_freshness)
+        execute.return_value = False  # The pending-plan route rejects the cancelled plan.
+    gui._submit_zero()
+    if cancel_at == "queued":
+        gui._submit_cancel()
+    for operation in submissions:
+        operation()
+
+    assert planning.call_count == plan_calls
+    assert execute.call_count == (cancel_at == "dispatch")
+    assert gui.state.action_status is ActionStatus.IDLE
+    assert gui.state.last_result == "cancel=True"
+    assert gui.state.plan_state == PanelPlanState()
+
+
+@pytest.mark.parametrize("invalidation", ["failure", "target", "selection", "stale_telemetry"])
+def test_zero_does_not_dispatch_without_a_current_plan(zero_gui, mocker, invalidation):
+    gui, submissions, planning, execute = zero_gui
+    plan = planning.return_value
+
+    def invalidate(_request):
+        if invalidation == "failure":
+            return None
+        if invalidation == "selection":
+            gui.state.advance_selection_epoch()
+        elif invalidation == "stale_telemetry":
+            mocker.patch.object(gui.operator, "is_state_stale", return_value=True)
+        else:
+            gui.state.next_sequence_id()
+        return plan
+
+    planning.side_effect = invalidate
+    gui._submit_zero()
+    submissions[0]()
+
+    execute.assert_not_called()
+    assert gui.state.action_status is ActionStatus.IDLE
+    assert gui.state.last_result == "zero=False"
+    assert bool(gui.state.error) == (invalidation in {"failure", "stale_telemetry"})
+
+
+def test_status_updates_the_synchronized_markdown_content(executable_gui, mocker):
+    gui, _, _ = executable_gui
+    handle = mocker.Mock(spec=GuiMarkdownHandle)
+    gui._handles["status"] = handle
+
+    gui._set_handle_value("status", "Zero execution rejected")
+
+    assert handle.content == "Zero execution rejected"
+
+
+def test_zero_outside_joint_limits_is_rejected_without_clamping(zero_gui):
+    gui, submissions, planning, execute = zero_gui
+    coordinates = gui.scene_info.model.joint_space.coordinates
+    gui.scene_info = replace(
+        gui.scene_info,
+        model=replace(
+            gui.scene_info.model,
+            joint_space=JointSpace((replace(coordinates[0], lower=0.2), *coordinates[1:])),
+        ),
+    )
+
+    gui._submit_zero()
+
+    assert submissions == []
+    assert gui.state.action_status is ActionStatus.IDLE
+    assert "limits" in gui.state.error
+    planning.assert_not_called()
+    execute.assert_not_called()
+
+
+@pytest.mark.parametrize("blocked_by", ["telemetry", "stale_telemetry", "busy", "fault"])
+def test_zero_requires_live_idle_selected_groups(zero_gui, mocker, blocked_by):
+    gui, submissions, planning, execute = zero_gui
+    if blocked_by == "telemetry":
+        mocker.patch.object(gui, "get_current_joint_state", return_value=None)
+    elif blocked_by == "stale_telemetry":
+        mocker.patch.object(gui.operator, "is_state_stale", return_value=True)
+    elif blocked_by == "busy":
+        gui.state.action_status = ActionStatus.EXECUTING
+    elif blocked_by == "fault":
+        gui.state.manipulation_state = "FAULT"
+
+    assert not gui._can_zero()
+    gui._submit_zero()
+
+    assert submissions == []
+    planning.assert_not_called()
+    execute.assert_not_called()

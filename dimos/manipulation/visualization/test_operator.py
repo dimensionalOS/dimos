@@ -182,3 +182,16 @@ def test_cartesian_planning_uses_current_group_pose() -> None:
     assert result is module.generate_cartesian_plan.return_value
     targets = module.generate_cartesian_plan.call_args.args[0]
     assert targets["left_arm"] == (monitor.get_group_ee_pose.return_value, target)
+
+
+def test_execute_pending_does_not_restore_a_cancelled_plan(module_factory, mocker):
+    module = module_factory()
+    operator = ManipulationOperator(module, mocker.Mock())
+    plan = _plan()
+    module._last_plan = plan
+    module.cancel()
+    module._control_coordinator.task_invoke.reset_mock()
+
+    assert not operator.execute_pending(plan)
+    assert module._last_plan is None
+    module._control_coordinator.task_invoke.assert_not_called()
