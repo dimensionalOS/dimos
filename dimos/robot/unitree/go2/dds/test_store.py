@@ -114,6 +114,10 @@ def test_lowstate(store: Go2McapStore) -> None:
     assert isinstance(ls, LowState)
     assert len(ls.motor_state) == 20
     assert np.isclose(np.linalg.norm(ls.imu_state.quaternion), 1.0, atol=1e-2)
+    # MotorState is u8-first; padding it like a struct shifts every record 3 bytes,
+    # which shows up as junk modes and a battery voltage near 1 V.
+    assert all(m.mode in (0, 1) for m in ls.motor_state[:12])
+    assert 20 < ls.power_v < 35
 
 
 def test_sportmodestate(store: Go2McapStore) -> None:
