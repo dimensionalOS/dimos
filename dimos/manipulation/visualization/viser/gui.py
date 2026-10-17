@@ -212,7 +212,7 @@ class ViserPanelGui:
         }
 
     def is_state_stale(self, max_age: float = 1.0) -> bool:
-        return self.get_current_joint_state() is None
+        return self.get_current_joint_state() is None or self.operator.is_state_stale(max_age)
 
     def get_module_state(self) -> str:
         return self.operator.status().state
@@ -373,6 +373,16 @@ class ViserPanelGui:
         plan_button = gui.add_button("Plan", disabled=True, color=PRIMARY_ACTION_COLOR)
         plan_button.on_click(lambda _: self._submit_plan())
         self._handles["plan"] = plan_button
+        zero_button = gui.add_button(
+            "Zero",
+            disabled=True,
+            hint="Plan and move selected groups to joint zero at Next plan speed. Release teleop first.",
+        )
+        zero_button.on_click(lambda _: self._submit_zero())
+        self._handles["zero"] = zero_button
+        self._handles["zero_hint"] = gui.add_markdown(
+            "Zero plans and moves the selected groups to joint zero."
+        )
         self._handles["plan_controls_heading"] = gui.add_markdown("**Plan controls**")
         preview_button = gui.add_button("Preview", disabled=True)
         preview_button.on_click(lambda _: self._submit_preview())
@@ -747,6 +757,8 @@ class ViserPanelGui:
         }
 
     def _preset_values_by_name(self, preset: str) -> dict[str, float]:
+        if preset == "Zero":
+            return dict.fromkeys(self.get_model_config().joint_names, 0.0)
         if preset == "Current":
             state = self.get_current_joint_state()
         elif preset == "Init":
@@ -786,7 +798,7 @@ class ViserPanelGui:
     def _apply_preset(self, preset: str) -> None:
         if self._closed:
             return
-        if preset not in {"Current", "Init", "Home"}:
+        if preset not in {"Current", "Init", "Home", "Zero"}:
             return
         targets: dict[PlanningGroupID, JointState] = {}
         slider_values: list[tuple[PlanningGroupID, tuple[str, ...], list[float]]] = []
@@ -1075,6 +1087,7 @@ class ViserPanelGui:
 
     def _update_control_state(self) -> None:
         self._set_disabled("next_plan_speed", self.state.action_status != ActionStatus.IDLE)
+        self._set_disabled("zero", not self._can_zero())
         self._set_disabled("plan", not self.state.can_plan())
         self._set_disabled("preview", not self.state.can_preview())
         self._set_disabled(
@@ -1104,6 +1117,80 @@ class ViserPanelGui:
 
     def _can_execute(self) -> bool:
         return self.state.can_execute()
+
+    def _can_zero(self) -> bool:
+        return (
+            self.state.runtime == PanelRuntime.RUNNING
+            and self.state.backend_status == BackendConnectionStatus.READY
+            and bool(self.state.selected_group_ids)
+            and self.state.action_status == ActionStatus.IDLE
+            and self.state.manipulation_state in {"IDLE", "COMPLETED"}
+            and not self._stale_models(self.state.selected_group_ids)
+        )
+
+    def _submit_zero(self) -> None:
+        """Plan and dispatch selected joint zeros through the normal motion stack."""
+        if self._closed:
+            return
+        with self._joint_controls_lock:
+            if not self._can_zero():
+                self._set_recoverable_error(
+                    "Zero requires selected groups, fresh telemetry and idle motion"
+                )
+                return
+            group_ids = self.state.selected_group_ids
+            groups = self._groups_by_id()
+            names = [name for group_id in group_ids for name in groups[group_id].joint_names]
+            for name in names:
+                coordinate = self.scene_info.model.joint_space.coordinate(name)
+                if (coordinate.lower is not None and coordinate.lower > 0.0) or (
+                    coordinate.upper is not None and coordinate.upper < 0.0
+                ):
+                    self._set_recoverable_error(f"Joint zero is outside the limits for {name}")
+                    return
+            request = JointTargetRequest(
+                group_ids, JointState(name=names, position=[0.0] * len(names))
+            )
+            # Claim the operation token before any callback can observe activity so a
+            # Cancel that lands during setup supersedes Zero rather than the reverse.
+            operation_id = self._next_operation_id()
+            self.state.action_status = ActionStatus.RUNNING
+            self.state.plan_state = PanelPlanState()
+            self._apply_preset("Zero")
+            if not self._operation_is_current(operation_id):
+                return
+            selection_epoch = self.state.selection_epoch
+            target_sequence_id = self.state.latest_sequence_id
+        self.refresh()
+
+        def operation() -> None:
+            if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
+                self._finish_operation("zero=False", operation_id=operation_id)
+                return
+            plan = self.operator.plan_to_joints(request)
+            if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
+                self._finish_operation("zero=False", operation_id=operation_id)
+                return
+            if plan is None:
+                self.state.error = self.get_error() or "Could not plan to joint zero"
+                self._finish_operation("zero=False", clear_error=False, operation_id=operation_id)
+                return
+            if self._stale_models(group_ids):
+                self.state.error = "Cannot zero without fresh telemetry"
+                self._finish_operation("zero=False", clear_error=False, operation_id=operation_id)
+                return
+            # The module dispatches only its still-pending plan, so a Cancel landing here
+            # is rejected instead of resurrecting the plan.
+            ok = self.operator.execute_pending(plan)
+            if not self._operation_is_current(operation_id):
+                return
+            if not ok:
+                self.state.error = self.get_error() or "Zero execution rejected"
+            self._finish_operation(f"zero={ok}", clear_error=ok, operation_id=operation_id)
+
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
 
     def _submit_plan(self) -> None:
         if self._closed:
@@ -1397,7 +1484,7 @@ class ViserPanelGui:
     def _set_handle_value(self, key: str, value: str) -> None:
         handle = self._handles.get(key)
         if isinstance(handle, GuiMarkdownHandle):
-            self._set_optional_handle_attr(handle, "value", value)
+            handle.content = value
 
     def _set_disabled(self, key: str, disabled: bool) -> None:
         handle = self._handles.get(key)
