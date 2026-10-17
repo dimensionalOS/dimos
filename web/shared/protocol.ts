@@ -26,6 +26,11 @@ import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 export type { ChannelSpec, Delivery, Dir, PanelSpec, Publish } from "./manifest.ts";
 export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 
+// v8: viewers acknowledge latest frames (ack {ch, seq}) and the relay keeps
+// at most ACK_BUDGET unacknowledged frames per latest channel in flight to
+// a viewer, so a slow link carries a bounded backlog of video instead of a
+// stream window's worth. A v7 viewer never acks and would see one frame per
+// ack timeout, hence the bump.
 // v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
 // video.webrtc.v1 track channels. An older peer would drop the unknown
 // messages and show a video panel that never draws, hence the bump.
@@ -53,7 +58,7 @@ export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 // misread in both directions). v2: a reliable channel packs all its frames
 // onto one persistent stream. Bump on any change an old peer would silently
 // misparse.
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 // The reserved data-frame channel carrying robot-leg control messages (v5+:
 // the robot's hello upstream, subs snapshots downstream on the robot control
@@ -174,6 +179,17 @@ export interface SubMsg {
 export interface UnsubMsg {
   t: "unsub";
   ch: string;
+}
+
+// Viewer->relay (v8): the newest latest-channel frame the viewer has read
+// on `ch`, cumulative. Sent on the control stream (or a datagram by the
+// Python viewer) as frames are read, coalesced per task; the relay holds
+// further frames of the channel until the count in flight to this viewer
+// drops under its budget.
+export interface AckMsg {
+  t: "ack";
+  ch: string;
+  seq: number;
 }
 
 // Relay->robot: the full set of channels with >= 1 subscribed viewer, sent as
@@ -313,7 +329,7 @@ export interface RtcStalledMsg {
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
-export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
+export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg | AckMsg;
 export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type PublishMsg = PubMsg | PubAckMsg | PubNackMsg;
 export type RtcMsg = RtcIceMsg | RtcOfferMsg | RtcAnswerMsg | RtcStalledMsg;
@@ -356,6 +372,7 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   manifest: { robotId: "string" },
   sub: { ch: "string" },
   unsub: { ch: "string" },
+  ack: { ch: "string", seq: "number" },
   subs: { n: "number" },
   twist: { vx: "number", vy: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
@@ -414,6 +431,7 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
+  ack: (v) => typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN,
   twist: (v) => absentOrNumber(v.gen),
   stop: (v) => absentOrNumber(v.gen),
   teleop_start: (v) => absentOrNumber(v.gen),

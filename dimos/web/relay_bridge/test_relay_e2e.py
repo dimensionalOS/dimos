@@ -318,8 +318,9 @@ async def test_latest_channel_newest_wins(robot: RelayClient, viewer: RelayClien
     # The interleaving must actually exercise multiple sends (the old
     # single-turn version guaranteed sent==1).
     assert writer.sent >= 2, f"pump never interleaved; sent={writer.sent}"
-    # Everything the writer actually sent arrived (loopback: no transport loss).
-    assert len(cam) == writer.sent
+    # No more arrives than the writer sent; the relay itself sheds a frame
+    # offered while the viewer's two-frame ack budget was spent (v8).
+    assert 0 < len(cam) <= writer.sent
 
 
 async def test_large_frame_1mib(robot: RelayClient, viewer: RelayClient) -> None:

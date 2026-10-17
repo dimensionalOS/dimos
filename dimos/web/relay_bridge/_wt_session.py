@@ -47,6 +47,7 @@ from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
     MAX_PUB_DATA_BYTES,
+    Ack,
     DataFrame,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -387,6 +388,10 @@ class SessionProtocol(QuicConnectionProtocol):
                     )
                     continue
                 self.frames.put_nowait(frame)
+                if frame.header.delivery == "latest" and self.session_id is not None:
+                    # v8 receipt: the relay keeps at most two unacknowledged
+                    # latest frames per channel in flight to this viewer.
+                    self.send_msg(Ack(ch=frame.header.ch, seq=frame.header.seq))
             if corrupt and self._carrier_stream(stream_id):
                 # The carrier is a control dependency: a poisoned carrier must
                 # not leave a half-alive session with frozen subscriptions.

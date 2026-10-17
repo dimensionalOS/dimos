@@ -13,7 +13,8 @@ import { fitTransform, posePath } from "./mapRenderer.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { getPanel, UnknownPanel } from "./registry.tsx";
 import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
-import type { VoxelScene } from "./voxelView.ts";
+import type { PreparedVoxels } from "./voxelPrepare.ts";
+import { heightColors, type VoxelScene } from "./voxelView.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -1005,15 +1006,21 @@ function voxelFrame(store: ChannelStore, seq: number, ts = seq, n = 2): VoxelsVa
   return value;
 }
 
-/** Inflate stub whose promises settle only when the test says so. */
-function deferredInflateVoxels() {
+/** Prepare stub whose promises settle only when the test says so; it
+ * resolves with the positions it is handed, coloured like the worker would. */
+function deferredPrepareVoxels() {
   const calls: VoxelsValue[] = [];
   const settlers: { resolve: (p: Float32Array) => void; reject: (e: Error) => void }[] = [];
-  const inflate = (value: VoxelsValue): Promise<Float32Array> => {
+  const prepare = (value: VoxelsValue): Promise<PreparedVoxels> => {
     calls.push(value);
-    return new Promise((resolve, reject) => settlers.push({ resolve, reject }));
+    return new Promise((resolve, reject) =>
+      settlers.push({
+        resolve: (positions) => resolve({ positions, colors: heightColors(positions) }),
+        reject,
+      })
+    );
   };
-  return { inflate, calls, settlers };
+  return { prepare, calls, settlers };
 }
 
 describe("startVoxelSink", () => {
@@ -1045,9 +1052,9 @@ describe("startVoxelSink", () => {
   });
 
   it("inflates one frame at a time once the scene is up and skips to the newest", async () => {
-    const { inflate, calls, settlers } = deferredInflateVoxels();
+    const { prepare, calls, settlers } = deferredPrepareVoxels();
     voxelFrame(store, 1); // a slot may predate the mount
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare }));
     expect(calls.length).toBe(0); // the scene (a lazy chunk) is not up yet
     await flush();
     expect(calls.length).toBe(1);
@@ -1080,8 +1087,8 @@ describe("startVoxelSink", () => {
   });
 
   it("clears the scene on an empty frame and frames the camera on the first voxels", async () => {
-    const { inflate, settlers } = deferredInflateVoxels();
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    const { prepare, settlers } = deferredPrepareVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare }));
     await flush();
     const drawn = (call: number) => (scene.setVoxels.mock.calls[call] as [Float32Array])[0].length;
 
@@ -1115,8 +1122,8 @@ describe("startVoxelSink", () => {
   });
 
   it("redraws the pose without a new inflate and passes the follow toggle on", async () => {
-    const { inflate, calls, settlers } = deferredInflateVoxels();
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    const { prepare, calls, settlers } = deferredPrepareVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare }));
     await flush();
     voxelFrame(store, 1);
     settlers[0].resolve(POSITIONS);
@@ -1136,14 +1143,14 @@ describe("startVoxelSink", () => {
   });
 
   it("coalesces renders into one per frame and skips an unchanged pose", async () => {
-    const { inflate, settlers } = deferredInflateVoxels();
+    const { prepare, settlers } = deferredPrepareVoxels();
     const frames: (() => void)[] = [];
     sink = startVoxelSink(
       store,
       CHS,
       canvas,
       health,
-      deps({ inflate, requestFrame: (cb: () => void) => frames.push(cb) }),
+      deps({ prepare, requestFrame: (cb: () => void) => frames.push(cb) }),
     );
     await flush();
     voxelFrame(store, 1);
@@ -1169,8 +1176,8 @@ describe("startVoxelSink", () => {
   });
 
   it("carries a follow toggled before the scene is up into it and skips the first fit", async () => {
-    const { inflate, settlers } = deferredInflateVoxels();
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    const { prepare, settlers } = deferredPrepareVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare }));
     sink.follow(true); // clicked while the three.js chunk was still loading
     expect(scene.setFollow).not.toHaveBeenCalled();
     await flush();
@@ -1183,9 +1190,9 @@ describe("startVoxelSink", () => {
   });
 
   it("does not inflate while hidden and catches up on visibilitychange", async () => {
-    const { inflate, calls, settlers } = deferredInflateVoxels();
+    const { prepare, calls, settlers } = deferredPrepareVoxels();
     let hidden = true;
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate, hidden: () => hidden }));
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare, hidden: () => hidden }));
     await flush();
     voxelFrame(store, 1);
     const newest = voxelFrame(store, 2);
@@ -1200,8 +1207,8 @@ describe("startVoxelSink", () => {
   });
 
   it("counts inflate rejections and recovers on the next frame", async () => {
-    const { inflate, settlers } = deferredInflateVoxels();
-    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    const { prepare, settlers } = deferredPrepareVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ prepare }));
     await flush();
     const stamp = health.lastDrawOkAtMs;
     voxelFrame(store, 1);
@@ -1217,10 +1224,10 @@ describe("startVoxelSink", () => {
   });
 
   it("reports an unavailable renderer and never inflates", async () => {
-    const { inflate, calls } = deferredInflateVoxels();
+    const { prepare, calls } = deferredPrepareVoxels();
     const onError = vi.fn();
     sink = startVoxelSink(store, CHS, canvas, health, {
-      inflate,
+      prepare,
       hidden: () => false,
       createScene: () => Promise.reject(new Error("no webgl")),
       onError,
@@ -1233,7 +1240,7 @@ describe("startVoxelSink", () => {
   });
 
   it("resizes the scene from the layout and disposes it on stop", async () => {
-    const { inflate } = deferredInflateVoxels();
+    const { prepare } = deferredPrepareVoxels();
     let resize: (() => void) | null = null;
     const disposeObserver = vi.fn();
     sink = startVoxelSink(
@@ -1242,7 +1249,7 @@ describe("startVoxelSink", () => {
       canvas,
       health,
       deps({
-        inflate,
+        prepare,
         observeResize: (_el: Element, cb: () => void) => {
           resize = cb;
           return disposeObserver;
@@ -1293,7 +1300,7 @@ describe("Map3DPanel", () => {
   const badge = () => container.querySelector(`[data-testid="map3d-${VOX_CH}-badge"]`)!;
   const sinkDeps = () => ({
     createScene: () => Promise.resolve(scene as unknown as VoxelScene),
-    inflate: () => Promise.resolve(POSITIONS),
+    prepare: () => Promise.resolve({ positions: POSITIONS, colors: heightColors(POSITIONS) }),
     requestFrame: (cb: () => void) => cb(),
   });
 

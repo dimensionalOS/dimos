@@ -254,6 +254,31 @@ describe("Session over a fake WebTransport", () => {
     expect(handle.status.get().transport.phase).not.toBe("failed");
   });
 
+  it("acknowledges latest frames as it reads them, coalesced, and never reliable ones", async () => {
+    const { relay, handle } = start();
+    // A JSON latest channel, so the fake frames decode into the store.
+    await goLive(relay, handle, ROBOT_A, [
+      spec(),
+      spec({ ch: "agent_idle", encoding: "json.v1", delivery: "latest" }),
+    ]);
+    const unsub = handle.subscribe("agent_idle", () => {});
+    handle.subscribe("odom", () => {});
+    await until(() => relay.sent.filter((m) => m.t === "sub").length === 2, "subs");
+    relay.pushFrames([{ seq: 1, value: true }, { seq: 2, value: false }], "agent_idle");
+    await until(() => handle.store.get("agent_idle")?.seq === 2, "frames");
+    await settle();
+    const acks = () => relay.sent.filter((m) => m.t === "ack");
+    // Cumulative: the newest seq read, every ack for the latest channel.
+    expect(acks().at(-1)).toEqual({ t: "ack", ch: "agent_idle", seq: 2 });
+    expect(acks().every((m) => m.t === "ack" && m.ch === "agent_idle")).toBe(true);
+    const before = acks().length;
+    relay.pushFrame(3, { x: 1 }, "odom"); // reliable: read, stored, not acked
+    await until(() => handle.store.get("odom")?.seq === 3, "odom");
+    await settle();
+    expect(acks().length).toBe(before);
+    unsub();
+  });
+
   it("publishes connected only after the relay's welcome", async () => {
     const { relay, handle } = start();
     await until(() => relay.sent.some((m) => m.t === "hello"), "hello");
