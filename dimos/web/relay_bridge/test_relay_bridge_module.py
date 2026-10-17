@@ -41,7 +41,6 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -135,9 +134,9 @@ def test_manifest_and_robot_info_content() -> None:
 
     info = resolve_robot_info(config)
     assert (info.id, info.name) == ("go2-lab", "Lab")
-    # Fallback chain: explicit id -> global robot_id -> hostname.
+    # An unspecified id uses the hostname.
     fallback = resolve_robot_info(RelayBridgeConfig())
-    assert fallback.id == (RelayBridgeConfig().g.robot_id or socket.gethostname())
+    assert fallback.id == socket.gethostname()
     assert fallback.name == fallback.id
 
 
@@ -1026,26 +1025,6 @@ def test_relay_key_reaches_hello(monkeypatch) -> None:
     try:
         module.start()
         assert client.hello_token == "robot-key-0123456789abcdef"
-    finally:
-        stop_module(module)
-
-
-def test_relay_key_falls_back_to_global_config(monkeypatch) -> None:
-    # RELAY_KEY (env or .env) lands in GlobalConfig; the module reads it when
-    # its own field is unset. The autouse fixture restores global_config.
-    client = FakeClient()
-
-    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
-        return client
-
-    patch_relay(monkeypatch, fake_connect)
-    global_config.update(relay_key="global-key-0123456789abcdef")
-    module = RelayBridgeModule(
-        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
-    )
-    try:
-        module.start()
-        assert client.hello_token == "global-key-0123456789abcdef"
     finally:
         stop_module(module)
 

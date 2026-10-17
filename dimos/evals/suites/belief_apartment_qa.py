@@ -14,7 +14,7 @@
 
 """Answer-only QA cases for the DimSim apartment scene.
 
-    DIMOS_TRANSPORT=lcm VIEWER=none DIMSIM_HEADLESS=true \\
+    DIMOS_TRANSPORT=lcm VIEWER=none GO2CONNECTION__DIMSIM__HEADLESS=true \\
         dimos evals run dimos.evals.suites.belief_apartment_qa \\
         --agent dimos.evals.agents.pi
 """

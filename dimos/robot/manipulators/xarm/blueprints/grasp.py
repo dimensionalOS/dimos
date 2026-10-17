@@ -14,8 +14,8 @@
 
 """The xArm grasping stack, on hardware by default.
 
-``dimos run xarm-grasp --xarm7-ip 192.168.1.x``   heuristic grasps
-``dimos run xarm-grasp-graspgenx --xarm7-ip ...`` learned grasps
+``dimos run xarm-grasp --config robot.json``   heuristic grasps
+``dimos run xarm-grasp-graspgenx --config robot.json`` learned grasps
 ``dimos run xarm-grasp --simulation mujoco``      the same stack in MuJoCo
 
 Only the grasp provider separates the two blueprints. The arm-versus-sim split is
@@ -122,7 +122,7 @@ if SIMULATED:
         base_pose=PoseStamped(frame_id="world"),
         tf_extra_links=[],
     )
-    _hardware = make_xarm7_sim_hardware(XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS)
+    _hardware = make_xarm7_sim_hardware(home_joints=XARM_GRASP_SCAN_JOINTS)
 else:
     _model = make_xarm7_model_config(
         add_gripper=True,

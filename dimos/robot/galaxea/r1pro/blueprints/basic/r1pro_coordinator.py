@@ -134,8 +134,6 @@ _RERUN_VISUAL_OVERRIDE = {
 rerun_config = {
     "blueprint": _r1pro_rerun_blueprint,
     "pubsubs": [Zenoh()],
-    "rerun_open": global_config.rerun_open,
-    "rerun_web": global_config.rerun_web,
     # A live viewer needs only a small rolling buffer, and every viewer
     # (re)connect replays the whole buffer before going live.
     "memory_limit": "256MB",

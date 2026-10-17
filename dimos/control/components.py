@@ -78,6 +78,9 @@ class HardwareComponent:
             on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
             off the generic HardwareComponent shared by manipulators,
             bases, and grippers.
+        mock_limits: Limits of the mock adapter that stands in for this
+            hardware while no address reaches it, from the blueprint or the
+            coordinator's ``addresses``. None: the adapter needs its address.
     """
 
     hardware_id: HardwareId
@@ -90,6 +93,7 @@ class HardwareComponent:
     limits: JointLimits | None = None
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
+    mock_limits: JointLimits | None = None
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:

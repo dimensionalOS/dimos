@@ -26,7 +26,7 @@ Features:
 """
 
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import inspect
 import threading
 import time
@@ -69,6 +69,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -102,6 +103,10 @@ class ControlCoordinatorConfig(ModuleConfig):
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
+    # Device addresses by hardware id (an IP, a CAN interface, a serial port),
+    # applied when the stack runs on hardware. In simulation the blueprint's
+    # simulated adapters stay, so one saved robot configuration serves both.
+    addresses: dict[str, str] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
@@ -150,6 +155,10 @@ class ControlCoordinator(Module):
     """
 
     config: ControlCoordinatorConfig
+
+    # Injected when the blueprint has a MujocoSimModule: the scene that
+    # simulated manipulator adapters without one of their own attach to.
+    _mujoco_sim: MujocoSimSpec | None = None
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
@@ -212,6 +221,7 @@ class ControlCoordinator(Module):
 
         try:
             for component in self.config.hardware:
+                component = self._resolve_component(component)
                 self._setup_hardware(component)
                 hardware_added.append(component.hardware_id)
 
@@ -232,6 +242,28 @@ class ControlCoordinator(Module):
                 with suppress(Exception):
                     self.remove_hardware(hw_id)
             raise
+
+    def _resolve_component(self, component: HardwareComponent) -> HardwareComponent:
+        """Settle the adapter and address a component runs with.
+
+        A device address configured by hardware id applies on hardware, not in
+        simulation. A component still without an address runs its mock
+        stand-in when it has one. A simulated manipulator without a scene
+        attaches to the blueprint's MujocoSimModule.
+        """
+        address = component.address
+        if not self.config.g.simulation:
+            address = self.config.addresses.get(component.hardware_id, address)
+        if address is None and component.mock_limits is not None:
+            return replace(component, adapter_type="mock", limits=component.mock_limits)
+        if address is None and component.adapter_type == "sim_mujoco":
+            if self._mujoco_sim is None:
+                raise RuntimeError(
+                    f"Hardware {component.hardware_id!r} simulates an arm but the blueprint "
+                    "has no MujocoSimModule to attach to; add one or set the scene as its address"
+                )
+            address = str(self._mujoco_sim.scene_path())
+        return replace(component, address=address)
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""

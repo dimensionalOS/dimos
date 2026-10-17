@@ -19,7 +19,6 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
@@ -150,7 +149,6 @@ _xarm6_control_hw = make_xarm_hardware(
     "arm",
     6,
     adapter_type="xarm",
-    address=global_config.xarm6_ip,
     gripper=True,
 )
 
