@@ -16,15 +16,20 @@
 
 Embedder frame retrieval, detection, segmentation, then a lift to 3D through
 the camera's aligned depth or the rig's lidar, and geometric association. The
-models are the caller's, behind the interfaces in ``dandetect``. Every verified
-instance is returned latest-seen first and positioned by its latest sighting,
-and every stage carries a score so the answer can be empty rather than a guess.
+models are the caller's, behind the interfaces in ``dandetect``. A window is
+answered only from sightings inside it; ``memento`` keeps every sighting, so a
+span read before is answered from there and only the unread gap is detected.
+Every verified instance is returned latest-seen first and positioned by its
+latest sighting, and every stage carries a score so the answer can be empty
+rather than a guess.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import hashlib
 import heapq
+import json
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +37,7 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (
@@ -42,9 +48,9 @@ from dimos.perception.localize.association import (
     M_KZ,
     M_SCORE,
     M_TS,
-    FrameKey,
     Groups,
 )
+from dimos.perception.localize.memento import Gap, Memento, Reader, Sighting, Span
 from dimos.perception.localize.rig import Rig
 from dimos.perception.localize.support_plane import (
     SupportPlane,
@@ -54,7 +60,7 @@ from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from dimos.memory.stream import Stream
     from dimos.models.embedding.base import EmbeddingModel
@@ -75,10 +81,15 @@ class IndexFrame:
 
 @dataclass
 class LocalizeTrace:
-    """Artifacts a renderer needs; collected only when one is passed in."""
+    """Artifacts a renderer needs; collected only when one is passed in.
+
+    ``answers`` holds each answer's lifted detections in this process, ``spans``
+    its first and last sighting.
+    """
 
     detection_frames: list[Any] = field(default_factory=list)
     answers: list[list[Detection3DPC]] = field(default_factory=list)
+    spans: list[Span] = field(default_factory=list)
 
 
 def _similarity(obs: Any) -> float:
@@ -89,8 +100,8 @@ def _per_camera(counts: dict[str, int]) -> str:
     return ", ".join(f"{frame} {n}" for frame, n in counts.items())
 
 
-def _box_key(box: Any) -> tuple[int, ...]:
-    return tuple(round(float(v)) for v in box)
+def _inside(gap: Gap) -> Callable[[Any], bool]:
+    return lambda obs: obs.ts in gap
 
 
 def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
@@ -193,26 +204,27 @@ def embed_index(rig: Rig, embedder: EmbeddingModel, t0: float, t1: float) -> Str
 
 
 def retrieve(
-    queries: list[str],
+    gaps: dict[str, Gap],
     *,
     index: Stream[Any, Any],
     rig: Rig,
     embedder: EmbeddingModel,
     params: LocalizeParams,
 ) -> Stream[Any, Any]:
-    """The index frames worth a detector pass for ``queries``, in time order.
+    """The index frames worth a detector pass for each query's unread gap, in time order.
 
-    Per query and camera: the embedder's similarity peaks and the tail's best
-    frame, each joined by the sharpest frames posed within ``verify_radius_m``.
+    Per query and camera, inside the query's gap: the embedder's similarity
+    peaks and the tail's best frame, each joined by the sharpest frames posed
+    within ``verify_radius_m``.
     """
     index_count = index.count()
     settled = _settled(index, params.settled_window_fraction / rig.embed_hz)
     source = index.filter(lambda obs: obs.id in settled)
-    feeds = {frame: source.tags(camera=frame) for frame in rig.cameras}
 
     candidate_ids: set[int] = set()
-    expanded: set[FrameKey] = set()
-    for q in queries:
+    expanded: set[tuple[str, float, Gap]] = set()
+    for q, gap in gaps.items():
+        feeds = {frame: source.tags(camera=frame).filter(_inside(gap)) for frame in rig.cameras}
         query_embedding = embedder.embed_text(q)
         sightings: list[Any] = []
         found_by: dict[str, int] = {}
@@ -238,7 +250,7 @@ def retrieve(
             found_by[frame] = len(found)
         for peak in sightings:
             candidate_ids.add(peak.id)
-            peak_key = (peak.tags["camera"], peak.ts)
+            peak_key = (peak.tags["camera"], peak.ts, gap)
             if peak_key in expanded:
                 continue
             expanded.add(peak_key)
@@ -253,11 +265,11 @@ def retrieve(
         )
 
     candidates = index.filter(lambda obs: obs.id in candidate_ids).order_by("ts")
-    per_camera = dict.fromkeys(feeds, 0)
+    per_camera = dict.fromkeys(rig.cameras, 0)
     for obs in candidates:
         per_camera[obs.tags["camera"]] += 1
     logger.info(
-        f"detection: {len(candidate_ids)} candidate frames for {len(queries)} labels "
+        f"detection: {len(candidate_ids)} candidate frames for {len(gaps)} labels "
         f"({_per_camera(per_camera)})"
     )
     return candidates
@@ -292,26 +304,24 @@ def detect(
     candidates: Stream[Any, Any],
     queries: list[str],
     *,
+    gaps: dict[str, Gap],
     rig: Rig,
     detector: Detector,
-    state: list[Groups],
     params: LocalizeParams,
-    pending: dict[FrameKey, list[int]],
 ) -> Stream[Any, Any]:
-    """Each candidate frame's boxes per query, from one detector pass per frame.
+    """Each candidate frame's boxes for the queries whose unread gap holds it.
 
-    A frame every query has read under ``params.read_key()`` is skipped, and so
-    is a box already folded into a query's groups. A frame left without boxes is
-    marked read here; any other goes into ``pending`` for :func:`associate` to mark.
+    One detector pass per frame scores every query; a box is kept only for a
+    query that has not read the frame.
     """
     floor = params.candidate_floor
-    read_key = params.read_key()
 
     def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
-            frame_key = (obs.tags["camera"], obs.ts)
             active = [
-                j for j, group in enumerate(state) if (frame_key, read_key) not in group.ingested
+                j
+                for j, q in enumerate(queries)
+                if q in gaps and obs.ts in gaps[q] and queries.index(q) == j
             ]
             if not active:
                 continue
@@ -322,8 +332,6 @@ def detect(
             for j in active:
                 keep = rows[:, j] >= floor
                 for box, score in zip(boxes[keep], rows[keep, j], strict=True):
-                    if (frame_key, _box_key(box)) in state[j].folded:
-                        continue
                     det = Detection2DBBox(
                         bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
                         track_id=len(detections),
@@ -335,115 +343,159 @@ def detect(
                     )
                     if det.is_valid():
                         detections.append(det)
-            if not detections:
-                for j in active:
-                    state[j].ingested.add((frame_key, read_key))
-                continue
-            pending[frame_key] = active
-            yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
+            if detections:
+                yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
 
     return candidates.transform(_frames)
 
 
 def segment(detections: Stream[Any, Any], segmenter: Segmenter) -> Stream[Any, Any]:
-    """Each frame's boxes as masks, carried with the detector's boxes they came from."""
-    return detections.map(lambda obs: obs.derive(data=(obs.data, segmenter.segment(obs.data))))
+    """Each frame's boxes as masks."""
+    return detections.map(lambda obs: obs.derive(data=segmenter.segment(obs.data)))
 
 
-def associate(
+def lift(
     frames: Stream[Any, Any],
+    queries: list[str],
     *,
     rig: Rig,
     params: LocalizeParams,
     planes: dict[str, SupportPlane | None],
-    state: list[Groups],
-    pending: dict[FrameKey, list[int]],
     traces: list[LocalizeTrace | None],
-) -> Stream[Any, Any]:
-    """Each segmented frame lifted to 3D, folded into its queries' groups, then marked read."""
-    read_key = params.read_key()
+) -> Iterator[tuple[str, Sighting]]:
+    """Each segmented frame lifted to 3D: one sighting per surviving mask, under its query.
 
-    def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
-        for obs in upstream:
-            boxes, frame = obs.data
-            frame_key = (obs.tags["camera"], obs.ts)
-            for det3d in _lift(frame, rig, params, planes.get(frame_key[0])):
-                j = det3d.class_id
-                slot = state[j].add(det3d, params.cluster_radius_m, params.fuse_voxel_m)
-                state[j].folded.add((frame_key, _box_key(boxes.detections[det3d.track_id].bbox)))
-                if traces[j] is not None:
-                    state[j].trace[slot].append(det3d)
-            for j, label_trace in enumerate(traces):
-                label_dets = [det for det in frame if det.class_id == j]
-                if label_trace is not None and label_dets:
-                    label_trace.detection_frames.append(
-                        obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
-                    )
-            # read only once its sightings are in, so a frame a call failed on is read again
-            for j in pending.pop(frame_key):
-                state[j].ingested.add((frame_key, read_key))
-            yield obs
-
-    return frames.transform(_frames)
+    A sighting carries its lifted detection only when a trace will render it.
+    """
+    keep = any(trace is not None for trace in traces)
+    for obs in frames:
+        frame = obs.data
+        camera = obs.tags["camera"]
+        for det3d in _lift(frame, rig, params, planes.get(camera)):
+            viewpoint = (-det3d.transform).translation
+            yield (
+                queries[det3d.class_id],
+                Sighting(
+                    ts=obs.ts,
+                    camera=camera,
+                    score=float(det3d.confidence),
+                    points=np.asarray(det3d.pointcloud.pointcloud.points),
+                    viewpoint=(viewpoint.x, viewpoint.y, viewpoint.z),
+                    detection=det3d if keep else None,
+                ),
+            )
+        for j, trace in enumerate(traces):
+            label_dets = [det for det in frame if det.name == queries[j]]
+            if trace is not None and label_dets:
+                trace.detection_frames.append(
+                    obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
+                )
 
 
 def localize(
     queries: list[str],
     *,
     index: Stream[Any, Any],
+    window: Span,
+    head: float,
     rig: Rig,
     embedder: EmbeddingModel,
     detector: Detector,
     segmenter: Segmenter,
     params: LocalizeParams,
+    memento: Memento | None = None,
     traces: list[LocalizeTrace] | None = None,
-    groups: dict[str, Groups] | None = None,
 ) -> list[list[Localization]]:
-    """Every verified 3D instance of each query, latest-seen first, one list per query.
+    """Every verified 3D instance of each query seen inside ``window``, latest-seen first.
 
-    The queries share one detection pass. An empty list is a first-class
-    answer: nothing reached the accept score or no support was confirmed from
-    a second viewpoint. Coexisting instances of one label are all returned,
-    each carrying ``ambiguity_margin`` against its rivals. ``traces``, one per
-    query, collect what a renderer needs. A ``groups`` dict makes evidence
-    cumulative across calls: frames already read for a label under the same
-    params, the answer gates aside, are skipped, a box is lifted in once, and
-    an object stays answerable after it leaves the window. A frame counts as
-    read once its sightings are in, so a frame a failed call left behind is
-    read again.
+    One list per query; the queries share one detection pass. ``window`` is the
+    closed span the answer covers, ``index`` its embedded frames and ``head``
+    the newest frame there is. An empty list is a first-class answer: nothing
+    in the window reached the accept score or was confirmed from a second
+    viewpoint. Coexisting instances of one label are all returned, each
+    carrying ``ambiguity_margin`` against its rivals, and an object that moved
+    inside the window is an instance per place. ``memento`` keeps every
+    sighting read: a span a label has read under the same params, the answer
+    gates aside, is answered from it with no detector pass, so a window
+    overlapping earlier ones detects only its unread gap. ``traces``, one per
+    query, collect what a renderer needs.
     """
     label_traces: list[LocalizeTrace | None] = (
         list(traces) if traces is not None else [None] * len(queries)
     )
-    state = [(groups if groups is not None else {}).setdefault(q, Groups()) for q in queries]
 
-    candidates = retrieve(queries, index=index, rig=rig, embedder=embedder, params=params)
-    planes = support_planes(rig, candidates, params)
-    # detect hands each frame with boxes to associate, which marks it read
-    pending: dict[FrameKey, list[int]] = {}
-    detections = detect(
-        candidates, queries, rig=rig, detector=detector, state=state, params=params, pending=pending
-    )
-    associate(
-        segment(detections, segmenter),
-        rig=rig,
+    def read(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+        candidates = retrieve(gaps, index=index, rig=rig, embedder=embedder, params=params)
+        planes = support_planes(rig, candidates, params)
+        detections = detect(
+            candidates, queries, gaps=gaps, rig=rig, detector=detector, params=params
+        )
+        found: dict[str, list[Sighting]] = {q: [] for q in gaps}
+        for label, sighting in lift(
+            segment(detections, segmenter),
+            queries,
+            rig=rig,
+            params=params,
+            planes=planes,
+            traces=label_traces,
+        ):
+            found[label].append(sighting)
+        return found
+
+    return answer_window(
+        queries,
+        memento=memento if memento is not None else Memento(),
+        key=memory_key(params),
+        window=window,
+        head=head,
+        read=read,
         params=params,
-        planes=planes,
-        state=state,
-        pending=pending,
+        world_frame=rig.world_frame,
         traces=label_traces,
-    ).drain()
+    )
 
-    return [_finalize(q, state[j], rig, params, label_traces[j]) for j, q in enumerate(queries)]
+
+def answer_window(
+    queries: list[str],
+    *,
+    memento: Memento,
+    key: str,
+    window: Span,
+    head: float,
+    read: Reader,
+    params: LocalizeParams,
+    world_frame: str,
+    traces: list[LocalizeTrace | None],
+) -> list[list[Localization]]:
+    """Each query's verified instances, built only from its sightings inside ``window``.
+
+    ``read`` runs on the unread gaps alone; everything else comes from ``memento``.
+    """
+    found, gaps = memento.recall(queries, key, window, head, read)
+    for q in queries:
+        logger.info(
+            f"memento {q!r}: read {gaps[q].seconds:.1f}s of the {window[1] - window[0]:.1f}s "
+            f"window, {len(found[q])} sightings in it"
+        )
+    return [_finalize(q, found[q], params, world_frame, traces[j]) for j, q in enumerate(queries)]
+
+
+def memory_key(params: LocalizeParams) -> str:
+    """What a span counts as read under: the params without the answer gates, as a digest."""
+    text = json.dumps(asdict(params.read_key()), sort_keys=True)
+    return hashlib.blake2s(text.encode(), digest_size=8).hexdigest()
 
 
 def _finalize(
     query: str,
-    group: Groups,
-    rig: Rig,
+    sightings: list[Sighting],
     params: LocalizeParams,
+    world_frame: str,
     trace: LocalizeTrace | None,
 ) -> list[Localization]:
+    group = Groups()
+    for sighting in sightings:
+        group.add(sighting, params.cluster_radius_m, params.fuse_voxel_m)
     rows = [group.rows(i) for i in range(len(group.centers))]
     views = [len(np.unique(np.round(r[:, M_KX : M_KZ + 1], 2), axis=0)) for r in rows]
     verified = [
@@ -472,18 +524,29 @@ def _finalize(
             and not (rows[j][:, M_TS].max() < lo or rows[j][:, M_TS].min() > hi)  # coexisting
         ]
         if trace is not None:
-            trace.answers.append(group.trace[i])
+            trace.answers.append(
+                [s.detection for s in group.sightings[i] if s.detection is not None]
+            )
+            trace.spans.append((lo, hi))
         newest = mine[mine[:, M_TS].argmax()]
         instances.append(
             Localization(
-                instance_id=group.ids[i],
+                instance_id=_instance_id(query, group.sightings[i][0]),
                 semantic_score=score,
                 ambiguity_margin=score - max(rivals) if rivals else 1.0,
                 position_world_xyz=(float(newest[M_CX]), float(newest[M_CY]), float(newest[M_CZ])),
-                frame_id=rig.world_frame,
+                frame_id=world_frame,
+                first_seen_timestamp=lo,
                 last_seen_timestamp=hi,
-                point_cloud=group.clouds[i],
+                point_cloud=PointCloud2.from_numpy(
+                    group.clouds[i], frame_id=world_frame, timestamp=hi
+                ),
                 n_views=views[i],
             )
         )
     return instances
+
+
+def _instance_id(query: str, first: Sighting) -> str:
+    """An instance named by its label and earliest sighting, so a repeated window names it alike."""
+    return hashlib.blake2s(f"{query}:{first.id}".encode(), digest_size=4).hexdigest()

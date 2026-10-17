@@ -7,8 +7,8 @@ description: Locate objects with a running PerceptionLocalize stack over MCP (`s
 
 `localize` answers from memory: the colour frames the module has embedded,
 lifted to 3D through depth or lidar. It does not look at the current frame.
-Every answer is a verified 3D object with a score and a view count, and an
-empty answer is an answer.
+Every answer is a verified 3D object seen inside the asked window, with a score,
+a view count and when it was first and last seen; an empty answer is an answer.
 
 ## Before the first call
 
@@ -53,27 +53,37 @@ empty answer is an answer.
 - The first answer line is the window as resolved:
   `window A s to B s of C s of feed, N frames`. With `N = 0` nothing was read
   and the answer is memory only.
-- A frame is read once per label and params, `accept_score` and `min_views`
-  aside. A window of frames never read for a label costs detector passes;
-  asking the same window again is nearly free.
+- An answer holds only what was seen inside its window. Earlier calls never add
+  objects to it, and nothing seen outside the window changes its positions,
+  ages, scores or views.
+- A span of time is read once per label and params; the fields that only build
+  the answer, `accept_score`, `min_views`, `cluster_radius_m` and
+  `fuse_voxel_m`, aside. A window never read for a label costs detector passes.
+  The same window asked again is answered from memory with no detector pass,
+  and a window overlapping earlier ones reads only its new part.
 
 ## Reading the answer
 
     window 0.0s to 30.0s of 28.3s of feed, 76 frames
-    'chair' at (-0.97, 7.31, 0.40) in world score=0.49 views=6 id=ed6e5cde seen 24s ago
+    'chair' at (-0.97, 7.31, 0.40) in world score=0.49 views=6 id=ed6e5cde seen 24s ago, first 28s ago
     no verified detection of 'bag'
 
 - One line per verified object, newest sighting first. The position is the
-  centroid of the object's newest sighting, in the frame the line names.
-- `id` names the same object for as long as the module runs.
+  centroid of the object's newest sighting in the window, in the frame the
+  line names.
+- `seen Ns ago, first Ms ago` are the ages of the object's newest and oldest
+  sighting inside the window.
+- An object that moved inside the window is one line per place, each with its
+  own ages: the trace of where it was. Two lines of one label that were seen
+  over the same seconds are two objects.
+- `id` names an object in this window. The same window asked again gives the
+  same `id`; another window can name the same object differently.
 - `score` is the detector's best score for the object. Compare scores within one
   label only; the scale changes with the wording.
 - `views` counts the distinct camera positions, 1 cm apart, that saw the object.
   An object needs 2, and a camera that does not move adds none. A camera that
   never moves, such as a fixed top view, stays silent until `min_views` is 1:
   pass `'{"min_views": 1}'`, which reads no frame again.
-- Objects found by earlier calls are answered again, also outside this window.
-  `seen Ns ago` is the age of the newest sighting.
 - `no verified detection` means nothing passed the gates at these params. It is
   not proof that the object is absent.
 - Labels are not compared: one object can be answered under two labels.
@@ -91,11 +101,11 @@ Four labels on a rolling 5 s window, one call after another:
   run time plus any wait. If calls take longer than the window, widen it. The
   overlap is free, because read frames are skipped; a gap loses frames.
 - Keep the label strings and `params` the same on every call. Memory is per
-  exact label string, and frames read under other params are read again,
-  unless only `accept_score` or `min_views` changed.
-- An object that left view stays in the answer at its last position, with a
-  growing `seen Ns ago`. An object that moved farther than `cluster_radius_m`
-  gets a new `id` at its new position, and the old `id` stays at the old one.
+  exact label string, and a window read under other params is read again,
+  unless only the fields that build the answer changed.
+- Each answer is what was seen in that call's window. An object that was taken
+  away drops out once the window no longer reaches its last sighting; one that
+  moved shows at its new place only.
 
 ## Narrowing a position
 
@@ -104,9 +114,9 @@ The position is the newest sighting's, so a closer sighting refines it.
 1. Bring the camera close to the object and move it a little: every new camera
    position adds a view.
 2. Ask a short recent window, `{"objects": "red mug", "start": -5, "duration": 5}`.
-   A sighting within `cluster_radius_m` of the object's centre joins it under
-   the same `id`, and the position moves to the new sighting.
-3. Check that `views` grew and `seen` is near 0 s.
+   The answer holds only that window's sightings, so its position is the
+   newest one.
+3. Check that `seen` is near 0 s.
 
 At a table, a walking robot's room-scale params are coarse for small objects:
 
@@ -118,8 +128,7 @@ At a table, a walking robot's room-scale params are coarse for small objects:
 | `surface_patch_max_rise_m`: a sighting this flat on the support is surface | 0.08 | 0.003 | 0.003 |
 
 Pass `"params": "xarm"` on every call for that label while working at the
-table. Objects the label already has from room-scale calls keep how they were
-built; a label first asked at the table is built at desk scale.
+table. A window first read at room scale is read again under desk params.
 
 ## Changing params per call
 
@@ -147,19 +156,19 @@ it is back on the module's, the ones its blueprint set.
 
 | field | acts on | what it gates |
 |---|---|---|
-| `accept_score` | every object of the label, at once | best score an object needs to be answered |
-| `min_views` | every object of the label, at once | camera positions an object needs |
-| `candidate_floor` | frames read by this call | detector score that forms a box; lower means more boxes and more GPU memory |
-| `cluster_radius_m` | frames read by this call | sightings this close are one object |
-| `max_object_extent_m`, `min_points`, `min_camera_range_m` | frames read by this call | size, points and camera distance a sighting needs |
-| `fuse_voxel_m` | objects a sighting of this call joins | resolution of the object's cloud |
-| `verify_radius_m`, `peak_prominence` | frames read by this call | how many frames retrieval hands to the detector |
+| `accept_score` | the answer | best score an object needs to be answered |
+| `min_views` | the answer | camera positions an object needs |
+| `cluster_radius_m` | the answer | sightings this close are one object |
+| `fuse_voxel_m` | the answer | resolution of the object's cloud |
+| `candidate_floor` | what is read | detector score that forms a box; lower means more boxes and more GPU memory |
+| `max_object_extent_m`, `min_points`, `min_camera_range_m` | what is read | size, points and camera distance a sighting needs |
+| `verify_radius_m`, `peak_prominence` | what is read | how many frames retrieval hands to the detector |
 
-- `accept_score` and `min_views` act only when the answer is built: changing
-  them reads no frame again and applies at once to everything remembered for
-  the label. Try them first.
-- The other fields shape only what happens from now on. Objects already built
-  keep how they were built.
+- The fields that act on the answer are applied when it is built: changing
+  them reads nothing again, and every window answered from memory uses them.
+  Try them first.
+- A field that acts on what is read starts a separate memory: a window asked
+  under it is read again.
 - A misspelled field fails the call with `unexpected keyword argument`, an
   unknown preset with `unknown preset`.
 - Every field is defined on `LocalizeParams` in `types.py`, and each preset's

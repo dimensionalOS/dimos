@@ -25,13 +25,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class Localization:
-    """One verified instance. Cloud is every viewpoint's union; position is the latest."""
+    """One verified instance inside the queried window, seen from its first to its last sighting.
+
+    Cloud is every viewpoint's union; position is the latest.
+    """
 
     instance_id: str
     semantic_score: float
     ambiguity_margin: float
     position_world_xyz: tuple[float, float, float]
     frame_id: str
+    first_seen_timestamp: float
     last_seen_timestamp: float
     point_cloud: PointCloud2
     n_views: int
@@ -66,6 +70,6 @@ class LocalizeParams:
     plane_cell_m: float  # XY cell of the support-plane cache
 
     def read_key(self) -> LocalizeParams:
-        """What a frame counts as read under: these params without the answer gates,
-        which act only once the answer is built, so changing them reads no frame again."""
-        return replace(self, accept_score=0.0, min_views=0)
+        """What a span counts as read under: these params without the fields that act
+        only once a window's answer is built, so changing those reads nothing again."""
+        return replace(self, accept_score=0.0, min_views=0, cluster_radius_m=0.0, fuse_voxel_m=0.0)
