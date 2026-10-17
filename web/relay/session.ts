@@ -53,6 +53,9 @@ export { CONTROL_SEND_ORDER, LATEST_SEND_ORDER, RELIABLE_SEND_ORDER } from "./fo
 // viewer holds every slot and is disconnected.
 export const STREAM_CREDIT_STALL_MS = 1000;
 export const STREAM_CREDIT_KICK_MS = 10_000;
+// Idle streams kept per viewer and sendOrder for reuse (sink.releaseStream);
+// beyond this an unsubscribed channel's stream is abandoned as before.
+const IDLE_STREAMS_MAX = 64;
 
 // How long a robot session holding a contested id has to answer the
 // relay's ping before a new session with that id supersedes it (the bridge
@@ -430,8 +433,20 @@ export class ViewerSession implements ViewerPeer {
     this.#creditStallMs = timing.creditStallMs ?? STREAM_CREDIT_STALL_MS;
     this.#creditKickMs = timing.creditKickMs ?? STREAM_CREDIT_KICK_MS;
     this.sink = {
-      openStream: (order) => this.#openStream(order),
+      openStream: (order) => {
+        const idle = this.#idle.get(order)?.pop();
+        return idle === undefined ? this.#openStream(order) : Promise.resolve(idle);
+      },
       sharedStream: (order) => this.#shared ??= this.#openStream(order),
+      releaseStream: (order, writer) => {
+        const idle = this.#idle.get(order) ?? [];
+        if (idle.length >= IDLE_STREAMS_MAX) {
+          writer.abort().catch(() => {});
+          return;
+        }
+        idle.push(writer);
+        this.#idle.set(order, idle);
+      },
       kick(reason: string): void {
         console.log(`[relay] kicking viewer: ${reason}`);
         try {
@@ -445,6 +460,10 @@ export class ViewerSession implements ViewerPeer {
 
   /** The stream the viewer's small reliable channels share (sink.sharedStream). */
   #shared: Promise<FrameWriter> | null = null;
+  /** Streams of unsubscribed channels, by sendOrder, for the next channel at
+   * that order (sink.releaseStream): a page switch would otherwise abandon a
+   * stream per panel, which on Deno 2.6.10 lives on for the connection. */
+  #idle = new Map<number, FrameWriter[]>();
 
   /** One persistent uni stream per channel at its band's sendOrder. The
    * create waits for stream credit (protocol.md workaround 7); a long wait

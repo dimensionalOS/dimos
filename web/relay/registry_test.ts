@@ -52,7 +52,17 @@ class FakeSink implements ViewerSink {
     return this.#shared ??= this.openStream(order);
   }
 
+  streamsReleased = 0;
+  #idle = new Map<number, FrameWriter[]>();
+
+  releaseStream(order: number, writer: FrameWriter): void {
+    this.streamsReleased++;
+    this.#idle.set(order, [...(this.#idle.get(order) ?? []), writer]);
+  }
+
   openStream(order: number): Promise<FrameWriter> {
+    const idle = this.#idle.get(order)?.pop();
+    if (idle !== undefined) return Promise.resolve(idle);
     this.streamsOpened++;
     this.orders.push(order);
     return Promise.resolve({
@@ -417,8 +427,11 @@ Deno.test("rapid watch switches release every abandoned persistent stream", asyn
     reg.onRobotFrame(robots[watching], frame("color_image", i));
   }
   await tick();
+  // The switches outrun the opens: each policy's stream finished opening
+  // after its dispose and went to the pool unused, so every switch opened a
+  // fresh one and none was aborted.
   assertEquals(viewer.sink.streamsOpened, 7);
-  assertEquals(viewer.sink.streamsAborted, 6); // only the live stream remains
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [6, 0]);
   assertEquals(viewer.sink.kicked, null);
 });
 
@@ -431,12 +444,12 @@ Deno.test("unsub disposes the channel's policy and releases its stream", async (
   await tick();
   send(reg, viewer, { t: "unsub", ch: "color_image" });
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1);
-  // Re-subscribing starts a fresh policy on a fresh stream.
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
+  // Re-subscribing starts a fresh policy on the released stream.
   send(reg, viewer, { t: "sub", ch: "color_image" });
   reg.onRobotFrame(robot, frame("color_image", 2));
   await tick();
-  assertEquals(viewer.sink.streamsOpened, 2);
+  assertEquals(viewer.sink.streamsOpened, 1);
   assertEquals(viewer.sink.sent.length, 2);
 });
 
@@ -466,7 +479,7 @@ Deno.test("viewer teardown disposes its policies", async () => {
   await tick();
   reg.viewerClosed(viewer);
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1); // the latest stream; the shared one goes with the transport
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]); // the transport close ends them
 });
 
 Deno.test("manifest delivery wins over the frame header's", () => {
@@ -588,13 +601,13 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
   assertEquals(viewer.sink.streamsOpened, 2);
   assertEquals(viewer.sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
   assertEquals(viewer.sink.sent.length, 6);
-  // An unsub releases the channel's stream; a resub opens a fresh one.
+  // An unsub hands the channel's stream back; a resub reuses it.
   send(reg, viewer, { t: "unsub", ch: "color_image" });
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
   send(reg, viewer, { t: "sub", ch: "color_image" });
   reg.onRobotFrame(robot, frame("color_image", 4, "latest"));
   await tick();
-  assertEquals(viewer.sink.streamsOpened, 3);
+  assertEquals(viewer.sink.streamsOpened, 2);
 });
 
 Deno.test("small reliable channels share one stream per viewer, bulk ones get their own", async () => {
@@ -625,7 +638,7 @@ Deno.test("small reliable channels share one stream per viewer, bulk ones get th
   await tick();
   assertEquals(viewer.sink.streamsOpened, 2);
   send(reg, viewer, { t: "unsub", ch: "cloud" });
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
 });
 
 Deno.test("claimRobot: a holder that answers its probe keeps the id; a silent one is superseded", async () => {
@@ -709,39 +722,44 @@ Deno.test("rate feedback: the cap follows the slowest shedding viewer, climbs ba
   const viewer = attach(reg, "r1", ["color_image"]);
   const rates = () =>
     robot.control.filter((m) => m.t === "rate").map((m) => (m as { hz: number }).hz);
-  const newestSent = () => parseRobotFrameHeader(viewer.sink.sent.at(-1)!)!.seq;
   let seq = 0;
-  /** `frames` robot frames over one 5 s rate window; the viewer acks the
-   * newest frame it was sent on every `every`th frame. Acking every third
-   * frame sheds one in three (two in flight, the pending one replaced). */
-  const window = async (frames: number, every: number) => {
+  let read = 0; // frames the viewer has read, in the order they were sent to it
+  /** `frames` robot frames over one 5 s rate window; the viewer reads (and
+   * acks) one frame every `readMs`, oldest first, like a decoder at that
+   * rate. Slower than the robot, it falls behind and the relay sheds. */
+  const window = async (frames: number, readMs: number) => {
     const start = now;
+    let nextReadAt = start;
     for (let i = 0; i < frames; i++) {
       now = start + Math.floor((i * 5000) / frames);
       reg.onRobotFrame(robot, frame("color_image", ++seq, "latest"));
       await tick();
-      if (i % every === every - 1) {
-        send(reg, viewer, { t: "ack", ch: "color_image", seq: newestSent() });
-        await tick();
+      while (nextReadAt <= now) {
+        const sent = viewer.sink.sent.map((b) => parseRobotFrameHeader(b)!.seq);
+        if (read < sent.length) {
+          send(reg, viewer, { t: "ack", ch: "color_image", seq: sent[read++] });
+          await tick();
+        }
+        nextReadAt += readMs;
       }
     }
     now = start + 5000;
   };
 
-  await window(75, 1); // 15 Hz, every frame acked: keeping up
+  await window(75, 60); // 15 Hz, read as fast as it arrives: keeping up
   reg.tick(now);
   assertEquals(rates(), []); // the cap stays at maxHz, nothing to say
 
-  await window(75, 3); // the viewer takes two frames in three: 10 of 15 fps
+  await window(75, 100); // the viewer reads 10 of the 15 frames a second
   reg.tick(now);
   // The rate window is ten 500 ms buckets, so a rate reads up to a tenth low.
   const capped = rates()[0];
   assert(
-    rates().length === 1 && capped >= 9 && capped <= 10,
+    rates().length === 1 && capped >= 8.5 && capped <= 10.5,
     `cap near the viewer's 10 fps: ${rates()}`,
   );
 
-  await window(50, 1); // the robot follows at the cap and the viewer keeps up: probe up a quarter
+  await window(Math.round(capped * 5), 60); // the robot follows the cap, the viewer keeps up: probe up a quarter
   reg.tick(now);
   assertEquals(rates().length, 2);
   assert(Math.abs(rates()[1] - capped * 1.25) < 1e-9, `probed up: ${rates()}`);
@@ -801,6 +819,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   assertEquals(outKeys, [
     "ackTimeouts",
     "bps",
+    "budget",
     "bytesOut",
     "delivery",
     "dropped",
