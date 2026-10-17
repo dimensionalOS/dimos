@@ -37,6 +37,7 @@ from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.joint_reset import JointResetModule
 
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
 
@@ -84,6 +85,12 @@ def build_dual_openyam_webxr(
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
         ArmTeleopModule.blueprint(),
+        JointResetModule.blueprint(
+            button_groups={
+                "left_secondary": ["left_manipulator"],
+                "right_secondary": ["right_manipulator"],
+            }
+        ),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
