@@ -11,6 +11,7 @@ import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts"
 import { Registry } from "./registry.ts";
 import { RtcHub } from "./rtc.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
+import { shardFor, type ShardInfo, spawnShards } from "./shards.ts";
 
 export interface RelayOptions {
   /**
@@ -73,6 +74,17 @@ export interface RelayOptions {
    * only sensible behind the operator's own TLS and access control.
    */
   unsafeNonLoopback?: boolean;
+  /**
+   * Run this many relay processes (--shards): this one is shard 0 and spawns
+   * the rest with `shardChildArgs` plus --port 0, reading `shardReadScopes`
+   * besides the web directory. /api/info?robot=<id> then answers with the
+   * robot's shard, so a robot and its viewers share one process (shards.ts).
+   */
+  shards?: number;
+  shardChildArgs?: string[];
+  shardReadScopes?: string[];
+  /** Test seam: the other shards, already running, instead of spawning. */
+  shardInfos?: ShardInfo[];
 }
 
 export interface RelayHandle {
@@ -82,6 +94,10 @@ export interface RelayHandle {
   wtUrl: string;
   /** base64 SHA-256 of the ephemeral certificate; absent with cert/key. */
   certHash?: string;
+  /** This process's id (/api/info instance). */
+  instance: string;
+  /** Relay processes answering discovery here (1 without --shards). */
+  shards: number;
   shutdown(): Promise<void>;
 }
 
@@ -260,6 +276,17 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // precedence over it in handleHttp.
   const staticRoot = serveRoot ?? cockpitRoot;
 
+  // The other shards, spawned before anything binds so a failed spawn
+  // leaves nothing behind. Their ready lines carry what discovery needs.
+  const spawned = options.shardInfos === undefined && (options.shards ?? 1) > 1
+    ? await spawnShards(
+      (options.shards ?? 1) - 1,
+      options.shardChildArgs ?? [],
+      options.shardReadScopes ?? [],
+    )
+    : null;
+  const shardInfos: ShardInfo[] = options.shardInfos ?? spawned?.infos ?? [];
+
   // A real certificate (--cert/--key) is served as-is and its hash is not
   // advertised: clients verify it like any other. Without one, an ephemeral
   // self-signed certificate is pinned by hash through /api/info.
@@ -364,6 +391,10 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         // Memory (bytes) and uptime, for soak runs watching for growth.
         memoryUsage: Deno.memoryUsage(),
         uptimeMs: Date.now() - startedAt,
+        // This process's figures only; the other shards answer on their
+        // own HTTP ports.
+        shards: shardInfos.length + 1,
+        shardHttpPorts: [httpPort, ...shardInfos.map((s) => s.httpPort)],
       },
       { headers },
     );
@@ -392,6 +423,25 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/api/info") {
+      // A robot and its viewers name the robot: the answer is its shard,
+      // this process (shard 0) or one of the children, from their ready
+      // lines. Without a robot the client stays here.
+      const robot = url.searchParams.get("robot");
+      const shard = robot === null || shardInfos.length === 0
+        ? 0
+        : shardFor(robot, shardInfos.length + 1);
+      if (shard > 0) {
+        const other = shardInfos[shard - 1];
+        const info = {
+          wtUrl: other.wtUrl,
+          ...(other.certHash !== undefined ? { certHash: other.certHash } : {}),
+          v: PROTOCOL_VERSION,
+          ...(other.instance !== undefined ? { instance: other.instance } : {}),
+          ...(hub !== null ? { rtc: true } : {}),
+          shard,
+        };
+        return Response.json(info, { headers: LOCAL_CORS });
+      }
       // The base, like the ready line: clients append /robot or /viewer.
       // With a real certificate it is the origin the client dialed (right by
       // construction: QUIC shares the port) and there is no hash to pin.
@@ -400,6 +450,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         v: PROTOCOL_VERSION,
         instance: INSTANCE_ID,
         ...(hub !== null ? { rtc: true } : {}),
+        ...(shardInfos.length > 0 ? { shard: 0 } : {}),
       };
       return Response.json(info, { headers: LOCAL_CORS });
     }
@@ -455,8 +506,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     quicPort,
     wtUrl,
     certHash: cert.certHashB64,
+    instance: INSTANCE_ID,
+    shards: shardInfos.length + 1,
     async shutdown(): Promise<void> {
       clearInterval(tickTimer);
+      spawned?.kill();
       hub?.dispose();
       for (const wt of sessions) {
         try {

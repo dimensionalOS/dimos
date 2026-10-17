@@ -318,9 +318,11 @@ class RelayProcess:
         key: Path | None = None,
         auth_file: Path | None = None,
         rtc_file: Path | None = None,
+        shards: int = 1,
         timeout: float = 20.0,
     ) -> None:
         self._port = port
+        self._shards = shards
         self._host = host
         self._web_dir = web_dir
         self._cockpit_dir = cockpit_dir
@@ -352,6 +354,7 @@ class RelayProcess:
             str(self._port),
             "--host",
             self._host,
+            *(["--shards", str(self._shards)] if self._shards > 1 else []),
             cockpit_dir=cockpit_dir,
             sdk_dir=sdk_dir,
             serve_dir=self._serve_dir,

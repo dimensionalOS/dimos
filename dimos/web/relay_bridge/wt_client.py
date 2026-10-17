@@ -29,7 +29,7 @@ import ssl
 import time
 from types import TracebackType
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 import urllib.request
 
 from aioquic.quic.configuration import QuicConfiguration
@@ -132,6 +132,10 @@ class RelayInfo:
     """True when the relay brokers video.webrtc.v1 track channels through
     its Cloudflare Realtime SFU (protocol v7)."""
     instance: str | None = None
+    """The relay process's id (v8), new after a restart on the same port."""
+    shard: int | None = None
+    """The shard answering for the robot named at discovery, when the relay
+    runs several processes (--shards); None otherwise."""
     """Random id of the relay process, new on every start: a relay behind a
     fixed port and certificate can be seen to have restarted by comparing
     it. None from a relay that predates the field."""
@@ -154,24 +158,29 @@ def _get_json(url: str, timeout: float, cafile: str | None) -> Any:
 
 
 async def fetch_relay_info(
-    base_url: str, *, timeout: float = 5.0, cafile: str | None = None
+    base_url: str, *, robot: str | None = None, timeout: float = 5.0, cafile: str | None = None
 ) -> RelayInfo:
     """Discover the relay's WebTransport endpoint through GET /api/info (the
     mirror of the SDK's fetchRelayInfo). A relay restart means a new QUIC
     port and certificate behind the same HTTP URL, so callers fetch on every
-    connect. For an https base, `cafile` (a PEM CA bundle: mkcert, a private
-    CA) replaces the system trust store. Raises OSError when the relay is
-    unreachable, answers an HTTP error, or fails certificate verification
-    (transient), ProtocolError for a non-relay answer or a protocol version
-    mismatch.
+    connect. `robot` names the robot this client is or watches: a sharded
+    relay answers with that robot's shard, so the robot and its viewers meet
+    on one process. For an https base, `cafile` (a PEM CA bundle: mkcert, a
+    private CA) replaces the system trust store. Raises OSError when the
+    relay is unreachable, answers an HTTP error, or fails certificate
+    verification (transient), ProtocolError for a non-relay answer or a
+    protocol version mismatch.
     """
     url = resolve_info_url(base_url)
+    if robot is not None:
+        url += "?" + urlencode({"robot": robot})
     data = await asyncio.to_thread(_get_json, url, timeout, cafile)
     if not isinstance(data, dict):
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
     rtc = data.get("rtc", False)
     instance = data.get("instance")
+    shard = data.get("shard")
     if (
         not isinstance(wt_url, str)
         or not (cert_hash is None or isinstance(cert_hash, str))
@@ -179,11 +188,14 @@ async def fetch_relay_info(
         or isinstance(v, bool)
         or not isinstance(rtc, bool)
         or not (instance is None or isinstance(instance, str))
+        or not (shard is None or (isinstance(shard, int) and not isinstance(shard, bool)))
     ):
         raise ProtocolError(f"{url} returned an unexpected shape")
     if v != PROTOCOL_VERSION:
         raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
-    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc, instance=instance)
+    return RelayInfo(
+        wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc, instance=instance, shard=shard
+    )
 
 
 @contextlib.asynccontextmanager
