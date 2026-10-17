@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 # Raise above 0 to draw what the planner searched over: surface, nodes and cost-colored
 # edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
+# Unchanged viz cells re-sent per tick, so cells a wifi viewer lost heal.
+viz_sweep_cells = 1
 BODY_DILATE_M = -0.03
 WALL_CLEARANCE_M = 0.05
 
@@ -53,6 +55,7 @@ _mls_planner = MLSPlannerNative.blueprint(
     step_threshold_m=0.16,
     step_penalty_weight=4.0,
     viz_publish_hz=planner_viz_hz,
+    viz_sweep_cells=viz_sweep_cells,
 ).remappings(
     [
         (MLSPlannerNative, "global_map", "global_map_unused"),
@@ -63,7 +66,11 @@ _mls_planner = MLSPlannerNative.blueprint(
 # MLS stays global. Its path is remapped to planner_path, the carrot source for the local
 # planner over the raycaster's local map.
 _go2_nav = autoconnect(
-    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+    RayTracingVoxelMap.blueprint(
+        **ray_tracing_config.model_copy(update={"viz_sweep_cells": viz_sweep_cells}).model_dump(
+            exclude_unset=True
+        )
+    ),
     _mls_planner,
     LocalPlannerNative.blueprint(body_dilate_m=BODY_DILATE_M),
     TrajectoryFollowerNative.blueprint(),

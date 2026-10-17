@@ -102,8 +102,8 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
+            viz_cell_m: 4.0,
+            viz_sweep_cells: 0,
             worker_threads,
         };
         config
@@ -172,7 +172,7 @@ impl MLSPlanner {
         };
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
+        py.allow_threads(|| planner.update_seed_region(&pts, &bounds, config));
         Ok(())
     }
 
@@ -221,7 +221,7 @@ impl MLSPlanner {
         let graph = self.planner.graph();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(graph.nodes.len() * 3);
-            for n in &graph.nodes {
+            for n in graph.nodes.iter() {
                 out.push(n.pos.0);
                 out.push(n.pos.1);
                 out.push(n.pos.2);
