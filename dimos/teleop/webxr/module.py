@@ -88,6 +88,8 @@ class WebXRTeleopConfig(ModuleConfig):
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
+    # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
+    zero_button: str | None = None
 
 
 _Config = TypeVar("_Config", bound=WebXRTeleopConfig)
@@ -662,8 +664,12 @@ class WebXRTeleopModule(Module):
                 released |= mask
         if pressed:
             self.button_pressed.publish(Buttons(pressed))
+            self._on_buttons_pressed(Buttons(pressed))
         if released:
             self.button_released.publish(Buttons(released))
+
+    def _on_buttons_pressed(self, pressed: Buttons) -> None:
+        """Override to react to debounced button presses."""
 
     def _release_all_buttons(self) -> None:
         """Emit release edges without debounce when input ownership disappears."""
