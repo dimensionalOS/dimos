@@ -472,6 +472,34 @@ def test_disconnect_releases_debounced_buttons_immediately(
     assert module._debounced_buttons == 0
 
 
+def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture) -> None:
+    module = ArmTeleopModule(server_port=9443, zero_button="B")
+    manipulation = mocker.Mock()
+    manipulation.list_planning_groups.return_value = (
+        SimpleNamespace(id="manipulator", joint_names=("joint1", "joint2")),
+    )
+    module._manipulation = manipulation
+    thread = mocker.patch("dimos.teleop.webxr.extensions.threading.Thread")
+    mocker.patch("dimos.teleop.webxr.module.time.monotonic", side_effect=[0.0, 0.1])
+    buttons = Buttons()
+    buttons.right_secondary = True
+    try:
+        module._publish_buttons(buttons)
+        module._publish_buttons(buttons)
+        mocker.stopall()
+        thread.assert_called_once_with(target=module._move_to_zero, daemon=True)
+        module._move_to_zero()
+    finally:
+        module.stop()
+
+    target = manipulation.plan_to_joints.call_args.args[0]["manipulator"]
+    assert target.name == ["joint1", "joint2"]
+    assert list(target.position) == [0.0, 0.0]
+    manipulation.execute.assert_called_once_with(
+        blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
+    )
+
+
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
