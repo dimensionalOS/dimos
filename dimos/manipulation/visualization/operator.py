@@ -101,10 +101,6 @@ class ManipulationOperator:
         """Return the runtime speed reduction used for future plans."""
         return self._motion_speed
 
-    def is_state_stale(self, max_age: float = 1.0) -> bool:
-        """Check authoritative telemetry age, not the last rendered joint snapshot."""
-        return self._world_monitor.is_state_stale(max_age)
-
     def set_motion_speed(self, speed_scale: float) -> bool:
         """Set the runtime speed reduction used for future plans."""
         if not math.isfinite(speed_scale) or not 0.0 < speed_scale <= 1.0:
@@ -212,10 +208,6 @@ class ManipulationOperator:
 
     def execute(self, plan: GeneratedPlan) -> bool:
         return self._module._execute_generated_plan(plan)
-
-    def execute_pending(self, plan: GeneratedPlan) -> bool:
-        """Dispatch only if this plan is still pending, without restoring it after Cancel."""
-        return self._module.execute(blocking=False, plan_id=plan.plan_id).succeeded
 
     def cancel(self) -> bool:
         return self._module.cancel().status.name != "UNCERTAIN"
