@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Vibe-adapted from the pure-modules branch to conform the spec.py"""
+"""Ivan's go2 ISAM2+ICP PGO core (`_PGOState`) wired to the loop-closure eval harness streams."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import numpy as np
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.loop_closure.pgo import (
+from dimos.navigation.go2.loop_closure.pgo import (
     PGOConfig,
     _PGOState,
     _transform_to_pose3,
@@ -43,7 +43,7 @@ class BaselinePGOConfig(ModuleConfig):
     world_frame: str = "map"
     body_frame: str = "base_link"
 
-    # PGOConfig knobs (mirrors dimos/mapping/loop_closure/pgo.py::PGOConfig).
+    # PGOConfig knobs (mirrors dimos/navigation/go2/loop_closure/pgo.py::PGOConfig).
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
     loop_search_radius: float = 2.0

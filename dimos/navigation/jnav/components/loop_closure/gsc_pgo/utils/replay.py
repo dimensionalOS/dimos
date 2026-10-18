@@ -16,8 +16,8 @@
 
 ``run_module_graph`` streams a recording through the module under test and hands
 back its optimized pose graph. The replay itself comes in two flavors:
-``LockstepReplay`` (ack-paced, machine-speed independent) and ``RateReplay``
-(legacy fixed-rate). ``GraphCapture`` collects the module's output graph.
+``LockstepReplay`` (ack-paced, machine-speed independent).
+``GraphCapture`` collects the module's output graph.
 """
 
 from __future__ import annotations
@@ -30,21 +30,19 @@ import json
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, TypedDict
+from typing import Any
 
-import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
-from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose, has_drift
+from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose
 
 # Watchdog for a hung run: a generous per-scan budget (well above any sane
 # processing time) plus fixed startup overhead. Hitting it raises — never a
@@ -63,11 +61,6 @@ GRAPH_SETTLE_POLL_S = 0.5
 _PROGRESS_EVERY_N_SCANS = 200
 # mirrors EDGE_LOOP_CLOSURE in rust/src/utils.rs pose-graph metadata ids
 EDGE_LOOP_CLOSURE = 1
-
-
-class ReplayStats(TypedDict, total=False):
-    scans_sent: int
-    error: str
 
 
 class GraphCaptureConfig(ModuleConfig):
@@ -160,12 +153,6 @@ class LockstepReplayConfig(ModuleConfig):
     odom_publish_hz: float = 500.0
     ack_timeout_s: float = 30.0
     done_path: Path = Path("replay-done.json")
-    # Artificial odometry drift: a constant-velocity world offset added to both
-    # odom poses and lidar clouds at time t (offset = drift_per_sec * (t - t0)).
-    # Consistent per-instant, so the trajectory warps over time — exactly the
-    # accumulating error loop closure is supposed to fix. [0,0,0] = no drift.
-    drift_per_sec: list[float] = [0.0, 0.0, 0.0]
-    drift_t0: float = 0.0
 
 
 class LockstepReplay(Module):
@@ -231,33 +218,14 @@ class LockstepReplay(Module):
         scans_sent = 0
         scans_skipped_pre_odom = 0
         first_odom_ts = next((timestamp for timestamp, kind, _ in messages if kind == "odom"), None)
-        drift = np.asarray(self.config.drift_per_sec, dtype=np.float64)
-        t0 = self.config.drift_t0
-        apply_drift = has_drift(drift)
         for timestamp, kind, payload in messages:
             if kind == "odom":
-                pose = payload.pose.pose
-                if apply_drift:
-                    offset = drift * (timestamp - t0)
-                    pose = Pose(
-                        position=[
-                            pose.position.x + offset[0],
-                            pose.position.y + offset[1],
-                            pose.position.z + offset[2],
-                        ],
-                        orientation=[
-                            pose.orientation.x,
-                            pose.orientation.y,
-                            pose.orientation.z,
-                            pose.orientation.w,
-                        ],
-                    )
                 self.odometry.publish(
                     Odometry(
                         ts=timestamp,
                         frame_id="map",
                         child_frame_id="base_link",
-                        pose=pose,
+                        pose=payload.pose.pose,
                     )
                 )
                 await asyncio.sleep(odom_period)
@@ -270,8 +238,6 @@ class LockstepReplay(Module):
                 continue
             points = payload.points_f32()
             frame_id = payload.frame_id or "map"
-            if apply_drift:
-                points = points + (drift * (timestamp - t0)).astype(np.float32)
             self._ack_event.clear()
             self.cloud.publish(
                 PointCloud2.from_numpy(points, frame_id=frame_id, timestamp=timestamp)
@@ -311,8 +277,6 @@ def run_module_graph(
     *,
     lidar_stream: str,
     odom_stream: str,
-    drift_per_sec: list[float] | None = None,
-    drift_t0: float = 0.0,
 ) -> tuple[list[GraphPose], int, list[tuple[float, float]], dict[str, Any], dict[str, Any]]:
     """Replay the recording through the module; return its optimized pose graph
     (with orientations), loop-closure count, committed loop-edge keyframe
@@ -320,10 +284,7 @@ def run_module_graph(
     edges with metadata ids).
 
     Scans are paced on the module's corrected_odometry acks — machine-speed
-    independent, and every recorded message is fed (no strides, no caps).
-    drift_per_sec injects a constant-velocity world offset into the replayed
-    odom+lidar (see LockstepReplayConfig)."""
-    drift_per_sec = drift_per_sec or [0.0, 0.0, 0.0]
+    independent, and every recorded message is fed (no strides, no caps)."""
     output_path = Path(tempfile.gettempdir()) / f"jnav_lc_eval_{db_path.parent.name}.json"
     output_path.unlink(missing_ok=True)
     heartbeat_path = Path(str(output_path) + ".heartbeat")
@@ -344,8 +305,6 @@ def run_module_graph(
             lidar_stream=lidar_stream,
             odometry_stream=odom_stream,
             done_path=done_path,
-            drift_per_sec=drift_per_sec,
-            drift_t0=drift_t0,
         ),
         module_class.blueprint(**config_overrides),  # type: ignore[attr-defined]
         GraphCapture.blueprint(output_path=output_path),
