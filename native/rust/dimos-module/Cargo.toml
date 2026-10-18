@@ -30,3 +30,7 @@ tracing-test = "0.2"
 
 [[example]]
 name = "transport_bench"
+
+# zenoh main at a fixed commit: 1.10.1 plus fixes no release has yet, e.g. the startup deadlock (eclipse-zenoh/zenoh issue 2581).
+[patch.crates-io]
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", rev = "467f138d26533079d010597136aadacc00dac49b" }

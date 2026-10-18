@@ -35,7 +35,7 @@ region_bounds = "geometry_msgs.PoseStamped"
 map_regions = "sensor_msgs.PointCloud2"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "3a510eb7a6d59a4c983055c30142ad7c51c5717f" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
@@ -58,3 +58,7 @@ debug = 0
 
 [profile.test]
 debug = 0
+
+# zenoh main at a fixed commit: 1.10.1 plus fixes no release has yet, e.g. the startup deadlock (eclipse-zenoh/zenoh issue 2581).
+[patch.crates-io]
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", rev = "467f138d26533079d010597136aadacc00dac49b" }

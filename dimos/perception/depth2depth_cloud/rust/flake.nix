@@ -5,7 +5,7 @@
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix.url = "github:jeff-hykin/crate2nix/fix/workspace-inheritance-git-deps";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
     # The tag of the depth2depth release Cargo.toml uses: its flake fetches the model that release embeds (pinned in its model.json).
     depth2depth.url = "github:jeff-hykin/depth2depth/v0.4.1";

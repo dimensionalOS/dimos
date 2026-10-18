@@ -17,7 +17,7 @@ required-features = ["module"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "3a510eb7a6d59a4c983055c30142ad7c51c5717f", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -52,3 +52,7 @@ path = "nav_msgs.Path"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# zenoh main at a fixed commit: 1.10.1 plus fixes no release has yet, e.g. the startup deadlock (eclipse-zenoh/zenoh issue 2581).
+[patch.crates-io]
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", rev = "467f138d26533079d010597136aadacc00dac49b" }

@@ -39,15 +39,16 @@
         "pre-commit-hooks": "pre-commit-hooks"
       },
       "locked": {
-        "lastModified": 1782759041,
-        "narHash": "sha256-2577vxyoBa8+ZRiXr3CuPtOuEtPRYsFPSZuEc/KI/80=",
-        "owner": "nix-community",
+        "lastModified": 1792338411,
+        "narHash": "sha256-QQgoIR7gRIaW4IHoZ5hVHpTizyYS70hj+MdfViJdiVM=",
+        "owner": "jeff-hykin",
         "repo": "crate2nix",
-        "rev": "5e1ecfd2d15b34ec90c2e51fdffbe8116595a767",
+        "rev": "0afc007c47fc73ef5cb86c7edf60118abee1cc35",
         "type": "github"
       },
       "original": {
-        "owner": "nix-community",
+        "owner": "jeff-hykin",
+        "ref": "fix/workspace-inheritance-git-deps",
         "repo": "crate2nix",
         "type": "github"
       }

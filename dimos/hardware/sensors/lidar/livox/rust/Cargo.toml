@@ -22,7 +22,7 @@ imu = "sensor_msgs.Imu"
 
 [dependencies]
 livox-wire = { git = "https://github.com/dimensionalOS/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "3a510eb7a6d59a4c983055c30142ad7c51c5717f" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -46,3 +46,7 @@ debug = 0
 
 [profile.test]
 debug = 0
+
+# zenoh main at a fixed commit: 1.10.1 plus fixes no release has yet, e.g. the startup deadlock (eclipse-zenoh/zenoh issue 2581).
+[patch.crates-io]
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", rev = "467f138d26533079d010597136aadacc00dac49b" }

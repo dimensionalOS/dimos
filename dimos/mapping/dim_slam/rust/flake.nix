@@ -5,7 +5,7 @@
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix.url = "github:jeff-hykin/crate2nix/fix/workspace-inheritance-git-deps";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
