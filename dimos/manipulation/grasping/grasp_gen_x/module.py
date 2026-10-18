@@ -68,6 +68,9 @@ class GraspGenXConfig(IsolatedPythonModuleConfig):
 
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
+    # How many grasps the model samples per call. More costs more GPU time.
+    num_samples: PositiveCount = 200
+    # How many grasps a call returns at most, best score first.
     max_candidates: PositiveCount = 100
 
     # Relational matrix properties cannot be expressed through scalar Field constraints.
