@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Offline PGO eval: replay a recorded db straight through `GscPgo` as fast as
-//! the machine allows, then dump an eval.py-shaped JSON (raw odom trajectory,
-//! optimized keyframe graph, closures, keyframes, runtime, realtime factor).
+//! Live PGO eval: replay a recorded db through `GscPgo` the way the live module
+//! runs it, then dump the result as JSON (raw odom trajectory, optimized keyframe
+//! graph, closures, per-scan timing and latency).
 //!
-//! This deliberately bypasses the module/transport/replay scaffolding: it opens
-//! the SQLite recording directly, decodes the LCM blobs, and drives the same
-//! worker-loop logic as `main.rs` (pair each scan with the latest odom pose →
-//! add_key_pose → on keyframe: search_for_loop_pairs + smooth_and_update).
-//! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
-//! reuses `trajectory_metrics`.
+//! Scans arrive at their recorded times (read and decoded on their own thread).
+//! The PGO thread follows `main.rs`: pair each scan with the latest odom pose,
+//! add_key_pose, and on a keyframe search for loops, fold in a finished GNC
+//! classification, smooth_and_update, and hand a closure to the background GNC
+//! worker; while idle it adopts a finished GNC solve. Scans more than
+//! `max_scan_queue` behind are dropped, as the module's queue drops them.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,7 +38,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 mod memory2;
-use memory2::{read_odometry, read_scans, OdomRow};
+use memory2::{for_each_scan, read_odometry, OdomRow, ScanRow};
 
 /// Eval config. Defaults mirror `module.py`'s `PGOConfig` so a bare run
 /// reproduces the module default; a `--config` JSON overlays any subset.
@@ -71,7 +71,6 @@ struct EvalConfig {
     loop_max_yank_rotation_deg: f64,
     loop_yank_gate_max_distance_m: f64,
     loop_min_id_gap: u64,
-
 
     subtract_odom_from_cloud: bool,
 
@@ -157,7 +156,7 @@ impl Default for EvalConfig {
             loop_refinement_passes: 5,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.99,
+            loop_gnc_inlier_probability: 0.95,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
@@ -329,6 +328,15 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
+    /// Per processed scan: [ts, wall ms spent in the PGO thread for it, keyframes so far].
+    frame_timing: Vec<[f64; 3]>,
+    /// Scans dropped because they were more than `max_scan_queue` scans behind.
+    scans_dropped: usize,
+    /// Per processed scan: [ts, ms from the scan's arrival (its recorded time) until the PGO
+    /// finished with it: the wait in the queue plus the work].
+    latency: Vec<[f64; 2]>,
+    /// Every `RSS_SAMPLE_EVERY` processed scans: [ts, process resident memory in MB] (from `ps`).
+    rss_samples: Vec<[f64; 2]>,
     /// Count of loop-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
     /// One record per loop-search evaluation (accepted + rejected), with the
@@ -454,6 +462,18 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
     Some(&odoms[*cursor])
 }
 
+const RSS_SAMPLE_EVERY: usize = 300;
+
+/// This process's resident memory in MB, via `ps` (no extra crate; Mac and Linux).
+fn resident_megabytes() -> Option<f64> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()?;
+    let kilobytes: f64 = String::from_utf8(output.stdout).ok()?.trim().parse().ok()?;
+    Some(kilobytes / 1024.0)
+}
+
 fn run() -> Result<(), String> {
     let args = parse_args()?;
 
@@ -470,17 +490,12 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
     let odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
-    let scans = read_scans(&connection, &args.lidar_stream, args.scan_stride)?;
 
     let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
     let odom_body_frame = unique_frame(
         odoms.iter().map(|row| row.child_frame_id.clone()),
         "odom child",
     )?;
-    let lidar_frame = unique_frame(scans.iter().map(|row| row.frame_id.clone()), "lidar stream")?;
-    if args.lidar_tf.is_none() {
-        check_same_frame(&lidar_frame, &odom_body_frame)?;
-    }
     let lidar_tf = args
         .lidar_tf
         .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
@@ -506,15 +521,73 @@ fn run() -> Result<(), String> {
     let mut cursor = 0usize;
     let mut closures = 0usize;
     let mut scans_processed = 0usize;
+    let mut frame_timing: Vec<[f64; 3]> = Vec::new();
+    let mut rss_samples: Vec<[f64; 2]> = Vec::new();
+    let mut lidar_frame: Option<String> = None;
+    let mut scan_span: Option<(f64, f64)> = None;
+    let mut pgo_s = 0.0f64;
+    // wall clock and recording time of the first scan: a scan arrives at wall0 + (ts - ts0)
+    let mut replay_clock: Option<(Instant, f64)> = None;
+    let mut scans_dropped = 0usize;
+    let mut latency: Vec<[f64; 2]> = Vec::new();
 
-    let started = Instant::now();
-    for scan in &scans {
+    // Scans are read and decoded on their own thread, as the live module receives them on its
+    // transport's: the PGO thread below never pays for reading the recording.
+    let (scan_sender, scan_receiver) = std::sync::mpsc::sync_channel::<ScanRow>(256);
+    let (lidar_stream, scan_stride) = (args.lidar_stream.clone(), args.scan_stride);
+    let reader = std::thread::spawn(move || {
+        for_each_scan(&connection, &lidar_stream, scan_stride, |scan| {
+            scan_sender.send(scan).map_err(|e| e.to_string())
+        })
+    });
+    let mut visit = |scan: ScanRow| -> Result<(), String> {
+        match &lidar_frame {
+            None => {
+                if args.lidar_tf.is_none() {
+                    check_same_frame(&scan.frame_id, &odom_body_frame)?;
+                }
+                lidar_frame = Some(scan.frame_id.clone());
+            }
+            Some(frame) if *frame != scan.frame_id => {
+                return Err(format!(
+                    "lidar stream mixes frames [{frame:?}, {:?}]; expected one",
+                    scan.frame_id
+                ));
+            }
+            Some(_) => {}
+        }
+        scan_span = Some((scan_span.map_or(scan.ts, |(first, _)| first), scan.ts));
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
-            continue;
+            return Ok(());
         };
+        let (wall0, ts0) = *replay_clock.get_or_insert((Instant::now(), scan.ts));
+        let arrival = wall0 + std::time::Duration::from_secs_f64((scan.ts - ts0).max(0.0));
+        // idle until the scan arrives; the live module adopts a finished GNC solve while idle
+        while Instant::now() < arrival {
+            pgo.poll_and_adopt_gnc_solution();
+            // short slices: macOS stretches a background process's sleep up to ~7x
+            let remaining = arrival.saturating_duration_since(Instant::now());
+            std::thread::sleep((remaining / 8).clamp(
+                std::time::Duration::from_micros(500),
+                std::time::Duration::from_millis(2),
+            ));
+        }
+        // the live queue holds `max_scan_queue` scans and drops the oldest past that
+        let (first_ts, _) = scan_span.unwrap_or((scan.ts, scan.ts));
+        let scans_seen = scans_processed + scans_dropped;
+        let period = if scans_seen > 0 {
+            (scan.ts - first_ts) / scans_seen as f64
+        } else {
+            0.0
+        };
+        if period > 0.0 && arrival.elapsed().as_secs_f64() > config.max_scan_queue as f64 * period {
+            scans_dropped += 1;
+            return Ok(());
+        }
         scans_processed += 1;
+        let frame_started = Instant::now();
 
-        let mut cloud = scan.points.clone();
+        let mut cloud = scan.points;
         if let Some((rotation, translation)) = &lidar_tf {
             cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
         }
@@ -534,23 +607,59 @@ fn run() -> Result<(), String> {
         let nanos = ((latest.ts - seconds as f64) * 1e9) as u32;
         pose.set_time(seconds, nanos);
 
+        let cloud = Arc::new(cloud);
         let cloud_with_pose = CloudWithPose {
-            cloud: Some(Arc::new(cloud)),
+            cloud: Some(cloud.clone()),
             pose,
             frame_id: latest.frame_id.clone(),
         };
 
-        if !pgo.add_key_pose(&cloud_with_pose) {
-            continue;
+        let mut closed = false;
+        if pgo.add_key_pose(&cloud_with_pose) {
+            // as main.rs: skip the loop search while newer scans are already waiting
+            if period > 0.0 && arrival.elapsed().as_secs_f64() > period {
+                pgo.skip_loop_search_behind();
+            } else {
+                pgo.search_for_loop_pairs();
+            }
+            if pgo.has_loop() {
+                closures += 1;
+                closed = true;
+            }
+            // the live module's order: fold in a finished GNC classification, update iSAM2, and
+            // hand a new closure to the background worker
+            pgo.poll_and_apply_gnc_classification();
+            pgo.smooth_and_update();
+            if closed {
+                pgo.dispatch_gnc_async();
+            }
         }
-        pgo.search_for_loop_pairs();
-        if pgo.has_loop() {
-            closures += 1;
+        let frame_s = frame_started.elapsed().as_secs_f64();
+        latency.push([scan.ts, arrival.elapsed().as_secs_f64() * 1e3]);
+        pgo_s += frame_s;
+        frame_timing.push([scan.ts, frame_s * 1e3, pgo.key_poses().len() as f64]);
+        if scans_processed % RSS_SAMPLE_EVERY == 1 {
+            if let Some(megabytes) = resident_megabytes() {
+                rss_samples.push([scan.ts, megabytes]);
+            }
         }
-        pgo.smooth_and_update();
+        Ok(())
+    };
+    for scan in scan_receiver {
+        visit(scan)?;
     }
-    pgo.finalize_gnc();
-    let runtime_s = started.elapsed().as_secs_f64();
+    reader
+        .join()
+        .map_err(|_| "the scan reader panicked".to_string())??;
+    let finalize_started = Instant::now();
+    // the module keeps running after the last scan, so the solve in flight still lands
+    while pgo.gnc_in_flight() {
+        if !pgo.poll_and_adopt_gnc_solution() {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+    let runtime_s = pgo_s + finalize_started.elapsed().as_secs_f64();
+    let lidar_frame = lidar_frame.unwrap_or_default();
 
     let graph: Vec<[f64; 8]> = pgo
         .key_poses()
@@ -570,10 +679,7 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let data_duration_s = match (scans.first(), scans.last()) {
-        (Some(first), Some(last)) => last.ts - first.ts,
-        _ => 0.0,
-    };
+    let data_duration_s = scan_span.map_or(0.0, |(first, last)| last - first);
     let realtime_factor = if runtime_s > 0.0 {
         data_duration_s / runtime_s
     } else {
@@ -611,6 +717,10 @@ fn run() -> Result<(), String> {
         data_duration_s,
         runtime_s,
         realtime_factor,
+        frame_timing,
+        scans_dropped,
+        latency,
+        rss_samples,
         gate_counts,
         loop_diagnostics,
         graph_error,

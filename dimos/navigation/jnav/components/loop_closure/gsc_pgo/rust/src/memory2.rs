@@ -68,32 +68,46 @@ fn read_stream<T>(
     stride: usize,
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
+    let mut out = Vec::new();
+    for_each_row(connection, stream, stride, |ts, data| {
+        if let Some(value) = decode(ts, data) {
+            out.push(value);
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// Visit every `stride`-th row of a stream in ts order without holding the stream in memory.
+fn for_each_row(
+    connection: &Connection,
+    stream: &str,
+    stride: usize,
+    mut visit: impl FnMut(f64, &[u8]) -> Result<(), String>,
+) -> Result<(), String> {
     let stride = stride.max(1);
     let table = quote_ident(stream)?;
     let blob_table = quote_ident(&format!("{stream}_blob"))?;
-    let sql = format!(
-        "SELECT meta.ts, blob.data FROM {table} AS meta \
-         JOIN {blob_table} AS blob ON meta.id = blob.id ORDER BY meta.ts"
-    );
-    let mut statement = connection.prepare(&sql).map_err(|e| e.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            let ts: f64 = row.get(0)?;
-            let data: Vec<u8> = row.get(1)?;
-            Ok((ts, data))
-        })
+    // sort only (ts, id), then read each blob by its key: ordering the joined blobs made sqlite copy the
+    // whole recording into a temp table first (GBs of RAM and disk on an hour of go2 scans)
+    let mut order = connection
+        .prepare(&format!("SELECT ts, id FROM {table} ORDER BY ts"))
         .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for (index, row) in rows.enumerate() {
-        if index % stride != 0 {
-            continue;
-        }
-        let (ts, data) = row.map_err(|e| e.to_string())?;
-        if let Some(value) = decode(ts, &data) {
-            out.push(value);
-        }
+    let keys = order
+        .query_map([], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let mut blob = connection
+        .prepare(&format!("SELECT data FROM {blob_table} WHERE id = ?1"))
+        .map_err(|e| e.to_string())?;
+    for (ts, id) in keys.into_iter().step_by(stride) {
+        let data: Vec<u8> = blob
+            .query_row([id], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        visit(ts, &data)?;
     }
-    Ok(out)
+    Ok(())
 }
 
 fn odom_from_odometry(ts: f64, message: &Odometry) -> OdomRow {
@@ -211,25 +225,33 @@ fn extract_xyz(message: &PointCloud2) -> Option<Vec<[f32; 3]>> {
     Some(points)
 }
 
-/// Read a lidar stream of PointCloud2 scans.
-pub fn read_scans(
+/// Stream a lidar stream of PointCloud2 scans one at a time, so a long recording is never held
+/// in memory. Returns how many scans decoded.
+pub fn for_each_scan(
     connection: &Connection,
     stream: &str,
     stride: usize,
-) -> Result<Vec<ScanRow>, String> {
-    let rows = read_stream(connection, stream, stride, |ts, data| {
-        let message = PointCloud2::decode(data).ok()?;
-        let points = extract_xyz(&message)?;
-        Some(ScanRow {
+    mut visit: impl FnMut(ScanRow) -> Result<(), String>,
+) -> Result<usize, String> {
+    let mut decoded = 0usize;
+    for_each_row(connection, stream, stride, |ts, data| {
+        let Ok(message) = PointCloud2::decode(data) else {
+            return Ok(());
+        };
+        let Some(points) = extract_xyz(&message) else {
+            return Ok(());
+        };
+        decoded += 1;
+        visit(ScanRow {
             ts,
             points,
             frame_id: message.header.frame_id.clone(),
         })
     })?;
-    if rows.is_empty() {
+    if decoded == 0 {
         return Err(format!(
             "lidar stream {stream:?} decoded no PointCloud2 rows"
         ));
     }
-    Ok(rows)
+    Ok(decoded)
 }
