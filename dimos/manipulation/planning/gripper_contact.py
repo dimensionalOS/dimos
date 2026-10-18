@@ -350,11 +350,11 @@ class _UrdfTree:
         if geometry is None:
             return None
         if (box := geometry.find("box")) is not None:
-            return trimesh.creation.box(extents=_floats(box.get("size")))
+            return trimesh.creation.box(extents=_floats(box.get("size")))  # type: ignore[no-any-return]
         if (sphere := geometry.find("sphere")) is not None:
-            return trimesh.creation.icosphere(radius=float(sphere.get("radius", "0")))
+            return trimesh.creation.icosphere(radius=float(sphere.get("radius", "0")))  # type: ignore[no-any-return]
         if (cylinder := geometry.find("cylinder")) is not None:
-            return trimesh.creation.cylinder(
+            return trimesh.creation.cylinder(  # type: ignore[no-any-return]
                 radius=float(cylinder.get("radius", "0")),
                 height=float(cylinder.get("length", "0")),
             )
@@ -367,7 +367,7 @@ class _UrdfTree:
             path = self._source_dir / path
         loaded = trimesh.load_mesh(path, force="mesh")
         if mesh.get("scale"):
-            loaded.apply_scale(np.asarray(_floats(mesh.get("scale"))))
+            loaded.apply_scale(np.asarray(_floats(mesh.get("scale"))))  # type: ignore[no-untyped-call]
         return loaded
 
 
@@ -465,7 +465,7 @@ def _distance(shape: _LinkShape, points: NDArray[np.float64], margin: float) -> 
 def _in_box(
     points: NDArray[np.float64], low: NDArray[np.float64], high: NDArray[np.float64]
 ) -> NDArray[np.bool_]:
-    return np.all((points >= low) & (points <= high), axis=1)
+    return np.all((points >= low) & (points <= high), axis=1)  # type: ignore[no-any-return]
 
 
 def _box_corners(low: NDArray[np.float64], high: NDArray[np.float64]) -> list[NDArray[np.float64]]:
