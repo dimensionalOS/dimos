@@ -29,7 +29,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    DUAL_OPENYAM_WEBXR_TASK_NAME,
     _dual_openyam_webxr_tasks,
     teleop_webxr_dual_openyam,
 )
@@ -98,11 +97,11 @@ def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(position=[1.0, 0.0, 0.0]),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(position=[-1.0, 0.0, 0.0]),
         )
         assert coordinator._tick_loop is not None
         coordinator._tick_loop._tick()
