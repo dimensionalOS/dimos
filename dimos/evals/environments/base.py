@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
     from dimos.evals.types import RunningEnvironment
 
 
@@ -57,7 +57,7 @@ class Environment(Configurable, ABC):
         """ROBOT.md template describing the raw topics, when provides_raw_robot."""
         return None
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         """Check compatibility before any environment starts."""
         return None
 

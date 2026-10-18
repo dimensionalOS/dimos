@@ -31,6 +31,7 @@ from reactivex import Observable, operators as ops
 from reactivex.disposable import Disposable
 import requests
 
+from dimos.agents.base_agent import BaseAgent
 from dimos.agents.typesafe.constants import (
     BASE_URL_ENV,
     DEFAULT_BASE_URL,
@@ -40,7 +41,7 @@ from dimos.agents.typesafe.constants import (
 from dimos.agents.typesafe.types import Answers, ChoiceAnswer, NoulAnswer, Question, ScoreAnswer
 from dimos.constants import LOG_DIR
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.stream import Out
 from dimos.utils.logging_config import setup_logger
 
@@ -63,7 +64,7 @@ class TypeSafeAgentConfig(ModuleConfig):
     trace: bool = False  # raw request/response pairs under the run's log dir
 
 
-class TypeSafeAgent(Module):
+class TypeSafeAgent(BaseAgent):
     config: TypeSafeAgentConfig
 
     choices: Out[dict[str, ChoiceAnswer]]

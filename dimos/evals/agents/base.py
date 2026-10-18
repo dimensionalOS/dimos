@@ -85,7 +85,7 @@ class ModelAgentConfig(AgentConfig):
     model: str = "gpt-5.6-luna"
 
 
-class Agent(Configurable, ABC):
+class EvalAgent(Configurable, ABC):
     """The thing under evaluation, behind one interface.
 
     A subclass adapts one way of answering a case: a coding harness plus a model

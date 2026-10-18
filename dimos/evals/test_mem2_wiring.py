@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
@@ -142,7 +142,7 @@ def test_grader_reads_the_history_the_environment_recorded(
     odom = store.stream("odom", PoseStamped)
     odom.append(_pose(5.0, 0.0), ts=1000.0)
 
-    class RecordingAgent(Agent):
+    class RecordingAgent(EvalAgent):
         def run(
             self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
         ) -> Trajectory:

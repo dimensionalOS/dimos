@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.ollama_agent import ollama_installed
 from dimos.core.coordination.blueprints import autoconnect
@@ -23,7 +23,7 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree
 unitree_go2_agentic_ollama = autoconnect(
     unitree_go2_spatial,
     McpServer.blueprint(),
-    McpClient.blueprint(model="ollama:qwen3:8b"),
+    Agent.blueprint(model="ollama:qwen3:8b"),
     _common_agentic,
 ).requirements(
     ollama_installed,
