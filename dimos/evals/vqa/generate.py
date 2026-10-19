@@ -43,6 +43,12 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
 )
+from dimos.evals.vqa.localize_coverage import (
+    DEFAULT_LOCALIZE_COVERAGE_K,
+    case_family_from_id,
+    collect_coverage_candidates_from_audit,
+    select_localize_coverage_ids,
+)
 from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrame,
     PointCloudFrameLoader,
@@ -78,11 +84,15 @@ class GenerationRequest(BaseModel):
     with_localize: bool = False
     localize_queries: tuple[NonEmptyString, ...] = ()
     localize_pad_s: float = Field(default=10.0, gt=0)
+    # None = default K when with_localize; 0 = disable coverage budget (publish all).
+    localize_coverage_k: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
         if self.localize_queries and not self.with_localize:
             raise ValueError("localize_queries requires with_localize=True")
+        if self.localize_coverage_k is not None and not self.with_localize:
+            raise ValueError("localize_coverage_k requires with_localize=True")
         if self.image_index is not None:
             if self.start is not None or self.stop is not None or self.stride is not None:
                 raise ValueError("image_index cannot be combined with start, stop, or stride")
@@ -302,12 +312,14 @@ def generate_frames_dataset(
         staging = Path(temporary)
         all_cases: list[PublicCase] = []
         all_labels: list[PrivateLabel] = []
+        generated_frames: list[_GeneratedFrame] = []
         frame_count = 0
         rejected_count = 0
         used_family_names: set[str] = set()
         for source in frames:
             frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
             _write_frame(staging, frame)
+            generated_frames.append(frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
             frame_count += 1
@@ -318,6 +330,16 @@ def generate_frames_dataset(
             raise ValueError("generation selected no frames")
         if not all_cases:
             raise ValueError("no selected frame produced an answerable question")
+
+        coverage_k = _effective_localize_coverage_k(request)
+        coverage_stats: dict[str, object] | None = None
+        if coverage_k is not None:
+            all_cases, all_labels, coverage_stats = _apply_localize_coverage_budget(
+                generated_frames, all_cases, all_labels, k=coverage_k
+            )
+            if not all_cases:
+                raise ValueError("localize coverage budget removed every published case")
+
         _write_jsonl(
             staging / "cases.jsonl",
             [case.model_dump(mode="json") for case in all_cases],
@@ -326,20 +348,20 @@ def generate_frames_dataset(
             staging / "labels.jsonl",
             [label.model_dump(mode="json") for label in all_labels],
         )
-        _write_json(
-            staging / "audit" / "run.json",
-            {
-                "generation": request.model_dump(mode="json", exclude={"output"}),
-                "configuration": config.model_dump(mode="json"),
-                "families": [
-                    family.name for family in AVAILABLE_FAMILIES if family.name in used_family_names
-                ],
-                "models": model_names or {},
-                "frame_count": frame_count,
-                "question_count": len(all_cases),
-                "rejected_question_count": rejected_count,
-            },
-        )
+        run_payload: dict[str, object] = {
+            "generation": request.model_dump(mode="json", exclude={"output"}),
+            "configuration": config.model_dump(mode="json"),
+            "families": [
+                family.name for family in AVAILABLE_FAMILIES if family.name in used_family_names
+            ],
+            "models": model_names or {},
+            "frame_count": frame_count,
+            "question_count": len(all_cases),
+            "rejected_question_count": rejected_count,
+        }
+        if coverage_stats is not None:
+            run_payload["localize_coverage"] = coverage_stats
+        _write_json(staging / "audit" / "run.json", run_payload)
         if output.exists():
             output.rmdir()
         staging.replace(output)
@@ -431,6 +453,63 @@ def _generate_frame(
         audit_rows=tuple(audit_rows),
         families=tuple(families),
     )
+
+
+def _effective_localize_coverage_k(request: GenerationRequest) -> int | None:
+    """Resolve publish budget: default K with localize, ``0`` disables, else explicit K."""
+    if not request.with_localize:
+        return None
+    if request.localize_coverage_k is None:
+        return DEFAULT_LOCALIZE_COVERAGE_K
+    if request.localize_coverage_k == 0:
+        return None
+    return request.localize_coverage_k
+
+
+def _apply_localize_coverage_budget(
+    frames: Sequence[_GeneratedFrame],
+    cases: Sequence[PublicCase],
+    labels: Sequence[PrivateLabel],
+    *,
+    k: int,
+) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
+    """Keep image-path cases; budget localize cases to ``K`` per (family, selector)."""
+    candidates: list[tuple[str, tuple[str, str], tuple[object, ...] | None]] = []
+    localize_ids: set[str] = set()
+    for frame in frames:
+        for case in frame.cases:
+            family = case_family_from_id(case.id)
+            candidate = collect_coverage_candidates_from_audit(
+                case_id=case.id,
+                family=family,
+                question=case.question,
+                audit_rows=frame.audit_rows,
+            )
+            if candidate is None:
+                continue
+            candidates.append(candidate)
+            localize_ids.add(case.id)
+
+    kept_localize = select_localize_coverage_ids(candidates, k=k)
+    kept_ids = {case.id for case in cases if case.id not in localize_ids} | kept_localize
+    filtered_cases = [case for case in cases if case.id in kept_ids]
+    filtered_labels = [label for label in labels if label.id in kept_ids]
+    by_cell: dict[str, int] = {}
+    for case_id, cell, _pose in candidates:
+        if case_id not in kept_localize:
+            continue
+        key = f"{cell[0]}|{cell[1]}"
+        by_cell[key] = by_cell.get(key, 0) + 1
+    stats: dict[str, object] = {
+        "k": k,
+        "localize_before": len(localize_ids),
+        "localize_after": len(kept_localize),
+        "non_localize_kept": len(kept_ids) - len(kept_localize),
+        "total_before": len(cases),
+        "total_after": len(filtered_cases),
+        "kept_per_cell": dict(sorted(by_cell.items())),
+    }
+    return filtered_cases, filtered_labels, stats
 
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
