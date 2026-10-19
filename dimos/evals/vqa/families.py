@@ -100,8 +100,9 @@ EGO_FORE_AFT_FAMILY = FamilySpec(
     name="ego_fore_aft",
     description=(
         "Ask whether one localized referent is ahead of or behind the robot body. "
-        "Prefer bare names for unique objects, or 'nearest <object>' / 'left <object>' / "
-        "'right <object>' when multiple instances exist. Do not infer fore/aft from the image."
+        "Prefer bare names for unique objects, 'nearest <object>', "
+        "'<object> next to <landmark>', or left/right <object>. "
+        "Do not infer fore/aft from the image."
     ),
     requires_localize=True,
 )
@@ -121,8 +122,9 @@ EGO_TURN_FAMILY = FamilySpec(
     name="ego_turn",
     description=(
         "Ask whether the robot should turn left, turn right, or is already facing one localized "
-        "referent (bare unique name or nearest <object>). Do not use left/right <object> "
-        "referents — that leaks the turn answer. Do not infer bearing from the image alone."
+        "referent: bare unique name, nearest <object>, or '<object> next to <landmark>'. "
+        "Do not use left/right <object> referents — that leaks the turn answer. "
+        "Do not infer bearing from the image alone."
     ),
     requires_localize=True,
 )
@@ -479,24 +481,27 @@ def _answer_ego_fore_aft(
     referent = proposal.object_names[0]
     answer = fore_aft_of(localize_scene, referent)
     instance = resolve_referent(localize_scene, referent)
-    selector, category = parse_referent(referent)
+    parsed = parse_referent(referent)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "object_name": referent,
+        "selector": parsed.selector,
+        "category": parsed.category,
+        "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
+        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+        "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        "robot_relative_forward_m": forward,
+        "robot_relative_left_m": left,
+        "answer_rule": "sign_of_robot_forward_axis",
+    }
+    if parsed.landmark is not None:
+        evidence["landmark"] = parsed.landmark
     return FamilyAnswer(
         question=f"Is the {referent} ahead of the robot or behind it?",
         choices=("ahead", "behind"),
         answer=answer,
-        evidence={
-            "primitive": "localize_scene",
-            "object_name": referent,
-            "selector": selector,
-            "category": category,
-            "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
-            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
-            "robot_yaw_rad": localize_scene.robot_yaw_rad,
-            "robot_relative_forward_m": forward,
-            "robot_relative_left_m": left,
-            "answer_rule": "sign_of_robot_forward_axis",
-        },
+        evidence=evidence,
     )
 
 
@@ -534,14 +539,28 @@ def _answer_ego_turn(
     proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
 ) -> FamilyAnswer:
     referent = proposal.object_names[0]
-    selector, category = parse_referent(referent)
-    if selector in ("left", "right"):
+    parsed = parse_referent(referent)
+    if parsed.selector in ("left", "right"):
         raise InsufficientEvidenceError(
             "ego_turn rejects left/right referents because the label leaks the turn answer"
         )
     answer = ego_turn_to(localize_scene, referent)
     instance = resolve_referent(localize_scene, referent)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "object_name": referent,
+        "selector": parsed.selector,
+        "category": parsed.category,
+        "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
+        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+        "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        "robot_relative_forward_m": forward,
+        "robot_relative_left_m": left,
+        "answer_rule": "bearing_in_robot_yaw_frame",
+    }
+    if parsed.landmark is not None:
+        evidence["landmark"] = parsed.landmark
     return FamilyAnswer(
         question=(
             f"To face the {referent}, should the robot turn left, turn right, "
@@ -549,18 +568,7 @@ def _answer_ego_turn(
         ),
         choices=("left", "right", "ahead"),
         answer=answer,
-        evidence={
-            "primitive": "localize_scene",
-            "object_name": referent,
-            "selector": selector,
-            "category": category,
-            "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
-            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
-            "robot_yaw_rad": localize_scene.robot_yaw_rad,
-            "robot_relative_forward_m": forward,
-            "robot_relative_left_m": left,
-            "answer_rule": "bearing_in_robot_yaw_frame",
-        },
+        evidence=evidence,
     )
 
 
@@ -568,11 +576,13 @@ def _answer_ego_any_fore_aft(
     proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
 ) -> FamilyAnswer:
     category = proposal.object_names[0]
-    selector, bare = parse_referent(category)
-    if selector != "unique":
+    parsed = parse_referent(category)
+    if parsed.selector != "unique":
         raise InsufficientEvidenceError(
-            "ego_any_fore_aft requires a bare category name, not a nearest/left/right referent"
+            "ego_any_fore_aft requires a bare category name, not a nearest/left/right/"
+            "next-to referent"
         )
+    bare = parsed.category
     answer = "yes" if any_ahead(localize_scene, bare) else "no"
     return FamilyAnswer(
         question=f"Is there any verified {bare} ahead of the robot?",

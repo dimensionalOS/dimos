@@ -99,6 +99,8 @@ default**. Enable them with `--with-localize`. Generation then:
    - **nearest** `<category>` when multiple hits exist (closest to the robot)
    - **left/right** `<category>` for `ego_fore_aft` only when both sides are laterally
      unambiguous (not paired with `ego_turn` — the side label would leak the turn answer)
+   - **`<anchor> next to <landmark>`** relational referents for `ego_fore_aft` / `ego_turn`
+     when a unique nearby pair exists (disambiguates without leaking turn direction)
    - **any-ahead** yes/no for each selected category (`ego_any_fore_aft`)
    - **height_order** pairs among unique categories only
 

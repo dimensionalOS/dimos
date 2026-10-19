@@ -36,6 +36,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
     format_referent,
+    next_to_referents,
     scene_from_named_hits,
     spatial_side_referents,
 )
@@ -101,10 +102,11 @@ def scene_at_timestamp(
 # Cap multi-instance categories so full-episode scenes do not explode case counts.
 _MAX_MULTI_CATEGORIES = 6
 _MAX_HEIGHT_PAIRS = 12
+_MAX_NEXT_TO_PAIRS = 6
 
 
 def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[QuestionProposal, ...]:
-    """Deterministic localize proposals: unique, nearest, left/right, and any-ahead."""
+    """Deterministic localize proposals: unique, nearest, relational, sides, any-ahead."""
     by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
     display_name: dict[str, str] = {}
     for instance in scene.instances:
@@ -137,7 +139,7 @@ def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[Questio
         proposals.append(QuestionProposal(family="ego_turn", object_names=(name,)))
         proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
 
-    # 2) Nearest-to-robot + 3) spatial left/right + 4) existential for multi-instance.
+    # 2) Nearest-to-robot + 3) left/right fore-aft only + 4) existential.
     for name in multi_names:
         nearest = format_referent("nearest", name)
         proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(nearest,)))
@@ -149,6 +151,11 @@ def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[Questio
             for referent in sides:
                 proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
         proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
+
+    # 5) Relational referents: "<anchor> next to <landmark>" (no leaked turn answer).
+    for referent in next_to_referents(scene, max_pairs=_MAX_NEXT_TO_PAIRS):
+        proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
+        proposals.append(QuestionProposal(family="ego_turn", object_names=(referent,)))
 
     # Height order among unique categories only (stable GT without selector prefixes).
     height_pairs = 0

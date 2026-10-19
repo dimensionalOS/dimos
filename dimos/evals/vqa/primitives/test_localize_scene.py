@@ -26,6 +26,8 @@ from dimos.evals.vqa.primitives.localize_scene import (
     ego_turn_to,
     fore_aft_of,
     higher_object,
+    next_to_referents,
+    parse_referent,
     resolve_referent,
     robot_relative_xy,
     spatial_side_referents,
@@ -143,6 +145,40 @@ def test_any_ahead_false_when_all_behind() -> None:
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-1.0, 0.5, 0.0)),
     )
     assert any_ahead(scene, "chair") is False
+
+
+def test_next_to_picks_anchor_nearest_landmark() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.5)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(5.0, -2.0, 0.5)),
+        LocalizeInstanceEvidence(object_name="table", position_world_xyz=(1.1, 2.1, 0.7)),
+    )
+    parsed = parse_referent("chair next to table")
+    assert parsed.selector == "next_to"
+    assert parsed.category == "chair"
+    assert parsed.landmark == "table"
+    inst = resolve_referent(scene, "chair next to table")
+    assert inst.position_world_xyz == (1.0, 2.0, 0.5)
+    assert ego_turn_to(scene, "chair next to table") == "left"
+
+
+def test_next_to_rejects_ambiguous_pairs() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.0, 0.5)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.05, 0.2, 0.5)),
+        LocalizeInstanceEvidence(object_name="table", position_world_xyz=(2.1, 0.1, 0.7)),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="ambiguous"):
+        resolve_referent(scene, "chair next to table")
+
+
+def test_next_to_referents_lists_unambiguous_pairs() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 1.0, 0.5)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(5.0, -2.0, 0.5)),
+        LocalizeInstanceEvidence(object_name="table", position_world_xyz=(2.2, 1.1, 0.7)),
+    )
+    assert "chair next to table" in next_to_referents(scene)
 
 
 def test_bare_name_still_requires_unique_instance() -> None:

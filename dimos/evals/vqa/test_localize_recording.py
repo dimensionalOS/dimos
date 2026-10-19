@@ -104,3 +104,19 @@ def test_proposals_from_localize_scene_cover_singles_and_pairs() -> None:
     assert ("ego_turn", ("right chair",)) not in families
     assert ("ego_any_fore_aft", ("chair",)) in families
     assert ("ego_fore_aft", ("chair",)) not in families
+
+
+def test_proposals_include_next_to_relational_referents() -> None:
+    scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 1.0, 0.5)),
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(5.0, -2.0, 0.5)),
+            LocalizeInstanceEvidence(object_name="table", position_world_xyz=(2.2, 1.1, 0.7)),
+        ),
+    )
+    proposals = proposals_from_localize_scene(scene)
+    families = {(p.family, p.object_names) for p in proposals}
+    assert ("ego_fore_aft", ("chair next to table",)) in families
+    assert ("ego_turn", ("chair next to table",)) in families
