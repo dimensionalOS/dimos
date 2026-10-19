@@ -108,7 +108,8 @@ Every arm move accepts speed_scale and timeout. Gripper calls accept timeout onl
 they wait until the fingers stop, at the target or on an object. arm.reset() stops any motion and clears a failed
 state; a move that fails with "call reset()" needs it before the next one.
 
-Camera (the wrist camera, moving with the gripper):
+Camera (the wrist camera, moving with the gripper; at the start pose it looks straight down:
+image right = world -Y, image up = world +X):
   app.peek_stream("color_image", 2.0).save("view.jpg")
                                  the latest RGB frame, saved for the read tool
 
