@@ -4,9 +4,7 @@
   #
   #   cd dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
   #   nix develop path:. --command cargo test
-  #
-  # `nix build` must use `.#default` rather than `path:.`: the package pulls in
-  # the native/rust path deps, which sit above this directory.
+  #   nix build path:.#checks.<system>.lint    # clippy, warnings as errors
   #
   # The dev shell exports GTSAM_INCLUDE_DIR / GTSAM_LIB_DIR /
   # EIGEN_INCLUDE_DIR / BOOST_INCLUDE_DIR, which build.rs consumes directly.
@@ -56,43 +54,43 @@
           TBB_LIB_DIR = "${pkgs.lib.getLib pkgs.tbb}/lib";
         };
 
-        crateSubdir = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust";
-
-        # Reassemble the crate next to the in-repo path deps it references
-        # (native/rust/dimos-module{,-macros}) so cargo's relative `path = `
-        # entries resolve inside the sandbox.
-        src = pkgs.runCommand "dimos-gsc-pgo-src" { } ''
-          mkdir -p "$out/${crateSubdir}"
-          cp -r ${./src} "$out/${crateSubdir}/src"
-          cp -r ${./shim} "$out/${crateSubdir}/shim"
-          cp ${./Cargo.toml} "$out/${crateSubdir}/Cargo.toml"
-          cp ${./Cargo.lock} "$out/${crateSubdir}/Cargo.lock"
-          cp ${./build.rs} "$out/${crateSubdir}/build.rs"
-          cp ${./crate-hashes.json} "$out/${crateSubdir}/crate-hashes.json"
-
-          mkdir -p "$out/native/rust"
-          cp -r ${../../../../../../../native/rust/dimos-module} "$out/native/rust/dimos-module"
-          cp -r ${../../../../../../../native/rust/dimos-module-macros} "$out/native/rust/dimos-module-macros"
-        '';
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: _type: !(builtins.elem (baseNameOf path) [ "target" "result" ]);
+        };
 
         # crate2nix turns Cargo.lock into one derivation per crate, so there is
         # no vendor-tarball `cargoHash` to regenerate whenever a dependency
-        # moves. `crate-hashes.json` pins the git dependency (lcm-msgs);
+        # moves. `crate-hashes.json` pins the git dependencies (lcm-msgs, dimos-module);
         # refresh it with `crate2nix generate` when that ref changes.
-        cargoNix = pkgs.callPackage
-          (crate2nix.tools.${system}.generatedCargoNix {
-            name = "dimos-gsc-pgo";
-            inherit src;
-            cargoToml = "${crateSubdir}/Cargo.toml";
-          })
-          {
-            defaultCrateOverrides = pkgs.defaultCrateOverrides // {
-              dimos-gsc-pgo = _attrs: {
-                nativeBuildInputs = [ pkgs.pkg-config ];
-                buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
-              } // buildEnv;
-            };
-          };
+        generated = crate2nix.tools.${system}.generatedCargoNix {
+          name = "dimos-gsc-pgo";
+          inherit src;
+        };
+        crateOverrides = pkgs.defaultCrateOverrides // {
+          dimos-gsc-pgo = _attrs: {
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
+          } // buildEnv;
+        };
+        # mode null: the release module; "lint": clippy with warnings as errors; "test": a debug build
+        # that runs the tests. Only our own crates change; dependencies build as for the module.
+        ours = [ "dimos-gsc-pgo" "dimos-module" "dimos-module-macros" ];
+        cargoNixWith = mode: pkgs.callPackage generated {
+          buildRustCrateForPkgs = cratePkgs: crate:
+            (cratePkgs.buildRustCrate.override { defaultCrateOverrides = crateOverrides; }) (crate // pkgs.lib.optionalAttrs
+              (mode != null && builtins.elem crate.crateName ours)
+              ({
+                release = false;
+                extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
+              } // pkgs.lib.optionalAttrs (mode == "lint") {
+                useClippy = true;
+                capLints = "forbid";
+                extraRustcOpts =
+                  (crate.extraRustcOpts or [ ]) ++ [ "-D" "warnings" "-C" "debuginfo=0" ];
+              }));
+        };
+        cargoNix = cargoNixWith null;
       in {
         devShells.default = pkgs.mkShell {
           # clippy + rustfmt come from the same nixpkgs pin as cargo/rustc so the
@@ -106,5 +104,14 @@
         packages.default = cargoNix.rootCrate.build.overrideAttrs (old: {
           meta = (old.meta or { }) // { mainProgram = "gsc-pgo"; };
         });
+
+        packages.lint = (cargoNixWith "lint").rootCrate.build.override {
+          runTests = true;
+          testCrateFlags = [ "--list" ];
+        };
+        checks.lint = self.packages.${system}.lint;
+
+        packages.tests = (cargoNixWith "test").rootCrate.build.override { runTests = true; };
+        checks.tests = self.packages.${system}.tests;
       });
 }

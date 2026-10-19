@@ -31,26 +31,26 @@ use dimos_gsc_pgo::msgs::{
     PoseStamped,
 };
 
-fn repo_root() -> PathBuf {
-    // <repo>/dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
+/// <repo>/dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust, or `None` when the crate was
+/// built outside the repo (the nix sandbox has only the crate).
+fn repo_root() -> Option<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(7)
-        .expect("repo root 7 levels above the crate")
-        .to_path_buf()
+        .map(Path::to_path_buf)
 }
 
 /// The repo venv's Python, or `None` when it hasn't been created (e.g. the
 /// nix CI job, which builds the crate without a Python environment). Tests use
 /// this to skip rather than hard-fail when the cross-language check can't run.
 fn venv_python() -> Option<PathBuf> {
-    let python = repo_root().join(".venv/bin/python");
+    let python = repo_root()?.join(".venv/bin/python");
     python.is_file().then_some(python)
 }
 
 /// Run a Python snippet in the repo venv, feeding `stdin` and returning stdout.
 fn python(python: &Path, code: &str, stdin: &str) -> String {
-    let root = repo_root();
+    let root = repo_root().expect("venv_python found the repo root");
     let mut pythonpath = root.as_os_str().to_owned();
     if let Some(home) = std::env::var_os("HOME") {
         let shim = Path::new(&home).join(".cache/cyclonedds_shim");

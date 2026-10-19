@@ -38,7 +38,7 @@ logger = setup_logger()
 
 
 class PGOConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
     executable: str = "result/bin/gsc-pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
     stdin_config: bool = True
