@@ -132,8 +132,11 @@ image right = world -Y, image up = world +X):
 
 Perception:
   app.skills.localize(objects="red cube, blue cup")
-                                 the named objects in the camera's recent frames, as text; describe
-                                 how an object looks (colour, shape). Each found object reports:
+                                 the named objects in the camera's recent frames, as text. Name what
+                                 the camera sees, colour + shape from above ("yellow rectangular
+                                 object", "blue circle"), not what the object is ("bin", "cap"):
+                                 names often score under 0.15. It cannot read text or letters.
+                                 Each found object reports:
                                  world position; footprint: length x width (m) of the smallest
                                  rectangle around it seen from above, its centre and the long
                                  side's yaw; the z range of the surfaces the camera saw (the top
