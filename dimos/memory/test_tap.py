@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,9 @@ from dimos.core.stream import Transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.messages.builtin_interfaces.msg import Time as GeneratedTime
+from dimos.messages.dimos_msgs.msg import LineSegments3D as GeneratedSegments
+from dimos.messages.std_msgs.msg import Header as GeneratedHeader
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
@@ -148,11 +152,11 @@ def test_recording_fails_loudly_when_no_stream_matches(
     monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_topics", "color_image2")
-    with pytest.raises(ValueError, match="matched none of: lidar, odom"):
-        with tap.recording(
-            {("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}
-        ):
-            pass
+    with (
+        pytest.raises(ValueError, match="matched none of: lidar, odom"),
+        tap.recording({("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}),
+    ):
+        pass
     assert not any(tmp_path.rglob("memory.db"))
 
 
@@ -178,3 +182,23 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_generated_transport_tap_records_cdr_and_preserves_zero_stamp(tmp_path):
+    expected = GeneratedSegments(GeneratedHeader(GeneratedTime(0, 0), "map"), [])
+    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
+        with ExitStack() as cleanup:
+            recorder = TransportRecorder(store)
+            cleanup.callback(recorder.close)
+            transport = _Transport()
+            unsubscribe = recorder.tap("segments", GeneratedSegments, transport)
+            assert unsubscribe is not None
+            cleanup.callback(unsubscribe)
+            transport.publish(expected)
+        observations = list(store.streams.segments)
+        assert len(observations) == 1
+        assert type(observations[0].data) is GeneratedSegments
+        assert observations[0].data == expected
+        assert observations[0].ts == 0.0
+    with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
+        assert next(iter(store.streams.segments)).data == expected
