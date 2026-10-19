@@ -200,7 +200,7 @@ def test_connect_unload_invalidates_cache(client):
     source = client._source
     source.get_module("StressTestModule")
 
-    client.unload("StressTestModule")
+    client.unload(StressTestModule)
 
     with pytest.raises(KeyError):
         source.get_module("StressTestModule")
@@ -254,25 +254,22 @@ def test_get_module_class_name_raises_when_ambiguous():
         assert module.ping_name() == "robot1/namedremotemodule"
 
 
-def test_unload_named_instance_by_instance_name():
+def test_unload_by_class_name_requires_a_single_instance():
     with _remote_source_with_instances(
         "robot0/namedremotemodule", "robot1/namedremotemodule"
     ) as source:
         with pytest.raises(ValueError, match="Multiple instances"):
-            source.unload_module("NamedRemoteModule")
-        assert source.get_module("robot0/namedremotemodule").ping_name() == (
-            "robot0/namedremotemodule"
-        )
+            source.unload_module_by_class_name("NamedRemoteModule")
 
-        source.unload_module("robot0/namedremotemodule")
-
-        assert source.list_module_names() == ["robot1/namedremotemodule"]
-        assert source.get_module("NamedRemoteModule").ping_name() == "robot1/namedremotemodule"
+        assert sorted(source.list_module_names()) == [
+            "robot0/namedremotemodule",
+            "robot1/namedremotemodule",
+        ]
 
 
 def test_unload_single_named_instance_by_class_name():
     with _remote_source_with_instances("robot0/namedremotemodule") as source:
-        source.unload_module("NamedRemoteModule")
+        source.unload_module_by_class_name("NamedRemoteModule")
 
         assert source.list_module_names() == []
 

@@ -124,29 +124,21 @@ class Dimos:
             self._source.invalidate(module_class.__name__)
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
-    def unload(self, module: type[ModuleBase] | str) -> None:
-        """Stop and remove one running module.
+    def unload(self, module_class: type[ModuleBase]) -> None:
+        """Stop and remove a running module.
 
         Args:
-            module: The module class, or a name that `get_module` accepts: an
-                instance name or a class name.
+            module_class: The module class to unload.
         """
         with self._lock:
             if self._source is None:
                 raise RuntimeError("No modules are running")
             if self._source.is_remote:
                 assert isinstance(self._source, RemoteModuleSource)
-                if isinstance(module, str):
-                    self._source.unload_module(module)
-                else:
-                    self._source.unload_module_by_class_name(module.__name__)
+                self._source.unload_module_by_class_name(module_class.__name__)
                 return
-            assert isinstance(self._source, LocalModuleSource)
             assert self._coordinator is not None
-            if isinstance(module, str):
-                self._coordinator.unload_module(self._source.instance_key(module))
-            else:
-                self._coordinator.unload_module(module)
+            self._coordinator.unload_module(module_class)
 
     @classmethod
     def connect(cls, *, timeout: float = 5.0) -> Dimos:

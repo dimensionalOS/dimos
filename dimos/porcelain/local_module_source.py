@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.core.rpc_client import ModuleProxyProtocol
 from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
@@ -53,24 +54,22 @@ class LocalModuleSource(ModuleSource):
         return self._coordinator.list_streams()
 
     def get_module(self, name: str) -> ModuleHandle:
-        return self._coordinator._deployed_modules[self.instance_key(name)]
-
-    def instance_key(self, name: str) -> str:
-        """The deployed instance that an instance name or class name refers to."""
         if name in self._coordinator._deployed_modules:
-            return name
+            return self._coordinator._deployed_modules[name]
 
-        matches = [
-            instance_key
-            for instance_key, cls in self._coordinator._instance_classes.items()
-            if cls.__name__ == name
-        ]
+        matches: list[tuple[str, ModuleProxyProtocol]] = []
+        for instance_key, proxy in self._coordinator._deployed_modules.items():
+            cls = self._coordinator._instance_classes[instance_key]
+            if cls.__name__ == name:
+                matches.append((instance_key, proxy))
+
         if len(matches) == 1:
-            return matches[0]
+            return matches[0][1]
         if len(matches) > 1:
+            instance_names = ", ".join(sorted(instance_key for instance_key, _ in matches))
             raise ValueError(
                 f"Multiple instances of {name!r} are deployed "
-                f"({', '.join(sorted(matches))}); use the instance name."
+                f"({instance_names}); use the instance name."
             )
         raise KeyError(name)
 

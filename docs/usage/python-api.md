@@ -199,7 +199,7 @@ app = Dimos.connect()
 app.run("keyboard-teleop")       # add a module by registry name
 app.run(SomeModule)               # or by Module class
 app.restart(SomeModule)           # hot-restart it on the daemon
-app.unload("KeyboardTeleop")      # stop and remove it; the rest keeps running
+app.unload(SomeModule)            # stop and remove it; the rest keeps running
 ```
 
 Strings and registered Module classes take a name-based fast path. Other
@@ -241,11 +241,10 @@ If you find yourself needing data from an existing module that isn't on its `Out
 
 ## Unloading modules
 
-`unload()` stops one module and removes it from the running system. It accepts the module class, or a name that `get_module()` accepts: an instance name or a class name.
+`unload()` stops one module and removes it from the running system. Like `restart()`, it takes the module class and raises if more than one instance of that class is running.
 
 ```python skip
-app.unload(McpServer)
-app.unload("robot0/namedremotemodule")  # one instance of a module deployed several times
+app.unload(KeyboardTeleop)
 ```
 
 The module's `stop()` runs, and its worker process exits if no other module runs in it. Modules that track the system, such as `McpServer`, receive the remaining module list, so the unloaded module's skills disappear. Stream transports stay in place: other modules that read the unloaded module's streams stop receiving messages, and modules that held a reference to it keep a reference that no longer answers.

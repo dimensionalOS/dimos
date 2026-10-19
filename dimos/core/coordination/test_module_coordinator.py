@@ -1023,32 +1023,6 @@ def test_restart_sends_the_module_list_once_the_module_is_back(dynamic_coordinat
     assert recorder.module_lists()[sent:] == [["ModuleA", "SystemModulesRecorder"]]
 
 
-def test_unload_module_by_class_name_and_by_name(dynamic_coordinator) -> None:
-    dynamic_coordinator.load_module(ModuleA)
-    dynamic_coordinator.unload_module_by_class_name("ModuleA")
-    assert dynamic_coordinator.get_instance(ModuleA) is None
-
-    # An unloaded module can be loaded again.
-    dynamic_coordinator.load_module(ModuleA)
-    assert dynamic_coordinator.get_instance(ModuleA).get_name() == "A, Module A"
-    dynamic_coordinator.unload_module_by_name(ModuleA.name)
-    assert dynamic_coordinator.get_instance(ModuleA) is None
-
-    with pytest.raises(ValueError, match="No deployed module with class name 'ModuleA'"):
-        dynamic_coordinator.unload_module_by_class_name("ModuleA")
-
-
-def test_unload_module_by_class_name_requires_a_single_instance(dynamic_coordinator) -> None:
-    dynamic_coordinator.load_blueprint(ModuleA.blueprint(instance_name="a0"))
-    dynamic_coordinator.load_blueprint(ModuleA.blueprint(instance_name="a1"))
-
-    with pytest.raises(ValueError, match="use unload_module_by_name"):
-        dynamic_coordinator.unload_module_by_class_name("ModuleA")
-
-    dynamic_coordinator.unload_module_by_name("a0")
-    assert dynamic_coordinator.list_module_names() == ["a1"]
-
-
 def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
     """Restart reconnects streams that were remapped during initial load."""
     bp = autoconnect(

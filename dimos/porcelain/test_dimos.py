@@ -237,19 +237,18 @@ def test_restart_no_reload(running_app):
     assert result == "pong"
 
 
-@pytest.mark.parametrize("target", [TickerModule, "TickerModule"])
-def test_unload_removes_only_that_module(running_app, target):
+def test_unload_removes_only_that_module(running_app):
     running_app.run(TickerModule)
 
-    running_app.unload(target)
+    running_app.unload(TickerModule)
 
     assert "TickerModule" not in running_app._source.list_module_names()
     assert running_app.skills.ping() == "pong"
 
 
-def test_unload_unknown_module(running_app):
-    with pytest.raises(KeyError):
-        running_app.unload("NoSuchModule")
+def test_unload_module_that_is_not_running(running_app):
+    with pytest.raises(ValueError, match="TickerModule is not deployed"):
+        running_app.unload(TickerModule)
 
 
 def test_skills_accessible(running_app):
@@ -282,11 +281,10 @@ def test_connected_restart_no_reload(client):
     assert client.skills.ping() == "pong"
 
 
-@pytest.mark.parametrize("target", [TickerModule, "TickerModule"])
-def test_connected_unload_removes_only_that_module(running_app, client, target):
+def test_connected_unload_removes_only_that_module(running_app, client):
     client.run(TickerModule)
 
-    client.unload(target)
+    client.unload(TickerModule)
 
     assert "TickerModule" not in client._source.list_module_names()
     assert "TickerModule" not in running_app._source.list_module_names()
