@@ -38,7 +38,7 @@ r = decode(encode(m), PoseStamped)
 assert type(r.header) is Header and r == m
 assert type(pickle.loads(pickle.dumps(m)).header) is Header
 assert 'MSG: std_msgs/Header' in schema(m.__msgtype__)
-assert len(message_types()) == 73
+assert len(message_types()) == 78
 assert 'visualization_msgs/msg/Marker' not in message_types()
 root = Path(package_root())
 assert (root / 'schema-sources.json').is_file()

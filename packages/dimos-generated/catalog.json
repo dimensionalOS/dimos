@@ -69,6 +69,11 @@
     "vision_msgs/msg/ObjectHypothesis": "Published runtime consumer: dimos/perception/detection/type/detection2d/bbox.py",
     "vision_msgs/msg/ObjectHypothesisWithPose": "Published runtime consumer: dimos/perception/detection/type/detection2d/bbox.py",
     "vision_msgs/msg/Point2D": "Published runtime consumer: dimos/perception/detection/type/detection2d/bbox.py",
-    "vision_msgs/msg/Pose2D": "Published runtime consumer: dimos/perception/detection/type/detection2d/bbox.py"
+    "vision_msgs/msg/Pose2D": "Published runtime consumer: dimos/perception/detection/type/detection2d/bbox.py",
+    "dimos_msgs/msg/Contact": "DimOS runtime message contract",
+    "dimos_msgs/msg/Contacts": "DimOS runtime message contract",
+    "dimos_msgs/msg/RegionBounds": "DimOS runtime message contract",
+    "dimos_msgs/msg/RegionLineSegments3D": "DimOS runtime message contract",
+    "dimos_msgs/msg/RegionPointCloud2": "DimOS runtime message contract"
   }
 }
