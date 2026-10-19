@@ -45,6 +45,8 @@ KILL_AGENT_PROCESSES = (
     'for pid in $(pgrep -v -f "^(/sbin/docker-init|sleep infinity)"); do '
     '[ "$pid" != "$$" ] && kill -9 "$pid"; done; true'
 )
+# Where the robot container sees this case's output dir, e.g. to log ground truth for grading.
+CASE_MOUNT = "/case"
 
 
 class FunctionRef(BaseModel):
@@ -79,6 +81,12 @@ class DimosRobot(BaseModel):
     forward: tuple[str, ...] = ()
     env: dict[str, str] = {}
     image: str = ROBOT_IMAGE
+    # dimOS data directories (get_data names) the robot needs, mounted read-only from this
+    # machine rather than downloaded in every container, e.g. ("scene_packages",).
+    data: tuple[str, ...] = ()
+    # False keeps dimOS's own topics off the router: the agent sees only what the
+    # blueprint serves itself (raw-robot-bridge), not simulator ground truth.
+    expose_dimos: bool = True
 
 
 class ExternalRobot(BaseModel):
@@ -136,6 +144,7 @@ class SandboxOutcome:
     # None without a blueprint robot.
     recording: Path | None
     exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
+    case_dir: Path  # this case's output dir, e.g. for ground truth or a report
 
 
 class SandboxCase(BaseModel):

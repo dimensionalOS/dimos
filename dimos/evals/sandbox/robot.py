@@ -61,13 +61,16 @@ def loopback(endpoint: str) -> str:
     return f"{protocol}/127.0.0.1:{address.rpartition(':')[2]}"
 
 
-def serve(listen: str, forward: Sequence[str], dimos_args: Sequence[str]) -> int:
+def serve(
+    listen: str, forward: Sequence[str], dimos_args: Sequence[str], expose_dimos: bool = True
+) -> int:
     """Run the router, and ``dimos <dimos_args>`` behind it, until SIGTERM or dimos exits.
 
     dimos runs on zenoh with every session dialing the router, so each topic the
     blueprint publishes or subscribes reaches whoever dials the router. *forward*
     adds zenoh endpoints the router dials itself: a real robot's router, or a peer
-    that only listens (raw-robot-bridge).
+    that only listens (raw-robot-bridge). With expose_dimos off, dimos's own sessions
+    stay off the router, so only the forwarded peers are reachable.
     """
     stop = threading.Event()
 
@@ -81,7 +84,9 @@ def serve(listen: str, forward: Sequence[str], dimos_args: Sequence[str]) -> int
         if not dimos_args:
             stop.wait()
             return 0
-        env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "ZENOH_CONNECT": loopback(listen)}
+        env = {**os.environ, "DIMOS_TRANSPORT": "zenoh"}
+        if expose_dimos:
+            env["ZENOH_CONNECT"] = loopback(listen)
         # The dimos of this interpreter, whether or not its console script is on PATH.
         command = [sys.executable, "-m", "dimos.cli.dimos", *dimos_args]
         with subprocess.Popen(command, env=env) as proc:

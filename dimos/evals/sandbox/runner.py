@@ -45,7 +45,7 @@ import tempfile
 import time
 from typing import Any
 
-from dimos.constants import STATE_DIR
+from dimos.constants import CACHE_DIR, STATE_DIR
 from dimos.evals.agents.lib.pi_config import Provider, RuntimeConfig, Thinking
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -54,6 +54,7 @@ from dimos.evals.constants import MAX_TOOL_SECONDS, PROVIDERS
 from dimos.evals.runner import _git_record, _write_trajectory, summarize
 from dimos.evals.sandbox.case import (
     AGENT_IMAGE,
+    CASE_MOUNT,
     KILL_AGENT_PROCESSES,
     ROBOT_ENDPOINT,
     ROBOT_IMAGE,
@@ -79,6 +80,8 @@ AWAIT_KEY = (
     "import sys; from dimos.evals.sandbox.robot import await_key; "
     "sys.exit(not await_key(sys.argv[1] or None, sys.argv[2], float(sys.argv[3])))"
 )
+# The robot container's cache, kept on this machine between cases.
+ROBOT_CACHE = CACHE_DIR / "evals" / "sandbox_robot"
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
@@ -198,11 +201,13 @@ class SandboxRunner:
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
+
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
                 recording=next((case_dir / "recordings").glob("*/memory.db"), None),
                 exec=exec_in(project, compose_file),
+                case_dir=case_dir,
             )
             return self._result(case, t0, trajectory, agent_s, score=case.evaluate(outcome))
         except Exception as e:
@@ -448,22 +453,25 @@ def _restore_work(compose: list[str], work: Path, staged: Path) -> None:
 
 def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
     if isinstance(robot, DimosRobot):
+        from dimos.utils.data import get_data
+
         forward = [a for endpoint in robot.forward for a in ("--forward", endpoint)]
+        hide = [] if robot.expose_dimos else ["--hide-dimos"]
+        ROBOT_CACHE.mkdir(parents=True, exist_ok=True)
         (case_dir / "recordings").mkdir(exist_ok=True)  # this user's, not the container's root
+        record = ["--record", "sqlite"]
         return {
-            "command": [
-                "dimos",
-                "evals",
-                "robot",
-                *forward,
-                "--",
-                "--record",
-                "sqlite",
-                *robot.args,
-            ],
+            "command": ["dimos", "evals", "robot", *forward, *hide, "--", *record, *robot.args],
             "environment": dict(robot.env),
-            # The robot image's XDG_STATE_HOME is /state, so dimos records under it.
-            "volumes": [f"{case_dir / 'recordings'}:/state/dimos/recordings"],
+            "volumes": [
+                # Ground truth the blueprint logs for grading; the agent cannot reach it.
+                f"{case_dir}:{CASE_MOUNT}",
+                # The robot image is a checkout (/app/.git), so dimos records under /app/recordings.
+                f"{case_dir / 'recordings'}:/app/recordings",
+                # Compiled models and the like survive from one case to the next.
+                f"{ROBOT_CACHE}:/cache",
+                *(f"{get_data(name)}:/app/data/{name}:ro" for name in robot.data),
+            ],
         }
     forward = [a for endpoint in robot.connect for a in ("--forward", endpoint)]
     return {

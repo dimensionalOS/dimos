@@ -37,5 +37,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     DIMOS_TRANSPORT=zenoh \
     PYTHONUNBUFFERED=1
 
-RUN mkdir -p /state /config
+# dimOS reads data from its checkout's data/ when it finds a .git there, and otherwise clones
+# a second copy. This image is a checkout without history whose data/ is mounted in
+# (DimosRobot.data), so mark it as the checkout.
+RUN mkdir -p /state /config /app/.git /app/data
 CMD ["bash"]
