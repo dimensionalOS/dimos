@@ -29,4 +29,5 @@ jobs:
           uv venv .venv --python 3.12 --seed
           uv pip install --python .venv/bin/python 'dimos-cdrgen[native]==0.1.0' numpy build pytest pytest-asyncio pytest-env
       - name: Verify DimOS SDK, installed Python consumer and C++ consumer
-        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
+        run: |
+          .venv/bin/python -m pytest --noconftest -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_integration.py
