@@ -176,7 +176,9 @@ Grasps:
                                  camera saw just the top: look from another angle and localize
                                  again before asking for grasps.
 
-help(<call>) shows any call's full docstring. Use only the calls above.
+Other streams: app.list_streams() lists every module's streams, and app.peek_stream(name) reads
+any of them except the simulator's ground truth (exact object poses, the scene camera), which
+reads as absent. help(<call>) shows any call's full docstring.
 
 Print only what you need: what a script prints is what you see.
 """

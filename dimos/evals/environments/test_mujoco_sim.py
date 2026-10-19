@@ -56,6 +56,10 @@ def test_launch_flags(monkeypatch):
         "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom,overview_image,overview_camera_info",
     ]
 
+    assert proc.extra_env["PEEK_HIDDEN_STREAMS"] == (
+        "body_poses,overview_image,overview_camera_info"
+    )
+
     proc = DimosCliCall()
     environment().configure_launch(proc)
     assert "MUJOCOSIMMODULE__TRACKED_BODIES" not in proc.extra_env
