@@ -34,6 +34,9 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
@@ -301,6 +304,17 @@ class Object(Detection3D):
             )
 
             if len(pcd_filtered.points) < 10:
+                # Say why a detection yields no object: an empty mask, no depth
+                # under it, or too few points left after filtering.
+                logger.warning(
+                    "Detection %s dropped: mask %d px, depth under mask %d px, "
+                    "%d points after downsample, %d after outlier removal",
+                    getattr(det, "name", "?"),
+                    int(np.count_nonzero(mask)),
+                    int(np.count_nonzero(depth_masked)),
+                    len(pc0.pointcloud.points),
+                    len(pcd_filtered.points),
+                )
                 continue
 
             pc = PointCloud2(
@@ -345,7 +359,30 @@ class Object(Detection3D):
             if max_distance > 0:
                 dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
                 if dist > max_distance:
+                    logger.warning(
+                        "Detection %s dropped: centre (%.2f, %.2f, %.2f) in %s is %.2f m "
+                        "from the origin, beyond max_distance %.2f",
+                        getattr(det, "name", "?"),
+                        center.x,
+                        center.y,
+                        center.z,
+                        frame_id,
+                        dist,
+                        max_distance,
+                    )
                     continue
+            logger.info(
+                "Detection %s: %d points, centre (%.2f, %.2f, %.2f) in %s, size (%.2f, %.2f, %.2f)",
+                getattr(det, "name", "?"),
+                len(pcd_filtered.points),
+                center.x,
+                center.y,
+                center.z,
+                frame_id,
+                sx,
+                sy,
+                sz,
+            )
 
             objects.append(
                 cls(
