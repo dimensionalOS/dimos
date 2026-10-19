@@ -23,11 +23,13 @@ Referent strings (``object_names`` entries) may be:
 - bare category: exactly one verified hit (rare / unique objects)
 - ``nearest <category>``: closest hit to the robot
 - ``left <category>`` / ``right <category>``: lateral extremes with margin
+- ``<anchor> next to <landmark>``: anchor instance nearest a landmark category
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, Literal
 
@@ -40,7 +42,7 @@ if TYPE_CHECKING:
 
 ForeAft = Literal["ahead", "behind"]
 EgoTurn = Literal["left", "right", "ahead"]
-ReferentSelector = Literal["unique", "nearest", "left", "right"]
+ReferentSelector = Literal["unique", "nearest", "left", "right", "next_to"]
 
 FORE_AFT_MIN_FORWARD_M = 0.30
 TURN_AHEAD_ABS_RAD = math.pi / 6  # 30 degrees
@@ -48,12 +50,24 @@ HEIGHT_MARGIN_M = 0.15
 EGO_TURN_MIN_RANGE_M = 0.30
 SPATIAL_LATERAL_MARGIN_M = 0.30
 SPATIAL_SIDE_SEPARATION_M = 0.40
+NEXT_TO_MAX_RANGE_M = 1.50
+NEXT_TO_UNIQUENESS_MARGIN_M = 0.35
+_NEXT_TO_TOKEN = " next to "
 
 _SELECTOR_PREFIXES: tuple[tuple[ReferentSelector, str], ...] = (
     ("nearest", "nearest "),
     ("left", "left "),
     ("right", "right "),
 )
+
+
+@dataclass(frozen=True)
+class ParsedReferent:
+    """Structured referent: selector, primary category, optional landmark."""
+
+    selector: ReferentSelector
+    category: str
+    landmark: str | None = None
 
 
 class LocalizeInstanceEvidence(BaseModel):
@@ -104,12 +118,25 @@ def instances_named(
     return tuple(inst for inst in scene.instances if inst.object_name.casefold() == key)
 
 
-def parse_referent(referent: str) -> tuple[ReferentSelector, str]:
-    """Split ``nearest chair`` / ``left chair`` / bare ``chair`` into selector + category."""
+def parse_referent(referent: str) -> ParsedReferent:
+    """Parse bare / nearest / left / right / ``A next to B`` referents."""
     text = referent.strip()
     if not text:
         raise InsufficientEvidenceError("localize referent must be non-empty")
     lower = text.casefold()
+    split_at = lower.find(_NEXT_TO_TOKEN)
+    if split_at >= 0:
+        anchor = text[:split_at].strip()
+        landmark = text[split_at + len(_NEXT_TO_TOKEN) :].strip()
+        if not anchor or not landmark:
+            raise InsufficientEvidenceError(
+                f"localize referent {referent!r} must name both sides of 'next to'"
+            )
+        if anchor.casefold() == landmark.casefold():
+            raise InsufficientEvidenceError(
+                f"localize referent {referent!r} cannot use the same category on both sides"
+            )
+        return ParsedReferent(selector="next_to", category=anchor, landmark=landmark)
     for selector, prefix in _SELECTOR_PREFIXES:
         if lower.startswith(prefix):
             category = text[len(prefix) :].strip()
@@ -117,14 +144,22 @@ def parse_referent(referent: str) -> tuple[ReferentSelector, str]:
                 raise InsufficientEvidenceError(
                     f"localize referent {referent!r} is missing a category after {prefix!r}"
                 )
-            return selector, category
-    return "unique", text
+            return ParsedReferent(selector=selector, category=category)
+    return ParsedReferent(selector="unique", category=text)
 
 
-def format_referent(selector: ReferentSelector, category: str) -> str:
+def format_referent(
+    selector: ReferentSelector,
+    category: str,
+    landmark: str | None = None,
+) -> str:
     """Build the canonical referent string used in proposals and questions."""
     if selector == "unique":
         return category
+    if selector == "next_to":
+        if landmark is None or not landmark.strip():
+            raise ValueError("next_to referents require a landmark category")
+        return f"{category}{_NEXT_TO_TOKEN}{landmark}"
     return f"{selector} {category}"
 
 
@@ -141,25 +176,119 @@ def require_one_instance(
 
 
 def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeInstanceEvidence:
-    """Resolve a unique / nearest / left / right referent to one instance."""
-    selector, category = parse_referent(referent)
-    hits = instances_named(scene, category)
-    if selector == "unique":
+    """Resolve a unique / nearest / left / right / next-to referent to one instance."""
+    parsed = parse_referent(referent)
+    if parsed.selector == "next_to":
+        assert parsed.landmark is not None
+        return _resolve_next_to(scene, parsed.category, parsed.landmark, referent=referent)
+    hits = instances_named(scene, parsed.category)
+    if parsed.selector == "unique":
         if len(hits) != 1:
             raise InsufficientEvidenceError(
-                f"localize scene requires exactly one verified {category!r}, got {len(hits)}"
+                f"localize scene requires exactly one verified {parsed.category!r}, "
+                f"got {len(hits)}"
             )
         return hits[0]
     if not hits:
-        raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
-    if selector == "nearest":
+        raise InsufficientEvidenceError(f"localize scene has no verified {parsed.category!r}")
+    if parsed.selector == "nearest":
         return min(
             hits,
             key=lambda inst: math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)),
         )
-    if selector == "left":
+    if parsed.selector == "left":
         return _extreme_lateral(scene, hits, side="left", referent=referent)
     return _extreme_lateral(scene, hits, side="right", referent=referent)
+
+
+def _horizontal_distance_m(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _resolve_next_to(
+    scene: LocalizeSceneEvidence,
+    anchor_category: str,
+    landmark_category: str,
+    *,
+    referent: str,
+) -> LocalizeInstanceEvidence:
+    anchors = instances_named(scene, anchor_category)
+    landmarks = instances_named(scene, landmark_category)
+    if not anchors:
+        raise InsufficientEvidenceError(f"localize scene has no verified {anchor_category!r}")
+    if not landmarks:
+        raise InsufficientEvidenceError(f"localize scene has no verified {landmark_category!r}")
+    pairs: list[tuple[float, LocalizeInstanceEvidence, LocalizeInstanceEvidence]] = []
+    for anchor in anchors:
+        for landmark in landmarks:
+            dist = _horizontal_distance_m(anchor.position_world_xyz, landmark.position_world_xyz)
+            pairs.append((dist, anchor, landmark))
+    pairs.sort(key=lambda item: item[0])
+    best_dist, best_anchor, _best_landmark = pairs[0]
+    if best_dist > NEXT_TO_MAX_RANGE_M:
+        raise InsufficientEvidenceError(
+            f"{referent!r} has no pair within {NEXT_TO_MAX_RANGE_M} m "
+            f"(nearest pair is {best_dist:.2f} m)"
+        )
+    if len(pairs) >= 2 and pairs[1][0] - best_dist < NEXT_TO_UNIQUENESS_MARGIN_M:
+        raise InsufficientEvidenceError(
+            f"{referent!r} is ambiguous: top pairs differ by less than "
+            f"{NEXT_TO_UNIQUENESS_MARGIN_M} m"
+        )
+    return best_anchor
+
+
+def next_to_referents(
+    scene: LocalizeSceneEvidence, *, max_pairs: int = 8
+) -> tuple[str, ...]:
+    """Unambiguous ``<anchor> next to <landmark>`` strings, nearest pairs first."""
+    if max_pairs < 1:
+        return ()
+    by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
+    display_name: dict[str, str] = {}
+    for instance in scene.instances:
+        key = instance.object_name.casefold()
+        display_name.setdefault(key, instance.object_name)
+        by_category.setdefault(key, []).append(instance)
+    categories = sorted(display_name, key=lambda key: display_name[key].casefold())
+    candidates: list[tuple[float, int, str]] = []
+    for anchor_key in categories:
+        for landmark_key in categories:
+            if anchor_key == landmark_key:
+                continue
+            referent = format_referent(
+                "next_to",
+                display_name[anchor_key],
+                landmark=display_name[landmark_key],
+            )
+            try:
+                anchor = resolve_referent(scene, referent)
+                landmark_hits = instances_named(scene, display_name[landmark_key])
+                dist = min(
+                    _horizontal_distance_m(anchor.position_world_xyz, landmark.position_world_xyz)
+                    for landmark in landmark_hits
+                )
+            except InsufficientEvidenceError:
+                continue
+            # Prefer multi-instance anchors (relational disambiguation is most useful there).
+            multi_penalty = 0 if len(by_category[anchor_key]) >= 2 else 1
+            candidates.append((multi_penalty, dist, referent))
+    candidates.sort(key=lambda item: (item[0], item[1], item[2].casefold()))
+    # Cap by unique anchor category so one label does not consume the whole budget.
+    chosen: list[str] = []
+    used_anchors: set[str] = set()
+    for _penalty, _dist, referent in candidates:
+        parsed = parse_referent(referent)
+        anchor_key = parsed.category.casefold()
+        if anchor_key in used_anchors:
+            continue
+        chosen.append(referent)
+        used_anchors.add(anchor_key)
+        if len(chosen) >= max_pairs:
+            break
+    return tuple(chosen)
 
 
 def _extreme_lateral(
