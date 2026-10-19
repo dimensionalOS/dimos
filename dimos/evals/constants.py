@@ -124,6 +124,11 @@ Camera (the wrist camera, moving with the gripper; at the start pose it looks st
 image right = world -Y, image up = world +X):
   app.peek_stream("color_image", 2.0).save("view.jpg")
                                  the latest RGB frame, saved for the read tool
+  app.peek_stream("depth_image", 2.0).as_numpy()
+                                 the latest depth frame: float32 metres per pixel, the same
+                                 pixels as color_image
+  app.peek_stream("camera_info", 2.0).K
+                                 the 3x3 intrinsics of both, row-major (fx, 0, cx, 0, fy, cy, 0, 0, 1)
 
 Perception:
   app.skills.localize(objects="red cube, blue cup")
