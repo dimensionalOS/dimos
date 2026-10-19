@@ -185,8 +185,7 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
     if parsed.selector == "unique":
         if len(hits) != 1:
             raise InsufficientEvidenceError(
-                f"localize scene requires exactly one verified {parsed.category!r}, "
-                f"got {len(hits)}"
+                f"localize scene requires exactly one verified {parsed.category!r}, got {len(hits)}"
             )
         return hits[0]
     if not hits:
@@ -201,9 +200,7 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
     return _extreme_lateral(scene, hits, side="right", referent=referent)
 
 
-def _horizontal_distance_m(
-    a: tuple[float, float, float], b: tuple[float, float, float]
-) -> float:
+def _horizontal_distance_m(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
@@ -240,9 +237,7 @@ def _resolve_next_to(
     return best_anchor
 
 
-def next_to_referents(
-    scene: LocalizeSceneEvidence, *, max_pairs: int = 8
-) -> tuple[str, ...]:
+def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 8) -> tuple[str, ...]:
     """Unambiguous ``<anchor> next to <landmark>`` strings, nearest pairs first."""
     if max_pairs < 1:
         return ()
