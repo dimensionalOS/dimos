@@ -1,0 +1,32 @@
+name: message-codegen
+
+on:
+  pull_request:
+    paths:
+      - dimos/message_codegen/**
+      - native/cpp/include/dimos/native/cdr_codec.hpp
+      - docs/development/message-source-packages.md
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/message-codegen.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install published generator and consumer test tools
+        run: |
+          uv venv .venv --python 3.12 --seed
+          uv pip install --python .venv/bin/python 'dimos-cdrgen[native]==0.1.0' numpy build pytest pytest-asyncio pytest-env
+      - name: Verify DimOS SDK, installed Python consumer and C++ consumer
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
