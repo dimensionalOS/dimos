@@ -154,6 +154,11 @@ except MotionError as error:
     raise
 ```
 
+A move whose execution completes but whose measured joints do not settle within
+`REACH_TOLERANCE_RAD` (0.02 rad) of the plan's end within `SETTLE_TIMEOUT_S` (1 s), for
+example because contact blocked the arm, also raises `MotionError`; its message names the
+joint furthest off and the end effector's position.
+
 `MotionError.result` preserves the original typed failure result. Invalid numeric
 inputs raise `ValueError`; unavailable telemetry raises `RuntimeError`. Transport
 exceptions propagate unchanged. Failed planning never proceeds to execution.

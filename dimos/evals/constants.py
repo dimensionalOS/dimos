@@ -102,7 +102,8 @@ Arm (help(arm.<method>) shows the full docstring):
                                  straight world-frame translation of the TCP, in metres
   arm.move_joints(q)             plan and move to joint positions
   arm.set_gripper_position(p)    0 closed .. 1 open; arm.open_gripper(), arm.close_gripper()
-Moves block until the motion ends and raise MotionError on failure; error.result says why.
+Moves block until the motion ends and raise MotionError on failure, including when the arm stops
+short of the planned end (e.g. blocked by contact); the message says how far off, error.result says why.
 Every move accepts speed_scale and timeout. arm.reset() stops any motion and clears a failed
 state; a move that fails with "call reset()" needs it before the next one.
 
