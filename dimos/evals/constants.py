@@ -14,6 +14,11 @@
 
 """Tunables for the eval harness. Literals only; nothing here imports dimos."""
 
+from dataclasses import asdict, replace
+import json
+
+from dimos.perception.localize.types import LocalizeParams
+
 # Model providers: API key variable and default upstream base URL, by provider name.
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
@@ -77,6 +82,11 @@ XARM7_GRIPPER_NOTES = (
     "11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open)."
 )
 
+# Localize in MuJoCo: the wrist camera starts parked, so confirm objects from one view, and
+# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the xarm preset's 0.40.
+SIM_LOCALIZE_PARAMS = replace(LocalizeParams(), min_views=1, candidate_floor=0.2, accept_score=0.25)
+SIM_LOCALIZE_ENV = {"PERCEPTIONLOCALIZE__PARAMS": json.dumps(asdict(SIM_LOCALIZE_PARAMS))}
+
 DIMOS_PYTHON_README = """\
 Robot interface: a live dimOS runtime driving the arm, reached from Python. Write scripts and run
 them with bash (`python script.py`); each script connects, acts and exits.
@@ -124,14 +134,14 @@ Perception:
                                  side's yaw; the z range of the surfaces the camera saw (the top
                                  is reliable, the bottom only as low as was in view); score,
                                  views and an id that stays the same across calls.
-  app.skills.localize(objects="...", policy='{"accept_score": 0.2}')
-                                 per-call thresholds, a JSON object of LocalizePolicy fields:
+  app.skills.localize(objects="...", params='{"accept_score": 0.2}')
+                                 per-call thresholds, a JSON object of LocalizeParams fields:
                                  candidate_floor (detector score to form a box), accept_score
                                  (score to report an object), min_views (camera positions to
                                  confirm it), max_object_extent_m, min_points. A miss reports
                                  its best candidate's score and views; lowering accept_score or
                                  min_views to it accepts that candidate, and lower values also
-                                 admit wrong matches. help(LocalizePolicy) from
+                                 admit wrong matches. help(LocalizeParams) from
                                  dimos.perception.localize.types lists every field.
   app.skills.state()             whether localize is ready to answer
 

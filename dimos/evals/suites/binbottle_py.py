@@ -24,7 +24,7 @@ dimos evals run dimos.evals.suites.binbottle_py --agent dimos.evals.agents.pi
 
 import json
 
-from dimos.evals.constants import DIMOS_PYTHON_README, XARM7_GRIPPER_NOTES
+from dimos.evals.constants import DIMOS_PYTHON_README, SIM_LOCALIZE_ENV, XARM7_GRIPPER_NOTES
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import GRIPPER_BODIES, cap_partial, lift_partial
 from dimos.evals.types import EvalCase, Suite
@@ -41,8 +41,6 @@ GUIDANCE = (
     "MuJoCo; learn about the scene only through the robot's camera and tools."
 )
 
-# One view, and robosuite's flat-shaded objects score under OWLv2's real-world defaults.
-LOCALIZE_POLICY = '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
 # Recording-only scene camera, the bottle cap's thread release, and gravity compensation so the
 # arm holds its commanded pose as the real xArm does (MujocoSimModule).
 SIM_ENV = {
@@ -62,7 +60,7 @@ def sim_env(scene: str) -> dict[str, str]:
 
 
 def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
-    env = {"PERCEPTIONLOCALIZE__POLICY": LOCALIZE_POLICY, **sim_env(scene)}
+    env = {**SIM_LOCALIZE_ENV, **sim_env(scene)}
     return MujocoEnvironment(
         # The Python-API stack (no MCP): the agent reaches modules and streams over the API.
         blueprint=["xarm-agent-sim"],

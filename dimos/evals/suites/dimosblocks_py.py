@@ -23,7 +23,7 @@ for viewing runs afterwards and no agent tool or bridge reads it.
 dimos evals run dimos.evals.suites.dimosblocks_py --agent dimos.evals.agents.pi
 """
 
-from dimos.evals.constants import DIMOS_PYTHON_README, XARM7_GRIPPER_NOTES
+from dimos.evals.constants import DIMOS_PYTHON_README, SIM_LOCALIZE_ENV, XARM7_GRIPPER_NOTES
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import GRIPPER_BODIES, WORD, word_partial
 from dimos.evals.types import EvalCase, Suite
@@ -40,8 +40,6 @@ GUIDANCE = (
     "MuJoCo; learn about the scene only through the robot's camera and tools."
 )
 
-# One view, and robosuite's flat-shaded objects score under OWLv2's real-world defaults.
-LOCALIZE_POLICY = '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
 # Recording-only scene camera, and gravity compensation so the arm holds its commanded pose as
 # the real xArm does (MujocoSimModule).
 SIM_ENV = {
@@ -62,7 +60,7 @@ SUITE: Suite = [
             tracked_bodies=(*(f"block_{c}_main" for c in WORD), *GRIPPER_BODIES),
             agent_artifacts=(),  # sensors and the API only; the recording holds ground truth
             python_guide=DIMOS_PYTHON_README,
-            module_env={"PERCEPTIONLOCALIZE__POLICY": LOCALIZE_POLICY, **SIM_ENV},
+            module_env={**SIM_LOCALIZE_ENV, **SIM_ENV},
         ),
         # Any placement on the table: 0.7 x pairs in reading order + 0.3 letters upright for one
         # reader (O at any angle).

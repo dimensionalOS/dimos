@@ -22,6 +22,7 @@ that is recorded for viewing runs afterwards; no agent tool or bridge reads it.
 
 import json
 
+from dimos.evals.constants import SIM_LOCALIZE_ENV
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import GRIPPER_BODIES, cap_partial, lift_partial
 from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
@@ -59,11 +60,9 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         base_height=0.912,
         tracked_bodies=(*bodies, *GRIPPER_BODIES),
         agent_artifacts=(),  # sensors and skills only; the recording holds ground-truth poses
-        # Same localize policy as the robosuite suite: one view, robosuite-style flat shading.
+        # Same localize params as the robosuite suite: one view, robosuite-style flat shading.
         module_env={
-            "PERCEPTIONLOCALIZE__POLICY": (
-                '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
-            ),
+            **SIM_LOCALIZE_ENV,
             **sim_env(scene),
         },
     )

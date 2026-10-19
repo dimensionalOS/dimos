@@ -14,7 +14,7 @@
 
 """One skills-enabled task per exported robosuite scene; filter with --tags <scene>."""
 
-from dimos.evals.constants import XARM7_GRIPPER_NOTES
+from dimos.evals.constants import SIM_LOCALIZE_ENV, XARM7_GRIPPER_NOTES
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import (
     GRIPPER_BODIES,
@@ -63,12 +63,9 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         base_height=0.912,
         tracked_bodies=(*bodies, *GRIPPER_BODIES),  # gripper poses feed the partial graders
         agent_artifacts=(),  # sensors and skills only; the recording holds ground-truth poses
-        # The wrist camera starts parked, so confirm objects from one view; robosuite's plain,
-        # flat-shaded objects score about 0.3 with OWLv2, under the 0.40 real-world default.
+        # One view and lower scores for flat-shaded sim objects (SIM_LOCALIZE_PARAMS).
         module_env={
-            "PERCEPTIONLOCALIZE__POLICY": (
-                '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
-            ),
+            **SIM_LOCALIZE_ENV,
             **ROBOSUITE_PHYSICS,
         },
     )
