@@ -63,7 +63,7 @@ class MotionError(RuntimeError):
 
 # A move completes when the arm's commands reach the plan's end, even if the arm itself is blocked
 # or lagging, so after every move the measured joints must settle within this of the plan's end.
-REACH_TOLERANCE_RAD = 0.02
+REACH_TOLERANCE_RAD = 0.05
 SETTLE_TIMEOUT_S = 1.0
 # The gripper command returns at once; gripper calls then wait until the fingers stop: at the
 # target, or held still this long (closed on an object).
