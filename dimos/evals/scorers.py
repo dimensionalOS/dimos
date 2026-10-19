@@ -559,9 +559,10 @@ _ANY_TURN_SAME = frozenset("O")  # reads the same at any angle on the table
 
 
 def word_partial(outcome: Outcome) -> float:
-    """0.7 x neighbouring letter pairs in reading order, 0.3 every letter upright for the same
-    reader (I and S either way up, O at any angle). Spacing and alignment are not graded. Nothing
-    counts until a block was moved (the random start may already have a pair in order)."""
+    """0.7 x neighbouring letter pairs in reading order, 0.3 x the share of letters upright for
+    the same reader: top face up and turned to the reader (I and S either way up, O at any angle,
+    but flat). Spacing and alignment are not graded. Nothing counts until a block was moved (the
+    random start may already have a pair in order)."""
     names = [f"block_{c}_main" for c in WORD]
     tracks = _tracks(outcome, names)
     if len(tracks) < len(names):
@@ -579,7 +580,7 @@ def word_partial(outcome: Outcome) -> float:
     cos20 = math.cos(math.radians(20))
     flips = np.array([c in _HALF_TURN_SAME for c in WORD])
     free = np.array([c in _ANY_TURN_SAME for c in WORD])
-    flat = all(b.rot[-1][2, 2] > cos20 for b in blocks)  # lettered top faces up
+    flat = np.array([b.rot[-1][2, 2] > cos20 for b in blocks])  # lettered top faces up
 
     def read(candidate: np.ndarray) -> float:
         dots = ups @ candidate
@@ -590,9 +591,9 @@ def word_partial(outcome: Outcome) -> float:
         right = np.array([up[1], -up[0]])  # the reader's left-to-right: up turned 90 deg clockwise
         along = pos @ right
         pairs = sum(along[i] < along[i + 1] for i in range(len(WORD) - 1))
-        # Every letter upright for this reader (I and S either way up, O at any angle).
+        # Letters upright for this reader (I and S either way up, O at any angle), each credited.
         dots = ups @ up
-        facing = flat and bool(((np.where(flips, np.abs(dots), dots) > cos20) | free).all())
-        return 0.7 * pairs / (len(WORD) - 1) + 0.3 * facing
+        upright = flat & ((np.where(flips, np.abs(dots), dots) > cos20) | free)
+        return 0.7 * pairs / (len(WORD) - 1) + 0.3 * float(upright.mean())
 
     return float(max(read(u) for u in (*ups[~free], *(-ups[flips]))))
