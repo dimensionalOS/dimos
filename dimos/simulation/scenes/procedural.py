@@ -117,10 +117,9 @@ class Box:
     def local(self, points: NDArray[np.float64]) -> NDArray[np.float64]:
         """Points in the box's own frame, whose axes the half sizes lie along."""
         c, s = math.cos(self.yaw), math.sin(self.yaw)
-        turn = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])[
-            : points.shape[-1], : points.shape[-1]
-        ]
-        moved: NDArray[np.float64] = (points - np.array(self.center)[: points.shape[-1]]) @ turn.T
+        moved: NDArray[np.float64] = points - np.array(self.center)[: points.shape[-1]]
+        x, y = moved[..., 0], moved[..., 1]
+        moved[..., :2] = np.stack([c * x + s * y, c * y - s * x], axis=-1)
         return moved
 
     def gap(self, xy: NDArray[np.float64]) -> NDArray[np.float64]:
