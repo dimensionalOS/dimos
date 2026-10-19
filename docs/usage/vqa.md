@@ -67,6 +67,10 @@ answers. Every proposal uses `object_names`; single-object families require one 
 | `largest_visible_area` | Two to five authored object references | Select a mask at least 20% larger than the runner-up |
 | `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
 | `closest_object` | Two to five authored object references | Select the smallest unambiguous LiDAR range |
+| `ego_fore_aft` | ahead, behind | Sign on the robot forward axis for a referent: bare unique name, `nearest X`, `left X`, or `right X` |
+| `height_order` | Two authored object references | Higher world-`z` with a minimum vertical margin (localize scene) |
+| `ego_turn` | left, right, ahead | Bearing to a resolved referent in the robot yaw frame |
+| `ego_any_fore_aft` | yes, no | Whether any verified instance of a category lies ahead of the robot |
 
 Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
 can be answered, generation fails without publishing a dataset.
@@ -81,6 +85,30 @@ Image-coverage questions choose between two bucket schemes so the measured mask 
 as possible from the nearest answer boundary. Largest-visible-area questions are rejected unless the
 winning EdgeTAM mask contains at least 20% more pixels than the runner-up. Both families work without
 point-cloud data.
+
+Localize-backed families (`ego_fore_aft`, `height_order`, `ego_turn`, `ego_any_fore_aft`) are **off by
+default**. Enable them with `--with-localize`. Generation then:
+
+1. Discovers object names in a padded time window with prompt-free YOLO-E (or uses optional
+   `--localize-query` overrides)
+2. Runs Dan localize once with a room-scale Go2 policy (not the xArm desktop defaults) to verify
+   those names in 3D
+3. Resolves `base_link` pose per selected image and attaches `LocalizeSceneEvidence`
+4. Adds deterministic localize proposals for case diversity:
+   - **unique** bare names when a category has exactly one verified hit
+   - **nearest** `<category>` when multiple hits exist (closest to the robot)
+   - **left/right** `<category>` when both sides are laterally unambiguous
+   - **any-ahead** yes/no for each selected category (`ego_any_fore_aft`)
+   - **height_order** pairs among unique categories only
+
+Without `--with-localize`, those families are not offered.
+
+```bash skip
+dimos evals vqa generate /path/to/calibrated-recording.db \
+  --start 180 --stop 280 --stride 20 \
+  --with-localize \
+  --localize-pad 20
+```
 
 ## Dataset Layout
 

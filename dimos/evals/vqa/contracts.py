@@ -43,6 +43,10 @@ FamilyName = Literal[
     "largest_visible_area",
     "object_distance",
     "closest_object",
+    "ego_fore_aft",
+    "height_order",
+    "ego_turn",
+    "ego_any_fore_aft",
 ]
 
 
@@ -92,6 +96,7 @@ class FamilySpec:
     distinct_objects: bool = False
     requires_masks: bool = False
     requires_pointcloud: bool = False
+    requires_localize: bool = False
     object_order_matters: bool = True
 
     def validate(self, proposal: QuestionProposal) -> None:
