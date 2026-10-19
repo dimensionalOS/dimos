@@ -83,3 +83,24 @@ class OpenAIQuestionAuthor:
                 continue
             proposals.append(proposal)
         return tuple(proposals)
+
+
+class FixedQuestionAuthor:
+    """Replay fixed proposals filtered to the families offered for a frame."""
+
+    def __init__(self, proposals: Sequence[QuestionProposal]) -> None:
+        self._proposals = tuple(proposals)
+
+    def propose(
+        self, image: Image, families: Sequence[FamilySpec]
+    ) -> Sequence[QuestionProposal]:
+        del image  # proposals are fixed; image is unused by design
+        available = {family.name: family for family in families}
+        accepted: list[QuestionProposal] = []
+        for proposal in self._proposals:
+            family = available.get(proposal.family)
+            if family is None:
+                continue
+            family.validate(proposal)
+            accepted.append(proposal)
+        return tuple(accepted)

@@ -29,6 +29,16 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
+from dimos.evals.vqa.primitives.localize_scene import (
+    LocalizeSceneEvidence,
+    any_ahead,
+    ego_turn_to,
+    fore_aft_of,
+    higher_object,
+    parse_referent,
+    resolve_referent,
+    robot_relative_xy,
+)
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
@@ -86,6 +96,44 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
     requires_pointcloud=True,
     object_order_matters=False,
 )
+EGO_FORE_AFT_FAMILY = FamilySpec(
+    name="ego_fore_aft",
+    description=(
+        "Ask whether one localized referent is ahead of or behind the robot body. "
+        "Prefer bare names for unique objects, or 'nearest <object>' / 'left <object>' / "
+        "'right <object>' when multiple instances exist. Do not infer fore/aft from the image."
+    ),
+    requires_localize=True,
+)
+HEIGHT_ORDER_FAMILY = FamilySpec(
+    name="height_order",
+    description=(
+        "Choose which of two distinct, clearly localized object references is higher in the "
+        "world. Do not infer height from the image alone."
+    ),
+    min_objects=2,
+    max_objects=2,
+    distinct_objects=True,
+    requires_localize=True,
+    object_order_matters=False,
+)
+EGO_TURN_FAMILY = FamilySpec(
+    name="ego_turn",
+    description=(
+        "Ask whether the robot should turn left, turn right, or is already facing one localized "
+        "referent (bare unique name, or nearest/left/right <object>). "
+        "Do not infer bearing from the image alone."
+    ),
+    requires_localize=True,
+)
+EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
+    name="ego_any_fore_aft",
+    description=(
+        "Ask whether any verified instance of a category lies ahead of the robot. "
+        "Use a bare category name. Do not infer from the image alone."
+    ),
+    requires_localize=True,
+)
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
@@ -94,6 +142,10 @@ AVAILABLE_FAMILIES = (
     LARGEST_VISIBLE_AREA_FAMILY,
     OBJECT_DISTANCE_FAMILY,
     CLOSEST_OBJECT_FAMILY,
+    EGO_FORE_AFT_FAMILY,
+    HEIGHT_ORDER_FAMILY,
+    EGO_TURN_FAMILY,
+    EGO_ANY_FORE_AFT_FAMILY,
 )
 
 _FAMILIES_BY_NAME = {family.name: family for family in AVAILABLE_FAMILIES}
@@ -110,6 +162,7 @@ def answer_question(
     pointcloud_frame: PointCloudFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
+    localize_scene: LocalizeSceneEvidence | None = None,
 ) -> FamilyAnswer:
     """Dispatch one constrained proposal to its deterministic family."""
     _family_spec(proposal.family).validate(proposal)
@@ -141,6 +194,22 @@ def answer_question(
                 "closest object requires image-aligned point-cloud evidence"
             )
         return _answer_closest_object(proposal, pointcloud_frame, range_estimator)
+    if proposal.family == "ego_fore_aft":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego fore/aft requires localize scene evidence")
+        return _answer_ego_fore_aft(proposal, localize_scene)
+    if proposal.family == "height_order":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("height order requires localize scene evidence")
+        return _answer_height_order(proposal, localize_scene)
+    if proposal.family == "ego_turn":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego turn requires localize scene evidence")
+        return _answer_ego_turn(proposal, localize_scene)
+    if proposal.family == "ego_any_fore_aft":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego any fore/aft requires localize scene evidence")
+        return _answer_ego_any_fore_aft(proposal, localize_scene)
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -402,3 +471,117 @@ def _distance_bucket(distance_m: float) -> int:
     if distance_m < 3:
         return 2
     return 3
+
+
+def _answer_ego_fore_aft(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    referent = proposal.object_names[0]
+    answer = fore_aft_of(localize_scene, referent)
+    instance = resolve_referent(localize_scene, referent)
+    selector, category = parse_referent(referent)
+    forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
+    return FamilyAnswer(
+        question=f"Is the {referent} ahead of the robot or behind it?",
+        choices=("ahead", "behind"),
+        answer=answer,
+        evidence={
+            "primitive": "localize_scene",
+            "object_name": referent,
+            "selector": selector,
+            "category": category,
+            "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
+            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+            "robot_yaw_rad": localize_scene.robot_yaw_rad,
+            "robot_relative_forward_m": forward,
+            "robot_relative_left_m": left,
+            "answer_rule": "sign_of_robot_forward_axis",
+        },
+    )
+
+
+def _answer_height_order(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    object_a, object_b = proposal.object_names
+    answer = higher_object(localize_scene, object_a, object_b)
+    instances = (
+        resolve_referent(localize_scene, object_a),
+        resolve_referent(localize_scene, object_b),
+    )
+    return FamilyAnswer(
+        question=f"Which is higher, the {object_a} or the {object_b}?",
+        choices=proposal.object_names,
+        answer=answer,
+        evidence={
+            "primitive": "localize_scene",
+            "comparison_rule": "world_z_with_height_margin",
+            "objects": cast(
+                "JsonValue",
+                [
+                    {
+                        "choice": object_name,
+                        "position_world_xyz": list(instance.position_world_xyz),
+                    }
+                    for object_name, instance in zip(
+                        proposal.object_names, instances, strict=True
+                    )
+                ],
+            ),
+        },
+    )
+
+
+def _answer_ego_turn(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    referent = proposal.object_names[0]
+    answer = ego_turn_to(localize_scene, referent)
+    instance = resolve_referent(localize_scene, referent)
+    selector, category = parse_referent(referent)
+    forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
+    return FamilyAnswer(
+        question=(
+            f"To face the {referent}, should the robot turn left, turn right, "
+            "or is it already ahead?"
+        ),
+        choices=("left", "right", "ahead"),
+        answer=answer,
+        evidence={
+            "primitive": "localize_scene",
+            "object_name": referent,
+            "selector": selector,
+            "category": category,
+            "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
+            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+            "robot_yaw_rad": localize_scene.robot_yaw_rad,
+            "robot_relative_forward_m": forward,
+            "robot_relative_left_m": left,
+            "answer_rule": "bearing_in_robot_yaw_frame",
+        },
+    )
+
+
+def _answer_ego_any_fore_aft(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    category = proposal.object_names[0]
+    selector, bare = parse_referent(category)
+    if selector != "unique":
+        raise InsufficientEvidenceError(
+            "ego_any_fore_aft requires a bare category name, not a nearest/left/right referent"
+        )
+    answer = "yes" if any_ahead(localize_scene, bare) else "no"
+    return FamilyAnswer(
+        question=f"Is there any verified {bare} ahead of the robot?",
+        choices=("yes", "no"),
+        answer=answer,
+        evidence={
+            "primitive": "localize_scene",
+            "object_name": bare,
+            "selector": "any_ahead",
+            "answer_rule": "exists_instance_with_forward_above_margin",
+            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+            "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        },
+    )

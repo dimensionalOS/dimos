@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -49,6 +50,7 @@ from dimos.evals.vqa.pointcloud_frame import (
     select_quality_indices,
 )
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
+from dimos.evals.vqa.primitives.localize_scene import LocalizeSceneEvidence
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -73,9 +75,14 @@ class GenerationRequest(BaseModel):
     stride: int | None = Field(default=None, ge=1)
     quality_window: float | None = Field(default=None, gt=0)
     min_brightness: float | None = Field(default=None, ge=0, le=1)
+    with_localize: bool = False
+    localize_queries: tuple[NonEmptyString, ...] = ()
+    localize_pad_s: float = Field(default=10.0, gt=0)
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
+        if self.localize_queries and not self.with_localize:
+            raise ValueError("localize_queries requires with_localize=True")
         if self.image_index is not None:
             if self.start is not None or self.stop is not None or self.stride is not None:
                 raise ValueError("image_index cannot be combined with start, stop, or stride")
@@ -169,11 +176,12 @@ class GenerationResult(BaseModel):
 
 @dataclass(frozen=True)
 class GenerationFrame:
-    """One indexed image with optional image-aligned point-cloud evidence."""
+    """One indexed image with optional point-cloud or localize evidence."""
 
     index: int
     image: Image
     pointcloud_frame: PointCloudFrame | None = None
+    localize_scene: LocalizeSceneEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -212,38 +220,70 @@ def generate_dataset(
         else:
             indices = resolve_generation_frame_indices(request, loader.image_count)
 
-        author_model = OpenAIVlModel()
-        detector_model = MoondreamVlModel()
-        try:
-            detector = detector_model
-            model_names = {
-                "author": author_model.config.model_name,
-                "detector": detector_model.config.model_name,
-            }
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+        localize_ctx = nullcontext(None)
+        if request.with_localize:
+            from dimos.evals.vqa.localize_recording import localize_window
 
-            def pointcloud_frames() -> Iterable[GenerationFrame]:
-                for index in indices:
-                    try:
-                        pointcloud_frame = loader.load(index)
-                    except PointCloudFrameUnavailableError:
-                        yield GenerationFrame(index, loader.load_image(index))
-                    else:
-                        yield GenerationFrame(index, pointcloud_frame.image, pointcloud_frame)
-
-            return generate_frames_dataset(
-                request,
-                pointcloud_frames(),
-                OpenAIQuestionAuthor(author_model),
-                detector,
-                LidarRangeEstimator(mask_estimator),
-                mask_estimator,
-                config=config,
-                model_names=model_names,
+            timestamps = tuple(
+                float(loader.images.offset(index).limit(1).first().ts) for index in indices
             )
-        finally:
-            author_model.stop()
-            detector_model.stop()
+            after = min(timestamps) - request.localize_pad_s
+            before = max(timestamps) + request.localize_pad_s
+            localize_ctx = localize_window(
+                request.dataset, request.localize_queries, after, before
+            )
+
+        with localize_ctx as localize_result:
+            author_model = OpenAIVlModel()
+            detector_model = MoondreamVlModel()
+            try:
+                detector = detector_model
+                model_names = {
+                    "author": author_model.config.model_name,
+                    "detector": detector_model.config.model_name,
+                }
+                if request.with_localize:
+                    model_names["localize"] = "dandetect"
+                    if localize_result is not None:
+                        model_names["localize_queries"] = ", ".join(localize_result.queries)
+                        model_names["localize_hits"] = str(len(localize_result.named_hits))
+                mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+
+                def pointcloud_frames() -> Iterable[GenerationFrame]:
+                    from dimos.evals.vqa.localize_recording import scene_at_timestamp
+
+                    for index in indices:
+                        try:
+                            pointcloud_frame = loader.load(index)
+                            image = pointcloud_frame.image
+                            pc_frame = pointcloud_frame
+                        except PointCloudFrameUnavailableError:
+                            image = loader.load_image(index)
+                            pc_frame = None
+                        localize_scene = None
+                        if localize_result is not None:
+                            localize_scene = scene_at_timestamp(
+                                localize_result.named_hits,
+                                localize_result.rig,
+                                image.ts,
+                            )
+                        yield GenerationFrame(
+                            index, image, pc_frame, localize_scene=localize_scene
+                        )
+
+                return generate_frames_dataset(
+                    request,
+                    pointcloud_frames(),
+                    OpenAIQuestionAuthor(author_model),
+                    detector,
+                    LidarRangeEstimator(mask_estimator),
+                    mask_estimator,
+                    config=config,
+                    model_names=model_names,
+                )
+            finally:
+                author_model.stop()
+                detector_model.stop()
 
 
 def generate_frames_dataset(
@@ -319,6 +359,11 @@ def _generate_frame(
 ) -> _GeneratedFrame:
     image_index = source.index
     image = source.image
+    # Empty verified-hit scenes must not expose localize families (author would propose
+    # unresolvable referents; deterministic seeding would also be a no-op).
+    localize_ready = (
+        source.localize_scene is not None and len(source.localize_scene.instances) > 0
+    )
     families = tuple(
         family
         for family in AVAILABLE_FAMILIES
@@ -327,8 +372,18 @@ def _generate_frame(
             family.requires_pointcloud
             and (source.pointcloud_frame is None or range_estimator is None)
         )
+        and not (family.requires_localize and not localize_ready)
     )
-    proposals = _deduplicate_proposals(author.propose(image, families))
+    proposals = author.propose(image, families)
+    if localize_ready and any(family.requires_localize for family in families):
+        from dimos.evals.vqa.localize_recording import proposals_from_localize_scene
+
+        assert source.localize_scene is not None
+        proposals = (
+            *proposals,
+            *proposals_from_localize_scene(source.localize_scene),
+        )
+    proposals = _deduplicate_proposals(proposals)
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
     audit_rows: list[dict[str, object]] = []
     for proposal in proposals:
@@ -340,6 +395,7 @@ def _generate_frame(
                 source.pointcloud_frame,
                 range_estimator,
                 mask_estimator,
+                source.localize_scene,
             )
         except (InsufficientEvidenceError, InvalidQuestionProposalError) as exc:
             audit_rows.append(

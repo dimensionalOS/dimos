@@ -26,7 +26,7 @@ from dimos.constants import STATE_DIR
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.types import Outcome
-from dimos.evals.vqa.author import OpenAIQuestionAuthor
+from dimos.evals.vqa.author import FixedQuestionAuthor, OpenAIQuestionAuthor
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
@@ -36,6 +36,10 @@ from dimos.evals.vqa.contracts import (
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     CLOSEST_OBJECT_FAMILY,
+    EGO_ANY_FORE_AFT_FAMILY,
+    EGO_FORE_AFT_FAMILY,
+    EGO_TURN_FAMILY,
+    HEIGHT_ORDER_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
     PRESENCE_FAMILY,
     answer_question,
@@ -53,6 +57,10 @@ from dimos.evals.vqa.generate import (
 )
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
+from dimos.evals.vqa.primitives.localize_scene import (
+    LocalizeInstanceEvidence,
+    LocalizeSceneEvidence,
+)
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.models.vl.base import VlModel
@@ -222,6 +230,10 @@ class _QuestionModel:
         assert "largest_visible_area" in prompt
         assert "object_distance" in prompt
         assert "closest_object" in prompt
+        assert "ego_fore_aft" in prompt
+        assert "height_order" in prompt
+        assert "ego_turn" in prompt
+        assert "ego_any_fore_aft" in prompt
         assert "JSON array" in prompt
         return [
             {"family": "presence", "object_names": ["chair"]},
@@ -237,6 +249,10 @@ class _QuestionModel:
                 "family": "closest_object",
                 "object_names": ["left person", "right person", "chair"],
             },
+            {"family": "ego_fore_aft", "object_names": ["chair"]},
+            {"family": "height_order", "object_names": ["shelf", "table"]},
+            {"family": "ego_turn", "object_names": ["door"]},
+            {"family": "ego_any_fore_aft", "object_names": ["chair"]},
         ]
 
 
@@ -768,6 +784,10 @@ def test_openai_author_parses_constrained_proposals() -> None:
             family="closest_object",
             object_names=("left person", "right person", "chair"),
         ),
+        QuestionProposal(family="ego_fore_aft", object_names=("chair",)),
+        QuestionProposal(family="height_order", object_names=("shelf", "table")),
+        QuestionProposal(family="ego_turn", object_names=("door",)),
+        QuestionProposal(family="ego_any_fore_aft", object_names=("chair",)),
     )
 
 
@@ -927,6 +947,141 @@ def test_generate_dataset_forwards_quality_window_indices(
     assert result.output == tmp_path / "out"
 
 
+def test_generate_dataset_attaches_localize_scene_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from dimos.evals.vqa.primitives.localize_scene import (
+        LocalizeInstanceEvidence,
+        LocalizeSceneEvidence,
+    )
+
+    captured_scenes: list[LocalizeSceneEvidence | None] = []
+    localize_windows: list[tuple[object, object, float, float]] = []
+
+    class _Obs:
+        def __init__(self, ts: float) -> None:
+            self.ts = ts
+
+    class _Images:
+        def offset(self, index: int) -> _Images:
+            self._index = index
+            return self
+
+        def limit(self, _n: int) -> _Images:
+            return self
+
+        def first(self) -> _Obs:
+            return _Obs(100.0 + self._index)
+
+    class _FakeImage:
+        def __init__(self, ts: float) -> None:
+            self.ts = ts
+
+    class _FakeLoader:
+        def __init__(self, dataset: object, tolerance_s: float = 0.1) -> None:
+            self.image_count = 10
+            self.images = _Images()
+
+        def __enter__(self) -> _FakeLoader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def load_image(self, index: int) -> _FakeImage:
+            return _FakeImage(100.0 + index)
+
+        def load(self, index: int) -> object:
+            raise PointCloudFrameUnavailableError(f"no point cloud for {index}")
+
+    class _FakeModel:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake"})()
+
+        def stop(self) -> None:
+            return None
+
+    @contextmanager
+    def fake_localize_window(
+        dataset: object, queries: object, after: float, before: float, **_kwargs: object
+    ):
+        localize_windows.append((dataset, queries, after, before))
+        yield SimpleNamespace(
+            named_hits=(("chair", object()),),
+            rig=object(),
+            queries=("chair", "table"),
+        )
+
+    def fake_scene_at_timestamp(named_hits: object, rig: object, timestamp: float):
+        del named_hits, rig, timestamp
+        return LocalizeSceneEvidence(
+            robot_position_xyz=(0.0, 0.0, 0.0),
+            robot_yaw_rad=0.0,
+            instances=(
+                LocalizeInstanceEvidence(
+                    object_name="chair", position_world_xyz=(1.0, 0.0, 0.5)
+                ),
+            ),
+        )
+
+    def fake_generate_frames_dataset(
+        request: GenerationRequest,
+        frames: object,
+        *_args: object,
+        **_kwargs: object,
+    ) -> GenerationResult:
+        for frame in frames:  # type: ignore[attr-defined]
+            captured_scenes.append(frame.localize_scene)
+        return GenerationResult(
+            output=request.output_directory(),
+            cases=(
+                PublicCase(
+                    id="q",
+                    image="assets/frame.png",
+                    question="Is the chair ahead?",
+                    choices=("ahead", "behind"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("dimos.evals.vqa.generate.PointCloudFrameLoader", _FakeLoader)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.localize_recording.localize_window", fake_localize_window
+    )
+    monkeypatch.setattr(
+        "dimos.evals.vqa.localize_recording.scene_at_timestamp", fake_scene_at_timestamp
+    )
+    monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
+    monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.generate_frames_dataset", fake_generate_frames_dataset
+    )
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.EdgeTAMObjectMaskPipeline", lambda detector: object()
+    )
+    monkeypatch.setattr("dimos.evals.vqa.generate.LidarRangeEstimator", lambda masks: object())
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenAIQuestionAuthor", lambda model: object())
+
+    generate_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            image_index=4,
+            output=tmp_path / "out",
+            with_localize=True,
+            localize_queries=("chair", "table"),
+            localize_pad_s=2.5,
+        )
+    )
+
+    assert localize_windows == [("recording.db", ("chair", "table"), 101.5, 106.5)]
+    assert len(captured_scenes) == 1
+    assert captured_scenes[0] is not None
+    assert captured_scenes[0].instances[0].object_name == "chair"
+
+
 def test_generation_request_rejects_quality_window_with_image_index() -> None:
     with pytest.raises(ValidationError, match="quality_window"):
         GenerationRequest(dataset="go2_short", image_index=4, quality_window=0.5)
@@ -946,6 +1101,27 @@ def test_generation_request_rejects_quality_window_with_stride() -> None:
 def test_generation_request_rejects_min_brightness_without_quality_window() -> None:
     with pytest.raises(ValidationError, match="min_brightness"):
         GenerationRequest(dataset="go2_short", start=0, stop=100, min_brightness=0.1)
+
+
+def test_generation_request_defaults_localize_off() -> None:
+    request = GenerationRequest(dataset="go2_short", image_index=4)
+    assert request.with_localize is False
+    assert request.localize_queries == ()
+
+
+def test_generation_request_allows_localize_without_preset_queries() -> None:
+    request = GenerationRequest(dataset="go2_short", image_index=4, with_localize=True)
+    assert request.with_localize is True
+    assert request.localize_queries == ()
+
+
+def test_generation_request_rejects_queries_without_localize_flag() -> None:
+    with pytest.raises(ValidationError, match="with_localize"):
+        GenerationRequest(
+            dataset="go2_short",
+            image_index=4,
+            localize_queries=("chair",),
+        )
 
 
 @pytest.mark.parametrize(
@@ -1432,3 +1608,181 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
         "frame-000004-chair-presence",
         "frame-000004-chair-presence-2",
     ]
+
+
+def _localize_scene() -> LocalizeSceneEvidence:
+    return LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.5, 0.5)),
+            LocalizeInstanceEvidence(object_name="shelf", position_world_xyz=(1.5, -0.5, 1.6)),
+            LocalizeInstanceEvidence(object_name="table", position_world_xyz=(1.5, 0.8, 0.7)),
+            LocalizeInstanceEvidence(object_name="door", position_world_xyz=(1.0, 1.5, 1.0)),
+        ),
+    )
+
+
+def test_localize_families_are_registered() -> None:
+    assert EGO_FORE_AFT_FAMILY in AVAILABLE_FAMILIES
+    assert HEIGHT_ORDER_FAMILY in AVAILABLE_FAMILIES
+    assert EGO_TURN_FAMILY in AVAILABLE_FAMILIES
+    assert EGO_ANY_FORE_AFT_FAMILY in AVAILABLE_FAMILIES
+
+
+def test_ego_fore_aft_answers_from_localize_scene() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="ego_fore_aft", object_names=("chair",))
+
+    answer = answer_question(
+        proposal, image, _Detector(present=True), localize_scene=_localize_scene()
+    )
+
+    assert answer.answer == "ahead"
+    assert answer.choices == ("ahead", "behind")
+    assert answer.evidence["primitive"] == "localize_scene"
+
+
+def test_height_order_answers_from_localize_scene() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="height_order", object_names=("shelf", "table"))
+
+    answer = answer_question(
+        proposal, image, _Detector(present=True), localize_scene=_localize_scene()
+    )
+
+    assert answer.answer == "shelf"
+    assert answer.choices == ("shelf", "table")
+
+
+def test_ego_turn_answers_from_localize_scene() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="ego_turn", object_names=("door",))
+
+    answer = answer_question(
+        proposal, image, _Detector(present=True), localize_scene=_localize_scene()
+    )
+
+    assert answer.answer == "left"
+    assert answer.choices == ("left", "right", "ahead")
+
+
+def test_ego_any_fore_aft_answers_from_localize_scene() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="ego_any_fore_aft", object_names=("chair",))
+
+    answer = answer_question(
+        proposal, image, _Detector(present=True), localize_scene=_localize_scene()
+    )
+
+    assert answer.answer == "yes"
+    assert answer.choices == ("yes", "no")
+    assert "ahead of the robot" in answer.question
+
+
+def test_ego_fore_aft_nearest_referent() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(3.0, 0.0, 0.5)),
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 0.0, 0.5)),
+        ),
+    )
+    answer = answer_question(
+        QuestionProposal(family="ego_fore_aft", object_names=("nearest chair",)),
+        image,
+        _Detector(present=True),
+        localize_scene=scene,
+    )
+    assert answer.answer == "ahead"
+    assert answer.evidence["selector"] == "nearest"
+    assert answer.evidence["position_world_xyz"] == [1.0, 0.0, 0.5]
+
+
+def test_localize_families_require_scene_evidence() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    with pytest.raises(InsufficientEvidenceError, match="localize scene"):
+        answer_question(
+            QuestionProposal(family="ego_fore_aft", object_names=("chair",)),
+            image,
+            _Detector(present=True),
+        )
+
+
+def test_generate_localize_families_with_fixed_author(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), ts=3.0)
+    author = FixedQuestionAuthor(
+        (
+            QuestionProposal(family="ego_fore_aft", object_names=("chair",)),
+            QuestionProposal(family="height_order", object_names=("table", "shelf")),
+            QuestionProposal(family="ego_turn", object_names=("door",)),
+        )
+    )
+
+    result = generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=7, output=output),
+        (GenerationFrame(7, image, localize_scene=_localize_scene()),),
+        author,
+        _Detector(present=True),
+    )
+
+    case_ids = {case.id for case in result.cases}
+    assert "frame-000007-chair-ego_fore_aft" in case_ids
+    assert "frame-000007-shelf-vs-table-height_order" in case_ids
+    assert "frame-000007-door-ego_turn" in case_ids
+    # Verified scene also seeds deterministic localize proposals (ego_turn/height pairs).
+    assert "frame-000007-chair-ego_turn" in case_ids
+    labels = {
+        json.loads(line)["id"]: json.loads(line)["answer"]
+        for line in (output / "labels.jsonl").read_text().splitlines()
+    }
+    assert labels["frame-000007-chair-ego_fore_aft"] == "ahead"
+    assert labels["frame-000007-shelf-vs-table-height_order"] == "shelf"
+    assert labels["frame-000007-door-ego_turn"] == "left"
+    suite = load_suite(output)
+    assert len(suite) == len(result.cases)
+
+
+def test_frame_without_localize_does_not_expose_localize_families(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    author = FixedQuestionAuthor(
+        (QuestionProposal(family="ego_fore_aft", object_names=("chair",)),)
+    )
+
+    with pytest.raises(ValueError, match="no selected frame produced an answerable question"):
+        generate_frames_dataset(
+            GenerationRequest(dataset="recording.db", image_index=4, output=output),
+            (GenerationFrame(4, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))),),
+            author,
+            _Detector(present=True),
+        )
+
+
+def test_empty_localize_scene_does_not_expose_localize_families(tmp_path: Path) -> None:
+    """Pose-only empty scenes must not offer requires_localize families to the author."""
+    output = tmp_path / "vqa"
+    empty_scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(),
+    )
+    author = FixedQuestionAuthor(
+        (QuestionProposal(family="ego_fore_aft", object_names=("chair",)),)
+    )
+
+    with pytest.raises(ValueError, match="no selected frame produced an answerable question"):
+        generate_frames_dataset(
+            GenerationRequest(dataset="recording.db", image_index=4, output=output),
+            (
+                GenerationFrame(
+                    4,
+                    Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8)),
+                    localize_scene=empty_scene,
+                ),
+            ),
+            author,
+            _Detector(present=True),
+        )
