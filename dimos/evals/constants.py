@@ -80,6 +80,8 @@ XARM7_GRIPPER_NOTES = (
 DIMOS_PYTHON_README = """\
 Robot interface: a live dimOS runtime driving the arm, reached from Python. Write scripts and run
 them with bash (`python script.py`); each script connects, acts and exits.
+Don't name scripts after standard-library modules (inspect.py, test.py, types.py, ...): Python
+imports the script's folder first, so they shadow the real module and break `import dimos`.
 
     from dimos import Dimos
     from dimos.manipulation.sdk import Arm, MotionError
