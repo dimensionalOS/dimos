@@ -22,10 +22,14 @@ import pytest
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory.module import StreamModule
+from dimos.memory.module import Recorder, StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
+from dimos.messages.builtin_interfaces.msg import Time as GeneratedTime
+from dimos.messages.dimos_msgs.msg import LineSegments3D as GeneratedSegments
+from dimos.messages.std_msgs.msg import Header as GeneratedHeader
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 
 
 class Double(Transformer[int, int]):
@@ -86,3 +90,29 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
+
+
+@pytest.mark.asyncio
+async def test_recorder_reads_generated_header_without_network(mocker, tmp_path):
+    # Isolate the module's RPC and event-loop resource boundaries.
+    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
+    mocker.patch("dimos.protocol.service.lcmservice.lcm_mod.LCM")
+    mocker.patch.object(LCMRPC, "start")
+    mocker.patch.object(LCMRPC, "serve_module_rpc")
+    recorder = Recorder(rpc_transport=LCMRPC, db_path=tmp_path / "unused.db", record_tf=False)
+    transform_tree = mocker.Mock()
+    mocker.patch.object(recorder, "_tf", transform_tree)
+    transform_tree.get.return_value.to_pose.return_value = mocker.sentinel.pose
+    message = GeneratedSegments(GeneratedHeader(GeneratedTime(0, 0), "sensor_frame"), [])
+    try:
+        assert recorder._resolve_ts("segments", message) == 0.0
+        assert await recorder._resolve_pose("segments", message, 0.0) is mocker.sentinel.pose
+        transform_tree.get.assert_called_once_with(
+            "world",
+            "sensor_frame",
+            time_point=0.0,
+            time_tolerance=0.5,
+        )
+    finally:
+        recorder.stop()
+    assert not (tmp_path / "unused.db").exists()

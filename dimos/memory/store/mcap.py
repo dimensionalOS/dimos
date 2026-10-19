@@ -35,8 +35,11 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Protocol, runtime_checkable
 
+from dimos_cdrgen.registry import message_types, schema as cdr_schema
+
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
 from dimos.memory.notifier.subject import SubjectNotifier
@@ -226,8 +229,20 @@ class McapStore(Store):
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
+        channel_signatures: dict[str, tuple[Any, ...]] = {}
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
+                declared = summary.schemas.get(ch.schema_id)
+                signature = (
+                    ch.message_encoding,
+                    (declared.name, declared.encoding, declared.data) if declared else None,
+                    ch.metadata.get("dimos.observation_time"),
+                )
+                if ch.topic in channel_signatures and channel_signatures[ch.topic] != signature:
+                    raise ValueError(
+                        f"Conflicting schemas or timing policies for topic {ch.topic!r}"
+                    )
+                channel_signatures[ch.topic] = signature
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
                 taken = self._stream_topic.get(name)
@@ -244,6 +259,17 @@ class McapStore(Store):
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
                         )
+                if ch.message_encoding == "cdr" and ch.topic not in self._codecs:
+                    # Unknown CDR stays raw, even when a legacy topic names a type.
+                    self._codecs[ch.topic] = _BYTES_CODEC
+                    self._raw[name] = declared.name if declared else None
+                    if declared is not None and declared.encoding == "ros2msg":
+                        kind = message_types().get(declared.name)
+                        if kind is not None:
+                            if declared.data.decode("utf-8") != cdr_schema(declared.name):
+                                raise ValueError(f"CDR schema mismatch: {declared.name}")
+                            self._codecs[ch.topic] = CdrCodec(kind)
+                            self._raw.pop(name, None)
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
@@ -254,7 +280,7 @@ class McapStore(Store):
                     ):
                         self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
-                self._available[name] = count
+                self._available[name] = self._available.get(name, 0) + count
                 self._observation_uses_publish_time[name] = (
                     ch.metadata.get("dimos.observation_time") == "publish_time"
                 )

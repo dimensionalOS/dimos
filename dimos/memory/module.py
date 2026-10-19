@@ -36,6 +36,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.types.timestamped import message_timestamp
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -76,7 +77,7 @@ def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
     """
 
     def _on_error(e: Exception) -> None:
-        logger.error("stream_to_port() pipeline error: %s", e, exc_info=True)
+        logger.error("stream_to_port() pipeline error: %s", e, exc_info=e)
 
     return stream.observable().subscribe(
         on_next=lambda obs: out.publish(obs.data),
@@ -375,7 +376,8 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return getattr(msg, "ts", None) or time.time()
+        ts = message_timestamp(msg)
+        return ts if ts is not None else time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with.
@@ -391,7 +393,11 @@ class Recorder(MemoryModule):
             return cast("Pose | None", await setter(msg))
         if self._tf is None:
             return None
-        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+        frame_id = (
+            getattr(getattr(msg, "header", None), "frame_id", None)
+            or getattr(msg, "frame_id", None)
+            or self.config.default_frame_id
+        )
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )

@@ -13,7 +13,7 @@
 # limitations under the License.
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
@@ -39,6 +39,15 @@ logger = setup_logger()
 
 
 TimeLike = Union[int, float, datetime, ROSTime]
+
+
+def message_timestamp(message: Any) -> float | None:
+    """Read a generated Header stamp or a legacy timestamp, preserving zero."""
+    stamp = getattr(getattr(message, "header", None), "stamp", None)
+    if stamp is not None and hasattr(stamp, "nanosec"):
+        return float(stamp.sec) + float(stamp.nanosec) / 1_000_000_000
+    ts = getattr(message, "ts", None)
+    return float(ts) if ts is not None else None
 
 
 def to_timestamp(ts: TimeLike) -> float:
