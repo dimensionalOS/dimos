@@ -21,7 +21,6 @@ import math
 from pathlib import Path
 import sys
 
-import cv2
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
@@ -229,7 +228,13 @@ def render(case: Case) -> NDArray[np.uint8]:
     return image
 
 
-if __name__ == "__main__":
+def main() -> None:
+    import cv2
+
     suite, case_id, out = sys.argv[1:]
     picture = render(Manifest.load(Path(suite)).case(case_id))
     cv2.imwrite(out, cv2.cvtColor(picture, cv2.COLOR_RGB2BGR))
+
+
+if __name__ == "__main__":
+    main()

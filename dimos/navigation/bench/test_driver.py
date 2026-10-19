@@ -64,18 +64,21 @@ def _until(done: object, timeout_s: float) -> None:
 
 def _verdict(pace_m: float) -> str:
     """What the watch loop ends on after a stuck window of commanded motion, pacing by pace_m."""
-    driver = EpisodeDriver.__new__(EpisodeDriver)
-    driver._rules = Rules()
-    driver._recent, driver._commands = deque(), deque()
-    driver._arrival = None
-    driver._stop_event = threading.Event()
-    now = time.time()
-    for into in np.arange(0.0, driver._rules.stuck_s, 0.05):
-        x = pace_m * math.sin(math.pi * into)
-        ts = now - driver._rules.stuck_s + into
-        driver._on_pose(PoseStamped(x, 0.0, 0.3, ts=ts, frame_id="odom"))
-        driver._on_cmd(Twist([0.5, 0.0, 0.0], [0.0, 0.0, 0.0]))
-    return driver._watch(now - 2 * driver._rules.stuck_s, None)
+    driver = EpisodeDriver()
+    try:
+        driver._rules = Rules()
+        driver._recent, driver._commands = deque(), deque()
+        driver._arrival = None
+        driver._stop_event = threading.Event()
+        now = time.time()
+        for into in np.arange(0.0, driver._rules.stuck_s, 0.05):
+            x = pace_m * math.sin(math.pi * into)
+            ts = now - driver._rules.stuck_s + into
+            driver._on_pose(PoseStamped(x, 0.0, 0.3, ts=ts, frame_id="odom"))
+            driver._on_cmd(Twist([0.5, 0.0, 0.0], [0.0, 0.0, 0.0]))
+        return driver._watch(now - 2 * driver._rules.stuck_s, None)
+    finally:
+        driver.stop()
 
 
 def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck() -> None:
@@ -83,6 +86,7 @@ def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck()
     assert _verdict(0.0) == "stuck"
 
 
+@pytest.mark.self_hosted
 def test_a_premap_without_objects_shows_the_floor_where_the_block_stands() -> None:
     scene = block(1, block_height=0.4)
     bare = without_objects(scene)

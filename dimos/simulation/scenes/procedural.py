@@ -549,9 +549,11 @@ def _winding(rng: np.random.Generator) -> tuple[list[Point], float]:
     """
     length = _uniform(rng, *WINDING_LENGTH)
     runs: list[float] = []
-    while length - sum(runs) >= 2 * WINDING_SEGMENT[0]:
-        runs.append(min(_uniform(rng, *WINDING_SEGMENT), length - sum(runs) - WINDING_SEGMENT[0]))
-    runs.append(length - sum(runs))
+    while length - math.fsum(runs) >= 2 * WINDING_SEGMENT[0]:
+        runs.append(
+            min(_uniform(rng, *WINDING_SEGMENT), length - math.fsum(runs) - WINDING_SEGMENT[0])
+        )
+    runs.append(length - math.fsum(runs))
     points, heading = [(0.0, 0.0)], 0.0
     for i, run in enumerate(runs):
         if i:
@@ -669,7 +671,7 @@ def _wound(
             "room_left": left,
             "room_right": far - left,
             "turns": len(points) - 2,
-            "corridor_length": sum(math.dist(a, b) for a, b in itertools.pairwise(points)),
+            "corridor_length": math.fsum(math.dist(a, b) for a, b in itertools.pairwise(points)),
         },
     )
     _shell(scene, width, length, z0)
