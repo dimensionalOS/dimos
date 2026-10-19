@@ -107,6 +107,8 @@ Arm (help(arm.<method>) shows the full docstring):
   arm.pose()                     measured tool centre point (TCP) in world: .position.x/.y/.z,
                                  .orientation (x, y, z, w)
   arm.joints()                   joint positions, radians
+  arm.state().gripper_position   measured gripper opening, 0 closed .. 1 open; fingers that stop
+                                 short of closed are holding something
   arm.move_pose([x, y, z], orientation=[qx, qy, qz, qw])
                                  plan and move the TCP to a world pose; omit orientation to keep
                                  the current one. Endpoint only, the path may curve.
@@ -129,6 +131,11 @@ image right = world -Y, image up = world +X):
                                  pixels as color_image
   app.peek_stream("camera_info", 2.0).K
                                  the 3x3 intrinsics of both, row-major (fx, 0, cx, 0, fy, cy, 0, 0, 1)
+  app.skills.camera_pose()       JSON {"t", "frame", "xyz", "quaternion_xyzw"}: the camera's optical
+                                 pose in world at its newest frame; optical +Z forward, +X image
+                                 right, +Y image down. Depth pixel (u, v) back-projects as
+                                 z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, then
+                                 this pose takes it to world.
 
 Perception:
   app.skills.localize(objects="red cube, blue cup")

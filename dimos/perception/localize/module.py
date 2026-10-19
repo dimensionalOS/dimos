@@ -68,6 +68,7 @@ from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
+    TF_TOLERANCE,
     WALK_EMBED_HZ,
     Rig,
     RigCamera,
@@ -243,6 +244,35 @@ class PerceptionLocalize(Module):
         if self._ready.is_set():
             return f"ready: {self.index.count()} frames embedded, localize will answer"
         return f"not ready: {self._stage}"
+
+    @skill
+    def camera_pose(self) -> str:
+        """World pose of the camera's optical frame at its newest colour frame, as JSON.
+
+        ``{"t", "frame", "xyz", "quaternion_xyzw"}``; optical +Z forward, +X image right,
+        +Y image down. With the depth stream and camera_info's K, a depth pixel (u, v)
+        back-projects as z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, and this
+        pose takes it to world.
+        """
+        camera = self._camera
+        if camera is None:
+            return "camera_pose cannot answer yet: no camera_info"
+        try:
+            ts = self._color_feed.last().ts
+        except LookupError:
+            return "camera_pose cannot answer yet: no colour frame"
+        transform = self._tf_buffer.get(camera.frame_id, self.config.world_frame, ts, TF_TOLERANCE)
+        if transform is None:
+            return f"camera_pose: no transform from {self.config.world_frame} to {camera.frame_id}"
+        pose = (-transform).to_pose()
+        return json.dumps(
+            {
+                "t": ts,
+                "frame": self.config.world_frame,
+                "xyz": [round(v, 5) for v in pose.position.to_numpy().tolist()],
+                "quaternion_xyzw": [round(v, 6) for v in pose.orientation.to_numpy().tolist()],
+            }
+        )
 
     @skill
     def localize(
