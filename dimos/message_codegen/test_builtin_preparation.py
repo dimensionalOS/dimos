@@ -48,12 +48,12 @@ def test_unprepared_product_fails_and_cached_preparation_is_complete(tmp_path, m
 
     monkeypatch.setattr("dimos_cdrgen.source_inputs.requests.get", no_network)
     inputs = prepare(cache, offline=True, project=project)
-    assert len(list(inputs.rglob("*.msg"))) == 83
+    assert len(list(inputs.rglob("*.msg"))) == 84
     output = generate(project)
     resources = output / "dimos_generated_schemas/package"
     manifest = json.loads((resources / "message-package.json").read_text())
-    assert len(manifest["owned"]) == 83
-    assert len(list(project.glob("custom/dimos_msgs/msg/*.msg"))) == 21
+    assert len(manifest["owned"]) == 84
+    assert len(list(project.glob("custom/dimos_msgs/msg/*.msg"))) == 22
     lock = json.loads((project / "schema-sources.json").read_text())
     assert all(len(item["sha256"]) == 64 for item in lock["sources"])
     assert (resources / "dimos_msgs-LICENSE").is_file()
