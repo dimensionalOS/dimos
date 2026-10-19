@@ -14,7 +14,6 @@
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from enum import Enum
 from functools import cached_property, reduce
 import operator
 import re
@@ -79,20 +78,18 @@ class ModuleRef:
     optional: bool = False
 
 
-class _HostSelection(Enum):
-    ANY = "any"
-
-
-_ANY_HOST = _HostSelection.ANY
-
-
 @dataclass(frozen=True)
 class HostedPlacement:
     """Placement constraint attached to one Blueprint fragment."""
 
     module_names: tuple[str, ...]
-    host: str | None | _HostSelection = _ANY_HOST
+    # An exact Host name or ID; None takes any Host that matches the tags.
+    host: str | None = None
     tags: frozenset[str] = frozenset()
+    # The controller's own Host.
+    local: bool = False
+    # Among matching Hosts, the one with the highest value of this numeric tag.
+    prefer: str | None = None
 
     def __post_init__(self) -> None:
         if not self.module_names:
@@ -268,22 +265,23 @@ class Blueprint:
     def hosted(
         self,
         *,
-        host: str | None | _HostSelection = _ANY_HOST,
+        host: str | None = None,
         tags: Iterable[str] = (),
+        prefer: str | None = None,
+        local: bool = False,
     ) -> "Blueprint":
         """Schedule this Blueprint fragment as one placement unit.
 
-        With no selector, ``hosted()`` chooses any available remote Host. An
-        exact Host name/ID and required Host tags may narrow the candidates.
-        Passing ``host=None`` constrains the fragment to the controlling machine.
+        With no selector, ``hosted()`` chooses any available Host. An exact Host
+        name/ID and required Host tags (``key`` or ``key=value``) may narrow the
+        candidates; ``prefer`` picks the one with the highest value of that numeric
+        tag, e.g. ``prefer="gpu_mem_gb"``. ``local`` keeps the fragment on the
+        controlling machine. Globals reach every Host; per-machine ones like
+        ``n_workers`` belong in each Host's env.
         """
         if not self.blueprints:
             raise ValueError("hosted() requires at least one module")
-        if (
-            host is not None
-            and host is not _ANY_HOST
-            and (not isinstance(host, str) or not host.strip())
-        ):
+        if host is not None and (not isinstance(host, str) or not host.strip()):
             raise ValueError("host must be a non-empty string")
 
         if isinstance(tags, str):
@@ -291,13 +289,15 @@ class Blueprint:
         tag_set = frozenset(tags)
         if any(not isinstance(tag, str) or not tag.strip() for tag in tag_set):
             raise ValueError("tags must contain non-empty strings")
-        if host is None and tag_set:
-            raise ValueError("host=None cannot be combined with tags")
+        if local and (tag_set or host is not None):
+            raise ValueError("local=True cannot be combined with host or tags")
 
         placement = HostedPlacement(
             module_names=tuple(atom.name for atom in self.blueprints),
             host=host,
             tags=tag_set,
+            local=local,
+            prefer=prefer,
         )
         return replace(self, hosted_placements=(*self.hosted_placements, placement))
 

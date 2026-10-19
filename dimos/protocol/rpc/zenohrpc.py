@@ -31,7 +31,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from types import FunctionType
 
 logger = setup_logger()
 
@@ -152,7 +151,7 @@ class ZenohRPC(RPCSpec, ZenohService):
             attachment=b"nowait",
         )
 
-    def serve_rpc(self, f: FunctionType, name: str | None = None):  # type: ignore[no-untyped-def, override]
+    def serve_rpc(self, f: Callable[..., Any], name: str | None = None):  # type: ignore[no-untyped-def, override]
         rpc_name = name or f.__name__
 
         def on_query(query: zenoh.Query) -> None:

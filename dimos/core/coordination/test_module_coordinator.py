@@ -38,8 +38,8 @@ from dimos.core.coordination.module_coordinator import (
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
-    _verify_no_name_conflicts,
     stream_name_types,
+    verify_no_name_conflicts,
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
@@ -368,7 +368,7 @@ def test_name_conflicts_are_reported() -> None:
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
@@ -390,7 +390,7 @@ def test_multiple_name_conflicts_are_reported() -> None:
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
@@ -414,7 +414,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError due to conflict")
     except ValueError as e:
         assert "'data' has conflicting types" in str(e)
@@ -430,7 +430,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     )
 
     # Should not raise any exception after remapping
-    _verify_no_name_conflicts(blueprint_set_remapped)
+    verify_no_name_conflicts(blueprint_set_remapped)
 
 
 def test_remapping() -> None:

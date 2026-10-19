@@ -231,7 +231,8 @@ def test_blueprint_rejects_hosted_placement_for_unknown_module() -> None:
         {"host": ""},
         {"tags": "gpu"},
         {"tags": {""}},
-        {"host": None, "tags": {"gpu"}},
+        {"local": True, "tags": {"gpu"}},
+        {"local": True, "host": "robot"},
     ),
 )
 def test_hosted_rejects_invalid_constraints(kwargs: dict[str, Any]) -> None:

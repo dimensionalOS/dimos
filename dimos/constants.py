@@ -27,6 +27,16 @@ else:
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
+# Per-boot files of running daemons; a plain `ssh host cmd` has no XDG_RUNTIME_DIR.
+_USER_RUN = Path(f"/run/user/{os.getuid()}") if hasattr(os, "getuid") else None
+RUNTIME_DIR = (
+    Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
+    if os.environ.get("XDG_RUNTIME_DIR")
+    else _USER_RUN / "dimos"
+    if _USER_RUN is not None and _USER_RUN.is_dir()
+    else STATE_DIR
+)
+
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
 if (DIMOS_PROJECT_ROOT / ".git").exists():

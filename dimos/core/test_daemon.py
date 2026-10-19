@@ -276,42 +276,39 @@ class TestForkDaemon:
 
 
 class TestSignalHandler:
-    """test_signal_handler_cleans_registry."""
+    """The handler stops the coordinator and exits; the registry is the caller's."""
 
-    def test_signal_handler_cleans_registry(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
-        assert entry.registry_path.exists()
-
+    def test_signal_handler_stops_and_exits(self):
         coord = mock.MagicMock()
         with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
+            install_signal_handlers("run-1", coord)
             # Capture the handler closure registered for SIGTERM
             handler = mock_signal.call_args_list[0][0][1]
 
-        with pytest.raises(SystemExit):
+        with (
+            mock.patch("dimos.core.daemon.kill_run_processes") as sweep,
+            pytest.raises(SystemExit),
+        ):
             handler(signal.SIGTERM, None)
 
-        # Registry file should be cleaned up
-        assert not entry.registry_path.exists()
-        # Coordinator should have been stopped
         coord.stop.assert_called_once()
+        sweep.assert_called_once_with("run-1")
 
-    def test_signal_handler_tolerates_stop_error(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
-
+    def test_signal_handler_tolerates_stop_error(self):
         coord = mock.MagicMock()
         coord.stop.side_effect = RuntimeError("boom")
         with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
+            install_signal_handlers("run-1", coord)
             handler = mock_signal.call_args_list[0][0][1]
 
-        with pytest.raises(SystemExit):
+        with (
+            mock.patch("dimos.core.daemon.kill_run_processes") as sweep,
+            pytest.raises(SystemExit),
+        ):
             handler(signal.SIGTERM, None)
 
-        # Entry still removed even if stop() throws
-        assert not entry.registry_path.exists()
+        # The sweep still runs if stop() throws
+        sweep.assert_called_once_with("run-1")
 
 
 class TestStatusCommand:
@@ -536,3 +533,57 @@ class TestStopCommand:
         latest = get_most_recent(alive_only=True)
         assert latest is not None
         assert latest.run_id == "20260306-110000-second"
+
+
+def test_run_coordinator_serves_and_leaves_the_registry_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.core.daemon import run_coordinator
+
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    coordinator = mock.MagicMock()
+    coordinator.health_check.return_value = True
+    entry = RunEntry("run-x", os.getpid(), "bp", "now", str(tmp_path))
+    entry.save()
+    readiness: list[bool] = []
+    with (
+        mock.patch("dimos.core.coordination.module_coordinator.ModuleCoordinator.build") as build,
+        mock.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog") as watchdog,
+        mock.patch("dimos.core.daemon.install_signal_handlers") as handlers,
+        mock.patch.dict(os.environ, {}, clear=False),
+    ):
+        build.return_value = coordinator
+        coordinator.loop.side_effect = lambda: readiness.append(
+            os.environ["DIMOS_RUN_ID"] == "run-x"
+        )
+        run_coordinator(
+            "bp",  # type: ignore[arg-type]
+            "cfg",  # type: ignore[arg-type]
+            run_id="run-x",
+            log_dir=str(tmp_path),
+            rpc_name="runs/x",
+            sigint=False,
+            on_ready=lambda _: readiness.append(True),
+        )
+
+    build.assert_called_once_with("bp", "cfg", remote_module_refs=None)
+    coordinator.start_rpc_service.assert_called_once_with(name="runs/x")
+    watchdog.assert_called_once_with("run-x", log_dir=str(tmp_path))
+    handlers.assert_called_once_with("run-x", coordinator, sigint=False)
+    assert readiness == [True, True]
+    # A fragment shares its controller's run id: the entry is never this function's to remove.
+    assert entry.registry_path.exists()
+
+
+def test_run_coordinator_stops_the_build_when_the_health_check_fails() -> None:
+    from dimos.core.daemon import run_coordinator
+
+    coordinator = mock.MagicMock()
+    coordinator.health_check.return_value = False
+    build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
+    with (
+        mock.patch(build, return_value=coordinator),
+        pytest.raises(RuntimeError, match="health check failed"),
+    ):
+        run_coordinator("bp", "cfg", run_id="run-y", log_dir="/logs")  # type: ignore[arg-type]
+    coordinator.stop.assert_called_once_with()

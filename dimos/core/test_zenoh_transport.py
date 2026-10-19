@@ -257,6 +257,27 @@ def test_coerce_zenoh_to_lcm_typed(use_lcm) -> None:
     assert t.topic.topic == "/cmd_vel"
 
 
+def test_coerce_rescopes_a_plain_zenoh_transport_into_the_run(use_zenoh, mocker) -> None:
+    mocker.patch.object(global_config, "zenoh_domain", "r1")
+    t = _coerce_transport_to_backend(ZenohTransport("dimos/cmd_vel", Image))
+    assert type(t) is ZenohTransport
+    assert t.topic.topic == "dimos/domains/r1/cmd_vel"
+    assert _coerce_transport_to_backend(t) is t
+    jpeg = JpegLcmTransport("/color_image", Image)
+    assert _coerce_transport_to_backend(jpeg) is jpeg
+
+
+def test_without_a_domain_a_custom_zenoh_key_is_left_alone(use_zenoh) -> None:
+    t = ZenohTransport("rt/cmd_vel", Image)
+    assert _coerce_transport_to_backend(t) is t
+
+
+def test_a_zenoh_domain_is_one_key_segment() -> None:
+    assert GlobalConfig(zenoh_domain="office-2.a_b").zenoh_domain == "office-2.a_b"
+    with pytest.raises(ValidationError):
+        GlobalConfig(zenoh_domain="a/b")
+
+
 def test_coerce_identity_when_backend_matches(use_lcm) -> None:
     orig = LCMTransport("/cmd_vel", Image)
     assert _coerce_transport_to_backend(orig) is orig

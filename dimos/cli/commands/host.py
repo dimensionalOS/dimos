@@ -12,138 +12,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Commands for running and inspecting DimOS Host services."""
+"""Commands for running and inspecting DimOS Hosts."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import ExitStack, contextmanager
-from importlib.metadata import version as package_version
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from dataclasses import asdict
 import json
-from pathlib import Path
+import signal
 import threading
 from typing import TYPE_CHECKING, Any, NoReturn
-import uuid
 
-from filelock import FileLock, Timeout
 import typer
 
-from dimos.constants import STATE_DIR
-from dimos.core.global_config import global_config
+from dimos.hosted.machine import load_host_id
+from dimos.hosted.tags import format_tags
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.hosted.daemon import HostDescriptor
+    from dimos.hosted.discovery import Found
+    from dimos.hosted.protocol import HostDescriptor
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 host_app = typer.Typer(help="Run and inspect DimOS Hosts", no_args_is_help=True)
-HOST_ID_PATH = STATE_DIR / "hosted" / "host_id"
-HOST_LOCK_PATH = STATE_DIR / "hosted" / "host.lock"
-DISCOVERY_KEY = "dimos/hosts/*/live"
-DEFAULT_DISCOVERY_TIMEOUT = 2.0
+DEFAULT_DISCOVERY_TIMEOUT = 1.0
+logger = setup_logger()
 
 
-def _load_host_id(path: Path) -> str:
-    try:
-        host_id = path.read_text().strip()
-    except FileNotFoundError:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        host_id = uuid.uuid4().hex
-        try:
-            with path.open("x") as identity_file:
-                identity_file.write(f"{host_id}\n")
-        except FileExistsError:
-            host_id = path.read_text().strip()
-    if not host_id:
-        raise ValueError(f"Host identity file is empty: {path}")
-    return host_id
+ConnectOption = typer.Option(
+    None, "--connect", "-c", help="Router to join as a client; default: the local Host"
+)
 
 
-def _zenoh_kwargs() -> dict[str, Any]:
-    return {
-        "mode": global_config.zenoh_mode,
-        "connect": [
-            item.strip() for item in global_config.zenoh_connect.split(",") if item.strip()
-        ],
-        "scouting": global_config.zenoh_scouting,
-        "scouting_interface": global_config.zenoh_interface,
-        "multicast": global_config.zenoh_multicast,
-        "gossip": global_config.zenoh_gossip,
-        "connect_timeout": global_config.zenoh_connect_timeout,
-    }
+def _connect(connect: list[str] | None) -> list[str]:
+    """``connect`` as given, else the running local daemon's router."""
+    from dimos.hosted.machine import local_host
+
+    if connect:
+        return connect
+    local = local_host()
+    if local is None:
+        _fail("No local Host is running: `dimos host start`, or pass --connect")
+    return [local.client_endpoint]
 
 
 @contextmanager
-def _host_rpc() -> Iterator[ZenohRPC]:
-    from dimos.protocol.rpc.zenohrpc import ZenohRPC
-    from dimos.protocol.service.zenohservice import ZenohSessionPool
+def _host_rpc(connect: list[str] | None) -> Iterator[ZenohRPC]:
+    from dimos.hosted.client import controller_rpc
 
-    pool = ZenohSessionPool()
-    rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
-    with ExitStack() as cleanup:
-        cleanup.callback(pool.close_all)
-        rpc.start()
-        cleanup.callback(rpc.stop)
+    with controller_rpc(_connect(connect)) as rpc:
         yield rpc
 
 
-def _discover_host_ids(rpc: ZenohRPC, timeout: float) -> list[str]:
-    replies = rpc.session.liveliness().get(DISCOVERY_KEY, timeout=timeout)
-    host_ids: set[str] = set()
-    for reply in replies:
-        sample = reply.ok
-        if sample is None:
-            continue
-        key = str(sample.key_expr)
-        parts = key.split("/")
-        if len(parts) == 4 and parts[:2] == ["dimos", "hosts"] and parts[3] == "live":
-            host_ids.add(parts[2])
-    return sorted(host_ids)
-
-
-def _get_descriptor(rpc: ZenohRPC, host_id: str, timeout: float) -> HostDescriptor:
-    from dimos.hosted.daemon import HOST_CONTROL_RPC_NAME, HostDescriptor
-
-    control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-    result, unsubscribe = rpc.call_sync(
-        f"{control_name}/describe",
-        ([], {}),
-        rpc_timeout=timeout,
-    )
-    try:
-        if not isinstance(result, HostDescriptor):
-            raise TypeError(f"Host {host_id} returned an invalid descriptor")
-        return result
-    finally:
-        unsubscribe()
-
-
 def _descriptor_dict(descriptor: HostDescriptor) -> dict[str, Any]:
-    return {
-        "host_id": descriptor.host_id,
-        "epoch": descriptor.epoch,
-        "name": descriptor.name,
-        "tags": sorted(descriptor.tags),
-        "versions": descriptor.versions,
-        "state": descriptor.state,
-        "active_run_ids": list(descriptor.active_run_ids),
-    }
-
-
-def _format_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
-    widths = [
-        max(len(header), *(len(row[index]) for row in rows)) for index, header in enumerate(headers)
-    ]
-
-    def format_row(row: tuple[str, ...]) -> str:
-        return "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
-
-    return "\n".join(
-        (
-            format_row(headers),
-            format_row(tuple("-" * width for width in widths)),
-            *(format_row(row) for row in rows),
-        )
-    )
+    return {**asdict(descriptor), "active_run_ids": list(descriptor.active_run_ids)}
 
 
 def _fail(message: str) -> NoReturn:
@@ -155,60 +78,86 @@ def _fail(message: str) -> NoReturn:
 def host_id() -> None:
     """Show this machine's persistent Host ID."""
     try:
-        typer.echo(_load_host_id(HOST_ID_PATH))
+        typer.echo(load_host_id())
     except (OSError, ValueError) as exc:
         _fail(str(exc))
 
 
-@host_app.command("list")
-def list_hosts(
+def _quiet_logs() -> None:
+    """Keep zenoh's session chatter out of a command whose stdout is a table."""
+    import logging
+
+    logging.getLogger("dimos/protocol/service/zenohservice.py").setLevel(logging.WARNING)
+
+
+def _tags_text(tags: dict[str, str]) -> Any:
+    from rich.text import Text
+
+    text = Text()
+    for i, (key, value) in enumerate(sorted(tags.items())):
+        if i:
+            text.append(" ")
+        text.append(key, style="yellow")
+        if value:
+            text.append("=", style="dim")
+            text.append(value, style="green")
+    return text
+
+
+def _print_hosts(found: Sequence[Found], revision: str) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(box=None, header_style="bold", pad_edge=False)
+    for header in ("NAME", "TAGS", "ADDRESSES", "REVISION", "RUNS"):
+        table.add_column(header, overflow="fold")
+    for row in found:
+        host = row.descriptor
+        rev_style = "green" if host.revision == revision else "red"
+        table.add_row(
+            host.name,
+            _tags_text(host.tags),
+            "\n".join(row.endpoints or host.listen) or "-",
+            f"[{rev_style}]{host.revision[:10] or '-'}[/]",
+            ",".join(host.active_run_ids) or "-",
+        )
+    Console().print(table)
+
+
+@host_app.command("ls")
+def ls(
     json_output: bool = typer.Option(False, "--json", help="Output descriptors as JSON"),
     timeout: float = typer.Option(
-        DEFAULT_DISCOVERY_TIMEOUT,
-        "--timeout",
-        min=0.1,
-        help="Discovery and RPC timeout in seconds",
+        DEFAULT_DISCOVERY_TIMEOUT, "--timeout", min=0.1, help="Discovery timeout in seconds"
     ),
+    probe: list[str] = typer.Option([], "--probe", "-p", help="Extra router to probe"),
+    scout: bool = typer.Option(True, help="Scout the Host multicast group"),
 ) -> None:
-    """List Hosts currently visible through Zenoh liveliness."""
-    try:
-        with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
-            descriptors: list[HostDescriptor | dict[str, str]] = []
-            for discovered_id in host_ids:
-                try:
-                    descriptors.append(_get_descriptor(rpc, discovered_id, timeout))
-                except Exception as exc:
-                    descriptors.append({"host_id": discovered_id, "error": str(exc)})
-    except Exception as exc:
-        _fail(str(exc))
+    """List dimos Hosts: the local one's fabric, HOST__CONNECT and --probe seeds, scouted routers."""
+    from dimos.hosted.config import HostConfig
+    from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
+    from dimos.hosted.machine import code_revision, local_host
+    from dimos.protocol.service.zenohservice import split_csv
 
+    _quiet_logs()
+    config = HostConfig()
+    local = local_host()
+    endpoints = [*([local.client_endpoint] if local else []), *probe, *split_csv(config.connect)]
+    if scout:
+        endpoints += scouted_endpoints(config, timeout)
+    endpoints = list(dict.fromkeys(endpoints))
+    found = merge(probe_all(endpoints, timeout))
     if json_output:
         output = [
-            item if isinstance(item, dict) else _descriptor_dict(item) for item in descriptors
+            {"descriptor": _descriptor_dict(row.descriptor), "endpoints": list(row.endpoints)}
+            for row in found
         ]
         typer.echo(json.dumps(output, indent=2, sort_keys=True))
         return
-    if not descriptors:
-        typer.echo("No online Hosts found")
+    if not found:
+        typer.echo(f"No dimos Hosts answered (tried {len(endpoints)} router(s))")
         return
-
-    rows: list[tuple[str, ...]] = []
-    for item in descriptors:
-        if isinstance(item, dict):
-            rows.append((item["host_id"], "-", "-", "unreachable", "-", "-"))
-            continue
-        rows.append(
-            (
-                item.host_id,
-                item.name,
-                ",".join(sorted(item.tags)) or "-",
-                item.state,
-                ",".join(item.active_run_ids) or "-",
-                str(item.versions.get("dimos", "-")),
-            )
-        )
-    typer.echo(_format_table(("ID", "NAME", "TAGS", "STATE", "RUNS", "DIMOS"), rows))
+    _print_hosts(found, code_revision())
 
 
 @host_app.command()
@@ -221,135 +170,129 @@ def describe(
         min=0.1,
         help="Discovery and RPC timeout in seconds",
     ),
+    connect: list[str] = ConnectOption,
 ) -> None:
     """Describe one online Host by ID or unique exact name."""
+    _quiet_logs()
+    from dimos.hosted.client import describe_all
+
     try:
-        with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
-            if host in host_ids:
-                descriptor = _get_descriptor(rpc, host, timeout)
-            else:
-                matches = []
-                for discovered_id in host_ids:
-                    item = _get_descriptor(rpc, discovered_id, timeout)
-                    if item.name == host:
-                        matches.append(item)
-                if not matches:
-                    raise ValueError(f"No online Host matches {host!r}")
-                if len(matches) > 1:
-                    ids = ", ".join(item.host_id for item in matches)
-                    raise ValueError(f"Host name {host!r} is ambiguous: {ids}")
-                descriptor = matches[0]
+        with _host_rpc(connect) as rpc:
+            matches = [d for d in describe_all(rpc, timeout) if host in (d.host_id, d.name)]
+            if not matches:
+                raise ValueError(f"No online Host matches {host!r}")
+            if len(matches) > 1:
+                ids = ", ".join(item.host_id for item in matches)
+                raise ValueError(f"Host name {host!r} is ambiguous: {ids}")
+            descriptor = matches[0]
     except Exception as exc:
         _fail(str(exc))
 
-    data = _descriptor_dict(descriptor)
     if json_output:
-        typer.echo(json.dumps(data, indent=2, sort_keys=True))
+        typer.echo(json.dumps(_descriptor_dict(descriptor), indent=2, sort_keys=True))
         return
     typer.echo(f"Host ID:       {descriptor.host_id}")
-    typer.echo(f"Epoch:         {descriptor.epoch}")
     typer.echo(f"Name:          {descriptor.name}")
-    typer.echo(f"Tags:          {','.join(sorted(descriptor.tags)) or '-'}")
-    typer.echo(f"State:         {descriptor.state}")
-    typer.echo(f"Active run IDs: {','.join(descriptor.active_run_ids) or '-'}")
-    typer.echo("Versions:")
-    for name, value in sorted(descriptor.versions.items()):
-        typer.echo(f"  {name}: {value}")
-
-
-def _zenoh_config_detail() -> str:
-    from dimos.protocol.service.zenohservice import ZenohConfig
-
-    config = ZenohConfig(**_zenoh_kwargs())
-    endpoints = ",".join(config.connect) or "none"
-    return (
-        f"mode={config.mode}, connect={endpoints}, "
-        f"scouting={config.scouting}, multicast={config.multicast}"
-    )
-
-
-def _check_zenoh_connection() -> str:
-    with _host_rpc() as rpc:
-        link_count = len(list(rpc.session.info.links()))
-    return f"session opened ({link_count} link(s))"
+    typer.echo(f"Tags:          {format_tags(descriptor.tags) or '-'}")
+    typer.echo(f"Revision:      {descriptor.revision}")
+    typer.echo(f"Runs:          {','.join(descriptor.active_run_ids) or '-'}")
 
 
 @host_app.command()
-def doctor() -> None:
-    """Check the local Host identity, Zenoh configuration, connection, and version."""
-    checks: list[tuple[str, Callable[[], str]]] = [
-        ("Host ID", lambda: _load_host_id(HOST_ID_PATH)),
-        ("Zenoh config", _zenoh_config_detail),
-        ("Zenoh connection", _check_zenoh_connection),
-        ("DimOS version", lambda: package_version("dimos")),
-    ]
-    failures = 0
-    for name, check in checks:
-        try:
-            detail = check()
-        except Exception as exc:
-            failures += 1
-            typer.echo(f"FAIL  {name}: {exc}", err=True)
-        else:
-            typer.echo(f"PASS  {name}: {detail}")
-    if failures:
-        typer.echo(f"Host doctor found {failures} problem(s).", err=True)
+def doctor(fix: bool = typer.Option(False, "--fix", help="Fix failing checks that can be")) -> None:
+    """Check this machine's Host setup, one line per check."""
+    _quiet_logs()
+    import sys
+
+    from dimos.hosted.doctor import run as run_checks
+
+    tty = sys.stdout.isatty()
+    marks = {"ok": "✓", "fail": "✗", "warn": "!"} if tty else {}
+    results = run_checks(fix=fix)
+    for result in results:
+        state = "ok" if result.ok else "warn" if result.warning else "fail"
+        line = f"{marks.get(state, state.upper()):<4}  {result.description}"
+        if result.fix_note:
+            line += f"  [{result.fix_note}]"
+        if result.error and not result.ok:
+            line += f"  ({result.error})"
+        typer.echo(line)
+    if not all(result.ok or result.warning for result in results):
         raise typer.Exit(1)
-    typer.echo("Host doctor passed.")
 
 
 @host_app.command()
-def serve(
-    name: str | None = typer.Option(None, "--name", help="Human-readable Host name"),
-    tags: list[str] = typer.Option([], "--tag", "-t", help="Placement tag; repeatable"),
+def start(
+    foreground: bool = typer.Option(
+        False, "--foreground", "-f", help="Run the daemon here instead of in the background"
+    ),
 ) -> None:
-    """Serve one Host over the configured Zenoh fabric."""
-    from dimos.hosted.daemon import (
-        HOST_CONTROL_RPC_NAME,
-        HOST_LIVELINESS_KEY,
-        HOST_PROTOCOL_VERSION,
-        HostDaemon,
+    """Start this machine's Host: its zenoh router and fragment supervisor.
+
+    In the background via the systemd unit if installed, else detached; --foreground runs
+    it here, as the unit does. Settings come from HOST__<FIELD> in the environment or .env.
+    """
+    from dimos.hosted import machine
+
+    if not foreground:
+        typer.echo(machine.start())
+        return
+
+    from dimos.hosted.config import HostConfig
+    from dimos.hosted.daemon import HostDaemon
+    from dimos.hosted.tags import auto_tags
+
+    daemon = HostDaemon(
+        HostConfig(), host_id=load_host_id(), revision=machine.code_revision(), tags=auto_tags()
     )
-    from dimos.hosted.fragment import FRAGMENT_SCHEMA_VERSION
-    from dimos.protocol.rpc.zenohrpc import ZenohRPC
-    from dimos.protocol.service.zenohservice import ZenohSessionPool
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    try:
+        machine.run_foreground(daemon, stop)
+    except RuntimeError as exc:
+        _fail(str(exc))
 
-    with ExitStack() as cleanup:
-        try:
-            cleanup.enter_context(FileLock(HOST_LOCK_PATH, timeout=0))
-        except Timeout:
-            _fail("Host service is already running on this machine")
-        except OSError as exc:
-            _fail(str(exc))
 
-        host_id = _load_host_id(HOST_ID_PATH)
-        daemon = HostDaemon(
-            host_id,
-            name=name,
-            tags=set(tags),
-            versions={
-                "protocol": HOST_PROTOCOL_VERSION,
-                "fragment_schema": FRAGMENT_SCHEMA_VERSION,
-                "dimos": package_version("dimos"),
-            },
-        )
-        pool = ZenohSessionPool()
-        rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
-        cleanup.callback(pool.close_all)
-        cleanup.callback(daemon.shutdown)
-        rpc.start()
-        cleanup.callback(rpc.stop)
-        control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-        rpc.serve_rpc(daemon.describe, f"{control_name}/describe")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.start, f"{control_name}/start")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.status, f"{control_name}/status")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.stop, f"{control_name}/stop")  # type: ignore[arg-type]
-        token = rpc.session.liveliness().declare_token(HOST_LIVELINESS_KEY.format(host_id=host_id))
-        cleanup.callback(token.undeclare)
-        descriptor = daemon.describe()
-        typer.echo(f"Host {descriptor.name} ({host_id}) is available")
-        try:
-            threading.Event().wait()
-        except KeyboardInterrupt:
-            pass
+@host_app.command()
+def install() -> None:
+    """Install and enable the dimos-host systemd user unit for this checkout."""
+    from dimos.hosted import machine
+
+    path = machine.install()
+    typer.echo(f"Installed {path}; start it with `dimos host start`")
+    typer.echo("To start at boot without a login: sudo loginctl enable-linger $USER")
+
+
+@host_app.command()
+def uninstall() -> None:
+    """Stop, disable and remove the dimos-host systemd user unit."""
+    from dimos.hosted import machine
+
+    machine.uninstall()
+    typer.echo(f"Removed {machine.unit_path()}")
+
+
+@host_app.command()
+def stop() -> None:
+    """Stop the Host started by `dimos host start` or its systemd unit."""
+    from dimos.hosted import machine
+
+    typer.echo(machine.stop())
+
+
+@host_app.command()
+def status() -> None:
+    """Whether the local Host runs, and what it advertises when reachable."""
+    from dimos.hosted import machine
+    from dimos.hosted.discovery import merge, probe
+
+    _quiet_logs()
+    typer.echo(machine.status())
+    local = machine.local_host()
+    if local is None:
+        return
+    result = probe(local.client_endpoint, DEFAULT_DISCOVERY_TIMEOUT)
+    found = [r for r in merge([result] if result else []) if r.descriptor.host_id == local.host_id]
+    if found:
+        _print_hosts(found, machine.code_revision())

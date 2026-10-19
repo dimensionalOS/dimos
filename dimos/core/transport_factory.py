@@ -44,15 +44,20 @@ if TYPE_CHECKING:
     from dimos.protocol.rpc.spec import RPCSpec
 
 
+def zenoh_prefix(g: GlobalConfig = global_config) -> str:
+    """The zenoh key prefix of every stream: ``dimos/``, or the run's domain under it."""
+    return f"dimos/domains/{g.zenoh_domain}/" if g.zenoh_domain else "dimos/"
+
+
 def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
     """Map a logical channel name to the active backend's topic string.
 
     LCM channels are leading-slash paths (`/foo`).
 
-    Zenoh key expressions can't start with `/` and are namespaced under `dimos`.
+    Zenoh key expressions can't start with `/` and live under `zenoh_prefix`.
     """
     if g.transport == "zenoh":
-        return "dimos/" + name.lstrip("/")
+        return zenoh_prefix(g) + name.lstrip("/")
     return name if name.startswith("/") else "/" + name
 
 

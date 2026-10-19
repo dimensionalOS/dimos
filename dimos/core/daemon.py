@@ -16,20 +16,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import json
 import os
 import signal
 import sys
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.run_registry import RunEntry
+    from dimos.core.module import ModuleBase
 
 logger = setup_logger()
 
@@ -109,12 +112,12 @@ def read_daemon_status(fd: int) -> dict[str, Any] | None:
 
 
 def install_signal_handlers(
-    entry: RunEntry,
+    run_id: str,
     coordinator: ModuleCoordinator,
     *,
     sigint: bool = True,
 ) -> None:
-    """Install SIGTERM/SIGINT handlers that stop the coordinator and clean the registry.
+    """Install SIGTERM/SIGINT handlers that stop the coordinator, sweep the run and exit.
 
     When `sigint` is False, only SIGTERM is wired. This is useful for foreground
     mode where the default SIGINT behavior (`KeyboardInterrupt`) should be
@@ -128,12 +131,49 @@ def install_signal_handlers(
         except Exception:
             logger.error("Error during coordinator stop", exc_info=True)
         try:
-            kill_run_processes(entry.run_id)
+            kill_run_processes(run_id)
         except Exception:
             logger.error("Error during run-process sweep", exc_info=True)
-        entry.remove()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
     if sigint:
         signal.signal(signal.SIGINT, _shutdown)
+
+
+def run_coordinator(
+    blueprint: Blueprint,
+    config: ParsedBlueprintConfig,
+    *,
+    run_id: str,
+    log_dir: str | os.PathLike[str],
+    rpc_name: str | None = None,
+    remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
+    | None = None,
+    sigint: bool = True,
+    on_ready: Callable[[ModuleCoordinator], None] | None = None,
+) -> None:
+    """Build, serve RPC, call ``on_ready`` and loop until a signal; the caller owns any registry entry."""
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.process_lifecycle import spawn_watchdog
+    from dimos.memory.tap import recording
+
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
+    coordinator = ModuleCoordinator.build(blueprint, config, remote_module_refs=remote_module_refs)
+    try:
+        if not coordinator.health_check():
+            raise RuntimeError("health check failed, a worker process died")
+        coordinator.start_rpc_service(name=rpc_name)
+    except BaseException:
+        coordinator.stop()
+        raise
+    spawn_watchdog(run_id, log_dir=log_dir)
+    install_signal_handlers(run_id, coordinator, sigint=sigint)
+    try:
+        if on_ready is not None:
+            on_ready(coordinator)
+        with recording(coordinator.transports):
+            coordinator.loop()
+    except Exception:
+        coordinator.stop()
+        raise
