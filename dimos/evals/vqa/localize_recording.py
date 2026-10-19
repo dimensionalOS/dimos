@@ -144,9 +144,10 @@ def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[Questio
         proposals.append(QuestionProposal(family="ego_turn", object_names=(nearest,)))
         sides = spatial_side_referents(scene, name)
         if sides is not None:
+            # left/right referents already encode lateral side — ego_turn would be
+            # nearly tautological ("left X" → turn left). Keep only fore/aft.
             for referent in sides:
                 proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
-                proposals.append(QuestionProposal(family="ego_turn", object_names=(referent,)))
         proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
 
     # Height order among unique categories only (stable GT without selector prefixes).

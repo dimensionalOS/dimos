@@ -121,8 +121,8 @@ EGO_TURN_FAMILY = FamilySpec(
     name="ego_turn",
     description=(
         "Ask whether the robot should turn left, turn right, or is already facing one localized "
-        "referent (bare unique name, or nearest/left/right <object>). "
-        "Do not infer bearing from the image alone."
+        "referent (bare unique name or nearest <object>). Do not use left/right <object> "
+        "referents — that leaks the turn answer. Do not infer bearing from the image alone."
     ),
     requires_localize=True,
 )
@@ -534,9 +534,13 @@ def _answer_ego_turn(
     proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
 ) -> FamilyAnswer:
     referent = proposal.object_names[0]
+    selector, category = parse_referent(referent)
+    if selector in ("left", "right"):
+        raise InsufficientEvidenceError(
+            "ego_turn rejects left/right referents because the label leaks the turn answer"
+        )
     answer = ego_turn_to(localize_scene, referent)
     instance = resolve_referent(localize_scene, referent)
-    selector, category = parse_referent(referent)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
     return FamilyAnswer(
         question=(

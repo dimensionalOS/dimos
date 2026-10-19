@@ -99,5 +99,8 @@ def test_proposals_from_localize_scene_cover_singles_and_pairs() -> None:
     assert ("ego_turn", ("nearest chair",)) in families
     assert ("ego_fore_aft", ("left chair",)) in families
     assert ("ego_fore_aft", ("right chair",)) in families
+    # left/right already name the lateral side — do not also ask ego_turn
+    assert ("ego_turn", ("left chair",)) not in families
+    assert ("ego_turn", ("right chair",)) not in families
     assert ("ego_any_fore_aft", ("chair",)) in families
     assert ("ego_fore_aft", ("chair",)) not in families
