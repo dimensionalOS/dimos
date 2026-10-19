@@ -229,9 +229,7 @@ def generate_dataset(
             )
             after = min(timestamps) - request.localize_pad_s
             before = max(timestamps) + request.localize_pad_s
-            localize_ctx = localize_window(
-                request.dataset, request.localize_queries, after, before
-            )
+            localize_ctx = localize_window(request.dataset, request.localize_queries, after, before)
 
         with localize_ctx as localize_result:
             author_model = OpenAIVlModel()
@@ -267,9 +265,7 @@ def generate_dataset(
                                 localize_result.rig,
                                 image.ts,
                             )
-                        yield GenerationFrame(
-                            index, image, pc_frame, localize_scene=localize_scene
-                        )
+                        yield GenerationFrame(index, image, pc_frame, localize_scene=localize_scene)
 
                 return generate_frames_dataset(
                     request,
@@ -361,9 +357,7 @@ def _generate_frame(
     image = source.image
     # Empty verified-hit scenes must not expose localize families (author would propose
     # unresolvable referents; deterministic seeding would also be a no-op).
-    localize_ready = (
-        source.localize_scene is not None and len(source.localize_scene.instances) > 0
-    )
+    localize_ready = source.localize_scene is not None and len(source.localize_scene.instances) > 0
     families = tuple(
         family
         for family in AVAILABLE_FAMILIES
