@@ -91,9 +91,7 @@ class FixedQuestionAuthor:
     def __init__(self, proposals: Sequence[QuestionProposal]) -> None:
         self._proposals = tuple(proposals)
 
-    def propose(
-        self, image: Image, families: Sequence[FamilySpec]
-    ) -> Sequence[QuestionProposal]:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
         del image  # proposals are fixed; image is unused by design
         available = {family.name: family for family in families}
         accepted: list[QuestionProposal] = []

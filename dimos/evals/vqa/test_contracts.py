@@ -1021,9 +1021,7 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
             robot_position_xyz=(0.0, 0.0, 0.0),
             robot_yaw_rad=0.0,
             instances=(
-                LocalizeInstanceEvidence(
-                    object_name="chair", position_world_xyz=(1.0, 0.0, 0.5)
-                ),
+                LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 0.0, 0.5)),
             ),
         )
 
@@ -1048,9 +1046,7 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
         )
 
     monkeypatch.setattr("dimos.evals.vqa.generate.PointCloudFrameLoader", _FakeLoader)
-    monkeypatch.setattr(
-        "dimos.evals.vqa.localize_recording.localize_window", fake_localize_window
-    )
+    monkeypatch.setattr("dimos.evals.vqa.localize_recording.localize_window", fake_localize_window)
     monkeypatch.setattr(
         "dimos.evals.vqa.localize_recording.scene_at_timestamp", fake_scene_at_timestamp
     )

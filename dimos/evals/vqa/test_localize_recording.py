@@ -51,9 +51,7 @@ def _hit(xyz: tuple[float, float, float]) -> Localization:
 def test_scene_at_timestamp_returns_none_without_base_link(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        localize_recording_module, "robot_pose_xyz_yaw", lambda rig, ts: None
-    )
+    monkeypatch.setattr(localize_recording_module, "robot_pose_xyz_yaw", lambda rig, ts: None)
     assert scene_at_timestamp((("chair", _hit((1.0, 0.0, 0.5))),), SimpleNamespace(), 1.0) is None
 
 
@@ -63,9 +61,7 @@ def test_scene_at_timestamp_builds_named_evidence(monkeypatch: pytest.MonkeyPatc
         "robot_pose_xyz_yaw",
         lambda rig, ts: ((0.0, 0.0, 0.0), 0.0),
     )
-    scene = scene_at_timestamp(
-        (("chair", _hit((2.0, 0.5, 0.4))),), SimpleNamespace(), 1.0
-    )
+    scene = scene_at_timestamp((("chair", _hit((2.0, 0.5, 0.4))),), SimpleNamespace(), 1.0)
 
     assert scene is not None
     assert scene.robot_position_xyz == (0.0, 0.0, 0.0)

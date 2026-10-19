@@ -523,9 +523,7 @@ def _answer_height_order(
                         "choice": object_name,
                         "position_world_xyz": list(instance.position_world_xyz),
                     }
-                    for object_name, instance in zip(
-                        proposal.object_names, instances, strict=True
-                    )
+                    for object_name, instance in zip(proposal.object_names, instances, strict=True)
                 ],
             ),
         },

@@ -27,8 +27,8 @@ Referent strings (``object_names`` entries) may be:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
+import math
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -68,9 +68,7 @@ class LocalizeInstanceEvidence(BaseModel):
     semantic_score: float = Field(default=1.0, ge=0)
 
     @classmethod
-    def from_localization(
-        cls, object_name: str, hit: Localization
-    ) -> LocalizeInstanceEvidence:
+    def from_localization(cls, object_name: str, hit: Localization) -> LocalizeInstanceEvidence:
         """Map one Dan localize hit; ``object_name`` is the caller's query label."""
         return cls(
             object_name=object_name,
@@ -142,9 +140,7 @@ def require_one_instance(
     return hits[0]
 
 
-def resolve_referent(
-    scene: LocalizeSceneEvidence, referent: str
-) -> LocalizeInstanceEvidence:
+def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeInstanceEvidence:
     """Resolve a unique / nearest / left / right referent to one instance."""
     selector, category = parse_referent(referent)
     hits = instances_named(scene, category)
@@ -159,9 +155,7 @@ def resolve_referent(
     if selector == "nearest":
         return min(
             hits,
-            key=lambda inst: math.hypot(
-                *robot_relative_xy(scene, inst.position_world_xyz)
-            ),
+            key=lambda inst: math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)),
         )
     if selector == "left":
         return _extreme_lateral(scene, hits, side="left", referent=referent)
@@ -195,9 +189,7 @@ def _extreme_lateral(
     return scored[0][1]
 
 
-def spatial_side_referents(
-    scene: LocalizeSceneEvidence, category: str
-) -> tuple[str, str] | None:
+def spatial_side_referents(scene: LocalizeSceneEvidence, category: str) -> tuple[str, str] | None:
     """Return ``(left <cat>, right <cat>)`` when both sides are unambiguous, else ``None``."""
     hits = instances_named(scene, category)
     if len(hits) < 2:

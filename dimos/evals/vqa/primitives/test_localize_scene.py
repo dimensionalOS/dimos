@@ -58,9 +58,7 @@ def test_robot_relative_xy_rotates_into_body_frame() -> None:
         ((-2.0, 0.0, 0.0), "behind"),
     ),
 )
-def test_fore_aft_uses_forward_axis_sign(
-    xyz: tuple[float, float, float], expected: str
-) -> None:
+def test_fore_aft_uses_forward_axis_sign(xyz: tuple[float, float, float], expected: str) -> None:
     scene = _scene(LocalizeInstanceEvidence(object_name="chair", position_world_xyz=xyz))
     assert fore_aft_of(scene, "chair") == expected
 
