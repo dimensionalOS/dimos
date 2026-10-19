@@ -104,13 +104,19 @@ default**. Enable them with `--with-localize`. Generation then:
    - **any-ahead** yes/no for each selected category (`ego_any_fore_aft`)
    - **height_order** pairs among unique categories only
 
+Published localize cases are then budgeted to at most **K=5** per `(family, selector)`
+cell (preferring distinct pose buckets) so a long trajectory does not flood the eval with
+near-duplicate capability probes. Override with `--localize-coverage-k`, or pass `0` to
+publish every answered localize case. Image-path families are never budgeted.
+
 Without `--with-localize`, those families are not offered.
 
 ```bash skip
 dimos evals vqa generate /path/to/calibrated-recording.db \
   --start 180 --stop 280 --stride 20 \
   --with-localize \
-  --localize-pad 20
+  --localize-pad 20 \
+  --localize-coverage-k 5
 ```
 
 ## Dataset Layout

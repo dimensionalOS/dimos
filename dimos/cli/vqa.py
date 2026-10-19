@@ -74,6 +74,15 @@ def generate(
         min=1e-9,
         help="Seconds to pad before/after selected frame timestamps for the localize window",
     ),
+    localize_coverage_k: int | None = typer.Option(
+        None,
+        "--localize-coverage-k",
+        min=0,
+        help=(
+            "With --with-localize, keep at most K published localize cases per "
+            "(family, selector) cell (default 5). Use 0 to publish every answered localize case"
+        ),
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.
@@ -95,6 +104,7 @@ def generate(
             with_localize=with_localize,
             localize_queries=tuple(localize_query),
             localize_pad_s=localize_pad,
+            localize_coverage_k=localize_coverage_k,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:

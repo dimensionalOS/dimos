@@ -154,6 +154,8 @@ Three families, one adapter, strong distinction from the existing seven.
 - Generation: `GenerationFrame.localize_scene` + `requires_localize` filter
 - Optional CLI: `--with-localize` + `--localize-query` (default off) via
   `dimos/evals/vqa/localize_recording.py`
+- Coverage budget: `dimos/evals/vqa/localize_coverage.py` keeps ≤K published cases per
+  `(family, selector)` (default K=5 with `--with-localize`; `--localize-coverage-k 0` disables)
 
 ---
 

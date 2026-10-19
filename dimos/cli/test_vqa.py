@@ -55,6 +55,8 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--with-localize" in output
     assert "--localize-query" in output
     assert "--localize-pad" in output
+    # Rich may truncate the long flag name in the help table.
+    assert "localize-cover" in output
     assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
@@ -188,6 +190,26 @@ def test_vqa_generate_cli_accepts_optional_localize_flags(
     )
     assert result.exit_code == 0
     assert seen[0].localize_queries == ("chair", "table")
+
+    seen.clear()
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path / "c"),
+            "--with-localize",
+            "--localize-coverage-k",
+            "5",
+        ],
+    )
+    assert result.exit_code == 0
+    assert seen[0].localize_coverage_k == 5
 
 
 def test_vqa_generate_cli_rejects_non_positive_localize_pad(tmp_path: Path) -> None:
