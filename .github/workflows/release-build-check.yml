@@ -31,12 +31,18 @@ jobs:
     env:
       # Keep in sync with the build-wheels env in release.yml
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_BEFORE_TEST: "pip install {project}/wheelhouse/dimos_generated-*.whl"
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Build cockpit dist
         uses: ./.github/actions/build-cockpit
+      - name: Prepare the curated message wheel
+        run: |
+          python -m pip install uv
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv build --wheel --out-dir wheelhouse packages/dimos-generated
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.2.1
         with:

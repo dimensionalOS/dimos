@@ -1844,6 +1844,8 @@ dependencies = [
     { name = "bleak" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
+    { name = "dimos-cdrgen" },
+    { name = "dimos-generated" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
@@ -2368,6 +2370,13 @@ lint = [
     { name = "watchdog" },
     { name = "xacro" },
 ]
+message-codegen = [
+    { name = "dimos-cdrgen", extra = ["prepare"] },
+    { name = "pytest" },
+    { name = "rosbags" },
+    { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
 project-deps = [
     { name = "can-motor-control" },
     { name = "chromadb" },
@@ -2541,6 +2550,8 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "dimos-generated", editable = "packages/dimos-generated" },
     { name = "dimos-lcm", specifier = ">=0.1.4" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2727,6 +2738,13 @@ lint = [
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
 ]
+message-codegen = [
+    { name = "dimos-cdrgen", extras = ["prepare"], specifier = "==0.1.0" },
+    { name = "pytest", specifier = "==8.3.5" },
+    { name = "rosbags", specifier = "==0.11.0" },
+    { name = "ruff", specifier = "==0.14.3" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
+]
 project-deps = [
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
@@ -2892,6 +2910,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/1a/31327fa4bb2a240783d0b41e315be2a4485eabf07ab032f49c6328f5f51b/dimos_cdrgen-0.1.0.tar.gz", hash = "sha256:69ea4955e64a769d56d4bd5e0fff44c98f96c29c5608125cd011cef2740624f0", size = 75010, upload-time = "2026-10-15T05:00:09.663Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/9c/086701c3249ed2caabe83cea008c3e08bd6063c48a1df852fbca6aadff50/dimos_cdrgen-0.1.0-py3-none-any.whl", hash = "sha256:6731e8900f7e61af419b8c77599587f32677c9d64f27ac15f5e78be4b76bc011", size = 70183, upload-time = "2026-10-15T05:00:08.098Z" },
+]
+
+[package.optional-dependencies]
+prepare = [
+    { name = "requests" },
+]
+
+[[package]]
+name = "dimos-generated"
+version = "0.1.0"
+source = { editable = "packages/dimos-generated" }
+dependencies = [
+    { name = "dimos-cdrgen" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "rosbags" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "rosbags", specifier = "==0.11.0" },
 ]
 
 [[package]]
@@ -7902,11 +7943,11 @@ wheels = [
 
 [[package]]
 name = "pybind11"
-version = "3.0.4"
+version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cc/f0/35145a3c3baffeef55d4b8324caa33abaa8fa56ab345ecd4b2211d09163e/pybind11-3.0.4.tar.gz", hash = "sha256:3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c", size = 589533, upload-time = "2026-04-19T03:08:15.925Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2f/7b/a6d8dcb83c457e24a9df1e4d8fd5fb8034d4bbc62f3c324681e8a9ba57c2/pybind11-3.0.1.tar.gz", hash = "sha256:9c0f40056a016da59bab516efb523089139fcc6f2ba7e4930854c61efb932051", size = 546914, upload-time = "2025-08-22T20:09:27.265Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/06/c3a23c9a0263b136c519f033a58d4641e73065fefc7754e9667ec206d992/pybind11-3.0.4-py3-none-any.whl", hash = "sha256:961720ee652da51d531b7b2451a6bd2bc042b0106e6d9baa48ecb7d58034ce63", size = 314166, upload-time = "2026-04-19T03:08:14.091Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/8a/37362fc2b949d5f733a8b0f2ff51ba423914cabefe69f1d1b6aab710f5fe/pybind11-3.0.1-py3-none-any.whl", hash = "sha256:aa8f0aa6e0a94d3b64adfc38f560f33f15e589be2175e103c0a33c6bce55ee89", size = 293611, upload-time = "2025-08-22T20:09:25.235Z" },
 ]
 
 [[package]]

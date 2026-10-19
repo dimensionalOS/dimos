@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-generated"
+version = "0.1.0"
+description = "Generated Python message source and complete CDR schemas"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26.4", "rosbags==0.11.0", "dimos-cdrgen==0.1.0"]
+
+[project.entry-points."dimos.messages"]
+dimos_generated = "dimos_generated_schemas.provider"
+
+[tool.setuptools.package-data]
+dimos_generated = ["py.typed", "*.pyi", "**/*.pyi"]
+dimos_generated_schemas = ["schemas.json", "schemas/**/*", "package/**/*"]
+
+[tool.dimos.messages]
+source = "interfaces"
+module = "dimos_generated"
+catalog = "catalog.json"
+resources = ["schema-sources.json", "interfaces/licenses/dimos_msgs-LICENSE", "interfaces/licenses/ros2_common_interfaces_geometry_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_nav_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_sensor_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_shape_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_std_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_trajectory_msgs_LICENSE", "interfaces/licenses/ros2_common_interfaces_visualization_msgs_LICENSE", "interfaces/licenses/ros2_rcl_interfaces_licenses_ros2_rcl_interfaces_LICENSE", "interfaces/licenses/ros2_geometry2_licenses_ros2_geometry2_LICENSE", "interfaces/licenses/ros-perception_vision_msgs_licenses_ros-perception_vision_msgs_LICENSE", "interfaces/licenses/ros2_rosidl_licenses_ros2_rosidl_LICENSE", "interfaces/licenses/foxglove_schemas_licenses_foxglove_schemas_LICENSE"]

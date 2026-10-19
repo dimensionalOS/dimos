@@ -274,6 +274,35 @@ jobs:
           path: .cachix-marker
           key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
 
+  message-alignment:
+    name: Built-in message alignment
+    env:
+      DIMOS_MESSAGE_ALIGNMENT_REQUIRED: "1"
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.92.0'
+          components: rustfmt
+      - name: Install locked generation/check dependencies only
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --only-group message-codegen --frozen
+      - name: Reject built-in Python/C++/Rust/schema drift
+        run: |
+          .venv/bin/python -m scripts.generate_builtin_messages
+          .venv/bin/python -m scripts.generate_builtin_messages --check
+      - name: Verify drift rejection for changed inputs and output inventories
+        run: .venv/bin/python -m pytest -c /dev/null --rootdir . --noconftest -q dimos/message_codegen/test_builtin_alignment.py
+
+
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -309,7 +338,9 @@ jobs:
           enable-cache: true
           prune-cache: true
       - name: Install lint dependencies
-        run: uv sync --only-group lint --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --only-group lint --frozen
       - name: Check declared dependencies
         run: uv run --no-sync deptry dimos --config pyproject.toml --github-output
       - name: Mypy
@@ -379,7 +410,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
@@ -434,7 +467,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install portaudio
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
       - name: Build the extensions
         run: uv run python bin/pyo3-extensions --build
       # Tested here, not in the tests jobs, so those start without waiting for this build.
@@ -465,7 +500,9 @@ jobs:
         with:
           node-version: 'lts/*'
       - name: Install Python dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
         id: hf-cache
         uses: actions/cache/restore@v6
@@ -589,7 +626,9 @@ jobs:
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
-        run: uv sync --group tests --group browser-tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
         run: uv run playwright install --with-deps chromium firefox
       - name: Cockpit + SDK browser e2e
@@ -706,7 +745,9 @@ jobs:
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
@@ -845,11 +886,14 @@ jobs:
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests-self-hosted --frozen
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
           brew install ffmpeg
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv run playwright install chromium firefox
       - name: Install Node 24 for the Pi and dimcode CLIs
@@ -1113,7 +1157,9 @@ jobs:
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
       - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Build DimSim and install its headless Chromium
@@ -1226,7 +1272,9 @@ jobs:
         with:
           enable-cache: true
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
         env:
           # Compile bytecode at install rather than at first import.
           UV_COMPILE_BYTECODE: "1"
@@ -1341,7 +1389,9 @@ jobs:
           # Nothing worth caching: Otava's dependencies are all prebuilt wheels.
           enable-cache: false
       - name: Install Otava
-        run: uv sync --project .github/benchmark-analysis --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --project .github/benchmark-analysis --frozen
       - name: Analyse the series and file regressions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
