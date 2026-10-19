@@ -468,6 +468,40 @@ def test_gripperless_arm_rejects_gripper_command(rpc):
     rpc.set_gripper_position.assert_not_called()
 
 
+def _gripper_readings(rpc, *positions):
+    snapshot = rpc.get_state.return_value
+    group = snapshot.groups["arm"]
+    rpc.get_state.side_effect = [
+        replace(snapshot, groups={"arm": replace(group, gripper_position=p)}) for p in positions
+    ]
+
+
+def test_gripper_waits_until_the_fingers_reach_the_target(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    _gripper_readings(rpc, 0.6, 0.8, 1.0)
+
+    arm.open_gripper()
+
+    assert rpc.get_state.call_count == 3
+
+
+def test_gripper_stops_waiting_once_the_fingers_hold_on_an_object(arm, rpc, mocker):
+    clock = iter(np.arange(0.0, 10.0, 0.1))
+    mocker.patch("dimos.manipulation.sdk.time.monotonic", side_effect=lambda: next(clock))
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    _gripper_readings(rpc, 0.5, 0.3, 0.2, *[0.2] * 20)
+
+    arm.close_gripper(timeout=5.0)
+
+    assert rpc.get_state.call_count < 10
+
+
+def test_gripper_timeout_zero_does_not_wait(arm, rpc):
+    arm.close_gripper(timeout=0)
+
+    rpc.get_state.assert_not_called()
+
+
 def test_gripper_failure_retains_result(arm, rpc):
     failure = CommandResult(CommandStatus.FAILED, "gripper unavailable")
     rpc.set_gripper_position.return_value = failure

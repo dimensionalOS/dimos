@@ -65,6 +65,11 @@ class MotionError(RuntimeError):
 # or lagging, so after every move the measured joints must settle within this of the plan's end.
 REACH_TOLERANCE_RAD = 0.02
 SETTLE_TIMEOUT_S = 1.0
+# The gripper command returns at once; gripper calls then wait until the fingers stop: at the
+# target, or held still this long (closed on an object).
+GRIPPER_STILL_S = 0.3
+GRIPPER_STILL_TOLERANCE = 0.005
+GRIPPER_TARGET_TOLERANCE = 0.05
 
 
 def _vector(values: ArrayLike, size: int, name: str) -> NDArray[np.float64]:
@@ -269,8 +274,14 @@ class Arm:
             raise MotionError("cancel", result)
         return result
 
-    def set_gripper_position(self, position: float) -> CommandResult:
-        """Set normalized gripper travel: 0 closed, 1 open."""
+    def set_gripper_position(
+        self, position: float, *, timeout: float | None = 2.0
+    ) -> CommandResult:
+        """Set normalized gripper travel: 0 closed, 1 open.
+
+        Waits up to ``timeout`` seconds for the fingers to stop, at the target or on an
+        object; ``timeout=0`` returns once the command is accepted.
+        """
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:
             raise ValueError("Gripper position must be finite and between 0 and 1")
         if not self.info.has_gripper:
@@ -278,15 +289,32 @@ class Arm:
         result = self.rpc.set_gripper_position(position, planning_group=self.info.id)
         if not result.succeeded:
             raise MotionError("set_gripper_position", result)
+        if timeout:
+            self._wait_gripper_still(position, timeout)
         return result
 
-    def open_gripper(self) -> CommandResult:
-        """Open the gripper."""
-        return self.set_gripper_position(1.0)
+    def _wait_gripper_still(self, target: float, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        last, still_since = None, time.monotonic()
+        while time.monotonic() < deadline:
+            current = self.state().gripper_position
+            if current is None:
+                return
+            if abs(current - target) <= GRIPPER_TARGET_TOLERANCE:
+                return
+            if last is None or abs(current - last) > GRIPPER_STILL_TOLERANCE:
+                last, still_since = current, time.monotonic()
+            elif time.monotonic() - still_since >= GRIPPER_STILL_S:
+                return
+            time.sleep(0.05)
 
-    def close_gripper(self) -> CommandResult:
-        """Close the gripper."""
-        return self.set_gripper_position(0.0)
+    def open_gripper(self, *, timeout: float | None = 2.0) -> CommandResult:
+        """Open the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(1.0, timeout=timeout)
+
+    def close_gripper(self, *, timeout: float | None = 2.0) -> CommandResult:
+        """Close the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(0.0, timeout=timeout)
 
     def home(
         self, *, speed_scale: float | None = None, timeout: float | None = None
