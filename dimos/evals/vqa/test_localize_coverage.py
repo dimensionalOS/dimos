@@ -15,16 +15,16 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from dimos.evals.vqa.generate import (
     GenerationRequest,
-    PublicCase,
     PrivateLabel,
-    _GeneratedFrame,
+    PublicCase,
     _apply_localize_coverage_budget,
     _effective_localize_coverage_k,
+    _GeneratedFrame,
 )
 from dimos.evals.vqa.localize_coverage import (
     DEFAULT_LOCALIZE_COVERAGE_K,

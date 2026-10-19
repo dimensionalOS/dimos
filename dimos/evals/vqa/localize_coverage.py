@@ -22,9 +22,9 @@ capability coverage rather than exhaustive enumeration.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Sequence
+import math
 from typing import Any
 
 from dimos.evals.vqa.families import AVAILABLE_FAMILIES
@@ -78,9 +78,7 @@ def select_localize_coverage_ids(
     """Keep up to ``k`` case ids per coverage cell, preferring distinct pose buckets."""
     if k < 1:
         raise ValueError("coverage k must be at least 1")
-    by_cell: dict[tuple[str, str], list[tuple[str, tuple[object, ...] | None]]] = defaultdict(
-        list
-    )
+    by_cell: dict[tuple[str, str], list[tuple[str, tuple[object, ...] | None]]] = defaultdict(list)
     for case_id, cell, pose in candidates:
         by_cell[cell].append((case_id, pose))
 
