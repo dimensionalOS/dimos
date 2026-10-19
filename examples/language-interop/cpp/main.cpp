@@ -1,3 +1,6 @@
+#include <dimos/native/cdr_codec.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 // C++ robot control example
 // Subscribes to robot pose and publishes twist commands
 
@@ -8,7 +11,7 @@
 #include <atomic>
 #include <chrono>
 
-#include <dimos_generated/messages.hpp>
+
 
 class RobotController {
 public:
@@ -16,7 +19,7 @@ public:
 
     void onPose(const lcm::ReceiveBuffer* buffer, const std::string&) {
         try {
-        const auto decoded = dimos::cdr::decode<geometry_msgs::msg::PoseStamped>(
+        const auto decoded = dimos::native::cdr_decode<geometry_msgs::msg::PoseStamped>(
             static_cast<const uint8_t*>(buffer->data), buffer->data_size);
         const auto* msg = &decoded;
         const auto& pos = msg->pose.position;
@@ -47,7 +50,7 @@ public:
                 twist.angular.y = 0;
                 twist.angular.z = std::sin(t) * 0.3;
 
-                const auto bytes = dimos::cdr::encode(twist);
+                const auto bytes = dimos::native::cdr_encode(twist);
                 lcm_.publish("/cmd_vel#geometry_msgs.Twist", bytes.data(), bytes.size());
                 printf("[twist] linear=%.2f angular=%.2f\n", twist.linear.x, twist.angular.z);
                 t += 0.1;

@@ -48,6 +48,7 @@ from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 
 from dimos_generated.geometry_msgs.msg import Vector3
 
+
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 

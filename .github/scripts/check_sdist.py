@@ -44,6 +44,13 @@ def main(sdist: str) -> None:
     generated = sorted(n for n in names if "node_modules" in n.split("/"))
     if generated:
         problems.append(f"{len(generated)} node_modules entries, e.g. {generated[0]}")
+    stale_builds = sorted(
+        n
+        for n in names
+        if n.startswith(("dimos/message_codegen/build/", "dimos/message_codegen/dist/"))
+    )
+    if stale_builds:
+        problems.append(f"{len(stale_builds)} nested message build entries, e.g. {stale_builds[0]}")
     total_mb = sum(m.size for m in members) / 1e6
     if total_mb > MAX_UNCOMPRESSED_MB:
         problems.append(f"{total_mb:.1f} MB uncompressed exceeds {MAX_UNCOMPRESSED_MB} MB")
