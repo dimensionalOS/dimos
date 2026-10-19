@@ -17,8 +17,7 @@
 Lidar clouds are assumed to be in world frame and logged directly under
 their entity path (no parent transform). Entities written:
 
-- ``world/lidar``         — Go2 L1 per-frame point cloud
-- ``world/fastlio_lidar`` — fastlio_lidar raw cloud (if present)
+- ``world/lidar``         — the selected per-frame point cloud
 - ``world/<stream>_voxels`` — growing voxel map, one per PointCloud2 stream (``--map``)
 - ``world/<stream>_map``    — single static voxel map, one per PointCloud2 stream (``--map-final``)
 - ``world/fastlio``       — fastlio_odometry pose axis (if present)
@@ -37,11 +36,14 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.mapping.cli.streams import select_stream
 from dimos.memory.utils.progress import progress
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import PointCloud2
+
     from dimos.memory.stream import Stream
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
 
 TIMELINE = "ts"
 
@@ -64,6 +66,8 @@ def _log_clouds(
     """
     import rerun as rr
 
+    from dimos.visualization.rerun.message_helpers import cloud_archetype
+
     n = total if total is not None else stream.count()
     with progress(n, label) as bar:
         for obs in stream:
@@ -71,7 +75,9 @@ def _log_clouds(
             rr.set_time(TIMELINE, timestamp=obs.ts)
             rr.log(
                 entity,
-                obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+                cloud_archetype(
+                    obs.data, voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff
+                ),
             )
 
 
@@ -116,7 +122,13 @@ def _log_path(
 
 
 def main(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    dataset: str = typer.Argument(..., help="Dataset .db or .mcap: bare name or path"),
+    lidar_stream: str | None = typer.Option(
+        None, "--lidar", help="PointCloud2 stream; auto-select only a unique candidate"
+    ),
+    image_stream: str | None = typer.Option(
+        None, "--image", help="Image stream; auto-select a unique candidate, omit if absent"
+    ),
     out: Path | None = typer.Option(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
@@ -151,7 +163,7 @@ def main(
     map_source: list[str] = typer.Option(
         [],
         "--map-source",
-        help="PointCloud2 stream(s) to map; repeatable. Default: all PointCloud2 streams",
+        help="PointCloud2 stream(s) to map; repeatable. Default: the selected --lidar stream",
     ),
     map_carve_columns: bool = typer.Option(
         False,
@@ -174,28 +186,36 @@ def main(
     ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+    from dimos_generated.nav_msgs.msg import Odometry
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import throttle
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.nav_msgs.Odometry import Odometry
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-    from dimos.robot.unitree.go2.connection import _camera_info_static
+    from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
+    from dimos.visualization.rerun.message_helpers import (
+        camera_pinhole,
+        cloud_archetype,
+        image_archetype,
+        register_colormap_annotation,
+    )
 
     src_path = resolve_dataset(dataset)
     store = open_store(src_path)
     if out is None:
         out = Path.cwd() / f"{src_path.stem}.rrd"
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     with store:
-        # Resolve which streams to voxelize: all PointCloud2 streams, or the
-        # explicit --map-source subset. Validate up front so typos fail fast.
-        pc_streams = [n for n, t in stream_payload_types(store).items() if t is PointCloud2]
-        map_sources = list(map_source) or pc_streams
+        # Resolve roles and the explicit --map-source subset before opening output.
+        types = stream_payload_types(store)
+        selected_lidar = select_stream(types, PointCloud2, lidar_stream, "--lidar")
+        selected_image = select_stream(types, Image, image_stream, "--image", required=False)
+        assert selected_lidar is not None
+        pc_streams = [n for n, t in types.items() if t is PointCloud2]
+        map_sources = list(map_source) or [selected_lidar]
         if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
             raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
 
@@ -205,7 +225,7 @@ def main(
 
         # Static pinhole on the camera entity; per-frame Transform3D goes on the
         # same entity. Image is the child so it projects through the pinhole.
-        pinhole = cam_info.to_rerun()
+        pinhole = camera_pinhole(cam_info)
         assert not isinstance(pinhole, list)
         rr.log("world/camera", pinhole, static=True)
 
@@ -223,16 +243,10 @@ def main(
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
             return store.stream(name, ptype).from_time(seek or None).to_time(duration)
 
-        lidar = clipped("lidar", PointCloud2)
-        color_image = clipped("color_image", Image)
-        has_livox = "fastlio_lidar" in store.streams
-        livox = clipped("fastlio_lidar", PointCloud2) if has_livox else None
+        lidar = clipped(selected_lidar, PointCloud2)
 
         # Per-frame raw clouds.
         _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode)
-        if livox is not None:
-            _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
-
         # Accumulated voxel maps over the selected PointCloud2 streams.
         # --map logs a growing map per stream; --map-final logs one static map
         # per stream. --map-carve-columns clears the Z column under each surface
@@ -268,8 +282,11 @@ def main(
                     ).last()
                     rr.log(
                         f"world/{name}_map",
-                        final.data.to_rerun(
-                            voxel_size=voxel / 4, mode=point_mode, bottom_cutoff=bottom_cutoff
+                        cloud_archetype(
+                            final.data,
+                            voxel_size=voxel / 4,
+                            mode=point_mode,
+                            bottom_cutoff=bottom_cutoff,
                         ),
                         static=True,
                     )
@@ -322,25 +339,27 @@ def main(
                 color=(0, 200, 100),  # green
             )
 
-        # Pass 2: camera pose + image per color_image.
-        cam_pipeline = (
-            color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
-        )
-        n_img = cam_pipeline.count()
-        with progress(n_img, "  color_image") as bar:
-            for img_obs in cam_pipeline:
-                bar(img_obs)
-                rr.set_time(TIMELINE, timestamp=img_obs.ts)
-                if img_obs.pose_tuple is not None:
-                    x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
-                    rr.log(
-                        "world/camera",
-                        rr.Transform3D(
-                            translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
-                        ),
-                    )
-                rr.log("world/camera/image", img_obs.data.to_rerun())
-
+        if selected_image is not None:
+            color_image = clipped(selected_image, Image)
+            # Pass 2: camera pose + image per color_image.
+            cam_pipeline = (
+                color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
+            )
+            n_img = cam_pipeline.count()
+            with progress(n_img, "  color_image") as bar:
+                for img_obs in cam_pipeline:
+                    bar(img_obs)
+                    rr.set_time(TIMELINE, timestamp=img_obs.ts)
+                    if img_obs.pose_tuple is not None:
+                        x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
+                        rr.log(
+                            "world/camera",
+                            rr.Transform3D(
+                                translation=[x, y, z],
+                                quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                            ),
+                        )
+                    rr.log("world/camera/image", image_archetype(img_obs.data))
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")

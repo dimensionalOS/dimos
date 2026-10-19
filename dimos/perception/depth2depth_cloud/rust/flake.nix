@@ -32,8 +32,8 @@
         cudaPackages = if system == "aarch64-linux" then pkgs.cudaPackages_12_6 else pkgs.cudaPackages_12_8;
 
         name = "dimos-depth2depth-cloud";
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        src = import ../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/perception/depth2depth_cloud/rust" ]; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/perception/depth2depth_cloud/rust/Cargo.toml"; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
         build = mode: features: (import generated {

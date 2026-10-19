@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-local-planner";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/navigation/local_planner/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/navigation/local_planner/rust/Cargo.toml"; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {

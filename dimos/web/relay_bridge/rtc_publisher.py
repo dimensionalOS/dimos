@@ -33,8 +33,8 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+from dimos_generated.sensor_msgs.msg import Image
 
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import wait_connected
 from dimos.protocol.pubsub.impl.webrtc.providers.video_track import (

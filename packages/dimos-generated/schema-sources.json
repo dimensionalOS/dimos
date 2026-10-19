@@ -215,6 +215,18 @@
         "licenses/ros2_common_interfaces_visualization_msgs_LICENSE": {
           "path": "visualization_msgs/LICENSE",
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "geometry_msgs/msg/PoseWithCovarianceStamped.msg": {
+          "path": "geometry_msgs/msg/PoseWithCovarianceStamped.msg",
+          "sha256": "87b6851480902effb5232f87bf68e76f19bf7b26affa11001be9e515542c21fb"
+        },
+        "geometry_msgs/msg/TwistWithCovarianceStamped.msg": {
+          "path": "geometry_msgs/msg/TwistWithCovarianceStamped.msg",
+          "sha256": "af369aea38a14e57ff350a3f2c63c2c66335a367822d134fecdef60789e49682"
+        },
+        "geometry_msgs/msg/WrenchStamped.msg": {
+          "path": "geometry_msgs/msg/WrenchStamped.msg",
+          "sha256": "853a8534230b795b6c1afcb8483002f5d1cf14e967ffa0da2cba8da5453b2162"
         }
       }
     },

@@ -18,11 +18,12 @@ ends the track on an exception."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 
 pytest.importorskip("aiortc")
 
@@ -34,12 +35,12 @@ from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoT
 async def test_16bit_frames_are_converted_to_rgb() -> None:
     track = CameraVideoTrack(asyncio.get_running_loop())
     track.arm()
-    for fmt in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
-        track.set_latest(Image(data=np.full((4, 6), 0x8000, np.uint16), format=fmt))
+    for encoding in ("mono16", "16UC1"):
+        track.set_latest(image_from_array(np.full((4, 6), 0x8000, np.uint16), encoding=encoding))
         frame = await asyncio.wait_for(track.recv(), 2)
         assert (frame.format.name, frame.width, frame.height) == ("rgb24", 6, 4)
         assert frame.to_ndarray()[0, 0].tolist() == [128, 128, 128]
-    track.set_latest(Image(data=np.zeros((4, 6, 3), np.uint8), format=ImageFormat.BGR))
+    track.set_latest(image_from_array(np.zeros((4, 6, 3), np.uint8), encoding="bgr8"))
     frame = await asyncio.wait_for(track.recv(), 2)
     assert frame.format.name == "bgr24"
 
@@ -49,7 +50,7 @@ async def test_odd_sized_frames_are_cropped_to_what_the_h264_encoder_opens() -> 
     # opens, inside aiortc's sender task, so the encoder itself runs here.
     track = CameraVideoTrack(asyncio.get_running_loop())
     track.arm()
-    track.set_latest(Image(data=np.zeros((47, 63, 3), np.uint8), format=ImageFormat.RGB))
+    track.set_latest(image_from_array(np.zeros((47, 63, 3), np.uint8), encoding="rgb8"))
     frame = await asyncio.wait_for(track.recv(), 2)
     assert (frame.width, frame.height) == (62, 46)
     payloads, _timestamp = H264Encoder().encode(frame, force_keyframe=True)
@@ -61,12 +62,15 @@ async def test_unconvertible_frames_are_skipped_not_raised() -> None:
     track.arm()
     pending = asyncio.ensure_future(track.recv())
     for bad in (
-        Image(data=np.zeros((4, 6), np.float32), format=ImageFormat.DEPTH),  # no av format
-        Image(data=np.zeros((4, 6, 3), np.uint16), format=ImageFormat.GRAY16),  # to_rgb() raises
+        image_from_array(np.zeros((4, 6), np.float32), encoding="32FC1"),  # no av format
+        replace(
+            image_from_array(np.zeros((4, 6), np.uint16), encoding="mono16"),
+            step=1,  # malformed wire metadata must not end the sender task
+        ),
     ):
         track.set_latest(bad)
         await asyncio.sleep(0.05)
         assert not pending.done()
-    track.set_latest(Image(data=np.zeros((4, 6), np.uint8), format=ImageFormat.GRAY))
+    track.set_latest(image_from_array(np.zeros((4, 6), np.uint8), encoding="mono8"))
     frame = await asyncio.wait_for(pending, 2)
     assert frame.format.name == "gray"

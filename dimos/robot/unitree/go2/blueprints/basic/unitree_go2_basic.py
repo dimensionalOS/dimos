@@ -29,17 +29,14 @@ from dimos.visualization.vis_module import vis_module
 if TYPE_CHECKING:
     from types import ModuleType
 
+    from dimos_generated.dimos_msgs.msg import LineSegments3D
+    from dimos_generated.geometry_msgs.msg import PoseArray, PoseStamped, Twist
+    from dimos_generated.nav_msgs.msg import OccupancyGrid
+    from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2
+    from dimos_generated.std_msgs.msg import Float32
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Twist import Twist
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-    from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.msgs.std_msgs.Float32 import Float32
     from dimos.visualization.rerun.bridge import RerunData, RerunMulti
 
 

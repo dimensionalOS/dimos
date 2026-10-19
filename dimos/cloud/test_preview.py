@@ -18,17 +18,28 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import Image, Joy, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
 from dimos.memory.store.base import Store
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
+
+
+def make_pose(
+    x: float, y: float, z: float, qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0
+) -> Pose:
+    return Pose(position=Point(x=x, y=y, z=z), orientation=Quaternion(x=qx, y=qy, z=qz, w=qw))
+
+
+def make_image(array: np.ndarray) -> Image:
+    return image_from_array(array, encoding="rgb8" if array.ndim == 3 else "16UC1")
 
 
 class Stream:
@@ -58,17 +69,22 @@ def points(doc: dict[str, Any], b64: str) -> np.ndarray:
 
 
 def cloud(t: float, *xyz: tuple[float, float, float], frame: str = "world") -> PointCloud2:
-    return PointCloud2.from_numpy(np.array(xyz, dtype=np.float32), frame_id=frame, timestamp=t)
+    return pointcloud_from_xyz(
+        np.array(xyz, dtype=np.float32), header=Header(stamp=time_from_seconds(t), frame_id=frame)
+    )
 
 
 def test_world_frame_recording() -> None:
     lidar = [
-        (100.0 + i, cloud(100.0 + i, (i, 1, 0.5), (i, -1, 0.5), (i, 0, 9.0)), Pose(i * 0.5, 0, 0.3))
+        (
+            100.0 + i,
+            cloud(100.0 + i, (i, 1, 0.5), (i, -1, 0.5), (i, 0, 9.0)),
+            make_pose(i * 0.5, 0, 0.3),
+        )
         for i in range(10)
     ]
     frames = [
-        (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 25 * i, np.uint8)), None)
-        for i in range(10)
+        (100.0 + i, make_image(np.full((48, 64, 3), 25 * i, np.uint8)), None) for i in range(10)
     ]
     mapper = [(99.0, cloud(99.0, (50, 50, 0.5)), None)]  # listed first, not a scan
     doc = preview.build(store(global_map=mapper, lidar=lidar, color_image=frames))
@@ -81,7 +97,7 @@ def test_world_frame_recording() -> None:
 
 
 def test_sensor_frame_scans_use_their_own_pose() -> None:
-    mount = Pose(
+    mount = make_pose(
         5.0, 0.0, 0.3, 0.0, 0.0, float(np.sin(np.pi / 4)), float(np.cos(np.pi / 4))
     )  # 90 deg yaw
     lidar = [
@@ -96,10 +112,9 @@ def test_sensor_frame_scans_use_their_own_pose() -> None:
 
 def test_timelapse(tmp_path: Path) -> None:
     frames = [
-        (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 8 * i, np.uint8)), None)
-        for i in range(30)
+        (100.0 + i, make_image(np.full((48, 64, 3), 8 * i, np.uint8)), None) for i in range(30)
     ]
-    depth = [(100.0, Image.from_numpy(np.zeros((48, 64), np.uint16)), None)]  # listed first
+    depth = [(100.0, make_image(np.zeros((48, 64), np.uint16)), None)]  # listed first
     meta = preview.timelapse(store(depth_image=depth, color_image=frames), tmp_path / "t.mp4")
     assert (
         meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
@@ -109,10 +124,20 @@ def test_timelapse(tmp_path: Path) -> None:
 
 def test_path_from_denser_odometry() -> None:
     odom = [
-        (100.0 + i, PoseStamped(position=[i, 2, 0.3], frame_id="world"), None) for i in range(5)
+        (
+            100.0 + i,
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+                pose=make_pose(i, 2, 0.3),
+            ),
+            None,
+        )
+        for i in range(5)
     ]
-    frames = [(101.0, Image.from_numpy(np.zeros((48, 64, 3), np.uint8)), None)]
-    lidar = [(102.0, cloud(102.0, (0, 0, 0.3)), Pose(9, 9, 0.3))]  # one posed scan: odom is denser
+    frames = [(101.0, make_image(np.zeros((48, 64, 3), np.uint8)), None)]
+    lidar = [
+        (102.0, cloud(102.0, (0, 0, 0.3)), make_pose(9, 9, 0.3))
+    ]  # one posed scan: odom is denser
     doc = preview.build(store(color_image=frames, odom=odom, lidar=lidar))
     assert doc is not None and len(doc["scans"]) == 1 and doc["duration_s"] == 4
     assert [r[1] for r in doc["trajectory"]] == [0, 1, 2, 3, 4] and len(doc["camera"]) == 1
@@ -120,11 +145,35 @@ def test_path_from_denser_odometry() -> None:
 
 def test_joystick_samples_ride_along() -> None:
     odom = [
-        (100.0 + i, PoseStamped(position=[i, 0, 0.3], frame_id="world"), None) for i in range(3)
+        (
+            100.0 + i,
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+                pose=make_pose(i, 0, 0.3),
+            ),
+            None,
+        )
+        for i in range(3)
     ]
     sticks = [
-        (100.5, Joy(axes=[0.0, 0.4567, -1.0, 0.0], buttons=[1, 0, 0]), None),
-        (101.5, Joy(axes=[0.0, 0.0, 0.0, 0.0], buttons=[0, 0, 1]), None),
+        (
+            100.5,
+            Joy(
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+                axes=np.array([0.0, 0.4567, -1.0, 0.0], dtype=np.float32),
+                buttons=np.array([1, 0, 0], dtype=np.int32),
+            ),
+            None,
+        ),
+        (
+            101.5,
+            Joy(
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+                axes=np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                buttons=np.array([0, 0, 1], dtype=np.int32),
+            ),
+            None,
+        ),
     ]
     doc = preview.build(store(odom=odom, joystick=sticks))
     assert doc is not None and doc["streams"]["joystick"] == {"name": "joystick", "count": 2}
@@ -138,8 +187,28 @@ def test_joystick_samples_ride_along() -> None:
 
 def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preview, "PREVIEW_JOY_SAMPLES", 3)
-    odom = [(100.0, PoseStamped(position=[0, 0, 0.3], frame_id="world"), None)]
-    sticks = [(100.0 + i, Joy(axes=[i / 10], buttons=[]), None) for i in range(10)]
+    odom = [
+        (
+            100.0,
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+                pose=make_pose(0, 0, 0.3),
+            ),
+            None,
+        )
+    ]
+    sticks = [
+        (
+            100.0 + i,
+            Joy(
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+                axes=np.array([i / 10], dtype=np.float32),
+                buttons=np.array([], dtype=np.int32),
+            ),
+            None,
+        )
+        for i in range(10)
+    ]
     doc = preview.build(store(odom=odom, joystick=sticks))
     assert doc is not None and doc["streams"]["joystick"]["count"] == 10
     assert [r[0] for r in doc["joy"]] == [0, 4, 9] and [r[1] for r in doc["joy"]] == [

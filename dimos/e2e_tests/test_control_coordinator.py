@@ -22,6 +22,10 @@ import os
 import platform
 import time
 
+from dimos_cdrgen.registry import decode as cdr_decode
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -31,10 +35,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.core.rpc_client import RPCClient
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.msgs.time import duration_from_seconds, header_now
+from dimos.msgs.trajectory import TrajectoryState
 
 pytestmark = pytest.mark.self_hosted
 
@@ -47,7 +49,7 @@ class TestControlCoordinatorE2E:
     ) -> None:
         """Test that coordinator starts and responds to RPC queries."""
         # Save topics we care about (topic names carry the type suffix)
-        joint_state_topic = "/coordinator_joint_state#sensor_msgs.JointState"
+        joint_state_topic = "/coordinator_joint_state#sensor_msgs/msg/JointState"
         lcm_spy.save_topic(joint_state_topic)
 
         # Start the mock coordinator blueprint
@@ -83,14 +85,14 @@ class TestControlCoordinatorE2E:
     ) -> None:
         """Test that coordinator executes a trajectory via RPC."""
         # Save topics
-        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         # Start coordinator
         start_blueprint("coordinator-mock")
         wait_for_system_ready()
 
         # Wait for it to be ready
-        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         # Create RPC client
         client = RPCClient(None, ControlCoordinator)
@@ -101,17 +103,22 @@ class TestControlCoordinatorE2E:
 
             # Create a simple trajectory
             trajectory = JointTrajectory(
+                header=header_now(),
                 joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0,
-                        positions=[0.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
-                    TrajectoryPoint(
-                        time_from_start=0.5,
-                        positions=[0.1] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.5),
+                        positions=np.asarray([0.1] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
                 ],
             )
@@ -139,7 +146,7 @@ class TestControlCoordinatorE2E:
         self, lcm_spy, start_blueprint, wait_for_system_ready
     ) -> None:
         """Test that joint state messages are published at expected rate."""
-        joint_state_topic = "/coordinator_joint_state#sensor_msgs.JointState"
+        joint_state_topic = "/coordinator_joint_state#sensor_msgs/msg/JointState"
         lcm_spy.save_topic(joint_state_topic)
 
         # Start coordinator
@@ -170,7 +177,7 @@ class TestControlCoordinatorE2E:
         with lcm_spy._messages_lock:
             raw_msg = lcm_spy.messages[joint_state_topic][0]
 
-        joint_state = JointState.lcm_decode(raw_msg)
+        joint_state = cdr_decode(raw_msg, JointState)
         assert len(joint_state.name) == 7
         assert len(joint_state.position) == 7
         assert "arm/joint1" in joint_state.name
@@ -179,28 +186,33 @@ class TestControlCoordinatorE2E:
         self, lcm_spy, start_blueprint, wait_for_system_ready
     ) -> None:
         """Test that a running trajectory can be cancelled."""
-        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         # Start coordinator
         start_blueprint("coordinator-mock")
         wait_for_system_ready()
-        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         client = RPCClient(None, ControlCoordinator)
         try:
             # Create a long trajectory (5 seconds)
             trajectory = JointTrajectory(
+                header=header_now(),
                 joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0,
-                        positions=[0.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
-                    TrajectoryPoint(
-                        time_from_start=5.0,
-                        positions=[1.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(5.0),
+                        positions=np.asarray([1.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
                 ],
             )
@@ -225,12 +237,12 @@ class TestControlCoordinatorE2E:
         self, lcm_spy, start_blueprint, wait_until, wait_for_system_ready
     ) -> None:
         """Test dual-arm coordinator moving both arms with one combined trajectory."""
-        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         # Start dual-arm mock coordinator
         start_blueprint("coordinator-dual-mock")
         wait_for_system_ready()
-        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
+        lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs/msg/JointState")
 
         client = RPCClient(None, ControlCoordinator)
         try:
@@ -247,11 +259,24 @@ class TestControlCoordinatorE2E:
             # One trajectory moving the left arm (7 joints) and right arm
             # (6 joints) together
             trajectory = JointTrajectory(
+                header=header_now(),
                 joint_names=[f"left_arm/joint{i + 1}" for i in range(7)]
                 + [f"right_arm/joint{i + 1}" for i in range(6)],
                 points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 13),
-                    TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7 + [0.3] * 6),
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 13, dtype=np.float64),
+                        velocities=np.array([], dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.5),
+                        positions=np.asarray([0.2] * 7 + [0.3] * 6, dtype=np.float64),
+                        velocities=np.array([], dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
                 ],
             )
 

@@ -15,8 +15,8 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-go2-dds";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        src = import ../../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/robot/unitree/go2/dds/rust" ]; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/robot/unitree/go2/dds/rust/Cargo.toml"; };
 
         # The vendored cyclonedds-sys binds nixpkgs' cyclonedds (bindgen) instead of cloning and building its own.
         cyclonedds = attrs: {

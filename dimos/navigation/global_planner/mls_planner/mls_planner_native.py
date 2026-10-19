@@ -16,14 +16,14 @@
 
 from __future__ import annotations
 
+from dimos_generated.dimos_msgs.msg import RegionBounds, RegionLineSegments3D, RegionPointCloud2
+from dimos_generated.geometry_msgs.msg import PointStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 
 
@@ -71,15 +71,15 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
-    region_bounds: In[PoseStamped]
+    region_bounds: In[RegionBounds]
     # A seeded map's regions as RayTracingVoxelMap lands them, applied through
     # the region pipeline between live updates. Live updates keep priority.
-    seed_map: In[PointCloud2]
-    seed_bounds: In[PoseStamped]
+    seed_map: In[RegionPointCloud2]
+    seed_bounds: In[RegionBounds]
     goal: In[PointStamped]
     tf: In[TFMessage]
 
     path: Out[Path]
-    surface_map: Out[PointCloud2]
+    surface_map: Out[RegionPointCloud2]
     nodes: Out[PointCloud2]
-    node_edges: Out[LineSegments3D]
+    node_edges: Out[RegionLineSegments3D]

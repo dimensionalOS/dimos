@@ -2,7 +2,7 @@
 
 Use this tutorial when changing dimOS's own message definitions. Work in a
 checkout of the CDR proposal; this is not a main-branch or published-release API.
-The separate `packages/dimos-generated` package owns checked-in generated Python source.
+The separate `packages/dimos-generated` package owns schema inputs and generated Python source.
 The root dimOS package consumes it and does not generate it in `setup.py`.
 
 Prepare Python 3.12 and uv for installation. Message maintainers additionally
@@ -15,7 +15,7 @@ uv sync --group tests --group message-codegen --frozen
 ```
 
 `uv sync` installs the built-in message package as editable Python source from
-`packages/dimos-generated/src`; no message-native extension is built. It consumes
+`packages/dimos-generated/build/message-source/python`; no message-native extension is built. It consumes
 the local packages in
 `[tool.uv.sources]`. **Plain `pip install .` at the dimOS root does not read those
 uv sources.** It needs matching `dimos-generated` and `dimos-message-project`

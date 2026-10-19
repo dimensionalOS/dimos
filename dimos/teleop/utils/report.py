@@ -25,19 +25,20 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from itertools import pairwise
 import json
 from pathlib import Path
 import sys
 from typing import Any
 
+from dimos_generated.dimos_msgs.msg import VideoStats
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.std_msgs.msg import UInt32
 import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.time import to_nanoseconds
 from dimos.teleop.utils.stream_stats import pcts
-from dimos.teleop.utils.video_stats import VideoStats
-from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -48,7 +49,7 @@ _STREAM_TYPES = {
     "cmd_vel_stamped": TwistStamped,
     "left_controller_output": PoseStamped,
     "right_controller_output": PoseStamped,
-    "teleop_buttons": Buttons,
+    "teleop_buttons": UInt32,
     "video_stats": VideoStats,
 }
 
@@ -78,7 +79,7 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
     # Per-message-stream → summary stats. video_stats is a separate shape.
     twist_streams = {n: r for n, r in records.items() if n != "video_stats" and r}
     summaries = {name: _summary(rs, stall_factor=3.0) for name, rs in twist_streams.items()}
-    # Filter on count, not rate_hz — Buttons has no ts (rate_hz None) and would vanish.
+    # Filter on count, not rate_hz — UInt32 has no source stamp (rate_hz None) and would vanish.
     active = {n: s for n, s in summaries.items() if s.get("count")}
     video_summary = _summarize_video(records.get("video_stats", []))
     telemetry_summary = _summarize_telemetry(telemetry)
@@ -133,24 +134,30 @@ def _read_telemetry(store: SqliteStore) -> list[dict[str, Any]]:
     return frames
 
 
+def _source_ns(message: Any) -> int | None:
+    """Read a generated source stamp; unstamped UInt32 messages have none."""
+    header = getattr(message, "header", None)
+    return to_nanoseconds(header.stamp) if header is not None else None
+
+
 def _run_duration(records: dict[str, list[Any]]) -> float:
-    """Wall-clock span across every stream in this recording."""
-    all_ts: list[float] = []
-    for rs in records.values():
-        all_ts.extend(getattr(m, "ts", 0.0) for m in rs if getattr(m, "ts", 0.0) > 0)
-    if len(all_ts) < 2:
-        return 0.0
-    return max(all_ts) - min(all_ts)
+    """Source-time span across stamped streams, preserving zero and nanoseconds."""
+    stamps = [
+        stamp
+        for rs in records.values()
+        for message in rs
+        if (stamp := _source_ns(message)) is not None
+    ]
+    return (max(stamps) - min(stamps)) / 1e9 if len(stamps) >= 2 else 0.0
 
 
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
-    """Stats for one twist/pose/buttons stream, from each message's ``.ts``
-    (sender stamp). Buttons lacks ``.ts``, so its rate/jitter are ``None``."""
+    """Rate/jitter from generated source stamps; unstamped messages retain count."""
     count = len(records)
-    tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
-
-    intervals_ms = (np.diff(sorted(tss)) * 1000.0).tolist() if len(tss) >= 2 else []
-    span = (tss[-1] - tss[0]) if len(tss) >= 2 else 0.0
+    stamps = sorted(stamp for message in records if (stamp := _source_ns(message)) is not None)
+    # Subtract integer epoch nanoseconds before conversion to milliseconds.
+    intervals_ms = [(second - first) / 1e6 for first, second in pairwise(stamps)]
+    span = (stamps[-1] - stamps[0]) / 1e9 if len(stamps) >= 2 else 0.0
 
     stalls: list[float] = []
     if intervals_ms:
@@ -159,7 +166,7 @@ def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
 
     return {
         "count": count,
-        "rate_hz": (len(tss) - 1) / span if span > 0 else None,
+        "rate_hz": (len(stamps) - 1) / span if span > 0 else None,
         "jitter_ms": pcts(intervals_ms),
         "stall_count": len(stalls),
         "stall_total_s": sum(stalls) / 1000.0,

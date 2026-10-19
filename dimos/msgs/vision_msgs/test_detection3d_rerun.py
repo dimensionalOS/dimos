@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
+import numpy as np
 import pytest
 import rerun as rr
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.time import time_from_seconds
+from dimos.visualization.rerun.message_helpers import detection_boxes
 
 
 def _detection3d(
@@ -31,24 +37,41 @@ def _detection3d(
     marker_id: str = "7",
     class_id: str = "DICT_APRILTAG_36h11:7",
 ) -> Detection3D:
-    det = Detection3D()
-    det.header = Header(ts, frame_id)
+    det = Detection3D(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            size=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        id="",
+    )
+    det.header = Header(stamp=time_from_seconds(ts), frame_id=frame_id)
     det.id = marker_id
     det.results = [
         ObjectHypothesisWithPose(
             hypothesis=ObjectHypothesis(
                 class_id=class_id,
                 score=1.0,
-            )
+            ),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
     ]
-    det.results_length = len(det.results)
     det.bbox = BoundingBox3D(
         center=Pose(
-            position=Vector3(1.0, 2.0, 3.0),
-            orientation=Quaternion(0.0, 0.0, 0.70710678, 0.70710678),
+            position=Point(x=1.0, y=2.0, z=3.0),
+            orientation=Quaternion(z=0.70710678, w=0.70710678, x=0.0, y=0.0),
         ),
-        size=Vector3(0.2, 0.4, 0.0),
+        size=Vector3(x=0.2, y=0.4, z=0.0),
     )
     return det
 
@@ -56,19 +79,18 @@ def _detection3d(
 def test_detection3d_frame_id_comes_from_header() -> None:
     det = _detection3d(frame_id="map")
 
-    assert det.frame_id == "map"
+    assert det.header.frame_id == "map"
 
 
 def test_detection3darray_to_rerun_preserves_wire_pose_size_and_identity() -> None:
     msg = Detection3DArray(
-        header=Header(12.5, "world"),
+        header=Header(stamp=time_from_seconds(12.5), frame_id="world"),
         detections=[_detection3d()],
-        detections_length=1,
     )
 
-    boxes = msg.to_rerun()
+    boxes = detection_boxes(msg)
 
-    assert msg.frame_id == "world"
+    assert msg.header.frame_id == "world"
     assert isinstance(boxes, rr.Boxes3D)
     assert boxes.centers.as_arrow_array().to_pylist() == [[1.0, 2.0, 3.0]]
     assert boxes.half_sizes.as_arrow_array().to_pylist()[0] == pytest.approx([0.1, 0.2, 0.0])
@@ -80,12 +102,11 @@ def test_detection3darray_to_rerun_preserves_wire_pose_size_and_identity() -> No
 
 def test_detection3darray_to_rerun_empty_array_is_safe() -> None:
     msg = Detection3DArray(
-        header=Header(12.5, "world"),
+        header=Header(stamp=time_from_seconds(12.5), frame_id="world"),
         detections=[],
-        detections_length=0,
     )
 
-    boxes = msg.to_rerun()
+    boxes = detection_boxes(msg)
 
     assert isinstance(boxes, rr.Boxes3D)
     assert boxes.centers.as_arrow_array().to_pylist() == []

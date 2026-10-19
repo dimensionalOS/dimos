@@ -19,6 +19,10 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
@@ -34,9 +38,6 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos
@@ -138,7 +139,13 @@ class Arm:
     ) -> ExecutionResult:
         """Plan and move to positions in group joint order; angular units are radians."""
         values = _vector(positions, len(self.info.joint_names), "positions")
-        target = JointState(name=list(self.info.joint_names), position=values.tolist())
+        target = JointState(
+            name=list(self.info.joint_names),
+            position=np.asarray(values.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         return self._move_joint_target("move_joints", target, speed_scale, timeout)
 
     def _move_joint_target(
@@ -165,14 +172,17 @@ class Arm:
         This targets an endpoint; use ``move_linear`` for a straight translation.
         """
         xyz = _vector(position, 3, "position")
-        rotation = (
-            self.pose().orientation
-            if orientation is None
-            else Quaternion(_vector(orientation, 4, "orientation"))
-        )
-        if math.hypot(*rotation.to_tuple()) == 0.0:
+        if orientation is None:
+            rotation = self.pose().pose.orientation
+        else:
+            x, y, z, w = _vector(orientation, 4, "orientation")
+            rotation = Quaternion(x=x, y=y, z=z, w=w)
+        if math.hypot(rotation.x, rotation.y, rotation.z, rotation.w) == 0.0:
             raise ValueError("orientation must have nonzero norm")
-        target = PoseStamped(frame_id="world", position=xyz, orientation=rotation)
+        target = PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(position=Point(x=xyz[0], y=xyz[1], z=xyz[2]), orientation=rotation),
+        )
         plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)
         return self._execute("move_pose", plan, timeout)
 

@@ -157,7 +157,7 @@ Autonomous subsystems. Communicate via `In[T]`/`Out[T]` typed streams. Run in fo
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.core import rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos_generated.sensor_msgs.msg import Image
 
 class MyModule(Module):
     color_image: In[Image]

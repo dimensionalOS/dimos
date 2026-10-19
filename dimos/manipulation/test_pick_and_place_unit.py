@@ -17,8 +17,13 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
+from dimos.core.transport_factory import rpc_backend
 from dimos.manipulation.grasp_verification import GripperSettle
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
@@ -31,13 +36,8 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 
 PLANNED = PlanResult(PlanStatus.SUCCEEDED)
 NO_PATH = PlanResult(PlanStatus.FAILED, "unreachable")
@@ -50,7 +50,9 @@ def _linear_move(execution: ExecutionResult = COMPLETED) -> MoveResult:
 
 
 @pytest.fixture
-def module() -> Iterator[PickAndPlaceModule]:
+def module(mocker) -> Iterator[PickAndPlaceModule]:
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
     instance = PickAndPlaceModule(planning_frame="world")
     instance._scene = MagicMock()
     instance._grasp_generator = MagicMock()
@@ -63,7 +65,11 @@ def module() -> Iterator[PickAndPlaceModule]:
             "arm/tool": SimpleNamespace(
                 gripper_position=0.5,
                 end_effector_pose=PoseStamped(
-                    frame_id="world", orientation=Quaternion.from_euler(Vector3(0, 0, 0.7))
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    pose=Pose(
+                        orientation=quaternion_from_euler(0, 0, 0.7),
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                    ),
                 ),
             )
         }
@@ -75,7 +81,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
     instance._scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [_candidate(0.1)]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"), candidates=[_candidate(0.1)]
     )
     yield instance
     instance.stop()
@@ -92,8 +98,11 @@ def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
     return GraspCandidate(
-        Pose(Vector3(x, 0.0, 0.2), Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0))),
-        score,
+        pose=Pose(
+            position=Point(x=x, y=0.0, z=0.2),
+            orientation=quaternion_from_euler(-3.141592653589793, 0.0, 0.0),
+        ),
+        score=score,
     )
 
 
@@ -121,7 +130,7 @@ def test_pick_object_uses_first_provider_candidate(
     grasp_generator: Any = module._grasp_generator
     first, second = _candidate(0.1, 0.1), _candidate(0.2, 0.9)
     grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [first, second]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"), candidates=[first, second]
     )
 
     result = module.pick_object("cup-1")
@@ -129,14 +138,14 @@ def test_pick_object_uses_first_provider_candidate(
     assert result.message == "Pick complete"
     assert module.get_grasp_candidates().candidates == [first, second]
     assert module._selected_grasp is not None
-    assert module._selected_grasp.position.x == pytest.approx(0.1)
+    assert module._selected_grasp.pose.position.x == pytest.approx(0.1)
     assert result.metadata["rank"] == 0
 
 
 def test_pick_object_rejects_non_planning_frame(module: PickAndPlaceModule) -> None:
     grasp_generator: Any = module._grasp_generator
     grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "camera"), [_candidate(0.1)]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="camera"), candidates=[_candidate(0.1)]
     )
 
     with pytest.raises(RuntimeError, match="frame 'camera'.*planning frame is 'world'"):
@@ -149,7 +158,8 @@ def test_pick_falls_through_to_the_next_reachable_candidate(
     """A learned provider's best-scoring pose is not always kinematically reachable."""
     manipulation: Any = module._manipulation
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [_candidate(0.1, score=0.9), _candidate(0.3, score=0.4)]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+        candidates=[_candidate(0.1, score=0.9), _candidate(0.3, score=0.4)],
     )
     manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED, PLANNED, PLANNED]
 
@@ -164,7 +174,8 @@ def test_pick_stops_walking_candidates_on_a_drive_fault(module: PickAndPlaceModu
     """An execution fault would repeat for every candidate, so it is not a demotion."""
     manipulation: Any = module._manipulation
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [_candidate(0.1), _candidate(0.3)]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+        candidates=[_candidate(0.1), _candidate(0.3)],
     )
     manipulation.execute.return_value = ExecutionResult(ExecutionStatus.FAULT, "drive fault")
 
@@ -183,7 +194,8 @@ def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
 ) -> None:
     manipulation: Any = module._manipulation
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [_candidate(0.1), _candidate(0.3)]
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+        candidates=[_candidate(0.1), _candidate(0.3)],
     )
     manipulation.plan_to_poses.return_value = NO_PATH
 
@@ -210,7 +222,7 @@ def test_proposals_reach_the_viewer_as_they_are_generated(module: PickAndPlaceMo
 
 def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> None:
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), []
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"), candidates=[]
     )
 
     result = module.pick_object("cup-1")
@@ -222,14 +234,14 @@ def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> Non
 def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) -> None:
     module.config.yaw_policy = "preserve_current"
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"),
-        [
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+        candidates=[
             GraspCandidate(
-                Pose(
-                    Vector3(0.1, 0.0, 0.2),
-                    Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.1)),
+                pose=Pose(
+                    position=Point(x=0.1, y=0.0, z=0.2),
+                    orientation=quaternion_from_euler(-3.141592653589793, 0.0, 0.1),
                 ),
-                1.0,
+                score=1.0,
             )
         ],
     )
@@ -238,15 +250,18 @@ def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) 
 
     assert result.message == "Pick complete"
     assert module._selected_grasp is not None
-    assert module._selected_grasp.orientation.to_euler().z == pytest.approx(0.7)
+    assert quaternion_euler(module._selected_grasp.pose.orientation)[2] == pytest.approx(0.7)
     assert module._holding_object
 
 
 def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._selected_grasp = PoseStamped(
-        frame_id="world",
-        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            orientation=quaternion_from_euler(-3.141592653589793, 0.0, 0.0),
+            position=Point(x=0.0, y=0.0, z=0.0),
+        ),
     )
     module._holding_object = True
 
@@ -254,14 +269,19 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
 
     assert result.message == "Place complete"
     preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
-    assert preplace.position.z == pytest.approx(0.3)
+    assert preplace.pose.position.z == pytest.approx(0.3)
     assert not module._holding_object
     assert module._selected_grasp is None
 
 
 def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
-    module._selected_grasp = PoseStamped(frame_id="world")
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     scene.scan_scene.side_effect = RuntimeError("No aligned RGB-D frame")
 
     with pytest.raises(RuntimeError, match="No aligned RGB-D frame"):
@@ -275,7 +295,12 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._holding_object = True
     module._selected_object_id = "cup-0"
-    module._selected_grasp = PoseStamped(frame_id="world")
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
     pick = module.pick_object("cup-1")
 
@@ -287,7 +312,12 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 
 
 def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> None:
-    module._selected_grasp = PoseStamped(frame_id="world")
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
     result = module.pick_object("missing")
 
@@ -413,7 +443,12 @@ def test_pick_raises_when_gripper_feedback_is_unavailable(
 def test_place_retains_held_state_when_release_fails(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module._selected_grasp = PoseStamped(frame_id="world")
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     module._holding_object = True
 
     def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
@@ -445,3 +480,15 @@ def test_motion_skills_declare_movement_capability() -> None:
     ]
 
     assert all(skill.__skill_uses__ == ["movement"] for skill in skills)
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf")])
+def test_pick_rejects_invalid_score_before_commanding_motion(module, score):
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        candidates=[_candidate(0.1, score=score)],
+    )
+    with pytest.raises(ValueError, match="GraspCandidate.score must be finite"):
+        module.pick_object("cup-1")
+    module._manipulation.plan_to_poses.assert_not_called()
+    module._manipulation.set_gripper_position.assert_not_called()

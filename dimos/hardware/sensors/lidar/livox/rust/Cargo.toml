@@ -17,13 +17,13 @@ path = "dimos_livox::module::Mid360"
 python = "dimos.hardware.sensors.lidar.livox.module:Mid360"
 
 [package.metadata.dimos.module.mid360.outputs]
-lidar = "sensor_msgs.PointCloud2"
-imu = "sensor_msgs.Imu"
+lidar = "sensor_msgs/msg/PointCloud2"
+imu = "sensor_msgs/msg/Imu"
 
 [dependencies]
 livox-wire = { git = "https://github.com/dimensionalOS/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/build/message-source/rust" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 socket2 = "0.6"

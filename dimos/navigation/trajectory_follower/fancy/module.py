@@ -26,6 +26,10 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import ImportString
 from reactivex.disposable import Disposable
 
@@ -33,11 +37,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
@@ -84,7 +83,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The planner's own body: the law decodes the path stamps with its governor band.
     embodiment: Embodiment = GO2
-    # The pose is the `path.frame_id -> base_frame` edge on tf, read each tick.
+    # The pose is the `path.header.frame_id -> base_frame` edge on tf, read each tick.
     base_frame: str = "base_link"
     # Deadman: zero the twist once the held path is this old, measured from arrival; must clear the ~1 Hz replan cadence.
     max_path_age_s: float = 2.5
@@ -129,7 +128,9 @@ class TrajectoryFollower(Module, spec.TrajectoryFollower):
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self.nav_cmd_vel.publish(Twist())
+        self.nav_cmd_vel.publish(
+            Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+        )
         super().stop()
 
     def _on_path(self, msg: Path) -> None:
@@ -144,10 +145,14 @@ class TrajectoryFollower(Module, spec.TrajectoryFollower):
                 self._path_at = time.monotonic()
                 if len(msg.poses) >= 2:
                     # a single-pose stub is a refusal, not an arrival target
-                    self._latch.set_goal((msg.poses[-1].position.x, msg.poses[-1].position.y))
+                    self._latch.set_goal(
+                        (msg.poses[-1].pose.position.x, msg.poses[-1].pose.position.y)
+                    )
         if not msg.poses:
             # now, not a control period later
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
 
     def _control_loop(self) -> None:
         period = 1.0 / self.config.control_frequency
@@ -165,29 +170,37 @@ class TrajectoryFollower(Module, spec.TrajectoryFollower):
             age = None if self._path_at is None else now - self._path_at
         pose = None
         if path is not None and self._pose_src is not None:
-            pose = self._pose_src.get(path.frame_id)
+            pose = self._pose_src.get(path.header.frame_id)
         if path is not None and pose is not None:
             assert age is not None
             self.step(pose, path, age)
         elif path is not None:
             # a plan with no live pose under it: the deadman on the pose
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
 
     def step(self, pose: PoseStamped, path: Path, age: float) -> None:
         """One control tick against a path that arrived `age` seconds ago."""
         # the deadman outranks arrival: a goal reached against an unrefreshed plan is a coincidence
         if age > self.config.max_path_age_s:
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
             return
-        xy = (pose.position.x, pose.position.y)
+        xy = (pose.pose.position.x, pose.pose.position.y)
         with self._lock:
             arrived, reached = self._latch.arrive(xy), self._latch.reached
         if arrived:
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
             self.goal_reached.publish(Bool(True))
             logger.info("goal reached", x=round(xy[0], 2), y=round(xy[1], 2))
             return
         if reached:
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
             return
         self.nav_cmd_vel.publish(self._controller.update(pose, path, time.monotonic()))

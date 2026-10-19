@@ -14,11 +14,4 @@
 
 """Policy for recording to an existing artifact."""
 
-import enum
-
-
-class OnExisting(str, enum.Enum):
-    OVERWRITE = "overwrite"
-    ERROR = "error"
-    BACKUP = "backup"
-    APPEND = "append"
+from dimos.memory.recording_policy import OnExisting as OnExisting

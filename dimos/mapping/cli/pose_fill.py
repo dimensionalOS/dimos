@@ -37,10 +37,11 @@ import typer
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
 # `dimos map --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+
     from dimos.memory.backend import Backend
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Transform import Transform
 
 
 def pose_fill(
@@ -48,7 +49,7 @@ def pose_fill(
     pose_stream: Stream[Any],
     *,
     tolerance: float = 0.1,
-    mount: Transform | None = None,
+    mount: TransformStamped | None = None,
 ) -> Stream[Any]:
     """Re-pose each observation in *stream* from the nearest entry in *pose_stream*.
 
@@ -64,10 +65,10 @@ def pose_fill(
     camera_optical`` so a base-frame odometry source yields an optical-frame
     image pose.
     """
+    from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+
     from dimos.memory.type.observation import _to_tuple
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.geometry import pose_from_matrix, pose_matrix, transform_matrix
 
     def _fill(pair_obs: Observation[Any]) -> Observation[Any]:
         primary, secondary = cast(
@@ -76,8 +77,13 @@ def pose_fill(
         if mount is None:
             return primary.with_pose(secondary.data)
         x, y, z, qx, qy, qz, qw = cast("tuple[float, ...]", _to_tuple(secondary.data))
-        world_base = Transform(translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw))
-        return primary.with_pose(world_base + mount)
+        world_base = Pose(
+            position=Point(x=x, y=y, z=z),
+            orientation=Quaternion(x=qx, y=qy, z=qz, w=qw),
+        )
+        return primary.with_pose(
+            pose_from_matrix(pose_matrix(world_base) @ transform_matrix(mount.transform))
+        )
 
     return stream.align(pose_stream, tolerance=tolerance).map(_fill)
 

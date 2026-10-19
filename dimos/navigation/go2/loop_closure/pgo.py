@@ -48,16 +48,41 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    pose_from_matrix,
+    pose_matrix,
+    quaternion_from_matrix,
+    transform_from_matrix,
+    transform_matrix,
+)
+from dimos.msgs.pointcloud import (
+    concatenate_clouds,
+    pointcloud_from_xyz,
+    pointcloud_stamps,
+    pointcloud_to_open3d,
+    pointcloud_xyz,
+    transform_cloud,
+    voxel_downsample_cloud,
+)
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -137,8 +162,8 @@ class Keyframe:
     """
 
     ts: float
-    local: Transform
-    optimized: Transform
+    local: TransformStamped
+    optimized: TransformStamped
 
 
 @dataclass(frozen=True)
@@ -151,8 +176,8 @@ class LoopClosure:
     tighter match.
     """
 
-    source: Transform
-    target: Transform
+    source: TransformStamped
+    target: TransformStamped
     score: float
 
 
@@ -168,48 +193,49 @@ class PoseGraph(Transformer[Any, Any]):
     keyframes: tuple[Keyframe, ...] = ()
     loops: tuple[LoopClosure, ...] = ()
 
-    def correct(self, pose: Transform) -> Transform:
-        """Map a raw-world pose into the drift-corrected frame at ``pose.ts``."""
-        # Transform.__add__ composes: (T_corr + T_raw) applies T_corr after T_raw.
-        return self.correction_at(pose.ts) + pose
+    def correct(self, pose: TransformStamped) -> TransformStamped:
+        """Map a raw-world stamped transform into the drift-corrected frame."""
+        result = compose_transforms(self.correction_at(to_seconds(pose.header.stamp)), pose)
+        result.header.stamp = pose.header.stamp
+        return result
 
-    def correction_at(self, ts: float) -> Transform:
+    def correction_at(self, ts: float) -> TransformStamped:
         """The raw ``world_corrected <- world_raw`` transform at ``ts``.
 
         Useful when applying the correction to non-pose data (e.g. point
-        clouds): ``pointcloud.transform(graph.correction_at(obs.ts))``.
+        clouds): ``transform_cloud(pointcloud, graph.correction_at(obs.ts))``.
         """
         R, t = self._corrections(np.array([ts]))
-        return Transform(
-            translation=Vector3(t[0]),
-            rotation=Quaternion.from_rotation_matrix(R[0].as_matrix()),
-            frame_id=FRAME_WORLD_CORRECTED,
+        return TransformStamped(
+            header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=time_from_seconds(float(ts))),
             child_frame_id=FRAME_WORLD_RAW,
-            ts=float(ts),
+            transform=Transform(
+                translation=Vector3(x=t[0, 0], y=t[0, 1], z=t[0, 2]),
+                rotation=quaternion_from_matrix(R[0].as_matrix()),
+            ),
         )
 
     def place(self, cloud: PointCloud2) -> PointCloud2:
         """Move each point by the correction for its capture time, anchored at the latest keyframe.
 
         Capture time is the cloud's per-point ``stamps`` when present, else
-        ``cloud.ts``. The latest keyframe's correction maps to identity, so
+        the cloud header timestamp. The latest keyframe's correction maps to identity, so
         current data stays where raw odometry puts it and older data moves.
         """
-        pts = cloud.points_f32()
+        pts = pointcloud_xyz(cloud).astype(np.float32)
         if not len(pts):
             return cloud
-        stamps = cloud.stamps_f64()
+        stamps = pointcloud_stamps(cloud)
         if stamps is None:
-            stamps = np.full(len(pts), cloud.ts)
+            stamps = np.full(len(pts), to_seconds(cloud.header.stamp))
         unique, inverse = np.unique(stamps, return_inverse=True)
         R, t = self._corrections(unique)
         now_R, now_t = self._corrections(np.array([np.inf]))
         anchor = now_R[0].inv()
         R, t = anchor * R, anchor.apply(t - now_t[0])
-        return PointCloud2.from_numpy(
+        return pointcloud_from_xyz(
             R[inverse].apply(pts.astype(np.float64)) + t[inverse],
-            frame_id=cloud.frame_id,
-            timestamp=cloud.ts,
+            header=cloud.header,
         )
 
     def __call__(self, upstream: Iterator[Observation[Any]]) -> Iterator[Observation[Any]]:
@@ -219,8 +245,14 @@ class PoseGraph(Transformer[Any, Any]):
             if ps is None:
                 yield obs
                 continue
-            raw_tf = Transform.from_pose(FRAME_BODY, ps)
-            yield obs.derive(data=obs.data, pose=self.correct(raw_tf))
+            correction = self.correction_at(obs.ts)
+            corrected = PoseStamped(
+                header=Header(stamp=ps.header.stamp, frame_id=FRAME_WORLD_CORRECTED),
+                pose=pose_from_matrix(
+                    transform_matrix(correction.transform) @ pose_matrix(ps.pose)
+                ),
+            )
+            yield obs.derive(data=obs.data, pose=corrected)
 
     def _corrections(self, ts: np.ndarray) -> tuple[Rotation, np.ndarray]:
         """Vectorized drift correction: slerp rotation, lerp translation, clipped to the keyframes."""
@@ -240,9 +272,19 @@ class PoseGraph(Transformer[Any, Any]):
 
         # Per-keyframe drift: world_corrected <- body <- world_raw.
         ts_list = [kf.ts for kf in self.keyframes]
-        drifts = [(kf.optimized + kf.local.inverse()) for kf in self.keyframes]
-        quat_list = [tf.rotation.to_numpy() for tf in drifts]
-        t_list = [tf.translation.to_numpy() for tf in drifts]
+        drifts = [
+            compose_transforms(kf.optimized, inverse_transform(kf.local)) for kf in self.keyframes
+        ]
+        quat_list = [
+            [
+                tf.transform.rotation.x,
+                tf.transform.rotation.y,
+                tf.transform.rotation.z,
+                tf.transform.rotation.w,
+            ]
+            for tf in drifts
+        ]
+        t_list = [transform_matrix(tf.transform)[:3, 3] for tf in drifts]
 
         # Slerp needs ≥2 keyframes; pad a len==1 list with a near-duplicate.
         if len(ts_list) == 1:
@@ -290,7 +332,12 @@ class PGO(Transformer[PointCloud2, "PoseGraph"]):
                 continue
             # Placeholder filter: zero translation OR uninitialized (all-zero)
             # quaternion. Identity rotation (qw=1) is valid and stays.
-            if pose.position.is_zero() or pose.orientation.is_zero():
+            if np.allclose([pose.position.x, pose.position.y, pose.position.z], 0.0) or (
+                pose.orientation.x == 0.0
+                and pose.orientation.y == 0.0
+                and pose.orientation.z == 0.0
+                and pose.orientation.w == 0.0
+            ):
                 continue
             pgo.process(_obs_to_pose3(obs), obs.ts, obs.data)
 
@@ -404,20 +451,23 @@ class _PGOState:
         ts: float,
         world_cloud: PointCloud2,
     ) -> None:
-        if len(world_cloud) == 0:
+        if world_cloud.width * world_cloud.height == 0:
             return
         if not self._is_keyframe(local_pose):
             return
         # Unregister: lift world-frame scan back into body frame using its
         # odom pose, so PGO can re-project it via the optimized pose later.
-        body_cloud = world_cloud.transform(
-            _pose3_to_transform(
-                local_pose.inverse(),
-                ts=ts,
-                frame_id=FRAME_BODY,
-                child_frame_id=FRAME_WORLD_RAW,
-            )
-        ).voxel_downsample(self._cfg.submap_resolution)
+        body_cloud = voxel_downsample_cloud(
+            transform_cloud(
+                world_cloud,
+                TransformStamped(
+                    header=Header(frame_id=FRAME_BODY, stamp=world_cloud.header.stamp),
+                    child_frame_id=world_cloud.header.frame_id,
+                    transform=transform_from_matrix(local_pose.inverse().matrix()),
+                ),
+            ),
+            self._cfg.submap_resolution,
+        )
         self._add_keyframe(local_pose, ts, body_cloud)
         self._search_for_loops()
         self._smooth_and_update()
@@ -539,26 +589,25 @@ class _PGOState:
         lo = max(0, idx - half_range)
         hi = min(len(self._key_poses) - 1, idx + half_range)
         if lo > hi:
-            return PointCloud2()
-        cloud = self._key_poses[lo].body_cloud.transform(
-            _pose3_to_transform(
-                self._key_poses[lo].optimized,
-                ts=self._key_poses[lo].timestamp,
-                frame_id=FRAME_WORLD_CORRECTED,
-                child_frame_id=FRAME_BODY,
+            return pointcloud_from_xyz(
+                np.empty((0, 3)),
+                header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=Time(sec=0, nanosec=0)),
             )
-        )
-        for i in range(lo + 1, hi + 1):
-            kp = self._key_poses[i]
-            cloud = cloud + kp.body_cloud.transform(
-                _pose3_to_transform(
-                    kp.optimized,
-                    ts=kp.timestamp,
-                    frame_id=FRAME_WORLD_CORRECTED,
+
+        def registered(kp: _KeyPose) -> PointCloud2:
+            return transform_cloud(
+                kp.body_cloud,
+                TransformStamped(
+                    header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=kp.body_cloud.header.stamp),
                     child_frame_id=FRAME_BODY,
-                )
+                    transform=transform_from_matrix(kp.optimized.matrix()),
+                ),
             )
-        return cloud.voxel_downsample(self._cfg.submap_resolution)
+
+        cloud = registered(self._key_poses[lo])
+        for i in range(lo + 1, hi + 1):
+            cloud = concatenate_clouds(cloud, registered(self._key_poses[i]))
+        return voxel_downsample_cloud(cloud, self._cfg.submap_resolution)
 
     def _search_for_loops(self) -> None:
         if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
@@ -682,23 +731,24 @@ def _pose3_to_transform(
     ts: float,
     frame_id: str,
     child_frame_id: str,
-) -> Transform:
+) -> TransformStamped:
     """PGO-internal: build a Transform from a Pose3."""
     t = np.asarray(pose.translation())
-    return Transform(
-        translation=Vector3(float(t[0]), float(t[1]), float(t[2])),
-        rotation=Quaternion.from_rotation_matrix(pose.rotation().matrix()),
-        frame_id=frame_id,
+    return TransformStamped(
+        header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
         child_frame_id=child_frame_id,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=float(t[0]), y=float(t[1]), z=float(t[2])),
+            rotation=quaternion_from_matrix(pose.rotation().matrix()),
+        ),
     )
 
 
-def _transform_to_pose3(tf: Transform) -> gtsam.Pose3:
+def _transform_to_pose3(tf: TransformStamped) -> gtsam.Pose3:
     """PGO-internal: build a Pose3 from a Transform."""
     import gtsam  # type: ignore[import-not-found,import-untyped]
 
-    return gtsam.Pose3(tf.to_matrix())
+    return gtsam.Pose3(transform_matrix(tf.transform))
 
 
 def _icp(
@@ -708,8 +758,8 @@ def _icp(
     max_dist: float = 1.0,
     tol: float = 1e-6,
     min_inliers: int = 10,
-    init: Transform | None = None,
-) -> tuple[Transform, float]:
+    init: TransformStamped | None = None,
+) -> tuple[TransformStamped, float]:
     """Point-to-plane ICP using Open3D's tensor pipeline.
 
     Returns ``(tf, fitness)`` where ``fitness`` is mean squared inlier
@@ -720,11 +770,18 @@ def _icp(
     import open3d as o3d  # type: ignore[import-untyped]
     import open3d.core as o3c  # type: ignore[import-untyped]
 
-    if len(source) < min_inliers or len(target) < min_inliers:
-        return Transform.identity(), float("inf")
+    if source.width * source.height < min_inliers or target.width * target.height < min_inliers:
+        return TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ), float("inf")
 
-    src_pcd = source.pointcloud_tensor
-    tgt_pcd = target.pointcloud_tensor
+    src_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(source))
+    tgt_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(target))
 
     # Normals on the target enable point-to-plane ICP — converges tighter
     # than point-to-point on indoor scenes (walls give unambiguous normals
@@ -733,7 +790,7 @@ def _icp(
 
     device = src_pcd.device
     init_T = o3c.Tensor(
-        init.to_matrix() if init is not None else np.eye(4),
+        transform_matrix(init.transform) if init is not None else np.eye(4),
         dtype=o3c.float64,
         device=device,
     )
@@ -755,9 +812,20 @@ def _icp(
         )
 
     if float(result.fitness) == 0.0:
-        return Transform.identity(), float("inf")
+        return TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ), float("inf")
 
-    # Frames intentionally unlabeled: caller only reads .to_matrix().
-    tf = Transform.from_matrix(result.transformation.numpy(), ts=source.ts)
+    # Frames intentionally unlabeled: caller only reads the transform matrix.
+    tf = TransformStamped(
+        header=Header(stamp=source.header.stamp, frame_id=""),
+        transform=transform_from_matrix(result.transformation.numpy()),
+        child_frame_id="",
+    )
     rmse = float(result.inlier_rmse)
     return tf, rmse * rmse

@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.web.relay_bridge import relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import TRACK_ENCODING
@@ -102,7 +102,7 @@ def test_rtc_ice_offers_the_answer_connects_and_frames_feed_the_track(monkeypatc
         # never a JPEG writer.
         push(module, client, Subs(chs=["color_image"], n=1))
         assert wait_until(lambda: bool(image_transport(module).subscribers))
-        image = Image(data=np.zeros((4, 4, 3), np.uint8), format=ImageFormat.RGB)
+        image = image_from_array(np.zeros((4, 4, 3), np.uint8), encoding="rgb8")
         image_transport(module).publish(image)
         assert wait_until(lambda: publishers[0].fed == [("color_image", image)])
         assert module.encoded["color_image"] == 1
@@ -157,7 +157,7 @@ def test_rtc_feed_gap_past_the_track_lifetime_is_reported_to_the_relay(monkeypat
         assert wait_until(lambda: publishers[0].accepted == "a")
         push(module, client, Subs(chs=["color_image"], n=1))
         assert wait_until(lambda: bool(image_transport(module).subscribers))
-        image = Image(data=np.zeros((4, 4, 3), np.uint8), format=ImageFormat.RGB)
+        image = image_from_array(np.zeros((4, 4, 3), np.uint8), encoding="rgb8")
         image_transport(module).publish(image)
         assert wait_until(lambda: len(publishers[0].fed) == 1)
         flush_loop(module)
@@ -235,7 +235,7 @@ def test_rtc_peer_loss_after_connect_is_torn_down_and_reoffered(monkeypatch) -> 
         fail_peer(module, publishers[0])
         assert wait_until(lambda: publishers[0].closed == 1 and len(_offers(client)) == 2)
         # Frames fed while the peer is down are dropped, not counted.
-        image = Image(data=np.zeros((4, 4, 3), np.uint8), format=ImageFormat.RGB)
+        image = image_from_array(np.zeros((4, 4, 3), np.uint8), encoding="rgb8")
         image_transport(module).publish(image)
         flush_loop(module)
         assert publishers[1].fed == [] and module.encoded["color_image"] == 0

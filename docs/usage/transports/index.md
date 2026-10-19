@@ -5,7 +5,7 @@ Transports connect **module streams** across **process boundaries** and/or **net
 * **Module**: a running component (e.g., camera, mapping, nav).
 * **Stream**: a unidirectional flow of messages owned by a module (one broadcaster → many receivers).
 * **Topic**: the name/identifier used by a transport or pubsub backend.
-* **Message**: payload carried on a stream (often `dimos.msgs.*`, but can be bytes / images / pointclouds / etc.).
+* **Message**: payload carried on a stream (often `dimos_generated.*`, but can be bytes / images / pointclouds / etc.).
 
 Each edge in the graph is a **transported stream** (potentially different protocols). Each node is a **module**:
 
@@ -29,7 +29,7 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ## Choosing a backend
 
-* `zenoh`: is our default. Reliable delivery and the same typed message model through `LCM` binary encoding of messages
+* `zenoh`: is our default. Reliable delivery and the same typed message model through CDR binary encoding of generated ROS messages
 * `lcm`: the legacy path, opt-in. Fast and simple, but UDP multicast is best-effort.
 
 At the CLI level, you can select the stream transport globally with:
@@ -179,7 +179,10 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.image import image_from_array, image_view
 
 class TickerCameraConfig(ModuleConfig):
     frequency_hz: float = 2.0
@@ -195,10 +198,10 @@ class TickerCameraModule(Module):
         super().start()
 
         def emit(_: int) -> None:
-            img = Image.from_numpy(
+            img = image_from_array(
                 np.zeros((480, 640, 3), dtype=np.uint8),
-                format=ImageFormat.RGB,
-                frame_id="synthetic",
+                encoding="rgb8",
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id="synthetic"),
             )
             self.color_image.publish(img)
 
@@ -209,7 +212,7 @@ class ImageListener(Module):
     image: In[Image]
 
     async def handle_image(self, img: Image) -> None:
-        print(f"Received: {img.shape}")
+        print(f"Received: {image_view(img).shape}")
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
@@ -250,65 +253,6 @@ Received: (480, 640, 3)
 12:36:08.388 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
 12:36:08.394 [inf][ation/worker_manager_python.py] All workers shut down
 ```
-
-See [Modules](/docs/usage/modules.md) for more on module architecture.
-
-## Inspecting traffic (CLI)
-
-`dimos spy` is the universal transport spy: one live view of every topic moving on every
-dimOS pubsub transport (names, message rates, bandwidth, sizes, and liveness), whether the
-system runs on LCM, Zenoh, or both.
-
-```bash
-dimos spy                     # everything, all transports
-dimos spy --transport zenoh   # filter to one transport (repeatable flag)
-dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
-```
-
-![dimos spy](../assets/lcmspy.png)
-
-`dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
-
-```sh skip
-Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
-```
-
-## Implementing a transport
-
-At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L83)) and implementing:
-
-* `broadcast(...)`
-* `subscribe(...)`
-
-Your `Transport.__init__` args can be anything meaningful for your backend:
-
-* `(ip, port)`
-* a Zenoh key expression
-* a filesystem path
-* a Redis channel
-
-Encoding is an implementation detail, but we encourage using LCM-compatible message types when possible.
-
-### Encoding helpers
-
-Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/usage/lcm.md).
-
-## PubSub transports
-
-Even though transport can be anything (TCP connection, unix socket) for now all our transport backends implement the `PubSub` interface.
-
-* `publish(topic, message)`
-* `subscribe(topic, callback) -> unsubscribe`
-
-```python
-from dimos.protocol.pubsub.spec import PubSub
-import inspect
-
-print(inspect.getsource(PubSub.publish))
-print(inspect.getsource(PubSub.subscribe))
-```
-
 ```results
     @abstractmethod
     def publish(self, topic: TopicT, message: MsgT) -> None:
@@ -330,7 +274,69 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+See [Modules](/docs/usage/modules.md) for more on module architecture.
+
+## Inspecting traffic (CLI)
+
+`dimos spy` is the universal transport spy: one live view of every topic moving on every
+dimOS pubsub transport (names, message rates, bandwidth, sizes, and liveness), whether the
+system runs on LCM, Zenoh, or both.
+
+```bash
+dimos spy                     # everything, all transports
+dimos spy --transport zenoh   # filter to one transport (repeatable flag)
+dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
+```
+
+![dimos spy](../assets/lcmspy.png)
+
+`dimos topic echo /topic` listens on typed channels like `/topic#pkg/msg/Msg` and decodes automatically:
+
+```sh skip
+Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg/msg/Msg')... (Ctrl+C to stop)
+Image(header=Header(...), height=480, width=640, encoding='rgb8', ...)
+```
+
+## Implementing a transport
+
+At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L83)) and implementing:
+
+* `broadcast(...)`
+* `subscribe(...)`
+
+Your `Transport.__init__` args can be anything meaningful for your backend:
+
+* `(ip, port)`
+* a Zenoh key expression
+* a filesystem path
+* a Redis channel
+
+Encoding is an implementation detail, but we encourage using generated ROS message types with CDR serialization when possible.
+
+### Encoding helpers
+
+Use `encode(message)` and `decode(payload, message_type.__msgtype__)` from `dimos_cdrgen.registry` for CDR serialization of generated message dataclasses. The same serialization works over LCM, Zenoh, and typed shared memory.
+
+## PubSub transports
+
+Even though transport can be anything (TCP connection, unix socket) for now all our transport backends implement the `PubSub` interface.
+
+* `publish(topic, message)`
+* `subscribe(topic, callback) -> unsubscribe`
+
+```python
+from dimos.protocol.pubsub.spec import PubSub
+import inspect
+
+print(inspect.getsource(PubSub.publish))
+print(inspect.getsource(PubSub.subscribe))
+```
+
+```results
+Received velocity: x=1.0, y=0.0, z=0.5
+```
+
+Topic/message types are flexible: bytes, JSON, or our generated ROS message types. We also have pickle-based transports for arbitrary Python objects.
 
 ### LCM (UDP multicast)
 
@@ -338,7 +344,7 @@ LCM is UDP multicast. It’s very fast on a robot LAN, but it’s **best-effort*
 For local emission it autoconfigures system in a way in which it's more robust and faster then other more common protocols like ROS, DDS
 
 ```python
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
 lcm = LCM()
@@ -348,7 +354,7 @@ received = []
 topic = Topic("/robot/velocity", Vector3)
 
 lcm.subscribe(topic, lambda msg, t: received.append(msg))
-lcm.publish(topic, Vector3(1.0, 0.0, 0.5))
+lcm.publish(topic, Vector3(x=1.0, y=0.0, z=0.5))
 
 import time
 time.sleep(0.1)
@@ -358,12 +364,38 @@ lcm.stop()
 ```
 
 ```results
-Received velocity: x=1.0, y=0.0, z=0.5
+Received: [{'data': [1, 2, 3]}]
 ```
 
 ### Zenoh
 
 See [Zenoh](#zenoh) for backend selection, connection settings, and per-topic QoS.
+
+### Shared memory (IPC)
+
+Shared memory only works on the **same machine**. Use `SHMTransport(topic, Image)` or a `shm:topic#sensor_msgs/msg/Image` URI for typed CDR messages. An untyped `shm:topic` carries raw bytes; `pshm:topic` carries pickled Python objects.
+
+```python
+from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
+
+shm = PickleSharedMemory(prefer="cpu")
+shm.start()
+
+received = []
+unsubscribe = shm.subscribe("test/topic", lambda msg, topic: received.append(msg))
+shm.publish("test/topic", {"data": [1, 2, 3]})
+
+import time
+time.sleep(0.1)
+
+print(f"Received: {received}")
+unsubscribe()
+shm.stop()
+```
+
+```results
+Received: [{'data': [1, 2, 3]}]
+```
 
 ### DDS Transport
 
@@ -396,7 +428,9 @@ dds.stop()
 ```
 
 ```results
-Received: [SensorReading(value=22.5)]
+Received 2 messages:
+  {'temperature': 22.5}
+  {'temperature': 23.0}
 ```
 ## A minimal transport: `Memory`
 
@@ -439,10 +473,10 @@ Transports often need to serialize messages before sending and deserialize after
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
 | `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
-| `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
+| `CDREncoderMixin`    | CDR binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
-`LCMEncoderMixin` is especially useful: you can use LCM message definitions with *any* transport (not just UDP multicast). See [LCM](/docs/usage/lcm.md) for details.
+`CDREncoderMixin` serializes generated ROS message dataclasses over any compatible pubsub backend.
 
 ### Creating a custom mixin
 

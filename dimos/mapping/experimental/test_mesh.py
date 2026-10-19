@@ -51,12 +51,14 @@ def test_most_recently_changed_chunk_goes_first() -> None:
 
 
 def test_colours_recolour_every_chunk_once_the_range_moves() -> None:
+    from dimos_generated.dimos_msgs.msg import TriangleMesh
+
     from dimos.mapping.experimental.mesh import MeshColours
-    from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+    from dimos.msgs.mesh import triangle_mesh_from_arrays
 
     def chunk(key: tuple[int, int, int], z: float) -> TriangleMesh:
         v = np.array([[0, 0, z], [1, 0, z], [0, 1, z + 1]], np.float32)
-        return TriangleMesh(v, np.array([[0, 1, 2]], np.uint32), key=key)
+        return triangle_mesh_from_arrays(v, np.array([[0, 1, 2]], np.uint32), key=key)
 
     colours = MeshColours()
     assert len(colours(chunk((0, 0, 0), 0.0))) == 2  # geometry + its colours

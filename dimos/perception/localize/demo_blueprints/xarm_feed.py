@@ -36,14 +36,14 @@ import sys
 import threading
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 

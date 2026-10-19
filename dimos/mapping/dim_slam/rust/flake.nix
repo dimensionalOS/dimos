@@ -18,9 +18,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dim-slam-module";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/mapping/dim_slam/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/mapping/dim_slam/rust/Cargo.toml"; };
 
         sdkPackages = nixpkgs.lib.filterAttrs
           (n: _: nixpkgs.lib.hasPrefix "sdk-" n)

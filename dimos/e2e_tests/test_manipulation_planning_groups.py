@@ -23,6 +23,10 @@ from __future__ import annotations
 from collections.abc import Callable
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -36,11 +40,10 @@ from dimos.manipulation.manipulation_spec import (
     ManipulationSnapshot,
     PlanningGroupInfo,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 pytestmark = [pytest.mark.self_hosted]
 
-JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
+JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs/msg/JointState"
 BLUEPRINT = "openarm-planner-coordinator"
 LEFT_GROUP_ID = "left_arm"
 RIGHT_GROUP_ID = "right_arm"
@@ -140,7 +143,10 @@ def _offset_target(snapshot: ManipulationSnapshot, group_id: str, delta: float) 
     assert current is not None
     return JointState(
         name=current.name,
-        position=[position + delta for position in current.position],
+        position=np.asarray([position + delta for position in current.position], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
 

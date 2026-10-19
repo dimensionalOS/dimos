@@ -25,11 +25,13 @@ from typing import (
     cast,
 )
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
@@ -41,6 +43,13 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils import colors
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    FrameHeader,
+    ProtocolError,
+    decode_data_frame,
+    encode_data_frame,
+    peek_data_frame_lengths,
+)
 
 logger = setup_logger()
 
@@ -153,7 +162,7 @@ class LCMTransport(PubSubTransport[T]):
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
             partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
-            (self.topic.topic, self.topic.lcm_type),
+            (self.topic.topic, self.topic.msg_type),
         )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
@@ -172,17 +181,22 @@ class LCMTransport(PubSubTransport[T]):
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+
         from dimos.protocol.pubsub.impl.jpeg_lcm import (
             JpegLCM,
         )  # ~330ms: deferred to avoid pulling in Image/cv2/rerun
 
+        if type is not Image:
+            raise TypeError("JpegLcmTransport requires generated sensor_msgs/Image")
+        self.image_type = type
         self.lcm = JpegLCM(**kwargs)  # type: ignore[assignment]
-        super().__init__(topic, type)
+        super().__init__(topic, CompressedImage)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
             partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
-            (self.topic.topic, self.topic.lcm_type),
+            (self.topic.topic, self.image_type),
         )
 
     def start(self) -> None:
@@ -191,6 +205,122 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 
     def stop(self) -> None:
         self.lcm.stop()
+        self._started = False
+
+
+class pSHMTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(topic)
+        self.shm = PickleSharedMemory(**kwargs)
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (
+            partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
+            (self.topic,),
+        )
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+
+        self.shm.publish(self.topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+    def start(self) -> None:
+        self.shm.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.shm.stop()
+        self._started = False
+
+
+class SHMTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, msg_type: type[DimosMsg] | None = None, **kwargs: Any) -> None:
+        self._base_topic = topic
+        self._msg_type = msg_type
+        super().__init__(str(LCMTopic(topic, msg_type)))
+        self.shm = BytesSharedMemory(**kwargs)
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (
+            partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
+            (self._base_topic, self._msg_type),
+        )
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+
+        payload = cdr_encode(msg) if self._msg_type is not None else msg
+        self.shm.publish(self.topic, payload)
+
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        msg_type = self._msg_type
+        if msg_type is None:
+            return self.shm.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
+        return self.shm.subscribe(
+            self.topic,
+            lambda msg, topic: callback(cast("T", cdr_decode(msg, msg_type.__msgtype__))),
+        )
+
+    def start(self) -> None:
+        self.shm.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.shm.stop()
+        self._started = False
+
+
+class JpegShmTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(topic)
+        from dimos.protocol.pubsub.impl.jpeg_shm import (
+            JpegSharedMemory,
+        )  # deferred to avoid pulling in Image/cv2/rerun
+
+        self.shm = JpegSharedMemory(quality=quality, **kwargs)
+        self.quality = quality
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (JpegShmTransport, (self.topic, self.quality))
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+
+        self.shm.publish(self.topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+    def start(self) -> None:
+        self.shm.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.shm.stop()
         self._started = False
 
 
@@ -296,8 +426,8 @@ class WebRTCTransport(PubSubTransport[M]):
     also be used directly with an explicit ``config``. Two modes:
 
     * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
-    * **Typed LCM** (``msg_type=SomeMsg``): LCM-encoded on ``broadcast()``,
-      LCM-decoded on ``subscribe()`` (foreign types on the shared channel are skipped) — so multiple
+    * **Typed CDR** (``msg_type=SomeMsg``): CDR in the shared browser data-frame
+      format, with channel and type metadata checked before decoding. Multiple
       transports sharing one multiplexed DataChannel each receive only
       their own message type.
 
@@ -324,6 +454,7 @@ class WebRTCTransport(PubSubTransport[M]):
         self._msg_type = msg_type
         self._config = config or self._config_cls(**config_kwargs)
         self._pubsub: WebRTCPubSub | None = None
+        self._frame_sequence = 0
         # Guards first-use init: concurrent subscribe()/broadcast() must not
         # construct two WebRTCPubSub wrappers (one would silently orphan any
         # subscribe_all state). Never pickled — __reduce__ rebuilds via the
@@ -337,7 +468,25 @@ class WebRTCTransport(PubSubTransport[M]):
         if not self._started:
             self.start()
         assert self._pubsub is not None
-        data = msg.lcm_encode() if self._msg_type is not None else msg
+        data: bytes | M
+        if self._msg_type is not None:
+            if msg.__msgtype__ != self._msg_type.__msgtype__:
+                raise ValueError("message type does not match declared WebRTC channel type")
+            with self._init_lock:
+                sequence = self._frame_sequence
+                self._frame_sequence += 1
+            data = encode_data_frame(
+                FrameHeader(
+                    ch=self.topic,
+                    seq=sequence,
+                    ts=time.time(),
+                    delivery="latest",
+                    meta={"type": self._msg_type.__msgtype__, "encoding": "cdr"},
+                ),
+                cdr_encode(msg),
+            )
+        else:
+            data = msg
         self._pubsub.publish(self.topic, data)  # type: ignore[arg-type]
 
     def subscribe(
@@ -351,12 +500,20 @@ class WebRTCTransport(PubSubTransport[M]):
             msg_type = self._msg_type
 
             def _typed_cb(data: bytes, _topic: str) -> None:
-                # The channel is multiplexed (e.g. the browser sends Twists and
-                # Poses on cmd_unreliable); lcm_decode verifies the wire
-                # fingerprint and raises on other types — skip those.
                 try:
-                    msg = msg_type.lcm_decode(data)
-                except ValueError:
+                    lengths = peek_data_frame_lengths(data)
+                    if lengths is None or lengths[2] != len(data):
+                        return
+                    frame = decode_data_frame(data)
+                    meta = frame.header.meta or {}
+                    if (
+                        frame.header.ch != self.topic
+                        or meta.get("encoding") != "cdr"
+                        or meta.get("type") != msg_type.__msgtype__
+                    ):
+                        return
+                    msg = cdr_decode(frame.payload, msg_type.__msgtype__)
+                except (ProtocolError, ValueError):
                     return
                 callback(msg)  # type: ignore[arg-type]
 
@@ -503,7 +660,7 @@ class CloudflareAudioTransport(WebRTCAudioTransport):
 
 
 class ZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with LCM encoding for typed DimosMsg.
+    """Zenoh transport with CDR encoding for typed DimosMsg.
 
     Accepts either a plain topic string plus message type, or a full
     `ZenohTopic` carrying per-topic settings: `ZenohTransport(ZenohTopic("bla",

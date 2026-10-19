@@ -14,13 +14,13 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../cdr-source.nix { inherit pkgs; paths = [ "native/rust" ]; };
 
         crateOf = name:
           let
             generated = crate2nix.tools.${system}.generatedCargoNix {
               inherit name src;
-              cargoToml = "${name}/Cargo.toml";
+              cargoToml = "native/rust/${name}/Cargo.toml";
             };
             callWith = mode: import generated {
               inherit pkgs;

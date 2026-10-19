@@ -52,3 +52,25 @@ dimsim eval --headless --scene apartment  # full headless run (CI)
 npm install      # browser deps (three, rapier, vite)
 npm run build    # → dist/
 ```
+
+## Message encoding
+
+The browser and Deno bridge use ROS 2 CDR payloads with full `package/msg/Type`
+channel suffixes. LCM/UDP and the WebSocket channel envelope remain the transport.
+Color frames contain raw RGBA pixels in `sensor_msgs/msg/Image`; depth uses
+`16UC1`. JPEG is used only for the eval/sidebar preview. Point clouds, poses and
+velocity commands use the same generated schema contract as Python, C++ and Rust.
+Old LCM-encoded clients and recordings are incompatible with this proposal.
+
+The standalone schema bundle is exported from the canonical generated messages:
+
+```bash
+python -m dimos.simulation.dimsim.cdr_schemas
+pytest dimos/simulation/dimsim/test_cdr_schemas.py
+cd misc/DimSim/cli
+deno test bridge/cdr_test.ts
+deno check cli.ts
+```
+
+Foxglove `rosmsg` 5.0.5 and `rosmsg2-serialization` 3.1.2 are pinned in both
+package manifests. Codec tests do not open network sockets or start simulation.

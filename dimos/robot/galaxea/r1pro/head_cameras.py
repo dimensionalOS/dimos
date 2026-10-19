@@ -32,15 +32,18 @@ holding the cameras; while it is, these modules log and retry.
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any
+
+from dimos_generated.sensor_msgs.msg import CameraInfo
+import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -116,16 +119,16 @@ def head_camera_infos(path: str = HEAD_STEREO_CALIBRATION) -> tuple[CameraInfo, 
         k = storage.getNode(f"K_{side}").mat().ravel().tolist()
         # 14 coefficients; past the first eight (rational polynomial) they are the unused tilt terms.
         d = storage.getNode(f"D_{side}").mat().ravel().tolist()[:8]
-        return CameraInfo(
-            height=height,
-            width=width,
-            distortion_model="rational_polynomial",
-            D=d,
-            K=k,
-            R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            P=[k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0],
-            frame_id=frame_id,
+        info = camera_info_from_intrinsics(
+            k[0], k[4], k[2], k[5], width, height, header=header_now(frame_id)
         )
+        info.distortion_model = "rational_polynomial"
+        info.d = np.asarray(d, dtype=np.float64)
+        info.k = np.asarray(k, dtype=np.float64)
+        info.p = np.asarray(
+            [k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0], dtype=np.float64
+        )
+        return info
 
     return eye("left", HEAD_LEFT_FRAME), eye("right", HEAD_RIGHT_FRAME)
 
@@ -180,6 +183,6 @@ class HeadCameraInfo(Module):
                     return
         while not self._stop.is_set():
             for out, info in ((self.left_info, left), (self.right_info, right)):
-                info.ts = time.time()
+                info.header = header_now(info.header.frame_id)
                 out.publish(info)
             self._stop.wait(1.0 / self.config.publish_hz)

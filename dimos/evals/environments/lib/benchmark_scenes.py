@@ -94,8 +94,8 @@ def grade_from_spec(spec: GradeSpec) -> Callable[[Outcome], float]:
     def grade(outcome: Outcome) -> float:
         with recording(outcome) as store:
             try:
-                start = first_body_transform(store, spec.body).translation.z
-                end = last_body_transform(store, spec.body).translation.z
+                start = first_body_transform(store, spec.body).transform.translation.z
+                end = last_body_transform(store, spec.body).transform.translation.z
             except LookupError:
                 return 0.0
         return min(max((end - start) / spec.by_m, 0.0), 1.0)

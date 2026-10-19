@@ -19,6 +19,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        messages = import ./messages.nix { inherit pkgs; };
         src = nix-filter.lib { root = ./.; exclude = [ "build" "target" "result" "__pycache__" ]; };
       in {
         packages.default = pkgs.runCommand "dimos-native-cpp" { } ''
@@ -34,6 +35,7 @@
           inherit src;
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
+            messages
             lcm-extended.packages.${system}.lcm
             pkgs.glib
             pkgs.nlohmann_json

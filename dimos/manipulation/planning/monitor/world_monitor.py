@@ -17,8 +17,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 import threading
 from typing import TYPE_CHECKING, Any
+
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.groups.identifiers import assert_valid_group_id
@@ -33,17 +42,13 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.geometry import quaternion_from_matrix
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    import numpy as np
+    from dimos_generated.vision_msgs.msg import Detection3D
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -53,7 +58,6 @@ if TYPE_CHECKING:
         Obstacle,
         PlanningGroupID,
     )
-    from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -215,7 +219,7 @@ class WorldMonitor:
 
             def record_state(state: JointState) -> None:
                 # RobotStateMonitor invokes callbacks under our shared lock.
-                self._latest_joint_state = JointState(state)
+                self._latest_joint_state = deepcopy(state)
 
             monitor.add_state_callback(record_state)
             monitor.start()
@@ -275,7 +279,7 @@ class WorldMonitor:
             self._obstacle_monitor.on_collision_object(msg)
 
     def on_detections(self, detections: list[Detection3D]) -> None:
-        """Handle perception detections (Detection3D from dimos.msgs.vision_msgs)."""
+        """Handle perception detections (generated Detection3D)."""
         if self._obstacle_monitor is not None:
             self._obstacle_monitor.on_detections(detections)
 
@@ -332,7 +336,7 @@ class WorldMonitor:
         """Get current joint state. Returns None if not yet received."""
         with self._lock:
             if self._state_monitor is not None:
-                return JointState(self._latest_joint_state) if self._latest_joint_state else None
+                return deepcopy(self._latest_joint_state) if self._latest_joint_state else None
             # Fall back to world's live context when no monitor is running.
             ctx = self._world.get_live_context()
             return self._world.get_joint_state(ctx)
@@ -340,8 +344,20 @@ class WorldMonitor:
     def current_model_joint_state(self, max_age: float = 1.0) -> JointState:
         """Return the fresh canonical model state."""
         if self._state_monitor is not None and self.is_state_stale(max_age):
-            return JointState()
-        return self.get_current_joint_state() or JointState()
+            return JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.array([], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        return self.get_current_joint_state() or JointState(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            position=np.array([], dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def current_group_joint_state(
         self, group_id: PlanningGroupID, max_age: float = 1.0
@@ -375,10 +391,14 @@ class WorldMonitor:
     def get_current_velocities(self) -> JointState | None:
         """Get current joint velocities as JointState. Returns None if not available."""
         if self._state_monitor is not None:
-            velocities = self._state_monitor.get_current_velocities()
-            if velocities is not None:
+            state = self._state_monitor.get_current_joint_state()
+            if state is not None and len(state.velocity):
                 return JointState(
-                    name=self.get_model_config().joint_names, velocity=velocities.tolist()
+                    header=deepcopy(state.header),
+                    name=state.name,
+                    velocity=np.asarray(state.velocity, dtype=np.float64),
+                    position=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
         return None
 
@@ -461,8 +481,12 @@ class WorldMonitor:
             self._world.set_joint_state(ctx, joint_state)
 
             pose = self._world.get_group_ee_pose(ctx, group_id)
-            pose.ts = joint_state.ts
-            return pose
+            return PoseStamped(
+                header=Header(
+                    frame_id=pose.header.frame_id, stamp=deepcopy(joint_state.header.stamp)
+                ),
+                pose=deepcopy(pose.pose),
+            )
 
     def get_link_pose(
         self, link_name: str, joint_state: JointState | None = None
@@ -487,12 +511,18 @@ class WorldMonitor:
 
             pos = mat[:3, 3]
             rot = mat[:3, :3]
-            quat = Quaternion.from_rotation_matrix(rot)
+            quat = quaternion_from_matrix(rot)
+            header = Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+            if joint_state is not None:
+                header.stamp = deepcopy(joint_state.header.stamp)
             return PoseStamped(
-                ts=joint_state.ts,
-                frame_id="world",
-                position=[float(pos[0]), float(pos[1]), float(pos[2])],
-                orientation=[float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
+                header=header,
+                pose=Pose(
+                    position=Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
+                    orientation=Quaternion(
+                        x=float(quat.x), y=float(quat.y), z=float(quat.z), w=float(quat.w)
+                    ),
+                ),
             )
 
     def get_jacobian(self, joint_state: JointState) -> NDArray[np.float64]:

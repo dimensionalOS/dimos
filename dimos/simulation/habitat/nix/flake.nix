@@ -19,8 +19,8 @@
       });
 
       devShells = forAll (pkgs: {
-        default = pkgs.mkShellNoCC {
-          packages = [ pkgs.micromamba pkgs.curl pkgs.cacert ];
+        default = pkgs.mkShell {
+          packages = [ pkgs.micromamba pkgs.curl pkgs.cacert pkgs.cmake ];
         };
       });
     };

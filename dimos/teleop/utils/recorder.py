@@ -24,16 +24,16 @@ composed blueprint produces, the rest stay empty in the DB. Compose at the CLI::
 from datetime import datetime
 from pathlib import Path
 
+from dimos_generated.dimos_msgs.msg import VideoStats
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.std_msgs.msg import UInt32
+
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.utils.report import generate_report
-from dimos.teleop.utils.video_stats import VideoStats
-from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,7 +50,7 @@ class TeleopRecorder(Recorder):
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
-    teleop_buttons: In[Buttons]
+    teleop_buttons: In[UInt32]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
     robot_telemetry: In[bytes]

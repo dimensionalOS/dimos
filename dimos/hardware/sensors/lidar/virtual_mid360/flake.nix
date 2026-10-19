@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-virtual-mid360";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/hardware/sensors/lidar/virtual_mid360" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/hardware/sensors/lidar/virtual_mid360/Cargo.toml"; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {

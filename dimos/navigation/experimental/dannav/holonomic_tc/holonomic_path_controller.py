@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_euler
 from dimos.navigation.experimental.dannav.geometry.path_distancer import project_to_polyline
 from dimos.navigation.experimental.dannav.geometry.path_speed_profile import profile_speed
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_tracking_controller import (
@@ -70,7 +70,7 @@ class HolonomicPathController:
         self._path = None
         if path is None or len(path.poses) < 2:
             return
-        xy = np.array([[p.position.x, p.position.y] for p in path.poses])
+        xy = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
         xy = xy[np.concatenate([[True], np.hypot(*np.diff(xy, axis=0).T) > 1e-6])]
         if len(xy) < 2:
             return
@@ -95,14 +95,14 @@ class HolonomicPathController:
         """The next command; a zero twist on arrival, which also drops the path."""
         if self._path is None:
             return None
-        x, y = float(odom.position.x), float(odom.position.y)
-        yaw = float(odom.orientation.euler[2])
+        x, y = float(odom.pose.position.x), float(odom.pose.position.y)
+        yaw = float(quaternion_euler(odom.pose.orientation)[2])
         foot = project_to_polyline(x, y, self._xy)
         s = foot.s_along_path_m
         end = self._xy[-1]
         if math.hypot(end[0] - x, end[1] - y) < self._goal_tolerance:
             self._path = None
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
         v = float(np.interp(s, self._s, self._speed))
         heading = float(np.interp(s, self._s, self._heading))
         reference = PlanarState(

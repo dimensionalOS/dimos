@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz, transform_cloud
 
 LOADED_MAP_STREAM = "loaded_map"
 
@@ -41,10 +42,10 @@ def place_loaded_map(
     loaded_map: Observation[PointCloud2], tf: StreamTF, world_frame: str, ts: float
 ) -> NDArray[np.float32]:
     """World-frame points of the loaded map, placed by the transform at ts."""
-    placement = tf.get(world_frame, loaded_map.data.frame_id, time_point=ts)
+    placement = tf.get(world_frame, loaded_map.data.header.frame_id, time_point=ts)
     if placement is None:
         raise RuntimeError(
-            f"no {world_frame}->{loaded_map.data.frame_id} transform at ts={ts:.3f} "
+            f"no {world_frame}->{loaded_map.data.header.frame_id} transform at ts={ts:.3f} "
             "to place the loaded map"
         )
-    return loaded_map.data.transform(placement).points_f32()
+    return pointcloud_xyz(transform_cloud(loaded_map.data, placement)).astype(np.float32)

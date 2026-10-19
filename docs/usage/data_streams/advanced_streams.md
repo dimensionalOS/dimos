@@ -104,7 +104,7 @@ Most module streams offer backpressured observables.
 ```python session=bp
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs import Image
+from dimos_generated.sensor_msgs.msg import Image
 
 class MLModel(Module):
     color_image: In[Image]

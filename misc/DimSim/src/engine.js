@@ -5774,16 +5774,12 @@ if (dimosMode) {
           captureRgb: () => {
             const frame = _dimosCaptureRgb();
             if (!frame) return null;
-            // Render to canvas → JPEG (used for both LCM publish and eval/sidebar)
+            // Keep JPEG for eval/sidebar; publish the original RGBA pixels as CDR Image.
             _dimosCapCtx.putImageData(new ImageData(new Uint8ClampedArray(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength), frame.width, frame.height), 0, 0);
             const dataUrl = _dimosCapCvs.toDataURL("image/jpeg", 0.75);
             _lastRgbBase64 = dataUrl.split("base64,")[1] || null;
             if (!_lastRgbBase64) return null;
-            // Decode base64 → Uint8Array for JPEG LCM transport
-            const bin = atob(_lastRgbBase64);
-            const jpegBytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) jpegBytes[i] = bin.charCodeAt(i);
-            return { data: jpegBytes, width: frame.width, height: frame.height };
+            return { data: frame.data, width: frame.width, height: frame.height };
           },
           captureDepth: () => _dimosCaptureDepth(),
         },

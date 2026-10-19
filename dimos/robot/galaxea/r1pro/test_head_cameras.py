@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos_generated.sensor_msgs.msg import CompressedImage
+import numpy as np
+
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
@@ -86,12 +88,13 @@ def test_each_eye_gets_its_own_intrinsics_from_the_factory_calibration(tmp_path:
 
     left, right = head_camera_infos(str(path))
 
-    assert (left.width, left.height, left.frame_id) == (1920, 1536, "camera_head_left_link")
-    assert right.frame_id == "camera_head_right_link"
-    assert left.K[0] == 1012.5 and right.K[2] == 958.7
+    assert (left.width, left.height, left.header.frame_id) == (1920, 1536, "camera_head_left_link")
+    assert right.header.frame_id == "camera_head_right_link"
+    assert left.k[0] == 1012.5 and right.k[2] == 958.7
     # Eight rational-polynomial coefficients; the six zero tilt terms are dropped.
-    assert left.distortion_model == "rational_polynomial" and len(left.D) == 8
-    assert left.P[:3] == left.K[:3] and left.P[3] == 0.0
+    assert left.distortion_model == "rational_polynomial" and len(left.d) == 8
+    np.testing.assert_array_equal(left.p[:3], left.k[:3])
+    assert left.p[3] == 0.0
 
 
 def test_r1pro_control_publishes_both_eyes_intrinsics() -> None:

@@ -22,6 +22,11 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection2DArray, Detection3DArray
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages.base import BaseMessage
 from reactivex import Observable, operators as ops
@@ -53,14 +58,7 @@ from dimos.agents.typesafe.world_state import WorldState, build_world_state
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.types.timestamped import Timestamped
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
 
@@ -125,17 +123,15 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
 
     @staticmethod
     def _pose_of(o: Odometry) -> PoseStamped:
-        return PoseStamped(
-            ts=o.ts, frame_id=o.frame_id, position=o.position, orientation=o.orientation
-        )
+        return PoseStamped(header=o.header, pose=o.pose.pose)
 
     def _fresh(self, name: str) -> Any:
         """Latest message on `name`, or None when absent or older than `stale_s`."""
         try:
-            msg: Timestamped = self._latest[name]()
+            msg = self._latest[name]()
         except TimeoutError:
             return None
-        return msg if time.time() - msg.ts <= self.config.stale_s else None
+        return msg if time.time() - to_seconds(msg.header.stamp) <= self.config.stale_s else None
 
     def state(self, trigger: object) -> WorldState | None:
         with self._lock:
@@ -207,7 +203,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             self._publisher.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         for reader in self._latest.values():
             reader.dispose()
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         super().stop()
 
     @rpc
@@ -229,7 +227,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             self._zero_since = None
             self._motion = "idle"
         if goal is None:
-            self.cmd_vel.publish(Twist.zero())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
         self.agent_idle.publish(goal is None)
 
     def _gave_up(self, gen: int) -> bool:
@@ -299,7 +299,12 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             prev = self._goal_xy
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
-            self.goal.publish(PointStamped(x, y, 0.0, frame_id="world"))
+            self.goal.publish(
+                PointStamped(
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id="world"),
+                    point=Point(x=x, y=y, z=0.0),
+                )
+            )
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
         now = time.monotonic()
@@ -310,7 +315,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             self._decided_at = now
             if immediate:
                 self._current = ZERO
-                self.cmd_vel.publish(Twist.zero())
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
             self._zero_since = (self._zero_since or now) if target == ZERO else None
 
     def _publish_loop(self) -> None:
@@ -334,6 +341,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
                 self._current = (nxt[0], nxt[1], nxt[2])
                 if self._goal is not None or any(cur):
                     self.cmd_vel.publish(
-                        Twist(linear=(nxt[0], nxt[1], 0.0), angular=(0.0, 0.0, nxt[2]))
+                        Twist(
+                            linear=Vector3(x=nxt[0], y=nxt[1], z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=nxt[2]),
+                        )
                     )
             self._stop_event.wait(dt)

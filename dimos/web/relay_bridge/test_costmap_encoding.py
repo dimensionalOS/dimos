@@ -23,11 +23,14 @@ import json
 from typing import Any
 import zlib
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -44,7 +47,7 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
     the actual wire contract."""
     meta = vec["meta"]
     cells = np.frombuffer(base64.b64decode(vec["grid_b64"]), dtype=np.uint8)
-    rows = np.where(cells == 255, -1, cells).astype(np.int8).reshape(meta["h"], meta["w"])
+    rows = cells.view(np.int8).reshape(meta["h"], meta["w"])
     ox, oy, yaw = meta["origin"]
     msg = grid_msg(rows.tolist(), meta["res"], ox, oy, yaw)
     encoded = encode_costmap(msg)
@@ -58,11 +61,9 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
 
 
 def test_encoder_handles_wire_decoded_grid() -> None:
-    """The bridge encodes grids that arrived over LCM; the decoded origin must
-    still expose .yaw (regression: the raw wire pose did not, and every
-    global_costmap frame failed to encode)."""
+    """The bridge derives yaw from the quaternion after a CDR roundtrip."""
     msg = grid_msg([[0, 100], [-1, 50]], 0.05, -1.25, 2.5, 0.5)
-    decoded = OccupancyGrid.lcm_decode(msg.lcm_encode())
+    decoded = cdr_decode(cdr_encode(msg), OccupancyGrid)
     encoded = encode_costmap(decoded)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -71,14 +72,44 @@ def test_encoder_handles_wire_decoded_grid() -> None:
 
 
 def test_empty_grid_encodes_to_none() -> None:
-    assert encode_costmap(OccupancyGrid()) is None
+    assert (
+        encode_costmap(
+            OccupancyGrid(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                info=MapMetaData(
+                    map_load_time=Time(sec=0, nanosec=0),
+                    resolution=0.0,
+                    width=0,
+                    height=0,
+                    origin=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                data=np.array([], dtype=np.int8),
+            )
+        )
+        is None
+    )
 
 
 def test_oversized_grid_is_downsampled_within_budget() -> None:
     rows = np.zeros((4096, 4096), dtype=np.int8)
     rows[0, 1] = 100  # lone obstacle: the block max must keep it
     rows[2:4, 2:4] = -1  # a fully unknown block stays unknown
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(1.0, 2.0, 0.0), ts=1.0)
+    msg = OccupancyGrid(
+        info=MapMetaData(
+            width=rows.shape[1],
+            height=rows.shape[0],
+            resolution=0.05,
+            origin=Pose(
+                position=Point(x=1, y=2, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
+        ),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -93,17 +124,43 @@ def test_oversized_grid_is_downsampled_within_budget() -> None:
 
 def test_grid_at_exactly_max_side_is_not_downsampled() -> None:
     rows = np.full((4, 2048), 7, dtype=np.int8)
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(0.0, 0.0, 0.0), ts=1.0)
+    msg = OccupancyGrid(
+        info=MapMetaData(
+            width=rows.shape[1],
+            height=rows.shape[0],
+            resolution=0.05,
+            map_load_time=Time(sec=0, nanosec=0),
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
-    assert (meta["w"], meta["h"], meta["res"]) == (2048, 4, 0.05)
+    assert (meta["w"], meta["h"], meta["res"]) == pytest.approx((2048, 4, 0.05))
     assert zlib.decompress(payload) == rows.astype(np.uint8).tobytes()
 
 
 def test_non_square_oversized_grid_uses_ceil_factor() -> None:
     rows = np.zeros((100, 4100), dtype=np.int8)
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(0.0, 0.0, 0.0), ts=1.0)
+    msg = OccupancyGrid(
+        info=MapMetaData(
+            width=rows.shape[1],
+            height=rows.shape[0],
+            resolution=0.05,
+            map_load_time=Time(sec=0, nanosec=0),
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     meta = encoded.meta

@@ -17,13 +17,12 @@ import shutil
 import tempfile
 import time
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import numpy as np
 import pytest
 from reactivex import of, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
 
@@ -109,7 +108,7 @@ class TestSpatialMemory:
                 nonlocal frame_counter
 
                 # Generate a unique position for this frame to ensure minimum distance threshold is met
-                pos = Pose(frame_counter * 0.5, frame_counter * 0.5, 0)
+                pos = Vector3(x=frame_counter * 0.5, y=frame_counter * 0.5, z=0.0)
                 transform = {"position": pos, "timestamp": time.time()}
                 frame_counter += 1
 
@@ -221,8 +220,16 @@ class TestSpatialMemory:
 
         spatial_memory.process_stream(
             of(
-                {"frame": frame, "position": Vector3(1000, 0, 0), "rotation": Vector3()},
-                {"frame": frame, "position": Vector3(1001, 0, 0), "rotation": Vector3()},
+                {
+                    "frame": frame,
+                    "position": Vector3(x=1000.0, y=0.0, z=0.0),
+                    "rotation": Vector3(x=0.0, y=0.0, z=0.0),
+                },
+                {
+                    "frame": frame,
+                    "position": Vector3(x=1001.0, y=0.0, z=0.0),
+                    "rotation": Vector3(x=0.0, y=0.0, z=0.0),
+                },
             )
         ).subscribe(on_next=results.append, on_error=errors.append)
 

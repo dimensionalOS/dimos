@@ -514,9 +514,10 @@ joint.
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 
@@ -530,9 +531,8 @@ _YOURARM_PACKAGE_PATHS = {"yourarm_description": _YOURARM_REPO / "."}
 
 def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
     return PoseStamped(
-        frame_id="map",
-        position=Vector3(x=x, y=y, z=z),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        header=Header(frame_id="map"),
+        pose=Pose(position=Point(x=x,y=y,z=z)),
     )
 ```
 

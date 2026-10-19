@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import Image
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from reactivex.disposable import Disposable
 
@@ -21,7 +23,7 @@ from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_jpeg
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -102,7 +104,11 @@ class VLMAgent(Module):
     def _invoke_image(
         self, image: Image, query: str, response_format: dict[str, Any] | None = None
     ) -> AIMessage:
-        content = [{"type": "text", "text": query}, *image.agent_encode()]
+        encoded = base64.b64encode(image_to_jpeg(image)).decode("ascii")
+        content: list[str | dict[str, Any]] = [
+            {"type": "text", "text": query},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
+        ]
         kwargs: dict[str, Any] = {}
         if response_format:
             kwargs["response_format"] = response_format

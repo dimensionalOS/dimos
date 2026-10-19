@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.geometry_msgs import Pose
-import pytest
+from dimos_generated.geometry_msgs.msg import Pose
 
-from dimos.msgs.helpers import lcm_msg_type
+from dimos.msgs.helpers import resolve_msg_type
 
 
-def test_lcm_msg_type() -> None:
-    assert lcm_msg_type("geometry_msgs.Pose") is Pose
-    with pytest.raises(ImportError):
-        lcm_msg_type("geometry_msgs.Nope")
-    with pytest.raises(ValueError):
-        lcm_msg_type("Bare")
+def test_installed_generated_type_resolves_by_schema_name() -> None:
+    assert resolve_msg_type("geometry_msgs/msg/Pose") is Pose
+
+
+def test_unknown_names_do_not_import_a_legacy_message_package() -> None:
+    assert resolve_msg_type("geometry_msgs/msg/Nope") is None
+    assert resolve_msg_type("geometry_msgs.Pose") is None
+    assert resolve_msg_type("Bare") is None

@@ -16,10 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
-
-from dimos.msgs.nav_msgs.Path import Path
 
 
 @dataclass(frozen=True)
@@ -49,7 +48,7 @@ class PathDistancer:
     """Arc-length projection onto a fixed ``Path`` polyline."""
 
     def __init__(self, path: Path) -> None:
-        self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
+        self._path = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
 
     def project(self, pos: NDArray[np.float64]) -> PolylineProjection:
         return project_to_polyline(float(pos[0]), float(pos[1]), self._path)

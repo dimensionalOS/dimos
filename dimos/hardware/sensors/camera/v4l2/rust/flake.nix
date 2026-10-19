@@ -17,8 +17,8 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-v4l2-camera";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        src = import ../../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/hardware/sensors/camera/v4l2/rust" ]; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml"; };
 
         nvidiaDeb = repo: pname: hash: pkgs.fetchurl {
           url = "https://repo.download.nvidia.com/jetson/${repo}/pool/main/n/${pname}/${pname}_36.4.7-20250918154033_arm64.deb";

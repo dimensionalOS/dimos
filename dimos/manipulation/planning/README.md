@@ -72,15 +72,15 @@ manual motion and explicit planning, preview, and execution through `arm.rpc`.
 from dimos.manipulation import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_generated.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 
 config = RobotModelConfig(
     model=RobotModel.from_file("/path/to/xarm7.urdf"),
-    base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+    base_pose=PoseStamped(),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     base_link="link_base",
     planning_groups=[

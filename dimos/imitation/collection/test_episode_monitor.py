@@ -30,9 +30,9 @@ from pydantic import ValidationError
 import pytest
 import pytest_mock
 
+from dimos.core.transport_factory import rpc_backend
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.teleop.webxr.module import WebXRTeleopModule
 
@@ -49,10 +49,9 @@ def make_monitor(
     stopped on teardown.
     """
     mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
-    mocker.patch.object(LCMRPC, "__init__", return_value=None)
-    mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
-    mocker.patch.object(LCMRPC, "start", return_value=None)
-    mocker.patch.object(LCMRPC, "stop", return_value=None)
+    backend = rpc_backend()
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(backend, method)
 
     built: list[EpisodeMonitorModule] = []
 
@@ -80,8 +79,8 @@ def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
     attr = BUTTON_ALIASES[alias]
     pressed = Buttons()
     pressed.set_attribute(attr, True)
-    monitor._on_buttons(pressed)
-    monitor._on_buttons(Buttons())
+    monitor._on_buttons(pressed.to_message())
+    monitor._on_buttons(Buttons().to_message())
 
 
 @pytest.mark.parametrize("duration", [0.03, 0.06])

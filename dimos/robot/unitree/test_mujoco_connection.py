@@ -18,6 +18,9 @@ import sys
 import threading
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.geometry_msgs.msg import Point, PoseStamped, Quaternion
+
 # Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
 import mujoco  # noqa: F401
 import numpy as np
@@ -26,6 +29,8 @@ import pytest
 from pytest import MonkeyPatch
 
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_seconds
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -190,6 +195,22 @@ def test_stop_terminates_child_before_closing_pumped_output(
     assert process.terminations == 1
 
 
+def test_odometry_reads_generated_pose_and_converts_wxyz(quiet_connection, monkeypatch):
+    monkeypatch.setattr(
+        quiet_connection.shm_data,
+        "read_odom",
+        lambda: ((np.array([1.25, -2.5, 0.3]), np.array([0.8, 0.0, 0.0, 0.6]), -0.5), 1),
+    )
+    message = quiet_connection.get_odom_message()
+    assert message is not None
+    decoded = cdr_decode(cdr_encode(message), PoseStamped)
+    assert decoded.header.frame_id == "world"
+    assert (decoded.header.stamp.sec, decoded.header.stamp.nanosec) == (-1, 500000000)
+    assert decoded.pose.position == Point(x=1.25, y=-2.5, z=0.3)
+    assert decoded.pose.orientation == Quaternion(z=0.6, w=0.8, x=0.0, y=0.0)
+    assert quiet_connection.get_odom_message() is None
+
+
 def test_start_waits_on_the_process_launched_at_construction(monkeypatch: MonkeyPatch) -> None:
     launches: list[_QuietProcess] = []
 
@@ -250,8 +271,8 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
 
     message = quiet_connection.get_lidar_message()
     assert message is not None
-    assert message.frame_id == "world"
-    assert message.ts == 3.5
-    np.testing.assert_allclose(message.points_f32(), points)
+    assert message.header.frame_id == "world"
+    assert to_seconds(message.header.stamp) == 3.5
+    np.testing.assert_allclose(pointcloud_xyz(message), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again

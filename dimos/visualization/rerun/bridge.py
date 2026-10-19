@@ -42,6 +42,13 @@ from typing import (
 )
 from urllib.parse import urlparse
 
+from dimos_generated.dimos_msgs.msg import EntityMarkers
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -51,9 +58,7 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.msgs.time import message_header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -69,6 +74,18 @@ from dimos.visualization.rerun.constants import (
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.message_helpers import (
+    camera_pinhole,
+    cloud_archetype,
+    detection_boxes,
+    entity_points,
+    image_archetype,
+    navigation_archetype,
+    occupancy_mesh,
+    tf_archetypes,
+    video_archetype,
+)
+from dimos.visualization.rerun.tf_tree import TfFrameTree
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -106,7 +123,7 @@ class RerunEntry(NamedTuple):
 RerunMulti: TypeAlias = "list[tuple[str, Archetype] | RerunEntry]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
-# A region cell packed into a header seq: i in the high half, j in the low half,
+# A region cell packed into a signed region ID: i in the high half, j in the low half,
 # both signed 16 bit. pack_cell in mls_planner/rust/src/region_viz.rs owns this
 # layout, the ray tracer copies it.
 CELL_SHIFT = 16
@@ -114,10 +131,10 @@ CELL_MASK = 0xFFFF
 CELL_SIGN = 0x8000
 
 
-def region_entity(base: str, seq: int) -> str:
-    """The entity of the region cell a native packed into a header seq."""
-    i = seq >> CELL_SHIFT
-    j = ((seq & CELL_MASK) ^ CELL_SIGN) - CELL_SIGN
+def region_entity(base: str, region_id: int) -> str:
+    """The entity of the region cell a native packed into a region ID."""
+    i = region_id >> CELL_SHIFT
+    j = ((region_id & CELL_MASK) ^ CELL_SIGN) - CELL_SIGN
     return f"{base}/{i}_{j}"
 
 
@@ -134,9 +151,9 @@ else:
 
 @runtime_checkable
 class KeyedRenderer(Protocol):
-    """A renderer whose entities are keyed by the message's header seq."""
+    """A renderer whose entities are keyed by the message's region ID."""
 
-    keyed_by_seq: bool
+    keyed_by_region: bool
 
     def __call__(self, *args: object, **kwargs: object) -> object: ...
 
@@ -144,17 +161,17 @@ class KeyedRenderer(Protocol):
 RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
-def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
-    renderer.keyed_by_seq = True  # type: ignore[attr-defined]
+def keyed_by_region(renderer: RendererT) -> RendererT:
+    """Mark a renderer whose topic keeps the latest message per region."""
+    renderer.keyed_by_region = True  # type: ignore[attr-defined]
     return renderer
 
 
-def is_keyed_by_seq(renderer: object) -> bool:
+def is_keyed_by_region(renderer: object) -> bool:
     """Whether a renderer, or the function under a partial, is marked keyed."""
     while isinstance(renderer, functools.partial):
         renderer = renderer.func
-    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
+    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_region
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -301,17 +318,18 @@ class Config(ModuleConfig):
 class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
-    Spawns its own Rerun viewer and subscribes to all topics on each provided
-    pubsub. Any message that has a to_rerun() method is automatically logged.
+        Spawns its own Rerun viewer and subscribes to all topics on each provided
+        pubsub. Any message that has a to_rerun() method is automatically logged.
 
-    Example:
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        Example:
+            from dimos.msgs.time import message_header
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM()
-        bridge = RerunBridgeModule(pubsubs=[lcm])
-        bridge.start()
-        # All messages with to_rerun() are now logged to Rerun
-        bridge.stop()
+            lcm = LCM()
+            bridge = RerunBridgeModule(pubsubs=[lcm])
+            bridge.start()
+            # All messages with to_rerun() are now logged to Rerun
+            bridge.stop()
     """
 
     config: Config
@@ -385,6 +403,20 @@ class RerunBridgeModule(Module):
                 return msg
             if is_rerun_multi(msg):
                 return msg
+            if isinstance(msg, OccupancyGrid):
+                return occupancy_mesh(msg)
+            if isinstance(msg, (PointStamped, PoseStamped, Odometry, Path)):
+                return navigation_archetype(msg)
+            if isinstance(msg, PointCloud2):
+                return cloud_archetype(msg)
+            if isinstance(msg, EntityMarkers):
+                return entity_points(msg)
+            if isinstance(msg, Detection3DArray):
+                return detection_boxes(msg)
+            if isinstance(msg, (Image, CompressedImage)):
+                return image_archetype(msg)
+            if isinstance(msg, CompressedVideo):
+                return video_archetype(msg)
             if isinstance(msg, RerunConvertible):
                 return msg.to_rerun()
             return None
@@ -397,12 +429,12 @@ class RerunBridgeModule(Module):
         return composed
 
     def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every seq must arrive."""
+        """Channels whose renderer keys entities by region ID, retaining the latest per region."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
             for path, renderer in self.config.visual_override.items()
-            if is_keyed_by_seq(renderer)
+            if is_keyed_by_region(renderer)
         ]
 
     def _get_entity_path(self, topic: Any) -> str:
@@ -434,10 +466,12 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        if self._tf_tree is not None and isinstance(msg, TFMessage):
+        if isinstance(msg, TFMessage):
             with self._tf_lock:
-                for path, archetype in msg.to_rerun(self._tf_tree):
-                    rr.log(path, archetype)
+                for tf_path, tf_archetype in tf_archetypes(msg):
+                    rr.log(tf_path, tf_archetype)
+                if self._tf_tree is not None:
+                    self._tf_tree.update(msg.transforms)
             return
 
         if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
@@ -455,23 +489,30 @@ class RerunBridgeModule(Module):
                 rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
+            frame_id = getattr(message_header(msg), "frame_id", None)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
                 rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                 self._frame_attached[entity_path] = frame_id
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
-            if isinstance(msg, Image):
+            if isinstance(msg, (Image, CompressedImage)):
                 self._image_entities.add(entity_path)
             # if source msg carries a frame_id, attach the entity to that TF frame
             # should skip if archetype is a Transform3D
             if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
+                frame_id = (
+                    msg.frame_id
+                    if isinstance(msg, CompressedVideo)
+                    else getattr(message_header(msg), "frame_id", None)
+                )
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                     self._frame_attached[entity_path] = frame_id
-                    if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+                    if (
+                        isinstance(msg, (Image, CompressedImage, CompressedVideo))
+                        and frame_id in self._camera_infos
+                    ):
+                        rr.log(entity_path, camera_pinhole(self._camera_infos[frame_id]))
 
     def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
@@ -482,13 +523,13 @@ class RerunBridgeModule(Module):
         """
         import rerun as rr
 
-        if not info.frame_id:
-            rr.log(entity_path, info.to_rerun_pinhole())
+        if not info.header.frame_id:
+            rr.log(entity_path, camera_pinhole(info))
             return
-        self._camera_infos[info.frame_id] = info
+        self._camera_infos[info.header.frame_id] = info
         for image_path, frame_id in self._frame_attached.items():
-            if frame_id == info.frame_id and image_path in self._image_entities:
-                rr.log(image_path, info.to_rerun_pinhole())
+            if frame_id == info.header.frame_id and image_path in self._image_entities:
+                rr.log(image_path, camera_pinhole(info))
 
     @rpc
     def start(self) -> None:
@@ -581,7 +622,7 @@ class RerunBridgeModule(Module):
         """
         if not self.config.topics:
             if isinstance(pubsub, Zenoh):
-                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
+                keyed = {name: attrgetter("region_id") for name in self._keyed_topics()}
                 return pubsub.subscribe_all(self._on_message, keyed=keyed)
             return pubsub.subscribe_all(self._on_message)
 

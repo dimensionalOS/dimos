@@ -19,11 +19,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -47,19 +47,14 @@ def webxr_to_robot(
     is_left_controller: bool = True,
 ) -> PoseStamped:
     """WebXR controller pose → robot frame (left +90° Z, right -90° Z);
-    preserves ts and frame_id."""
-    webxr_matrix = pose_to_matrix(pose_stamped)
+    preserves the exact header."""
+    webxr_matrix = pose_matrix(pose_stamped.pose)
 
     direction = 1 if is_left_controller else -1
     z_rotation = R.from_euler("z", 90 * direction, degrees=True).as_matrix()
     webxr_matrix[:3, :3] = webxr_matrix[:3, :3] @ z_rotation
 
     robot_matrix = WEBXR_TO_ROBOT_FRAME @ webxr_matrix
-    robot_pose = matrix_to_pose(robot_matrix)
+    robot_pose = pose_from_matrix(robot_matrix)
 
-    return PoseStamped(
-        position=robot_pose.position,
-        orientation=robot_pose.orientation,
-        ts=pose_stamped.ts,
-        frame_id=pose_stamped.frame_id,
-    )
+    return PoseStamped(header=pose_stamped.header, pose=robot_pose)

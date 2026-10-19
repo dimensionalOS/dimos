@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import pytest
-
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 @pytest.mark.self_hosted_large
@@ -35,7 +34,7 @@ def test_walk_forward(
     # The coordinator can be ready while DimSim is still loading its scene.
     # Teleports sent before physics starts are discarded by the bridge.
     lcm_spy.wait_for_message_result(
-        "/odom#geometry_msgs.PoseStamped",
+        "/odom#geometry_msgs/msg/PoseStamped",
         PoseStamped,
         predicate=lambda _: True,
         fail_message="DimSim did not publish initial odometry",

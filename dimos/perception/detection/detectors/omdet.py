@@ -18,12 +18,14 @@ from __future__ import annotations
 
 from functools import cached_property
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from PIL import Image as PILImage
 import torch
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -79,7 +81,7 @@ class OmDetDetector(HuggingFaceModel):
         ``confidence`` is the per-box score. ``class_id`` indexes into
         ``queries``.
         """
-        pil = PILImage.fromarray(image.to_rgb().data)
+        pil = PILImage.fromarray(image_to_rgb(image))
         with torch.inference_mode():
             inputs = self._processor(images=pil, text=queries, return_tensors="pt").to(
                 self.config.device
@@ -105,7 +107,7 @@ class OmDetDetector(HuggingFaceModel):
                 class_id=int(label),
                 confidence=float(score),
                 name=queries[int(label)],
-                ts=image.ts,
+                ts=to_seconds(image.header.stamp),
                 image=image,
             )
             if det.is_valid():
@@ -135,7 +137,7 @@ class OmDetDetector(HuggingFaceModel):
         from torchvision.ops.boxes import batched_nms  # type: ignore[import-untyped]
         from transformers.image_transforms import center_to_corners_format
 
-        pil = PILImage.fromarray(image.to_rgb().data)
+        pil = PILImage.fromarray(image_to_rgb(image))
         with torch.inference_mode():
             inputs = self._processor(
                 images=pil, text=queries, task="Detect all objects.", return_tensors="pt"

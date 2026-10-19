@@ -20,13 +20,16 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 # Add system path for gi module if needed
@@ -279,11 +282,10 @@ class GstreamerCameraModule(Module):
             image_array = data.reshape((height, width, 3))
 
             # Create an Image message with the absolute timestamp
-            image_msg = Image(
-                data=image_array.copy(),  # Make a copy to ensure data persistence
-                format=ImageFormat.BGR,
-                frame_id=self.frame_id,
-                ts=timestamp,
+            image_msg = image_from_array(
+                image_array,
+                encoding="bgr8",
+                header=Header(frame_id=self.frame_id, stamp=time_from_seconds(timestamp)),
             )
 
             # Publish the image

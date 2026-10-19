@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-pointlio";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/hardware/sensors/lidar/pointlio/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/hardware/sensors/lidar/pointlio/rust/Cargo.toml"; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {

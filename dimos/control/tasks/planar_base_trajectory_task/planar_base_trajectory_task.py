@@ -22,6 +22,8 @@ import math
 import threading
 from typing import Any
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from pydantic import ConfigDict, NonNegativeFloat, PositiveFloat
 
 from dimos.control.task import (
@@ -35,8 +37,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.time import duration_from_seconds, header_now, to_nanoseconds
+from dimos.msgs.trajectory import TrajectoryState, sample_trajectory, trajectory_duration
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -156,20 +158,23 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
 
     def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
         with self._lock:
-            duration = self._trajectory.duration if self._trajectory is not None else 0.0
+            duration = (
+                trajectory_duration(self._trajectory) if self._trajectory is not None else 0.0
+            )
             elapsed = self._elapsed
             if (
                 t_now is not None
                 and self._start_t is not None
-                and self._state is TrajectoryState.EXECUTING
+                and self._state == TrajectoryState.EXECUTING
             ):
                 elapsed = t_now - self._start_t
             progress = 1.0 if duration <= 0.0 else min(1.0, elapsed / duration)
             return TrajectoryStatus(
+                header=header_now(),
                 state=self._state,
                 progress=progress,
-                time_elapsed=elapsed,
-                time_remaining=max(0.0, duration - elapsed),
+                time_elapsed=duration_from_seconds(elapsed),
+                time_remaining=duration_from_seconds(max(0.0, duration - elapsed)),
                 error=self._error,
             )
 
@@ -221,7 +226,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             if self._start_t is None:
                 self._start_t = state.t_now
             self._elapsed = state.t_now - self._start_t
-            reference, reference_velocity = self._trajectory.sample(self._elapsed)
+            reference, reference_velocity = sample_trajectory(self._trajectory, self._elapsed)
             position_error = math.hypot(reference[0] - pose[0], reference[1] - pose[1])
             yaw_error = abs(angle_diff(reference[2], pose[2]))
 
@@ -243,14 +248,14 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                     state.t_now,
                     f"base is {position_error:.3f} m / {yaw_error:.3f} rad off the trajectory",
                 )
-            if self._elapsed >= self._trajectory.duration:
+            if self._elapsed >= trajectory_duration(self._trajectory):
                 if (
                     position_error < config.position_goal_tolerance
                     and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
                     return self._command(0.0, 0.0, 0.0)
-                if self._elapsed - self._trajectory.duration > config.settle_timeout:
+                if self._elapsed - trajectory_duration(self._trajectory) > config.settle_timeout:
                     return self._fail(state.t_now, "base did not reach the end of the trajectory")
                 # Settling is pure feedback; the last point's velocity would carry it past.
                 reference_velocity = [0.0, 0.0, 0.0]
@@ -327,18 +332,22 @@ def _trajectory_problem(
 ) -> str:
     if trajectory is None or not trajectory.points:
         return "Base trajectory has no points"
-    previous_time: float | None = None
+    previous_time: int | None = None
     for point in trajectory.points:
         if len(point.positions) != 3 or len(point.velocities) != 3:
             return "Base trajectory points must carry x, y and yaw"
-        values = (*point.positions, *point.velocities, point.time_from_start)
+        try:
+            point_time = to_nanoseconds(point.time_from_start)
+        except ValueError:
+            return "Base trajectory contains an invalid duration"
+        values = (*point.positions, *point.velocities, point_time)
         if not all(math.isfinite(value) for value in values):
             return "Base trajectory contains non-finite values"
-        if previous_time is None and point.time_from_start != 0.0:
+        if previous_time is None and point_time != 0.0:
             return "Base trajectory must start at t=0"
-        if previous_time is not None and point.time_from_start <= previous_time:
+        if previous_time is not None and point_time <= previous_time:
             return "Base trajectory has non-increasing timestamps"
-        previous_time = point.time_from_start
+        previous_time = point_time
         vx, vy, wz = point.velocities
         if (
             math.hypot(vx, vy) > config.max_linear + _SPEED_SLACK

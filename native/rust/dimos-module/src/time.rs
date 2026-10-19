@@ -16,7 +16,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lcm_msgs::std_msgs::Time;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 
 /// The wall clock as a message stamp.
 pub fn now() -> Time {
@@ -25,7 +25,7 @@ pub fn now() -> Time {
         .unwrap_or_default();
     Time {
         sec: dur.as_secs().min(i32::MAX as u64) as i32,
-        nsec: dur.subsec_nanos() as i32,
+        nanosec: dur.subsec_nanos(),
     }
 }
 

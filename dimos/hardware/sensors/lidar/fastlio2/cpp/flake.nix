@@ -9,10 +9,6 @@
     nixpkgs.follows = "dimos-native-cpp/nixpkgs";
     flake-utils.follows = "dimos-native-cpp/flake-utils";
     dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
@@ -31,7 +27,7 @@
     };
   };
 
-  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -65,6 +61,7 @@
                 (old.patches or [ ]);
             });
           };
+        sdk = nix-filter.lib { root = ../../../../../../native/cpp; exclude = [ "build" "target" "result" "__pycache__" ]; };
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ darwinDepFixes ];
@@ -83,6 +80,7 @@
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
+            (import ../../../../../../native/cpp/messages.nix { inherit pkgs; })
             livox-sdk2
             lcm
             pkgs.glib
@@ -97,10 +95,9 @@
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
-            "-DDIMOS_NATIVE_CPP_DIR=${dimos-native-cpp.packages.${system}.default}"
+            "-DDIMOS_NATIVE_CPP_DIR=${sdk}"
           ];
         };
       in {

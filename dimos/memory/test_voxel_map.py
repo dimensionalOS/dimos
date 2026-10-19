@@ -14,15 +14,24 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory.type.observation import Observation
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 
 
 def _make_obs(obs_id: int, points: np.ndarray, ts: float = 0.0) -> Observation[PointCloud2]:
-    return Observation(id=obs_id, ts=ts, _data=PointCloud2.from_numpy(points))
+    return Observation(
+        id=obs_id,
+        ts=ts,
+        _data=pointcloud_from_xyz(
+            points, header=Header(frame_id="world", stamp=time_from_seconds(ts))
+        ),
+    )
 
 
 def _unit_cube_points(n: int = 100) -> np.ndarray:
@@ -36,18 +45,21 @@ def test_accumulate_two_frames() -> None:
     obs1 = _make_obs(0, pts, ts=1.0)
     obs2 = _make_obs(1, pts + 10.0, ts=2.0)  # offset by 10m, no overlap
 
-    xf = VoxelMapTransformer(voxel_size=0.5, carve_columns=False)
+    xf = VoxelMapTransformer(voxel_size=0.5, carve_columns=False, device="CPU:0")
     results = list(xf(iter([obs1, obs2])))
 
     assert len(results) == 2  # emit_every=1 default
     global_map = results[-1].data  # last result has the full accumulated map
 
-    single_results = list(VoxelMapTransformer(voxel_size=0.5)(iter([obs1])))
-    assert len(global_map) > len(single_results[0].data)
+    single_results = list(VoxelMapTransformer(voxel_size=0.5, device="CPU:0")(iter([obs1])))
+    assert (
+        global_map.width * global_map.height
+        > single_results[0].data.width * single_results[0].data.height
+    )
 
 
 def test_empty_stream() -> None:
-    xf = VoxelMapTransformer(voxel_size=0.5)
+    xf = VoxelMapTransformer(voxel_size=0.5, device="CPU:0")
     assert list(xf(iter([]))) == []
 
 

@@ -20,6 +20,8 @@ from abc import ABC, abstractmethod
 import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+
 from dimos.msgs.protocol import DimosMsg
 
 if TYPE_CHECKING:
@@ -94,33 +96,29 @@ class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
         return cast("MsgT", pickle.loads(msg))
 
 
-class LCMTopicProto(Protocol):
-    """Protocol for topics usable with LCM encoders."""
+class TypedTopicProto(Protocol):
+    """A topic's explicit generated message type, independent of its transport."""
 
     topic: str  # At decode time, always concrete string
-    lcm_type: type[DimosMsg] | None
+    msg_type: type[DimosMsg] | None
 
 
-class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
-    """Encoder mixin for DimosMsg using LCM binary encoding."""
+class CDREncoderMixin(PubSubEncoderMixin[TypedTopicProto, DimosMsg, bytes]):
+    """Encode typed streams as standard encapsulated CDR."""
 
-    def subscribe(
-        self, topic: LCMTopicProto, callback: Callable[[DimosMsg, LCMTopicProto], None]
-    ) -> Callable[[], None]:
-        # Import the type's heavy decode dependencies now, on the subscriber's
-        # thread. Left to the first decode, the import would run on the LCM
-        # handler thread and block it for seconds, dropping messages meanwhile.
-        warmup = getattr(topic.lcm_type, "lcm_warmup", None)
-        if warmup is not None:
-            warmup()
-        return super().subscribe(topic, callback)
-
-    def encode(self, msg: DimosMsg | bytes, _: LCMTopicProto) -> bytes:
+    def encode(self, msg: DimosMsg | bytes, topic: TypedTopicProto) -> bytes:
         if isinstance(msg, bytes):
             return msg
-        return msg.lcm_encode()
+        if topic.msg_type is not None and msg.__msgtype__ != topic.msg_type.__msgtype__:
+            raise ValueError(
+                f"Message {msg.__msgtype__} does not match topic type {topic.msg_type.__msgtype__}"
+            )
+        return cdr_encode(msg)
 
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg:
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return topic.lcm_type.lcm_decode(msg)
+    def decode(self, msg: bytes, topic: TypedTopicProto) -> DimosMsg:
+        if topic.msg_type is None:
+            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no msg_type")
+        try:
+            return cast("DimosMsg", cdr_decode(msg, topic.msg_type.__msgtype__))
+        except ValueError as exc:
+            raise DecodingError(f"Invalid CDR on topic {topic.topic!r}") from exc

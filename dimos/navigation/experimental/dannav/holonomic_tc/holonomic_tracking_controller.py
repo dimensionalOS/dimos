@@ -25,8 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+
 from dimos.utils.trigonometry import angle_diff
 
 

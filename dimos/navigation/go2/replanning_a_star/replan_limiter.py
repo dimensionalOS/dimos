@@ -14,7 +14,9 @@
 
 from threading import RLock
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Point
+
+from dimos.msgs.geometry import point_distance
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -28,7 +30,7 @@ class ReplanLimiter:
 
     _max_attempts: int = 6
     _reset_distance: float = 2.0
-    _attempt_pos: Vector3 | None = None
+    _attempt_pos: Point | None = None
     _lock: RLock
 
     _attempt: int
@@ -37,13 +39,13 @@ class ReplanLimiter:
         self._lock = RLock()
         self._attempt = 0
 
-    def can_retry(self, position: Vector3) -> bool:
+    def can_retry(self, position: Point) -> bool:
         with self._lock:
             if self._attempt == 0:
                 self._attempt_pos = position
 
             if self._attempt >= 1 and self._attempt_pos:
-                distance = self._attempt_pos.distance(position)
+                distance = point_distance(self._attempt_pos, position)
                 if distance >= self._reset_distance:
                     logger.info(
                         "Traveled enough to reset attempts",

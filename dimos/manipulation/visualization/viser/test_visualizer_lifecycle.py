@@ -17,9 +17,19 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
+from dimos.msgs.time import header_now
+
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -38,9 +48,6 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime
 from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -86,7 +93,13 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path(f"{name}.urdf")),
-        base_pose=PoseStamped(),
+        base_pose=PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         joint_names=[],
         planning_groups=[
             PlanningGroupDefinition(
@@ -424,7 +437,13 @@ def test_visualizer_publish_preview_and_close_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str]] = []
-    current = JointState({"name": ["joint1"], "position": [0.5]})
+    current = JointState(
+        name=["joint1"],
+        position=np.array([0.5], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
     class FakeRuntime:
         url = "http://localhost:8095"
@@ -476,7 +495,9 @@ def test_visualizer_publish_preview_and_close_paths(
     visualizer.cancel_preview_animation()
     visualizer.update_state(VisualizationStateFrame(current))
     visualizer.cancel_preview_animation()
-    visualizer.animate_trajectory(JointTrajectory(joint_names=["arm/joint1"]), duration=1.5)
+    visualizer.animate_trajectory(
+        JointTrajectory(header=header_now(), joint_names=["arm/joint1"], points=[]), duration=1.5
+    )
     visualizer.close()
     visualizer.update_state(VisualizationStateFrame(current))
 
@@ -541,7 +562,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
 
     config = fake_robot_config("arm")
     config.model = RobotModel.from_file(fixed_world_root)
-    config.base_pose.position.x = 1.0
+    config.base_pose.pose.position.x = 1.0
 
     def prepare(description: object, **kwargs: object) -> object:
         prepared.append(kwargs)
@@ -595,7 +616,15 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
 
     scene.register_model(prepared)
     current = scene._urdfs["current"]
-    scene.update_current_model(JointState({"name": ["joint1"], "position": [0.75]}))
+    scene.update_current_model(
+        JointState(
+            name=["joint1"],
+            position=np.array([0.75], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
 
     assert current is not old_current
     assert scene.robot_display_mode == mode

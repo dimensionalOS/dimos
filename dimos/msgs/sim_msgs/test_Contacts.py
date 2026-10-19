@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+from dimos_cdrgen.registry import decode, encode
+from dimos_generated.dimos_msgs.msg import Contact, Contacts
+from dimos_generated.std_msgs.msg import Header
+import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
-
-
-def test_round_trip_keeps_contacts_and_stamp() -> None:
-    msg = Contacts([Contact("foot", "floor"), Contact("trunk", "wall")], ts=12.5)
-    back = Contacts.lcm_decode(msg.lcm_encode())
-    assert back.contacts == msg.contacts
-    assert back.ts == 12.5
+from dimos.msgs.time import time_from_seconds, to_seconds
 
 
-def test_empty_set_round_trips() -> None:
-    back = Contacts.lcm_decode(Contacts(ts=1.0).lcm_encode())
-    assert back.contacts == []
-    assert back.ts == 1.0
+@pytest.mark.parametrize(
+    "contacts", [[], [Contact(part="foot", kind="floor"), Contact(part="trunk", kind="wall")]]
+)
+def test_cdr_retains_semantic_contacts_and_source_stamp(contacts):
+    value = Contacts(header=Header(stamp=time_from_seconds(12.5), frame_id=""), contacts=contacts)
+    decoded = decode(encode(value), Contacts)
+    assert decoded.contacts == contacts
+    assert to_seconds(decoded.header.stamp) == 12.5

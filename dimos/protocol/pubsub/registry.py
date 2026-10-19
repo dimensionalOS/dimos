@@ -22,14 +22,15 @@ URI grammar::
 
     <proto>:<topic>[#<msg_type>]
 
-- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``.
+- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``, ``shm``, ``pshm``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
-- ``<msg_type>``: optional ``module.ClassName`` resolved via
-  ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
+- ``<msg_type>``: optional ``package/msg/Type`` resolved via
+  ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs/msg/Image``).
 
 Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
 the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``)
-don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
+don't. The ``shm`` proto uses CDR with a type and raw bytes without one.
+Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
 the typed transport appends the message type to the wire key.
 """
 
@@ -76,6 +77,20 @@ def _make_zenoh(topic: str, msg_type: type | None) -> Any:
     return ZenohTransport(topic, msg_type)
 
 
+def _make_pshm(topic: str, msg_type: type | None) -> Any:
+    # pickled shared memory: same shape as plcm but over /dev/shm.
+    from dimos.core.transport import pSHMTransport
+
+    return pSHMTransport(topic)
+
+
+def _make_shm(topic: str, msg_type: type | None) -> Any:
+    # Explicit type selects CDR; an untyped channel carries raw bytes.
+    from dimos.core.transport import SHMTransport
+
+    return SHMTransport(topic, msg_type)
+
+
 def _make_pzenoh(topic: str, msg_type: type | None) -> Any:
     from dimos.core.transport import pZenohTransport
 
@@ -86,6 +101,8 @@ _REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
     "lcm": _make_lcm,
     "jpeg_lcm": _make_jpeg_lcm,
     "plcm": _make_plcm,
+    "shm": _make_shm,
+    "pshm": _make_pshm,
     "zenoh": _make_zenoh,
     "pzenoh": _make_pzenoh,
 }

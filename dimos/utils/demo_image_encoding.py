@@ -28,13 +28,14 @@ import argparse
 import threading
 import time
 
+from dimos_generated.sensor_msgs.msg import Image
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
 from dimos.utils.fast_image_generator import random_image
 
 
@@ -64,7 +65,7 @@ class EmitterModule(Module):
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.image.publish(Image(data=data))
+            self.image.publish(image_from_array(data, encoding="bgr8"))
         open_file.close()
 
 

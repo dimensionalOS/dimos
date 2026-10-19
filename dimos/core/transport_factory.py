@@ -27,6 +27,7 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -58,7 +59,7 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 
 # High-rate sensor streams: drop stale frames under congestion, never stall the
 # publisher. Matched by message type since that is what makes them high-rate.
-_LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
+_LATEST_WINS_TYPES = ("sensor_msgs/msg/Image", "sensor_msgs/msg/PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
 # turn of agent/human conversation, a one-shot robot action verb, a push-to-talk
 # chunk where one gap discards the whole utterance, or a region of a seeded map
@@ -91,7 +92,7 @@ def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
     """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    return default_zenoh_qos_for(name, getattr(msg_type, "msg_name", ""))
+    return default_zenoh_qos_for(name, getattr(msg_type, "__msgtype__", ""))
 
 
 def make_transport(
@@ -100,7 +101,7 @@ def make_transport(
     """Construct the active-backend pub/sub transport for a logical channel.
 
     A pickled (self-describing) transport is used when no `msg_type` is given or
-    the type has no `lcm_encode`. Otherwise a typed transport is used.
+    the type does not implement the generated message contract. Otherwise CDR is used.
 
     A channel name alone doesn't fully define a topic: backends have per-topic
     settings (Zenoh publisher QoS, for one) that live on their Topic objects.
@@ -110,7 +111,7 @@ def make_transport(
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
-    use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
+    use_pickled = msg_type is None or not isinstance(msg_type, DimosMsg)
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
         ztopic = ZenohTopic(

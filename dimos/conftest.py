@@ -20,6 +20,7 @@ import os
 import pathlib
 import platform
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -84,6 +85,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
+from dimos_cdrgen.registry import message_types
 from dotenv import dotenv_values
 import pytest
 import tqdm
@@ -171,6 +173,25 @@ def pytest_sessionstart(session):
     _arm_crash_dumps()
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """Expose a crashed worker's dump before a later job timeout loses it."""
+    if error is None:
+        return
+    base = pathlib.Path(
+        os.environ.get("DIMOS_CRASH_DIR")
+        or os.path.join(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "pytest-crash")
+    )
+    for path in sorted(base.glob(f"crash-{node.gateway.id}-*.log")):
+        try:
+            dump = path.read_text(errors="replace")
+        except OSError as exc:
+            print(f"Cannot read worker crash diagnostic {path.name}: {exc}", flush=True)
+            continue
+        if dump:
+            print(f"\nWorker crash diagnostic {path.name}:\n{dump}", flush=True)
+
+
 def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     # Nested Python projects own their dependencies and test invocation.
     if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
@@ -228,6 +249,18 @@ def pytest_configure(config):
         )
 
 
+@pytest.fixture(autouse=True)
+def _restore_reference_types_module():
+    # Reference typestores replace rosbags' process-global class module. Keep
+    # their test-local identities from invalidating canonical message pickles.
+    message_types()
+    previous = sys.modules["rosbags.usertypes"]
+    try:
+        yield
+    finally:
+        sys.modules["rosbags.usertypes"] = previous
+
+
 def _global_config_guard():
     from dimos.core.global_config import global_config
 
@@ -274,8 +307,10 @@ def mcp_url(mcp_port: int) -> str:
 
 @pytest.fixture(scope="session")
 def lcm_url() -> str:
-    """The LCM bus URL pinned for this xdist worker (or the default)."""
-    return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
+    """The worker's LCM bus URL, with an optional test-only provider override."""
+    return os.environ.get("DIMOS_TEST_LCM_URL") or os.environ.get(
+        "LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0"
+    )
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ import threading
 from typing import Protocol
 import uuid
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import pytest
 from reactivex.disposable import Disposable
 
@@ -32,7 +33,6 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import RemoteModuleProxy
 from dimos.porcelain.remote_module_source import RemoteModuleSource

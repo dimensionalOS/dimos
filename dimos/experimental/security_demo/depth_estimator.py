@@ -17,12 +17,13 @@ from __future__ import annotations
 from collections.abc import Callable
 import threading
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from PIL import Image as PILImage
 import torch
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_to_rgb
 
 _DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
 _DEPTH_MAX_WIDTH = 640
@@ -86,8 +87,7 @@ class DepthEstimator:
                 self._process(image)
 
     def _process(self, image: Image) -> None:
-        rgb = image.to_rgb()
-        pil_image = PILImage.fromarray(rgb.data)
+        pil_image = PILImage.fromarray(image_to_rgb(image))
         if pil_image.width > _DEPTH_MAX_WIDTH:
             scale = _DEPTH_MAX_WIDTH / pil_image.width
             new_h = int(pil_image.height * scale)
@@ -105,8 +105,4 @@ class DepthEstimator:
         ).squeeze()
 
         depth_np = depth.cpu().numpy().astype(np.float32)
-        self._publish(
-            Image.from_numpy(
-                depth_np, format=ImageFormat.DEPTH, frame_id=image.frame_id, ts=image.ts
-            )
-        )
+        self._publish(image_from_array(depth_np, encoding="32FC1", header=image.header))

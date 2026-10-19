@@ -23,15 +23,16 @@ import subprocess
 import sys
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.time import time_from_seconds
 
 
 def config(**overrides: Any) -> GraspGenXConfig:
@@ -68,15 +69,31 @@ def test_public_adapter_import_does_not_load_optional_runtime() -> None:
 
 
 def test_messages_round_trip_empty_and_score() -> None:
-    value = GraspCandidateArray(Header(3.0, "camera"), [GraspCandidate(Pose(1, 2, 3), 0.25)])
-    decoded = GraspCandidateArray.decode(value.encode())
+    value = GraspCandidateArray(
+        header=Header(stamp=time_from_seconds(3.0), frame_id="camera"),
+        candidates=[
+            GraspCandidate(
+                pose=Pose(
+                    position=Point(x=1, y=2, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                score=0.25,
+            )
+        ],
+    )
+    decoded = cdr_decode(cdr_encode(value), GraspCandidateArray)
 
     assert decoded.header.frame_id == "camera"
-    assert decoded.header.timestamp == pytest.approx(3.0)
+    assert decoded.header.stamp == time_from_seconds(3.0)
     assert decoded.candidates[0].score == pytest.approx(0.25)
     assert (
-        GraspCandidateArray.decode(
-            GraspCandidateArray(Header(3.0, "camera"), []).encode()
+        cdr_decode(
+            cdr_encode(
+                GraspCandidateArray(
+                    header=Header(stamp=time_from_seconds(3.0), frame_id="camera"), candidates=[]
+                )
+            ),
+            GraspCandidateArray,
         ).candidates
         == []
     )
@@ -92,7 +109,10 @@ def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
         "scene_pointcloud",
     ]
     assert list(signature.parameters) == ["self", "object_pointcloud"]
-    assert signature.parameters["object_pointcloud"].annotation.__name__ == "PointCloud2"
+    assert (
+        signature.parameters["object_pointcloud"].annotation.__msgtype__
+        == "sensor_msgs/msg/PointCloud2"
+    )
     assert signature.return_annotation is GraspCandidateArray
 
 

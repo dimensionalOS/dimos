@@ -23,14 +23,15 @@ import math
 import time
 from typing import Any, Literal
 
-from dimos_lcm.std_msgs import Bool
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool, Header
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 
@@ -45,7 +46,7 @@ class _DirectTransport(Transport):  # type: ignore[type-arg]
 
     def broadcast(self, _selfstream: Any, value: Any) -> None:
         for callback in list(self._subscribers):
-            callback(value)
+            callback(cdr_decode(cdr_encode(value), type(value)))
 
     def subscribe(
         self, callback: Callable[[Any], Any], _selfstream: Stream[Any] | None = None
@@ -71,15 +72,13 @@ class _Captured:
 
 
 def _yaw_quaternion(yaw_rad: float) -> Quaternion:
-    return Quaternion(0.0, 0.0, math.sin(yaw_rad / 2.0), math.cos(yaw_rad / 2.0))
+    return Quaternion(z=math.sin(yaw_rad / 2.0), w=math.cos(yaw_rad / 2.0), x=0.0, y=0.0)
 
 
 def _odom(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> PoseStamped:
     return PoseStamped(
-        ts=ts,
-        frame_id="map",
-        position=[x, y, 0.0],
-        orientation=_yaw_quaternion(yaw_rad),
+        header=Header(stamp=time_from_seconds(ts), frame_id="map"),
+        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=_yaw_quaternion(yaw_rad)),
     )
 
 
@@ -92,15 +91,8 @@ def _path_from_points(points: list[tuple[float, float]]) -> Path:
         else:
             prev_point = points[index - 1]
             yaw = math.atan2(point[1] - prev_point[1], point[0] - prev_point[0])
-        poses.append(
-            PoseStamped(
-                ts=1.0,
-                frame_id="map",
-                position=[point[0], point[1], 0.0],
-                orientation=_yaw_quaternion(yaw),
-            )
-        )
-    return Path(frame_id="map", poses=poses)
+        poses.append(_odom(point[0], point[1], yaw))
+    return Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses)
 
 
 def _is_zero_twist(cmd: Twist) -> bool:
@@ -135,10 +127,12 @@ class _ModuleHarness:
         self.module.path.transport.broadcast(None, path)
 
     def feed_empty_path(self) -> None:
-        self.module.path.transport.broadcast(None, Path(frame_id="map", poses=[]))
+        self.module.path.transport.broadcast(
+            None, Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=[])
+        )
 
     def feed_stop(self, value: bool = True) -> None:
-        self.module.stop_movement.transport.broadcast(None, Bool(value))
+        self.module.stop_movement.transport.broadcast(None, Bool(data=value))
 
     def close(self) -> None:
         for unsub in self._unsubs:

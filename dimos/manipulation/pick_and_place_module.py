@@ -16,8 +16,13 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -35,10 +40,12 @@ from dimos.manipulation.grasp_verification import (
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.geometry import (
+    pose_matrix,
+    quaternion_euler,
+    quaternion_from_euler,
+    translate_pose_local,
+)
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
 
@@ -79,7 +86,9 @@ class PickAndPlaceModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, dict[str, Any]] = {}
-        self._grasp_candidates = GraspCandidateArray()
+        self._grasp_candidates = GraspCandidateArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+        )
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
@@ -108,7 +117,7 @@ class PickAndPlaceModule(Module):
         ]
         self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
         return SkillResult(
-            f"Detected {detections.detections_length} object(s)",
+            f"Detected {len(detections.detections)} object(s)",
             metadata={"prompts": prompts, "objects": list(self._objects.values())},
         )
 
@@ -144,6 +153,10 @@ class PickAndPlaceModule(Module):
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
+        for candidate in candidates.candidates:
+            if not math.isfinite(candidate.score):
+                raise ValueError("GraspCandidate.score must be finite")
+            pose_matrix(candidate.pose)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
@@ -161,10 +174,10 @@ class PickAndPlaceModule(Module):
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
             grasp = self._apply_yaw_policy(
                 PoseStamped(
-                    ts=candidates.header.timestamp,
-                    frame_id=candidates.header.frame_id,
-                    position=candidate.pose.position,
-                    orientation=candidate.pose.orientation,
+                    header=candidates.header,
+                    pose=Pose(
+                        position=candidate.pose.position, orientation=candidate.pose.orientation
+                    ),
                 ),
                 group,
             )
@@ -230,9 +243,10 @@ class PickAndPlaceModule(Module):
             )
         group = self._gripper_group(planning_group)
         place = PoseStamped(
-            frame_id=self.config.planning_frame,
-            position=Vector3(x, y, z),
-            orientation=self._selected_grasp.orientation,
+            header=Header(frame_id=self.config.planning_frame, stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=x, y=y, z=z), orientation=self._selected_grasp.pose.orientation
+            ),
         )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
         if blocked := self._move(preplace, group):
@@ -248,8 +262,14 @@ class PickAndPlaceModule(Module):
         return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:
-        self._grasp_candidates = GraspCandidateArray()
-        self._manipulation.show_grasp_proposals(GraspCandidateArray())
+        self._grasp_candidates = GraspCandidateArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+        )
+        self._manipulation.show_grasp_proposals(
+            GraspCandidateArray(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+            )
+        )
         self._selected_object_id = None
         self._selected_grasp = None
 
@@ -298,22 +318,21 @@ class PickAndPlaceModule(Module):
         current = self._manipulation.get_state().groups[group].end_effector_pose
         if current is None:
             return pose
-        euler = pose.orientation.to_euler()
-        current_euler = current.orientation.to_euler()
+        euler = quaternion_euler(pose.pose.orientation)
+        current_euler = quaternion_euler(current.pose.orientation)
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position,
-            orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
+            header=pose.header,
+            pose=Pose(
+                position=pose.pose.position,
+                orientation=quaternion_from_euler(euler[0], euler[1], current_euler[2]),
+            ),
         )
 
     @staticmethod
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
-            orientation=pose.orientation,
+            header=pose.header,
+            pose=translate_pose_local(pose.pose, Vector3(z=-offset, x=0.0, y=0.0)),
         )
 
     def _servo(
@@ -329,9 +348,9 @@ class PickAndPlaceModule(Module):
         when the arm arrived.
         """
         result = self._manipulation.move_linear(
-            end.position.x - start.position.x,
-            end.position.y - start.position.y,
-            end.position.z - start.position.z,
+            end.pose.position.x - start.pose.position.x,
+            end.pose.position.y - start.pose.position.y,
+            end.pose.position.z - start.pose.position.z,
             planning_group,
             check_collision=False,
         )

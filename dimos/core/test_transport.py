@@ -14,6 +14,7 @@
 
 import pickle
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.core.transport import (
@@ -21,7 +22,6 @@ from dimos.core.transport import (
     LCMTransport,
     pLCMTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 @pytest.mark.parametrize("transport_class", [pLCMTransport, LCMTransport, JpegLcmTransport])

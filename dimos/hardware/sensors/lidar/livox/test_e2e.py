@@ -30,6 +30,8 @@ import struct
 import subprocess
 import time
 
+from dimos_cdrgen.registry import decode as cdr_decode
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
 import lcm as lcm_module
 import pytest
 
@@ -42,8 +44,8 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
 )
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
+from dimos.msgs.time import to_seconds
 from dimos.utils.data import get_data
 
 _LIDAR = DIMOS_PROJECT_ROOT / "dimos" / "hardware" / "sensors" / "lidar"
@@ -169,7 +171,7 @@ class Spawner:
                 raw[topic].append(data)
 
             msg_type = topics[topic]
-            lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
+            lc.subscribe(f"{topic}#{msg_type.__msgtype__}", on_msg)
         end = time.monotonic() + seconds
         while not all(len(raw[topic]) >= count for topic, count in enough.items()):
             self._assert_running()
@@ -218,12 +220,11 @@ def _first_capture_ts(pcap: Path) -> float:
 
 
 def _assert_cloud_shape(cloud: PointCloud2, min_points: int) -> None:
-    assert cloud.frame_id == "lidar_link"
-    points, _ = cloud.as_numpy()
+    assert cloud.header.frame_id == "lidar_link"
+    points = pointcloud_xyz(cloud)
     assert len(points) > min_points
     # Full point format carries per-point deskew offsets within one frame.
-    offsets = cloud.offset_times_u32()
-    assert offsets is not None
+    offsets = pointcloud_view(cloud)["offset_time"]
     assert offsets.max() < 150_000_000, "offsets exceed one frame interval"
 
 
@@ -240,8 +241,8 @@ def test_real_capture_replay_publishes_streams(spawn: Spawner) -> None:
     )
     blob = {
         "topics": {
-            "lidar": "/e2e_real_lidar#sensor_msgs.PointCloud2",
-            "imu": "/e2e_real_imu#sensor_msgs.Imu",
+            "lidar": "/e2e_real_lidar#sensor_msgs/msg/PointCloud2",
+            "imu": "/e2e_real_imu#sensor_msgs/msg/Imu",
         },
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
@@ -253,8 +254,8 @@ def test_real_capture_replay_publishes_streams(spawn: Spawner) -> None:
         enough={"/e2e_real_lidar": 20, "/e2e_real_imu": 800},
     )
 
-    clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_real_lidar"]]
-    imus = [Imu.lcm_decode(data) for data in received["/e2e_real_imu"]]
+    clouds = [cdr_decode(data, PointCloud2) for data in received["/e2e_real_lidar"]]
+    imus = [cdr_decode(data, Imu) for data in received["/e2e_real_imu"]]
     # Thresholds leave headroom for receive-buffer drops on the big clouds.
     assert len(clouds) >= 20, f"expected >=20 clouds, got {len(clouds)}"
     assert len(imus) >= 800, f"expected >=800 imu samples, got {len(imus)}"
@@ -265,14 +266,16 @@ def test_real_capture_replay_publishes_streams(spawn: Spawner) -> None:
     median = magnitudes[len(magnitudes) // 2]
     assert 5.0 < median < 15.0, f"median accel magnitude {median}"
     assert imus[0].orientation_covariance[0] == -1.0
-    assert imus[0].frame_id == "imu_link"
+    assert imus[0].header.frame_id == "imu_link"
 
     # Replayed stamps sit on the recording's clock, not the sensor's power-on
     # clock: within the collected window of the first capture record. The offset
     # filter strips delivery latency, so a stamp can sit a few ms before its record.
     capture_start = _first_capture_ts(pcap)
     for msg in (clouds[0], clouds[-1], imus[0], imus[-1]):
-        assert -0.1 <= msg.ts - capture_start < 30.0, f"stamp {msg.ts} vs capture {capture_start}"
+        assert -0.1 <= to_seconds(msg.header.stamp) - capture_start < 30.0, (
+            f"stamp {to_seconds(msg.header.stamp)} vs capture {capture_start}"
+        )
 
 
 @pytest.mark.native_e2e
@@ -301,8 +304,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
     )
     driver_blob = {
         "topics": {
-            "lidar": "/e2e_live_lidar#sensor_msgs.PointCloud2",
-            "imu": "/e2e_live_imu#sensor_msgs.Imu",
+            "lidar": "/e2e_live_lidar#sensor_msgs/msg/PointCloud2",
+            "imu": "/e2e_live_imu#sensor_msgs/msg/Imu",
         },
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
@@ -317,8 +320,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
         enough={"/e2e_live_lidar": 3, "/e2e_live_imu": 120},
     )
 
-    clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_live_lidar"]]
-    imus = [Imu.lcm_decode(data) for data in received["/e2e_live_imu"]]
+    clouds = [cdr_decode(data, PointCloud2) for data in received["/e2e_live_lidar"]]
+    imus = [cdr_decode(data, Imu) for data in received["/e2e_live_imu"]]
     # Large clouds drop under the default receive buffer, so the IMU packets
     # carry the rate assertion.
     assert len(clouds) >= 3, f"expected >=3 clouds, got {len(clouds)}"
@@ -327,7 +330,7 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
 
     # The synthetic capture is a 5 m ring at z ~1 m, so a decode regression
     # in scaling or field layout shows up as broken geometry here.
-    points, _ = clouds[len(clouds) // 2].as_numpy()
+    points = pointcloud_xyz(clouds[len(clouds) // 2])
     radii = sorted(math.hypot(x, y) for x, y, _z in points)
     assert abs(radii[len(radii) // 2] - 5.0) < 0.1, f"median ring radius {radii[len(radii) // 2]}"
     z_values = sorted(z for _x, _y, z in points)
@@ -337,9 +340,11 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
     sample = imus[len(imus) // 2]
     assert abs(_magnitude(sample) - GRAVITY_MS2) < 1e-3
     assert sample.orientation_covariance[0] == -1.0
-    assert sample.frame_id == "imu_link"
+    assert sample.header.frame_id == "imu_link"
 
     # Live stamps are anchored to the host clock, whatever the device reports.
     now = time.time()
     for msg in (clouds[-1], imus[-1]):
-        assert abs(msg.ts - now) < 15.0, f"stamp {msg.ts} vs host {now}"
+        assert abs(to_seconds(msg.header.stamp) - now) < 15.0, (
+            f"stamp {to_seconds(msg.header.stamp)} vs host {now}"
+        )

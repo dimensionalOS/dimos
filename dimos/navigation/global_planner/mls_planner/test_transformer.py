@@ -14,14 +14,20 @@
 
 from __future__ import annotations
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
 pytest.importorskip("dimos_mls_planner")
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.memory.type.observation import Observation
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.global_planner.mls_planner.transformer import MLSPlan
 
 
@@ -35,7 +41,15 @@ def _obs(
         ts=0.0,
         pose=pose,
         tags={"region_bounds": region_bounds},
-        _data=PointCloud2.from_numpy(points),
+        _data=cdr_decode(
+            cdr_encode(
+                pointcloud_from_xyz(
+                    points,
+                    header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789)),
+                )
+            ),
+            PointCloud2,
+        ),
     )
 
 
@@ -55,6 +69,11 @@ def test_flat_floor_yields_populated_path_and_planned_true() -> None:
 
     [out] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
 
+    decoded = cdr_decode(cdr_encode(out.data), Path)
+    assert decoded.header.frame_id == "world"
+    assert decoded.header.stamp.sec == 1700000000
+    assert decoded.header.stamp.nanosec == 123456789
+    assert all(p.header.stamp.nanosec == 123456789 for p in decoded.poses)
     assert out.tags["planned"] is True
     assert len(out.data.poses) >= 2
     assert out.tags["voxels"] > 0
@@ -70,7 +89,15 @@ def test_poseless_obs_is_skipped() -> None:
         ts=0.0,
         pose=None,
         tags={"region_bounds": (0.0, 0.0, 5.0, -1.0, 2.0)},
-        _data=PointCloud2.from_numpy(points),
+        _data=cdr_decode(
+            cdr_encode(
+                pointcloud_from_xyz(
+                    points,
+                    header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789)),
+                )
+            ),
+            PointCloud2,
+        ),
     )
     posed = _obs(points, pose=(-2.0, -2.0, 1.0), region_bounds=(0.0, 0.0, 5.0, -1.0, 2.0))
 
@@ -105,4 +132,4 @@ def test_no_route_yields_empty_path_with_planned_false() -> None:
     [out] = list(MLSPlan(goal=(100.0, 100.0, 100.0))(iter([obs])))
 
     assert out.tags["planned"] is False
-    assert out.data.poses == []
+    assert len(out.data.poses) == 0

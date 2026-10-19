@@ -18,7 +18,10 @@ from collections.abc import Sequence
 import json
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from PIL import Image as PILImage
 from pydantic import ValidationError
 import pytest
 
@@ -56,9 +59,16 @@ from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+def _image(pixels: np.ndarray, *, ts: float = 0.0) -> Image:
+    return image_from_array(
+        pixels, encoding="rgb8", header=Header(stamp=time_from_seconds(ts), frame_id="")
+    )
 
 
 class _TestVlModel(VlModel):
@@ -152,7 +162,7 @@ class _RecordingAuthor(_Author):
 
 class _EmptyThenAuthor:
     def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
-        if image.ts == 1.0:
+        if to_seconds(image.header.stamp) == 1.0:
             return ()
         return (QuestionProposal(family="presence", object_names=("chair",)),)
 
@@ -182,7 +192,7 @@ class _Detector(_TestVlModel):
                     class_id=-1,
                     confidence=1.0,
                     name=query,
-                    ts=image.ts,
+                    ts=to_seconds(image.header.stamp),
                     image=image,
                 )
             )
@@ -205,7 +215,7 @@ class _BoxesDetector(_TestVlModel):
                     class_id=-1,
                     confidence=1.0,
                     name=query,
-                    ts=image.ts,
+                    ts=to_seconds(image.header.stamp),
                     image=image,
                 )
                 for index, box in enumerate(self._boxes)
@@ -314,7 +324,7 @@ class _MaskEstimator:
             class_id=-1,
             confidence=1.0,
             name=object_name,
-            ts=image.ts,
+            ts=to_seconds(image.header.stamp),
             image=image,
         )
         return ObjectMaskEvidence(
@@ -443,7 +453,7 @@ def test_closest_object_proposal_requires_two_to_five_distinct_references() -> N
 
 
 def test_object_distance_requires_range_evidence() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_distance", object_names=("chair",))
 
     with pytest.raises(InsufficientEvidenceError, match="image-aligned point-cloud"):
@@ -460,7 +470,7 @@ def test_object_distance_requires_range_evidence() -> None:
     ),
 )
 def test_object_distance_buckets_range_evidence(range_m: float, expected: str) -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_distance", object_names=("chair",))
 
     answer = answer_question(
@@ -477,7 +487,7 @@ def test_object_distance_buckets_range_evidence(range_m: float, expected: str) -
 
 
 def test_object_distance_rejects_evidence_crossing_bucket_boundary() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_distance", object_names=("chair",))
 
     with pytest.raises(InsufficientEvidenceError, match="uncertainty crosses"):
@@ -507,7 +517,7 @@ def test_closest_object_compares_multiple_named_references(
     quartiles: tuple[tuple[float, float, float], ...],
     expected: str,
 ) -> None:
-    image = Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 10, 3), dtype=np.uint8))
     proposal = QuestionProposal(
         family="closest_object",
         object_names=("left person", "right person", "chair"),
@@ -528,7 +538,7 @@ def test_closest_object_compares_multiple_named_references(
 
 
 def test_closest_object_rejects_overlapping_range_intervals() -> None:
-    image = Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 10, 3), dtype=np.uint8))
     proposal = QuestionProposal(
         family="closest_object",
         object_names=("left person", "right person", "chair"),
@@ -557,7 +567,7 @@ def test_closest_object_rejects_reordered_range_results() -> None:
     with pytest.raises(ValueError, match="requested object order"):
         answer_question(
             proposal,
-            Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
+            _image(np.zeros((4, 10, 3), dtype=np.uint8)),
             _Detector(present=True),
             object(),
             _ReorderedClosestRangeEstimator((1.0, 1.1, 1.2), (2.0, 2.1, 2.2)),
@@ -590,7 +600,7 @@ def test_family_answer_requires_case_insensitive_unique_choices() -> None:
 
 
 def test_presence_family_derives_answer_from_detector_evidence() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="presence", object_names=("chair",))
 
     present = answer_question(proposal, image, _Detector(present=True))
@@ -614,7 +624,7 @@ def test_presence_family_derives_answer_from_detector_evidence() -> None:
     ),
 )
 def test_horizontal_direction_uses_detection_center(box: Bbox, expected: str) -> None:
-    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    image = _image(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="horizontal_direction", object_names=("robot",))
 
     answer = answer_question(proposal, image, _BoxesDetector((box,)))
@@ -625,7 +635,7 @@ def test_horizontal_direction_uses_detection_center(box: Bbox, expected: str) ->
 
 
 def test_horizontal_direction_rejects_ambiguous_instances() -> None:
-    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    image = _image(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="horizontal_direction", object_names=("chair",))
     detector = _BoxesDetector(
         (
@@ -643,7 +653,7 @@ def test_horizontal_direction_rejects_ambiguous_instances() -> None:
     ((1, "one"), (2, "two"), (3, "three"), (4, "four or more"), (5, "four or more")),
 )
 def test_object_count_buckets_detected_instances(count: int, expected: str) -> None:
-    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    image = _image(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_count", object_names=("box",))
     boxes = tuple((float(index), 0.0, float(index + 1), 1.0) for index in range(count))
 
@@ -656,7 +666,7 @@ def test_object_count_buckets_detected_instances(count: int, expected: str) -> N
 
 
 def test_object_count_requires_at_least_one_detection() -> None:
-    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    image = _image(np.zeros((60, 90, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="object_count", object_names=("box",))
 
     with pytest.raises(InsufficientEvidenceError, match="to count"):
@@ -676,7 +686,7 @@ def test_image_coverage_chooses_scheme_with_largest_boundary_margin(
     boundaries: list[float],
     margin: float,
 ) -> None:
-    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    image = _image(np.zeros((10, 10, 3), dtype=np.uint8))
     proposal = QuestionProposal(family="image_coverage", object_names=("chair",))
 
     answer = answer_question(
@@ -698,7 +708,7 @@ def test_image_coverage_requires_mask_evidence() -> None:
     with pytest.raises(InsufficientEvidenceError, match="segmentation-mask"):
         answer_question(
             proposal,
-            Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8)),
+            _image(np.zeros((10, 10, 3), dtype=np.uint8)),
             _Detector(present=True),
         )
 
@@ -714,7 +724,7 @@ def test_largest_visible_area_requires_distinct_references() -> None:
 
 
 def test_largest_visible_area_accepts_winner_at_twenty_percent_margin() -> None:
-    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    image = _image(np.zeros((10, 10, 3), dtype=np.uint8))
     proposal = QuestionProposal(
         family="largest_visible_area",
         object_names=("chair", "table", "box"),
@@ -733,7 +743,7 @@ def test_largest_visible_area_accepts_winner_at_twenty_percent_margin() -> None:
 
 
 def test_largest_visible_area_rejects_close_mask_areas() -> None:
-    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))
+    image = _image(np.zeros((10, 10, 3), dtype=np.uint8))
     proposal = QuestionProposal(
         family="largest_visible_area",
         object_names=("chair", "table"),
@@ -749,7 +759,7 @@ def test_largest_visible_area_rejects_close_mask_areas() -> None:
 
 
 def test_openai_author_parses_constrained_proposals() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     author = OpenAIQuestionAuthor(_QuestionModel())
 
     proposals = author.propose(image, AVAILABLE_FAMILIES)
@@ -772,7 +782,7 @@ def test_openai_author_parses_constrained_proposals() -> None:
 
 
 def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     author = OpenAIQuestionAuthor(_PartlyInvalidQuestionModel())
 
     proposals = author.propose(image, AVAILABLE_FAMILIES)
@@ -781,7 +791,7 @@ def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
 
 
 def test_openai_author_skips_unavailable_family() -> None:
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     author = OpenAIQuestionAuthor(_UnavailableFamilyQuestionModel())
 
     proposals = author.propose(image, (AVAILABLE_FAMILIES[0],))
@@ -1072,7 +1082,7 @@ def test_suite_reports_empty_cases_before_duplicate_labels(tmp_path: Path) -> No
 
 def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     output = tmp_path / "nested" / "vqa"
-    image = Image.from_numpy(np.arange(48, dtype=np.uint8).reshape(4, 4, 3), ts=12.5)
+    image = _image(np.arange(48, dtype=np.uint8).reshape(4, 4, 3), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
@@ -1085,7 +1095,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert result.cases[0].id == "frame-000004-chair-presence"
     image_path = output / "assets" / "frame-000004.png"
     assert image_path.is_file()
-    assert np.array_equal(Image.from_file(image_path).data, image.data)
+    assert np.array_equal(np.asarray(PILImage.open(image_path)), image_view(image))
     assert (output / "cases.jsonl").is_file()
     assert (output / "labels.jsonl").is_file()
     assert (output / "audit" / "frame-000004" / "ground_truth.json").is_file()
@@ -1109,7 +1119,7 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
     existing = output / "existing.txt"
     existing.write_text("keep me")
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
 
     with pytest.raises(FileExistsError, match="output directory is not empty"):
         generate_frames_dataset(
@@ -1125,7 +1135,7 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
 
 def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
@@ -1143,7 +1153,7 @@ def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path
 
 def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
@@ -1167,7 +1177,7 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
 
 def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((4, 10, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(
@@ -1196,7 +1206,7 @@ def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> N
 
 def test_generate_image_coverage_case_without_pointcloud(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
 
     result = generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=output),
@@ -1217,7 +1227,7 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
         (
             GenerationFrame(
                 4,
-                Image.from_numpy(np.zeros((4, 10, 3), dtype=np.uint8)),
+                _image(np.zeros((4, 10, 3), dtype=np.uint8)),
                 object(),
             ),
         ),
@@ -1239,7 +1249,7 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
 def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Path) -> None:
     result = generate_frames_dataset(
         GenerationRequest(dataset="recording.db", image_index=4, output=tmp_path / "vqa"),
-        (GenerationFrame(4, Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8))),),
+        (GenerationFrame(4, _image(np.zeros((10, 10, 3), dtype=np.uint8))),),
         _DuplicateLargestVisibleAreaAuthor(),
         _Detector(present=True),
         mask_estimator=_MaskEstimator({"chair": 60, "table": 40, "box": 10}),
@@ -1251,7 +1261,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
 
 def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
     author = _RecordingAuthor()
 
@@ -1272,7 +1282,7 @@ def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((10, 10, 3), dtype=np.uint8), ts=12.5)
     author = _RecordingAuthor()
 
     generate_frames_dataset(
@@ -1302,8 +1312,8 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
         output=output,
     )
     frames = (
-        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        GenerationFrame(3, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=3.0)),
+        GenerationFrame(1, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(3, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=3.0)),
     )
 
     result = generate_frames_dataset(
@@ -1340,8 +1350,8 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
     output = tmp_path / "vqa"
     request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
     frames = (
-        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        GenerationFrame(2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+        GenerationFrame(1, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(2, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
     )
 
     generate_frames_dataset(
@@ -1359,7 +1369,7 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
 
 def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8), ts=12.5)
+    image = _image(np.zeros((60, 90, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
     detector = _BoxesDetector(
         (
@@ -1383,7 +1393,7 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
 
 def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     with pytest.raises(ValueError, match="detector broke"):
@@ -1401,8 +1411,8 @@ def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) ->
     output = tmp_path / "vqa"
     request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
     frames = (
-        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        GenerationFrame(2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+        GenerationFrame(1, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(2, _image(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
     )
 
     with pytest.raises(ValueError, match="detector broke"):
@@ -1418,7 +1428,7 @@ def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) ->
 
 def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
-    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image = _image(np.zeros((4, 4, 3), dtype=np.uint8))
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     result = generate_frames_dataset(

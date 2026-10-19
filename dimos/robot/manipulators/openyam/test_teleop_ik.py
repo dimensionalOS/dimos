@@ -14,13 +14,15 @@
 
 """Objective tests for single-arm OpenYAM Quest teleoperation."""
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver, PoseTargetIKTaskConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
 from dimos.robot.manipulators.openyam.config import OPENYAM_ARM_JOINTS, OPENYAM_HOME_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
@@ -53,7 +55,13 @@ def _solver(
 @pytest.mark.self_hosted
 def test_solver_weights_large_joints_above_wrist_joints() -> None:
     solver = _solver()
-    state = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
+    state = JointState(
+        name=OPENYAM_ARM_JOINTS,
+        position=np.asarray(OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     targets = solver.frame_poses(state, (_TARGET_FRAME,))
 
     assert solver.step(targets, state, 0.01) is not None
@@ -68,12 +76,24 @@ def _orientation_target_motion(
     solver_type: type[PinkPoseTargetSolver],
 ) -> tuple[float, float]:
     solver = _solver(solver_type)
-    initial = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
+    initial = JointState(
+        name=OPENYAM_ARM_JOINTS,
+        position=np.asarray(OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     pose = solver.frame_poses(initial, (_TARGET_FRAME,))[_TARGET_FRAME]
+    q = pose.pose.orientation
+    rotated = (
+        Rotation.from_euler("xyz", [0.0, 0.2, 0.0]) * Rotation.from_quat([q.x, q.y, q.z, q.w])
+    ).as_quat()
     target = PoseStamped(
-        frame_id=pose.frame_id,
-        position=pose.position,
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)) * pose.orientation,
+        header=pose.header,
+        pose=Pose(
+            position=pose.pose.position,
+            orientation=Quaternion(x=rotated[0], y=rotated[1], z=rotated[2], w=rotated[3]),
+        ),
     )
     state = initial
     for _ in range(10):

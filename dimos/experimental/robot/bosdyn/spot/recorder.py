@@ -25,18 +25,17 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from pydantic import Field
 
 from dimos.core.stream import In
 from dimos.experimental.robot.bosdyn.spot.config import CAMERA_STREAM_SUFFIXES
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
 
 # jpeg codec quantises depth it to ~25cm and adds block artifacts (horrible)
-LOSSLESS_CODEC = "lz4+lcm"
+LOSSLESS_CODEC = "lz4+cdr"
 
 
 class SpotRecorderConfig(RecorderConfig):

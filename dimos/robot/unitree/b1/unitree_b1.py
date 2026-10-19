@@ -23,15 +23,15 @@ Uses standard Twist interface for velocity commands.
 import logging
 import os
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Int32
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.core.transport import ROSTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.b1.connection import (
     B1ConnectionModule,

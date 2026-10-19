@@ -20,6 +20,12 @@ import pickle
 from types import UnionType
 from typing import get_args, get_origin, get_type_hints
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
+
 from dimos.manipulation.manipulation_module import ManipulationModule
 import dimos.manipulation.manipulation_spec as manipulation_spec
 from dimos.manipulation.manipulation_spec import (
@@ -37,9 +43,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.spec.utils import spec_annotation_compliance
 
 
@@ -96,10 +100,24 @@ def test_public_result_repr_does_not_truncate_message() -> None:
 
 def test_state_repr_exposes_values_for_repl_use() -> None:
     state = PlanningGroupState(
-        JointState(name=["arm/j0"], position=[0.25]),
+        JointState(
+            name=["arm/j0"],
+            position=np.array([0.25], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         None,
         0.75,
-        {"home": JointState(name=["arm/j0"], position=[0.0])},
+        {
+            "home": JointState(
+                name=["arm/j0"],
+                position=np.array([0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        },
     )
     snapshot = ManipulationSnapshot(
         timestamp=12.5,
@@ -124,15 +142,40 @@ def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None
     plan = GeneratedPlan(
         group_ids=("arm/manipulator",),
         trajectory=JointTrajectory(
+            header=header_now(),
             joint_names=["arm/j0"],
             points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[123.456], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.array([0.0], dtype=np.float64),
+                    velocities=np.array([0.0], dtype=np.float64),
+                    time_from_start=duration_from_seconds(0.0),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.array([123.456], dtype=np.float64),
+                    velocities=np.array([0.0], dtype=np.float64),
+                    time_from_start=duration_from_seconds(1.0),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
         ),
         path=[
-            JointState(name=["arm/j0"], position=[0.0]),
-            JointState(name=["arm/j0"], position=[123.456]),
+            JointState(
+                name=["arm/j0"],
+                position=np.array([0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=["arm/j0"],
+                position=np.array([123.456], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         ],
         status=PlanningStatus.SUCCESS,
         path_length=123.456,
@@ -145,7 +188,7 @@ def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None
     assert "waypoints=2" in text
     assert "path_length=123" in text
     assert "iterations=7" in text
-    assert "TrajectoryPoint" not in text
+    assert "JointTrajectoryPoint" not in text
     assert "positions" not in text
 
 

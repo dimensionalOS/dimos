@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-voxel-ray-tracing";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/mapping/ray_tracing/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/mapping/ray_tracing/rust/Cargo.toml"; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {

@@ -25,11 +25,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import CompressedImage
 from pydantic import Field, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 
 
 class V4L2CameraConfig(NativeModuleConfig):

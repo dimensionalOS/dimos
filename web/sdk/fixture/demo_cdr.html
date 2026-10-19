@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>DimOS generated CDR demo</title>
+    <style>
+      body {
+        margin: 3rem auto;
+        max-width: 960px;
+        padding: 0 1.5rem;
+        font: 16px/1.5 system-ui;
+        color: #172638;
+        background: #f4f7fa;
+      }
+      h1 {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+      }
+      label {
+        display: inline-block;
+        margin: 1rem 1rem 1rem 0;
+      }
+      select {
+        padding: 0.5rem;
+        font: inherit;
+      }
+      main {
+        background: white;
+        border: 1px solid #d5dfe8;
+        border-radius: 12px;
+        padding: 1.5rem;
+      }
+      #status {
+        color: #086848;
+        font-weight: 600;
+      }
+      pre {
+        overflow: auto;
+        padding: 1rem;
+        background: #edf2f6;
+        font-size: 14px;
+        max-height: 28rem;
+      }
+      canvas {
+        border: 1px solid #b8c9d6;
+        image-rendering: pixelated;
+      }
+      summary {
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Generated messages in the browser</h1>
+    <p>
+      Python-generated CDR bytes, decoded by the DimOS browser SDK from their embedded ROS2
+      definitions. No ROS installation or browser message package.
+    </p>
+    <label>Message <select id="message"></select></label>
+    <label>Byte order <select id="endian">
+        <option value="little">Little endian</option>
+        <option value="big">Big endian</option>
+      </select></label>
+    <main>
+      <div id="status" role="status"></div>
+      <h2 id="type"></h2>
+      <canvas id="image" width="2" height="1" style="width: 320px; height: 160px" hidden></canvas>
+      <pre id="value"></pre>
+      <details>
+        <summary>Embedded ROS2 definition</summary>
+        <pre id="schema"></pre>
+      </details>
+    </main>
+    <script type="module" src="./demo_cdr.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,43 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+from pathlib import Path
+
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.std_msgs.msg import Int32
+
+from dimos.experimental.isolated_python.bootstrap import load_class
+from dimos.experimental.isolated_python.example.contract import ExampleExternal
+
+
+def test_external_example_uses_generated_contract_and_cdr(monkeypatch):
+    project = Path(__file__).parents[3] / "native/python/example"
+    monkeypatch.syspath_prepend(str(project))
+    runtime_type = load_class("example_external.runtime:ExampleExternalRuntime")
+    runtime = runtime_type(_isolated_python_runtime=True, initial_multiplier=3)
+    received = []
+    monkeypatch.setattr(runtime.doubled, "publish", received.append)
+    try:
+        streams = {s.name: s.type for s in ExampleExternal.blueprint().blueprints[0].streams}
+        assert streams["value"] is Int32 and streams["doubled"] is Int32
+        runtime._publish_doubled(cdr_decode(cdr_encode(Int32(data=-7)), Int32))
+        assert len(received) == 1
+        assert type(received[0]) is Int32
+        assert cdr_decode(cdr_encode(received[0]), Int32).data == -21
+        assert runtime.get_multiplier() == 3
+    finally:
+        runtime.stop()

@@ -18,10 +18,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PointStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 
 from dimos.core.global_config import global_config
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override, g1_static_robot
 from dimos.visualization.vis_module import vis_module
 
@@ -51,14 +54,17 @@ def _g1_path_colors(path: Path) -> Any:
     if not path.poses:
         return rr.LineStrips3D([])
 
-    points = [[pose.x, pose.y, pose.z + _PATH_Z_LIFT] for pose in path.poses]
+    points = [
+        [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z + _PATH_Z_LIFT]
+        for pose in path.poses
+    ]
     return rr.LineStrips3D([points], colors=[_PATH_COLOR_RGBA], radii=_PATH_RADIUS_METERS)
 
 
-def _global_map_colors(cloud: Any) -> Any:
+def _global_map_colors(cloud: PointCloud2) -> Any:
     import rerun as rr
 
-    points, _ = cloud.as_numpy()
+    points = pointcloud_xyz(cloud)
     if len(points) == 0:
         return None
 
@@ -76,27 +82,29 @@ def _global_map_colors(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.03)
 
 
-def _waypoint_colors(waypoint: Any) -> Any:
+def _waypoint_colors(waypoint: PointStamped) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(value) for value in (waypoint.x, waypoint.y, waypoint.z)):
+    if not all(
+        math.isfinite(value) for value in (waypoint.point.x, waypoint.point.y, waypoint.point.z)
+    ):
         return None
 
     return rr.Points3D(
-        positions=[[waypoint.x, waypoint.y, waypoint.z + _VIS_LIFT]],
+        positions=[[waypoint.point.x, waypoint.point.y, waypoint.point.z + _VIS_LIFT]],
         colors=[(255, 140, 0)],
         radii=0.22,
     )
 
 
-def _goal_colors(goal: Any) -> Any:
+def _goal_colors(goal: PointStamped) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(value) for value in (goal.x, goal.y, goal.z)):
+    if not all(math.isfinite(value) for value in (goal.point.x, goal.point.y, goal.point.z)):
         return None
 
     return rr.Points3D(
-        positions=[[goal.x, goal.y, goal.z + _VIS_LIFT]],
+        positions=[[goal.point.x, goal.point.y, goal.point.z + _VIS_LIFT]],
         colors=[(180, 60, 220)],
         radii=0.3,
     )

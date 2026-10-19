@@ -25,12 +25,12 @@ whose native only reads it.
 
 from typing import Protocol
 
+from dimos_generated.geometry_msgs.msg import PointStamped, Twist
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class GlobalPlanner(Protocol):

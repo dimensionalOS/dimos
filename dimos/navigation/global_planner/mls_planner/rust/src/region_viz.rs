@@ -86,7 +86,7 @@ pub fn cell_of((ix, iy, _): VoxelKey, pitch: i32) -> Cell {
     (ix.div_euclid(pitch), iy.div_euclid(pitch))
 }
 
-/// A cell packed into a message seq so the viewer keys entities by it: i in
+/// A cell packed into a region ID so the viewer keys entities by it: i in
 /// the high 16 bits, j in the low 16, both signed.
 pub fn pack_cell((i, j): Cell) -> i32 {
     debug_assert!(i16::try_from(i).is_ok() && i16::try_from(j).is_ok());
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_cells_round_trip_through_the_seq_layout() {
+    fn packed_cells_round_trip_through_the_region_id_layout() {
         let seq = pack_cell((-3, 5));
         assert_eq!((seq >> 16, ((seq & 0xffff) ^ 0x8000) - 0x8000), (-3, 5));
         let seq = pack_cell((7, -2));

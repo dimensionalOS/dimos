@@ -18,10 +18,11 @@ from dataclasses import dataclass
 import os
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.protocol.pubsub.benchmark.type import Case
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.spec import PubSub
@@ -36,6 +37,11 @@ except ImportError:
     DDS_AVAILABLE = False
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.shmpubsub import (
+    BytesSharedMemory,
+    CDRSharedMemory,
+    PickleSharedMemory,
+)
 
 
 def make_data_bytes(size: int) -> bytes:
@@ -54,7 +60,7 @@ def make_data_image(size: int) -> Image:
     height = max(1, int(pixels**0.5))
     width = pixels // height
     data = padded_data[: height * width * 3].reshape(height, width, 3)
-    return Image(data=data, format=ImageFormat.RGB)
+    return image_from_array(data, encoding="rgb8")
 
 
 testcases: list[Case[Any, Any]] = []
@@ -69,7 +75,7 @@ def lcm_pubsub_channel() -> Generator[LCM, None, None]:
 
 
 def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
-    topic = LCMTopic(topic="benchmark/lcm", lcm_type=Image)
+    topic = LCMTopic(topic="benchmark/lcm", msg_type=Image)
     return (topic, make_data_image(size))
 
 
@@ -121,6 +127,66 @@ def memory_msggen(size: int) -> tuple[str, Any]:
 #     )
 # )
 
+
+@contextmanager
+def shm_pickle_pubsub_channel() -> Generator[PickleSharedMemory, None, None]:
+    # 12MB capacity to handle benchmark sizes up to 10MB
+    shm_pubsub = PickleSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+    shm_pubsub.start()
+    yield shm_pubsub
+    shm_pubsub.stop()
+
+
+def shm_msggen(size: int) -> tuple[str, Any]:
+    """Generate message for SharedMemory pubsub benchmark."""
+    return ("benchmark/shm", make_data_image(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=shm_pickle_pubsub_channel,
+        msg_gen=shm_msggen,
+    )
+)
+
+
+@contextmanager
+def shm_bytes_pubsub_channel() -> Generator[BytesSharedMemory, None, None]:
+    """SharedMemory with raw bytes - no pickle overhead."""
+    shm_pubsub = BytesSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+    shm_pubsub.start()
+    yield shm_pubsub
+    shm_pubsub.stop()
+
+
+def shm_bytes_msggen(size: int) -> tuple[str, bytes]:
+    """Generate raw bytes for SharedMemory transport benchmark."""
+    return ("benchmark/shm_bytes", make_data_bytes(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=shm_bytes_pubsub_channel,
+        msg_gen=shm_bytes_msggen,
+    )
+)
+
+
+@contextmanager
+def shm_cdr_pubsub_channel() -> Generator[CDRSharedMemory, None, None]:
+    """SharedMemory with CDR encoding - no pickle overhead."""
+    shm_pubsub = CDRSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+    shm_pubsub.start()
+    yield shm_pubsub
+    shm_pubsub.stop()
+
+
+testcases.append(
+    Case(
+        pubsub_context=shm_cdr_pubsub_channel,
+        msg_gen=lcm_msggen,  # Reuse the LCM message generator
+    )
+)
 
 if DDS_AVAILABLE:
     from cyclonedds.idl import IdlStruct

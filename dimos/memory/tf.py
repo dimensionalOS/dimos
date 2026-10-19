@@ -19,12 +19,14 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.memory.stream import Stream
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+
     from dimos.protocol.tf.tf import TFLookup
 
 
@@ -58,7 +60,7 @@ class StreamTF(MultiTBuffer):
         recorded = tf_stream(store, stream)
         return None if recorded is None else cls(recorded)
 
-    def publish(self, *args: Transform) -> None:
+    def publish(self, *args: TransformStamped) -> None:
         raise NotImplementedError("StreamTF is a read-only replay service.")
 
     def _load(self, lo: float, hi: float) -> None:
@@ -86,7 +88,7 @@ class StreamTF(MultiTBuffer):
         *,
         forward_tolerance: float = 0.0,
         warn: bool = True,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         tp = time_point
         if tp is None:
             last = next(iter(self.stream.order_by("ts", desc=True).limit(1)), None)

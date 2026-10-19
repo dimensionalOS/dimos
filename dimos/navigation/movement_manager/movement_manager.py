@@ -25,15 +25,14 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos_generated.std_msgs.msg import Bool
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -45,7 +44,9 @@ MAX_CLICK_VERTICAL_M = 50.0
 
 class MovementManagerConfig(ModuleConfig):
     tele_cooldown_sec: float = 1.0
-    tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
+    tele_cmd_vel_scaling: Twist = Twist(
+        linear=Vector3(x=1, y=1, z=1), angular=Vector3(x=1, y=1, z=1)
+    )
 
 
 class MovementManager(Module):
@@ -82,18 +83,22 @@ class MovementManager(Module):
         super().stop()
 
     def _on_click(self, msg: PointStamped) -> None:
-        if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
-            logger.warning("Ignored invalid click", x=msg.x, y=msg.y, z=msg.z)
+        if not all(math.isfinite(v) for v in (msg.point.x, msg.point.y, msg.point.z)):
+            logger.warning("Ignored invalid click", x=msg.point.x, y=msg.point.y, z=msg.point.z)
             return
         if (
-            abs(msg.x) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.y) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.z) > MAX_CLICK_VERTICAL_M
+            abs(msg.point.x) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.point.y) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.point.z) > MAX_CLICK_VERTICAL_M
         ):
-            logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
+            logger.warning(
+                "Ignored out-of-range click", x=msg.point.x, y=msg.point.y, z=msg.point.z
+            )
             return
 
-        logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        logger.debug(
+            "Goal", x=round(msg.point.x, 1), y=round(msg.point.y, 1), z=round(msg.point.z, 1)
+        )
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
@@ -103,7 +108,7 @@ class MovementManager(Module):
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners
         cancel = PointStamped(
-            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
+            header=header_now("map"), point=Point(x=float("nan"), y=float("nan"), z=float("nan"))
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
@@ -129,14 +134,14 @@ class MovementManager(Module):
         scale = self.config.tele_cmd_vel_scaling
         scaled = Twist(
             linear=Vector3(
-                msg.linear.x * scale.linear.x,
-                msg.linear.y * scale.linear.y,
-                msg.linear.z * scale.linear.z,
+                x=msg.linear.x * scale.linear.x,
+                y=msg.linear.y * scale.linear.y,
+                z=msg.linear.z * scale.linear.z,
             ),
             angular=Vector3(
-                msg.angular.x * scale.angular.x,
-                msg.angular.y * scale.angular.y,
-                msg.angular.z * scale.angular.z,
+                x=msg.angular.x * scale.angular.x,
+                y=msg.angular.y * scale.angular.y,
+                z=msg.angular.z * scale.angular.z,
             ),
         )
         self.cmd_vel.publish(scaled)

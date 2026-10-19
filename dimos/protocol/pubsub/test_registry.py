@@ -17,6 +17,9 @@ from __future__ import annotations
 from contextlib import ExitStack
 import threading
 
+from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -25,13 +28,15 @@ from dimos.core.transport import (
     JpegLcmTransport,
     LCMTransport,
     PubSubTransport,
+    SHMTransport,
     ZenohTransport,
     pLCMTransport,
+    pSHMTransport,
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.protocol.pubsub.registry import (
     make_pubsub_transport,
     parse_pubsub_uri,
@@ -52,7 +57,7 @@ def session_pool(monkeypatch):
 
 def test_supported_protos_includes_known_set() -> None:
     """Registry exposes the canonical proto names."""
-    assert supported_protos() == ["jpeg_lcm", "lcm", "plcm", "pzenoh", "zenoh"]
+    assert supported_protos() == ["jpeg_lcm", "lcm", "plcm", "pshm", "pzenoh", "shm", "zenoh"]
 
 
 @pytest.mark.parametrize(
@@ -63,16 +68,16 @@ def test_supported_protos_includes_known_set() -> None:
         ("zenoh:dimos/color_image", ("zenoh", "dimos/color_image", None)),
         ("pzenoh:foo/bar", ("pzenoh", "foo/bar", None)),
         (
-            "lcm:/odom#nav_msgs.Odometry",
-            ("lcm", "/odom", "nav_msgs.Odometry"),
+            "lcm:/odom#nav_msgs/msg/Odometry",
+            ("lcm", "/odom", "nav_msgs/msg/Odometry"),
         ),
         (
-            "jpeg_lcm:/color_image#sensor_msgs.Image",
-            ("jpeg_lcm", "/color_image", "sensor_msgs.Image"),
+            "jpeg_lcm:/color_image#sensor_msgs/msg/Image",
+            ("jpeg_lcm", "/color_image", "sensor_msgs/msg/Image"),
         ),
         (
-            "zenoh:dimos/color_image#sensor_msgs.Image",
-            ("zenoh", "dimos/color_image", "sensor_msgs.Image"),
+            "zenoh:dimos/color_image#sensor_msgs/msg/Image",
+            ("zenoh", "dimos/color_image", "sensor_msgs/msg/Image"),
         ),
     ],
 )
@@ -97,7 +102,7 @@ def test_parse_pubsub_uri_rejects_malformed(uri: str) -> None:
         parse_pubsub_uri(uri)
 
 
-@pytest.mark.parametrize("proto", ["shm", "pshm", "jpeg_shm"])
+@pytest.mark.parametrize("proto", ["jpeg_shm"])
 def test_make_pubsub_transport_rejects_removed_protocols(proto) -> None:
     with pytest.raises(ValueError, match=f"Unsupported proto '{proto}'"):
         make_pubsub_transport(f"{proto}:color_image", msg_type=Image)
@@ -131,7 +136,7 @@ def test_make_pubsub_transport_zenoh_matches_default_image_channel() -> None:
     default = make_transport("color_image", Image, g=GlobalConfig(transport="zenoh"))
 
     assert isinstance(t, ZenohTransport)
-    assert t.channel == default.channel == "dimos/color_image/sensor_msgs.Image"
+    assert t.channel == default.channel == "dimos/color_image/sensor_msgs/msg/Image"
 
 
 def test_make_pubsub_transport_pzenoh_ignores_msg_type() -> None:
@@ -150,9 +155,13 @@ def test_make_pubsub_transport_typed_proto_without_msg_type_raises(proto) -> Non
 @pytest.mark.parametrize("proto", ["lcm", "jpeg_lcm", "zenoh"])
 @pytest.mark.parametrize("msg_type", [None, Vector3])
 def test_make_pubsub_transport_uri_suffix_resolves_and_overrides_msg_type(proto, msg_type) -> None:
-    t = make_pubsub_transport(f"{proto}:color_image#sensor_msgs.Image", msg_type=msg_type)
+    t = make_pubsub_transport(f"{proto}:color_image#sensor_msgs/msg/Image", msg_type=msg_type)
 
-    assert t.topic.lcm_type is Image
+    assert t.topic.msg_type.__msgtype__ == (
+        "sensor_msgs/msg/CompressedImage" if proto == "jpeg_lcm" else "sensor_msgs/msg/Image"
+    )
+    if proto == "jpeg_lcm":
+        assert t.image_type is Image
 
 
 @pytest.mark.parametrize("proto", ["lcm", "zenoh"])
@@ -185,11 +194,10 @@ def test_subscribe_pubsub_uri_returns_transport_and_unsubscribe(mocker) -> None:
     [("zenoh:dimos/registry_image", Image), ("pzenoh:dimos/registry_image", None)],
 )
 def test_zenoh_uri_receives_image_from_standard_publisher(uri, msg_type, session_pool) -> None:
-    message = Image(
-        data=np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8),
-        format=ImageFormat.RGB,
-        ts=12.5,
-        frame_id="camera",
+    message = image_from_array(
+        np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(12.5), frame_id="camera"),
     )
     received: list[Image] = []
     arrived = threading.Event()
@@ -209,7 +217,20 @@ def test_zenoh_uri_receives_image_from_standard_publisher(uri, msg_type, session
 
         assert arrived.wait(timeout=5.0)
         assert len(received) == 1
-        np.testing.assert_array_equal(received[0].data, message.data)
-        assert received[0].format == ImageFormat.RGB
-        assert received[0].ts == 12.5
-        assert received[0].frame_id == "camera"
+        np.testing.assert_array_equal(image_view(received[0]), image_view(message))
+        assert received[0].encoding == "rgb8"
+        assert to_seconds(received[0].header.stamp) == 12.5
+        assert received[0].header.frame_id == "camera"
+
+
+@pytest.mark.parametrize("msg_type", [None, Image])
+def test_make_pubsub_transport_shm(msg_type) -> None:
+    transport = make_pubsub_transport("shm:registry_image", msg_type=msg_type)
+    assert isinstance(transport, SHMTransport)
+    assert transport.channel == (
+        "registry_image#sensor_msgs/msg/Image" if msg_type else "registry_image"
+    )
+
+
+def test_make_pubsub_transport_pshm() -> None:
+    assert isinstance(make_pubsub_transport("pshm:registry_image"), pSHMTransport)

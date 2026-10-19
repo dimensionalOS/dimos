@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from collections import deque
 from functools import reduce
-import operator
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from reactivex import Observable, operators as ops
 
 from dimos.core.core import rpc
@@ -30,7 +30,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.module import Config, RelocalizationModule
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import concatenate_clouds, pointcloud_to_open3d
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
@@ -51,7 +51,7 @@ def window(
         ops.do_action(held.append),
         ops.throttle_first(interval),
         ops.filter(lambda _: len(held) >= cfg.min_frames),
-        ops.map(lambda _: reduce(operator.add, held)),
+        ops.map(lambda _: reduce(concatenate_clouds, held)),
     )
 
 
@@ -91,7 +91,9 @@ class CloudRelocalization(RelocalizationModule):
             return
         # Downsampling the premap and computing its normals and FPFH is the
         # pipeline's dominant cost, so it is a startup cost, not a per-fix one.
-        self._relocalizer = LidarRelocalizer(self.premap.pointcloud, self.config.relocalize)
+        self._relocalizer = LidarRelocalizer(
+            pointcloud_to_open3d(self.premap), self.config.relocalize
+        )
         self.register_disposable(
             backpressure(
                 self.clouds().pipe(
@@ -108,20 +110,20 @@ class CloudRelocalization(RelocalizationModule):
         now = time.monotonic()
         if now - self._last_skip_log > 5.0:
             logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} "
+                f"relocalize skipped: n_pts={msg.width * msg.height} "
                 f"< min_local_points={self.config.min_local_points}"
             )
             self._last_skip_log = now
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= self.config.min_local_points
+        return msg.width * msg.height >= self.config.min_local_points
 
     def _relocalize(self, msg: PointCloud2) -> None:
         assert self._relocalizer is not None
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.relocalize(
-                msg.pointcloud, self.config.world_frame, self.config.map_frame
+                pointcloud_to_open3d(msg), self.config.world_frame, self.config.map_frame
             )
         except Exception:
             logger.exception("relocalize() failed")
@@ -129,11 +131,11 @@ class CloudRelocalization(RelocalizationModule):
         dt = time.monotonic() - t0
         if tf is None:
             logger.info(
-                f"relocalize lidar: refused after {dt:.1f}s n_pts={len(msg)} "
+                f"relocalize lidar: refused after {dt:.1f}s n_pts={msg.width * msg.height} "
                 f"(below fitness_threshold={self.config.relocalize.fitness_threshold})"
             )
             return
-        logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
+        logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={msg.width * msg.height}")
         self.submit(tf, "lidar")
 
 

@@ -14,12 +14,12 @@
 
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 
 
 @pytest.fixture
@@ -30,9 +30,11 @@ def dataset(tmp_path: Path) -> str:
         stream = store.stream("odom", PoseStamped)
         for i in range(5):
             pose = PoseStamped(
-                position=make_vector3(float(i), 0.0, 0.0),
-                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=float(i), y=0.0, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
             )
             stream.append(pose, ts=1000.0 + i)
     return str(path)

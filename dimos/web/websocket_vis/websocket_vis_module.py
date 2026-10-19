@@ -24,11 +24,20 @@ The frontend is served from a separate HTML file.
 import asyncio
 from pathlib import Path as FilePath
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 import webbrowser
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+from dimos_generated.std_msgs.msg import Bool
 from reactivex.disposable import Disposable
 
 from dimos.utils.data import get_data
@@ -48,12 +57,9 @@ from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_euler
+from dimos.msgs.occupancy import occupancy_view
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.optimized_costmap import OptimizedCostmapEncoder
 
@@ -92,13 +98,13 @@ class WebsocketVisModule(Module):
 
     config: WebsocketConfig
 
-    # LCM inputs
+    # Typed inputs
     odom: In[PoseStamped]
     gps_location: In[LatLon]
     path: In[Path]
     global_costmap: In[OccupancyGrid]
 
-    # LCM outputs
+    # Typed outputs
     goal_request: Out[PoseStamped]
     gps_goal: Out[LatLon]
     explore_cmd: Out[Bool]
@@ -296,13 +302,17 @@ class WebsocketVisModule(Module):
         @self.sio.event  # type: ignore[untyped-decorator]
         async def click(sid, position) -> None:  # type: ignore[no-untyped-def]
             goal = PoseStamped(
-                position=(position[0], position[1], 0),
-                orientation=(0, 0, 0, 1),  # Default orientation
-                frame_id="world",
+                header=header_now("world"),
+                pose=Pose(
+                    position=Point(x=position[0], y=position[1], z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             )
             self.goal_request.publish(goal)
             logger.info(
-                "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
+                "Click goal published",
+                x=round(goal.pose.position.x, 3),
+                y=round(goal.pose.position.y, 3),
             )
 
         @self.sio.event  # type: ignore[untyped-decorator]
@@ -343,30 +353,18 @@ class WebsocketVisModule(Module):
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
-            # Publish Twist if transport is configured
-            if self.tele_cmd_vel and self.tele_cmd_vel.transport:
-                twist = Twist(
-                    linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
-                    angular=Vector3(
-                        data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
-                    ),
-                )
-                self.tele_cmd_vel.publish(twist)
-
-            # Publish TwistStamped if transport is configured
-            if self.movecmd_stamped and self.movecmd_stamped.transport:
-                twist_stamped = TwistStamped(
-                    ts=time.time(),
-                    frame_id="base_link",
-                    linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
-                    angular=Vector3(
-                        data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
-                    ),
-                )
-                self.movecmd_stamped.publish(twist_stamped)
+            twist = Twist(
+                linear=Vector3(**data["linear"]),
+                angular=Vector3(**data["angular"]),
+            )
+            self.tele_cmd_vel.publish(twist)
+            self.movecmd_stamped.publish(TwistStamped(header=header_now("base_link"), twist=twist))
 
     def _on_robot_pose(self, msg: PoseStamped) -> None:
-        pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
+        pose_data = {
+            "type": "vector",
+            "c": [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z],
+        }
         self.vis_state["robot_pose"] = pose_data
         self._emit("robot_pose", pose_data)
 
@@ -376,7 +374,7 @@ class WebsocketVisModule(Module):
         self._emit("gps_location", pose_data)
 
     def _on_path(self, msg: Path) -> None:
-        points = [[pose.position.x, pose.position.y] for pose in msg.poses]
+        points = [[pose.pose.position.x, pose.pose.position.y] for pose in msg.poses]
         path_data = {"type": "path", "points": points}
         self.vis_state["path"] = path_data
         self._emit("path", path_data)
@@ -389,17 +387,17 @@ class WebsocketVisModule(Module):
     def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
         costmap = gradient(simple_inflate(costmap, 0.1), max_distance=1.0)
-        grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
+        grid_data = self.costmap_encoder.encode_costmap(occupancy_view(costmap))
 
         return {
             "type": "costmap",
             "grid": grid_data,
             "origin": {
                 "type": "vector",
-                "c": [costmap.origin.position.x, costmap.origin.position.y, 0],
+                "c": [costmap.info.origin.position.x, costmap.info.origin.position.y, 0],
             },
-            "resolution": costmap.resolution,
-            "origin_theta": 0,  # Assuming no rotation for now
+            "resolution": costmap.info.resolution,
+            "origin_theta": quaternion_euler(costmap.info.origin.orientation)[2],
         }
 
     def _emit(self, event: str, data: Any) -> None:

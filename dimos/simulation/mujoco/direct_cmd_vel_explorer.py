@@ -16,11 +16,11 @@ import math
 import threading
 from typing import TYPE_CHECKING
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import yaw
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -76,19 +76,21 @@ class DirectCmdVelExplorer:
 
     def _stop(self) -> None:
         assert self._cmd_vel is not None
-        self._cmd_vel.broadcast(None, Twist(linear=Vector3(), angular=Vector3()))
+        self._cmd_vel.broadcast(
+            None, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
     def _drive_to(self, target_x: float, target_y: float) -> None:
         """Pursuit controller: steer toward the target while driving forward."""
         while True:
             pose = self._wait_for_pose()
-            dx = target_x - pose.x
-            dy = target_y - pose.y
+            dx = target_x - pose.pose.position.x
+            dy = target_y - pose.pose.position.y
             distance = math.hypot(dx, dy)
             if distance < 0.3:
                 break
             target_heading = math.atan2(dy, dx)
-            heading_error = self._normalize_angle(target_heading - pose.yaw)
+            heading_error = self._normalize_angle(target_heading - yaw(pose.pose.orientation))
             # Only drive forward when roughly facing the target.
             if abs(heading_error) > 0.3:
                 linear = 0.0
@@ -98,7 +100,9 @@ class DirectCmdVelExplorer:
             assert self._cmd_vel is not None
             self._cmd_vel.broadcast(
                 None,
-                Twist(linear=Vector3(linear, 0, 0), angular=Vector3(0, 0, angular)),
+                Twist(
+                    linear=Vector3(x=linear, y=0.0, z=0.0), angular=Vector3(z=angular, x=0.0, y=0.0)
+                ),
             )
         self._stop()
 

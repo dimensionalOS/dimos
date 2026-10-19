@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
@@ -26,7 +27,6 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModuleConfig,
 )
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 

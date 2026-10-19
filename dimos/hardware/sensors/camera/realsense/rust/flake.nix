@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-realsense";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/hardware/sensors/camera/realsense/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/hardware/sensors/camera/realsense/rust/Cargo.toml"; };
 
         needsLibrealsense = _: {
           buildInputs = [ pkgs.librealsense ];

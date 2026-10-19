@@ -41,12 +41,21 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import (
+    inverse_transform,
+    pose_from_transform,
+    pose_matrix,
+    transform_matrix,
+    vector_array,
+)
+from dimos.msgs.image import image_from_array, image_to_bgr, image_to_rgb
+from dimos.msgs.pointcloud import pointcloud_xyz, voxel_downsample_cloud
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
@@ -104,12 +113,13 @@ def render(
     with it. The 3D view hides those frames, and ``cameras`` unless there is
     a robot, until toggled on.
     """
+    from matplotlib import colormaps
     import rerun as rr
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.sensor_msgs.PointCloud2 import _get_colormap_lut
     from dimos.visualization.rerun.init import rerun_init
+    from dimos.visualization.rerun.message_helpers import camera_pinhole, image_archetype
 
     names = {frame: rr.escape_entity_path_part(frame) for frame in rig.cameras}
     robot = base_pose(rig, backdrop_ts) is not None
@@ -136,6 +146,10 @@ def render(
         )
     )
 
+    def pose_archetype(pose: PoseStamped) -> Any:
+        matrix = pose_matrix(pose.pose)
+        return rr.Transform3D(translation=matrix[:3, 3], mat3x3=matrix[:3, :3])
+
     def at(ts: float) -> None:
         rr.set_time("ts", timestamp=ts)
 
@@ -146,7 +160,7 @@ def render(
     # map cells claimed by a detected object, plus one cell of halo
     answer_points = np.vstack(
         [
-            det.pointcloud.points_f32()
+            pointcloud_xyz(det.pointcloud)
             for _, trace in traces
             for members in trace.answers
             for det in members
@@ -161,13 +175,13 @@ def render(
 
     def image_colors(det: Any) -> np.ndarray:
         """Sample the sighting's own image at each cloud point's reprojection."""
-        points = det.pointcloud.points_f32()
-        matrix = det.transform.to_matrix()
+        points = pointcloud_xyz(det.pointcloud)
+        matrix = transform_matrix(det.transform.transform)
         cam = points @ matrix[:3, :3].T + matrix[:3, 3]
-        pixels = Detection3DPC.project_pixels(cam, rig.cameras[det.image.frame_id].info)
+        pixels = Detection3DPC.project_pixels(cam, rig.cameras[det.image.header.frame_id].info)
         cols = np.round(pixels[:, 0]).astype(int)
         rows = np.round(pixels[:, 1]).astype(int)
-        rgb = det.image.to_rgb().data
+        rgb = image_to_rgb(det.image)
         height, width = rgb.shape[:2]
         return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
 
@@ -178,13 +192,13 @@ def render(
     for frame, name in names.items():
         backdrop = rig.backdrop(backdrop_ts, frame) if frame not in through_lidar else None
         if backdrop is not None:
-            carved = carve(backdrop.voxel_downsample(MAP_CELL).points_f32())
+            carved = carve(pointcloud_xyz(voxel_downsample_cloud(backdrop, MAP_CELL)))
             if len(carved):
                 views[name] = (carved, POINT_SIZE)
     lidar_size = LIDAR_POINT_SIZE
     lidar_map = rig.lidar_map() if through_lidar else None
     if lidar_map is not None:
-        points = lidar_map.points_f32()
+        points = pointcloud_xyz(lidar_map)
         lidar_size = lattice_quantum(points) or LIDAR_POINT_SIZE
         carved = carve(points)
         if len(carved):
@@ -193,7 +207,7 @@ def render(
     if views:
         heights = np.concatenate([carved[:, 2] for carved, _ in views.values()])
         low, high = float(heights.min()), float(heights.max())
-        turbo = _get_colormap_lut("turbo")
+        turbo = (colormaps["turbo"](np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
         for name, (carved, spacing) in views.items():
             t = np.clip((carved[:, 2] - low) / (high - low + 1e-8), 0.0, 1.0)
             colors = turbo[(t * 255).astype(np.uint8)].astype(np.float32)
@@ -208,7 +222,11 @@ def render(
     # each camera's live feed + frustum tracking its capture pose along the
     # timeline; a robot's body box follows its base frame
     for frame, name in names.items():
-        rr.log(f"cameras/{name}", rig.cameras[frame].info.to_rerun(), static=True)
+        rr.log(
+            f"cameras/{name}",
+            camera_pinhole(rig.cameras[frame].info, optical_frame=""),
+            static=True,
+        )
     if robot:
         body = rr.Boxes3D(half_sizes=[ROBOT_HALF_SIZES], colors=[ROBOT_COLOR])
         rr.log("robot", body, static=True)
@@ -220,16 +238,16 @@ def render(
         key=lambda obs: obs.ts,
     )
     for obs in feed:
-        frame = obs.data.frame_id
+        frame = obs.data.header.frame_id
         pose = rig.camera_pose(obs.ts, frame)
         if pose is None:
             continue
         at(obs.ts)
-        rr.log(f"cameras/{names[frame]}/image", obs.data.to_rerun())
-        rr.log(f"cameras/{names[frame]}", pose.to_rerun())
+        rr.log(f"cameras/{names[frame]}/image", image_archetype(obs.data))
+        rr.log(f"cameras/{names[frame]}", pose_archetype(pose))
         base = base_pose(rig, obs.ts) if robot else None
         if base is not None:
-            rr.log("robot", base.to_rerun())
+            rr.log("robot", pose_archetype(base))
 
     n_instances = sum(len(trace.answers) for _, trace in traces)
     box_colors = [
@@ -247,29 +265,31 @@ def render(
     for _, trace in traces:
         for obs in trace.detection_frames:
             image = obs.data.image
-            shots.setdefault((image.frame_id, obs.ts), (image, []))[1].extend(obs.data.detections)
+            shots.setdefault((image.header.frame_id, obs.ts), (image, []))[1].extend(
+                obs.data.detections
+            )
     for (camera, ts), (image, dets) in sorted(shots.items(), key=lambda shot: shot[0][1]):
         if rig.camera_pose(ts, camera) is None:
             continue
         at(ts)
         marked = overlay(image, best_per_box(dets), label_colors)
-        rr.log(f"cameras/{names[camera]}/image", marked.to_rerun())
+        rr.log(f"cameras/{names[camera]}/image", image_archetype(marked))
 
     for query, trace in traces:
         root = f"detections/{query.replace(' ', '_')}"
 
         # a frozen frustum at each detection frame's capture pose, with this label's masks
         for i, obs in enumerate(trace.detection_frames):
-            camera = obs.data.image.frame_id
+            camera = obs.data.image.header.frame_id
             pose = rig.camera_pose(obs.ts, camera)
             if pose is None:
                 continue
             at(obs.ts)
             frame = f"{root}/frames/{i}"
-            rr.log(frame, pose.to_rerun())
-            rr.log(frame, rig.cameras[camera].info.to_rerun())
+            rr.log(frame, pose_archetype(pose))
+            rr.log(frame, camera_pinhole(rig.cameras[camera].info, optical_frame=""))
             marked = overlay(obs.data.image, obs.data.detections, label_colors)
-            rr.log(f"{frame}/image", marked.to_rerun())
+            rr.log(f"{frame}/image", image_archetype(marked))
 
         # the answers: per verified instance, every sighting's cloud colored
         # by its own image and grouped by camera, wrapped in a labeled
@@ -279,13 +299,13 @@ def render(
                 rr.log(
                     f"{root}/answer/{i}/{names[camera]}",
                     rr.Points3D(
-                        positions=np.vstack([det.pointcloud.points_f32() for det in sightings]),
+                        positions=np.vstack([pointcloud_xyz(det.pointcloud) for det in sightings]),
                         colors=np.vstack([image_colors(det) for det in sightings]),
                         radii=size[camera] / 2,
                     ),
                     static=True,
                 )
-            positions = np.vstack([det.pointcloud.points_f32() for det in members])
+            positions = np.vstack([pointcloud_xyz(det.pointcloud) for det in members])
             aabb_min, aabb_max = positions.min(axis=0), positions.max(axis=0)
             score = max(det.confidence for det in members)
             rr.log(
@@ -307,7 +327,7 @@ def overlay(image: Image, detections: list[Any], colors: dict[str, tuple[int, in
     its box and its label; a detection without a mask gets the box alone."""
     import cv2
 
-    canvas = image.to_opencv().copy()
+    canvas = image_to_bgr(image).copy()
     tint = canvas.copy()
     for det in detections:
         mask = getattr(det, "mask", None)
@@ -331,7 +351,7 @@ def overlay(image: Image, detections: list[Any], colors: dict[str, tuple[int, in
         cv2.putText(
             canvas, label, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
         )
-    return Image.from_opencv(canvas, frame_id=image.frame_id, ts=image.ts)
+    return image_from_array(canvas, encoding="bgr8", header=image.header)
 
 
 def best_per_box(detections: list[Any]) -> list[Any]:
@@ -348,14 +368,14 @@ def best_per_box(detections: list[Any]) -> list[Any]:
 def base_pose(rig: Rig, ts: float) -> PoseStamped | None:
     """World pose of the robot's base frame at ts; None when tf has none."""
     transform = rig.tf.get(BASE_FRAME, rig.world_frame, ts, TF_TOLERANCE)
-    return (-transform).to_pose() if transform is not None else None
+    return pose_from_transform(inverse_transform(transform)) if transform is not None else None
 
 
 def by_camera(rig: Rig, sightings: list[Detection3DPC]) -> dict[str, list[Detection3DPC]]:
     """An instance's sightings per camera, in the rig's camera order."""
     grouped: dict[str, list[Detection3DPC]] = {frame: [] for frame in rig.cameras}
     for det in sightings:
-        grouped[det.image.frame_id].append(det)
+        grouped[det.image.header.frame_id].append(det)
     return {frame: dets for frame, dets in grouped.items() if dets}
 
 
@@ -365,8 +385,10 @@ def camera_line(rig: Rig, sightings: list[Detection3DPC]) -> str:
     means: list[np.ndarray] = []
     parts: list[str] = []
     for frame, dets in by_camera(rig, sightings).items():
-        centroids = [np.asarray(det.pointcloud.pointcloud.points).mean(axis=0) for det in dets]
-        cameras = np.array([(-det.transform).translation.to_numpy() for det in dets])
+        centroids = [pointcloud_xyz(det.pointcloud).mean(axis=0) for det in dets]
+        cameras = np.array(
+            [vector_array(inverse_transform(det.transform).transform.translation) for det in dets]
+        )
         views = len(np.unique(np.round(cameras, 2), axis=0))
         mean = np.mean(centroids, axis=0)
         means.append(mean)
@@ -388,7 +410,7 @@ def report(query: str, hits: list[Localization], trace: LocalizeTrace, rig: Rig,
         print(
             f"hit {query!r} [{hit.instance_id}]: position=({x:.3f}, {y:.3f}, {z:.3f}) "
             f"frame={hit.frame_id} ts_offset={hit.last_seen_timestamp - lo:.1f}s "
-            f"points={len(hit.point_cloud)} views={hit.n_views} "
+            f"points={hit.point_cloud.width * hit.point_cloud.height} views={hit.n_views} "
             f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
         )
         if len(rig.cameras) > 1:

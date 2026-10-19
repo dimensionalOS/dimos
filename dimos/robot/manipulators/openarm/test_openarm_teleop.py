@@ -16,6 +16,10 @@
 
 from typing import Any, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Float32, Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -28,9 +32,6 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_WEBXR_TASK_NAME,
@@ -160,8 +161,20 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         OpenArmPinkPoseTargetSolver,
         "frame_poses",
         return_value={
-            "openarm_left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
-            "openarm_right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "openarm_left_grasp_frame": PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.5, y=0.2, z=0.4),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            "openarm_right_grasp_frame": PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.5, y=-0.2, z=0.4),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
         },
     )
     step = mocker.patch.object(
@@ -169,7 +182,10 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         "step",
         return_value=JointState(
             name=list(OPENARM_ARM_JOINTS),
-            position=[0.01] * len(OPENARM_ARM_JOINTS),
+            position=np.asarray([0.01] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
     )
     mocker.patch.object(TickLoop, "start")
@@ -194,16 +210,28 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         buttons.left_grip = True
         buttons.right_grip = True
         buttons.pack_analog_triggers(left=0.25, right=0.75)
-        coordinator._dispatch("teleop_buttons", buttons)
+        coordinator._dispatch("teleop_buttons", buttons.to_message())
         coordinator._dispatch("left_gripper_command", Float32(data=0.75))
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=1.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=-1.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
         )
 
         assert coordinator._tick_loop is not None
@@ -223,7 +251,7 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
 
         released = Buttons()
         released.right_primary = True
-        coordinator._dispatch("teleop_buttons", released)
+        coordinator._dispatch("teleop_buttons", released.to_message())
         coordinator._tick_loop._tick()
         step.assert_called_once()
     finally:
@@ -241,7 +269,13 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
         lm_damping=0.01,
         gain=0.25,
     )
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     solver = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
     targets = solver.frame_poses(seed, frames)
 
@@ -263,7 +297,12 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
 
     moved_seed = JointState(
         name=OPENARM_ARM_JOINTS,
-        position=np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(),
+        position=np.asarray(
+            np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(), dtype=np.float64
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     solver.reset()
     solver.step(targets, moved_seed, 0.01)
@@ -287,13 +326,23 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
         gain=0.25,
     )
     ik = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     initial = ik.frame_poses(seed, frames)
     targets = {
         name: PoseStamped(
-            frame_id=pose.frame_id,
-            position=[pose.position.x, pose.position.y, pose.position.z + 0.01],
-            orientation=pose.orientation,
+            header=Header(frame_id=pose.header.frame_id, stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(
+                    x=pose.pose.position.x, y=pose.pose.position.y, z=pose.pose.position.z + 0.01
+                ),
+                orientation=pose.pose.orientation,
+            ),
         )
         for name, pose in initial.items()
     }
@@ -311,12 +360,12 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
     final = ik.frame_poses(seed, frames)
     errors = [
         np.linalg.norm(
-            np.array([target.position.x, target.position.y, target.position.z])
+            np.array([target.pose.position.x, target.pose.position.y, target.pose.position.z])
             - np.array(
                 [
-                    final[name].position.x,
-                    final[name].position.y,
-                    final[name].position.z,
+                    final[name].pose.position.x,
+                    final[name].pose.position.y,
+                    final[name].pose.position.z,
                 ]
             )
         )

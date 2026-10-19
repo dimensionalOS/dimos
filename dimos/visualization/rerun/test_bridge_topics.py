@@ -26,19 +26,24 @@ from functools import partial
 from typing import Any
 from unittest.mock import patch
 
+from dimos_generated.dimos_msgs.msg import LineSegments3D, RegionLineSegments3D, RegionPointCloud2
+from dimos_generated.sensor_msgs.msg import PointCloud2
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 import rerun as rr
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.core.transport_factory import rpc_backend
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import header_now
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
     is_rerun_multi,
-    keyed_by_seq,
+    keyed_by_region,
     region_entity,
 )
 
@@ -62,8 +67,10 @@ class FakeZenoh(Zenoh):
 
 
 @pytest.fixture
-def make_bridge() -> Iterator[Callable[..., RerunBridgeModule]]:
+def make_bridge(mocker: MockerFixture) -> Iterator[Callable[..., RerunBridgeModule]]:
     """Build real bridge modules. Constructing one opens a transport, so each is stopped again."""
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
     bridges: list[RerunBridgeModule] = []
 
     def make(**config: Any) -> RerunBridgeModule:
@@ -95,7 +102,7 @@ def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModu
 def test_the_firehose_takes_keyed_renderers_per_seq(
     make_bridge: Callable[..., RerunBridgeModule],
 ) -> None:
-    @keyed_by_seq
+    @keyed_by_region
     def by_cell(msg: PointCloud2) -> None:
         return None
 
@@ -129,8 +136,9 @@ def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:
     assert coordinator._coordinator_rpc is None
 
 
+@pytest.mark.parametrize("message_type", [PointCloud2, RegionPointCloud2, RegionLineSegments3D])
 def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
-    mocker: MockerFixture, make_bridge: Callable[..., RerunBridgeModule]
+    mocker: MockerFixture, make_bridge: Callable[..., RerunBridgeModule], message_type
 ) -> None:
     cells = [
         RerunEntry("world/surface_map/0_0", rr.Points3D([[0.0, 0.0, 0.0]]), static=True),
@@ -138,10 +146,18 @@ def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
     ]
     assert is_rerun_multi(cells)
     log = mocker.patch("rerun.log")
-    topic = ZenohTopic(topic="dimos/surface_map", lcm_type=PointCloud2)
+    topic = ZenohTopic(topic="dimos/surface_map", msg_type=message_type)
     bridge = make_bridge(visual_override={"world/surface_map": lambda m: cells})
     entity = bridge._get_entity_path(topic)
-    msg = PointCloud2(frame_id="odom")
+    cloud = pointcloud_from_xyz(np.empty((0, 3)), header=header_now("odom"))
+    if message_type is RegionPointCloud2:
+        msg = RegionPointCloud2(region_id=-196603, cloud=cloud)
+    elif message_type is RegionLineSegments3D:
+        msg = RegionLineSegments3D(
+            region_id=-196603, lines=LineSegments3D(header=cloud.header, segments=[])
+        )
+    else:
+        msg = cloud
     bridge._on_message(msg, topic)
     bridge._on_message(msg, topic)
     calls = [(c.args[0], c.kwargs.get("static", False)) for c in log.call_args_list]
@@ -151,6 +167,6 @@ def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
     assert len(pins) == 1 and isinstance(pins[0].args[1], rr.Transform3D)
 
 
-def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:
+def test_region_cells_unpack_from_the_signed_id_the_planner_packs() -> None:
     assert region_entity("world/surface_map", (-3 << 16) | (5 & 0xFFFF)) == "world/surface_map/-3_5"
     assert region_entity("world/node_edges", (7 << 16) | (-2 & 0xFFFF)) == "world/node_edges/7_-2"

@@ -47,16 +47,19 @@ Qualities: [0.9]
 
 ## Image Sharpness Filtering
 
-For camera streams, we provide `sharpness_barrier` which uses the image's sharpness score.
+For camera streams, we provide `quality_barrier(image_sharpness, frequency)` which uses the image's sharpness score.
 
 Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Storage & Replay](/docs/usage/sensor_streams/storage_replay.md) toolkit, which provides access to recorded robot data:
 
 ```python skip session=qb
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos_generated.sensor_msgs.msg import Image
+from dimos.msgs.image import image_sharpness, image_view, image_to_rgb
+from dimos.msgs.time import to_seconds
+from dimos.utils.reactive import quality_barrier
 from dimos.utils.testing.replay import TimedSensorReplay
 
-# Load recorded camera frames (bundled test data path)
-video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
+# Load recorded camera frames (new-format CDR recording path)
+video_replay = TimedSensorReplay("/path/to/cdr-recording.db/color_image")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
 input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
@@ -65,7 +68,7 @@ input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
 
 def show_frames(frames):
    for i, frame in enumerate(frames[:10]):
-      print(f"  Frame {i}: {frame.sharpness:.3f}")
+      print(f"  Frame {i}: {image_sharpness(frame):.3f}")
 
 print(f"Loaded {len(input_frames)} frames from Go2 camera")
 print(f"Frame resolution: {input_frames[0].width}x{input_frames[0].height}")
@@ -89,13 +92,13 @@ Sharpness scores:
   Frame 9: 0.322
 ```
 
-Using `sharpness_barrier` to select the sharpest frames:
+Using `quality_barrier(image_sharpness, frequency)` to select the sharpest frames:
 
 ```python skip session=qb
 # Create a stream from the recorded frames
 
 sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
-    sharpness_barrier(2.0),
+    quality_barrier(image_sharpness, 2.0),
     ops.to_list()
 ).run()
 
@@ -128,7 +131,7 @@ def plot_mosaic(frames, selected, path, cols=5):
     fig.patch.set_facecolor('black')
     for i, ax in enumerate(axes.flat):
         if i < len(frames):
-            ax.imshow(frames[i].data)
+            ax.imshow(image_view(frames[i]))
             for spine in ax.spines.values():
                 spine.set_color('lime' if frames[i] in selected else 'black')
                 spine.set_linewidth(4 if frames[i] in selected else 0)
@@ -142,7 +145,7 @@ def plot_mosaic(frames, selected, path, cols=5):
 def plot_sharpness(frames, selected, path):
     matplotlib.use('svg')
     plt.style.use('dark_background')
-    sharpness = [f.sharpness for f in frames]
+    sharpness = [image_sharpness(f) for f in frames]
     selected_idx = [i for i, f in enumerate(frames) if f in selected]
 
     plt.figure(figsize=(10, 3))
@@ -176,7 +179,7 @@ Let's request a higher frequency.
 
 ```python skip session=qb
 sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
-    sharpness_barrier(4.0),
+    quality_barrier(image_sharpness, 4.0),
     ops.to_list()
 ).run()
 
@@ -222,7 +225,7 @@ class CameraModule(Module):
         stream = self.hardware.image_stream()
 
         if self.config.frequency > 0:
-            stream = stream.pipe(sharpness_barrier(self.config.frequency))
+            stream = stream.pipe(quality_barrier(image_sharpness, self.config.frequency))
 
         self.register_disposable(
             stream.subscribe(self.color_image.publish),
@@ -234,22 +237,22 @@ class CameraModule(Module):
 
 The sharpness score (0.0 to 1.0) is computed using Sobel edge detection:
 
-from [`Image.py`](/dimos/msgs/sensor_msgs/Image.py)
+from [`image.py`](/dimos/msgs/image.py)
 
 ```python skip session=qb
 import cv2
 
 # Get a frame and show the calculation
 img = input_frames[10]
-gray = img.to_grayscale()
+gray = cv2.cvtColor(image_to_rgb(img), cv2.COLOR_RGB2GRAY)
 
 # Sobel gradients - use .data to get the underlying numpy array
-sx = cv2.Sobel(gray.data, cv2.CV_32F, 1, 0, ksize=5)
-sy = cv2.Sobel(gray.data, cv2.CV_32F, 0, 1, ksize=5)
+sx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=5)
+sy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=5)
 magnitude = cv2.magnitude(sx, sy)
 
 print(f"Mean gradient magnitude: {magnitude.mean():.2f}")
-print(f"Normalized sharpness:    {img.sharpness:.3f}")
+print(f"Normalized sharpness:    {image_sharpness(img):.3f}")
 ```
 
 ```results
@@ -294,9 +297,9 @@ RxPY pipe operator that selects the highest quality item within each time window
 
 **Returns:** A pipe operator for use with `.pipe()`
 
-### `sharpness_barrier(target_frequency)`
+### `quality_barrier(image_sharpness, target_frequency)`
 
-Convenience wrapper for images that uses `image.sharpness` as the quality function.
+Convenience wrapper for images that uses `image_sharpness(image)` as the quality function.
 
 | Parameter          | Type    | Description              |
 |--------------------|---------|--------------------------|

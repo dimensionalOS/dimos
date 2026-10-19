@@ -15,14 +15,14 @@
 import time
 
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 def test_replay_all() -> None:
     lidar_store = LegacyPickleStore("unitree/lidar", autocast=pointcloud2_from_webrtc_lidar)
-    odom_store = LegacyPickleStore("unitree/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree/odom", autocast=pose_from_webrtc_odometry)
     video_store = LegacyPickleStore("unitree/video")
 
     backpressure(odom_store.stream()).subscribe(print)

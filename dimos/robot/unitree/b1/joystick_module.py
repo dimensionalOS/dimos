@@ -25,14 +25,14 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header, Int32
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.msgs.time import time_from_seconds
 
 
 class JoystickModule(Module):
@@ -78,12 +78,12 @@ class JoystickModule(Module):
         self.pygame_ready = False
 
         # Send stop command
-        stop_twist = Twist()
+        stop_twist = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
         stop_twist_stamped = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=stop_twist.linear,
-            angular=stop_twist.angular,
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+            twist=Twist(linear=stop_twist.linear, angular=stop_twist.angular),
         )
         self.twist_out.publish(stop_twist_stamped)
 
@@ -120,19 +120,19 @@ class JoystickModule(Module):
                     # Mode changes - publish to mode_out for connection module
                     if event.key == pygame.K_0:
                         self.current_mode = 0
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 0
                         self.mode_out.publish(mode_msg)
                         print("Mode: IDLE")
                     elif event.key == pygame.K_1:
                         self.current_mode = 1
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 1
                         self.mode_out.publish(mode_msg)
                         print("Mode: STAND")
                     elif event.key == pygame.K_2:
                         self.current_mode = 2
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 2
                         self.mode_out.publish(mode_msg)
                         print("Mode: WALK")
@@ -140,18 +140,21 @@ class JoystickModule(Module):
                         self.keys_held.clear()
                         # Send IDLE mode for emergency stop
                         self.current_mode = 0
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 0
                         self.mode_out.publish(mode_msg)
                         # Also send zero twist
-                        stop_twist = Twist()
-                        stop_twist.linear = Vector3(0, 0, 0)
-                        stop_twist.angular = Vector3(0, 0, 0)
+                        stop_twist = Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        )
+                        stop_twist.linear = Vector3(x=0, y=0, z=0)
+                        stop_twist.angular = Vector3(x=0, y=0, z=0)
                         stop_twist_stamped = TwistStamped(
-                            ts=time.time(),
-                            frame_id="base_link",
-                            linear=stop_twist.linear,
-                            angular=stop_twist.angular,
+                            header=Header(
+                                stamp=time_from_seconds(time.time()), frame_id="base_link"
+                            ),
+                            twist=Twist(linear=stop_twist.linear, angular=stop_twist.angular),
                         )
                         self.twist_out.publish(stop_twist_stamped)
                         print("EMERGENCY STOP!")
@@ -163,9 +166,9 @@ class JoystickModule(Module):
                     self.keys_held.discard(event.key)
 
             # Generate Twist message from held keys
-            twist = Twist()
-            twist.linear = Vector3(0, 0, 0)
-            twist.angular = Vector3(0, 0, 0)
+            twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            twist.linear = Vector3(x=0, y=0, z=0)
+            twist.angular = Vector3(x=0, y=0, z=0)
 
             # Apply controls based on mode
             if self.current_mode == 2:  # WALK mode - movement control
@@ -213,7 +216,8 @@ class JoystickModule(Module):
                     twist.angular.y = -1.0  # Pitch backward
 
             twist_stamped = TwistStamped(
-                ts=time.time(), frame_id="base_link", linear=twist.linear, angular=twist.angular
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=twist.linear, angular=twist.angular),
             )
             self.twist_out.publish(twist_stamped)
 

@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+import math
+
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from scipy import ndimage
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.occupancy import occupancy_extent, occupancy_view
 
 
 def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGrid:
@@ -25,29 +29,28 @@ def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGri
     Returns:
         New OccupancyGrid with inflated obstacles
     """
+    occupancy_extent(occupancy_grid)
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("inflation radius must be finite and nonnegative")
+
     # Convert radius to grid cells
-    cell_radius = int(np.ceil(radius / occupancy_grid.resolution))
+    cell_radius = int(np.ceil(radius / occupancy_grid.info.resolution))
 
     # Get grid as numpy array
-    grid_array = occupancy_grid.grid
+    grid_array = occupancy_view(occupancy_grid)
 
     # Create circular kernel for binary inflation
     y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
     kernel = (x**2 + y**2 <= cell_radius**2).astype(np.uint8)
 
     # Find occupied cells
-    occupied_mask = grid_array >= CostValues.OCCUPIED
+    occupied_mask = grid_array >= 100
 
     # Binary inflation
     inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
     result_grid = grid_array.copy()
-    result_grid[inflated] = CostValues.OCCUPIED
+    result_grid[inflated] = 100
 
-    # Create new OccupancyGrid with inflated data using numpy constructor
-    return OccupancyGrid(
-        grid=result_grid,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    result = deepcopy(occupancy_grid)
+    result.data = result_grid.ravel()
+    return result

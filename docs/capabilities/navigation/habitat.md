@@ -35,7 +35,7 @@ Layered so a failure can be bisected by dropping a level:
 
 ## How It Is Built
 
-habitat-sim only ships python 3.9 builds, so it cannot share the dimos interpreter. `HabitatConnection` is a [native module](/docs/usage/native_modules.md): the simulator runs as a subprocess and speaks dimos over zenoh through `dimos_lcm`, the standalone message package. Nothing on that side imports dimos, and a test enforces it.
+habitat-sim only ships python 3.9 builds, so it cannot share the dimos interpreter. `HabitatConnection` is a [native module](/docs/usage/native_modules.md): the simulator runs as a subprocess and speaks dimos over zenoh through its standalone generated CDR message package. Nothing on that side imports dimos, and a test enforces it.
 
 `dimos/simulation/habitat/nix/install.sh` provisions the module. It is **not** a
 `build_command`: habitat is the one native module `NativeModule` will not build for

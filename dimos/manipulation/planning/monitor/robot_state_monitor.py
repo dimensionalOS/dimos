@@ -26,12 +26,13 @@ Example:
 
 from __future__ import annotations
 
+import copy
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -84,6 +85,7 @@ class RobotStateMonitor:
         self._timeout = timeout
 
         # Latest state
+        self._latest_state: JointState | None = None
         self._latest_positions: NDArray[np.float64] | None = None
         self._latest_velocities: NDArray[np.float64] | None = None
         self._last_update_time: float | None = None
@@ -142,16 +144,19 @@ class RobotStateMonitor:
                 self._latest_positions = positions
                 self._latest_velocities = velocities
                 self._last_update_time = current_time
+                joint_state = JointState(
+                    header=copy.deepcopy(msg.header),
+                    name=self._joint_names,
+                    position=np.asarray(positions.tolist(), dtype=np.float64),
+                    velocity=np.asarray(
+                        velocities.tolist() if velocities is not None else [], dtype=np.float64
+                    ),
+                    effort=np.array([], dtype=np.float64),
+                )
+                self._latest_state = copy.deepcopy(joint_state)
 
                 # Sync to world's live context (for visualization)
                 try:
-                    # Create JointState for world sync (API uses JointState)
-                    joint_state = JointState(
-                        ts=msg.ts,
-                        name=self._joint_names,
-                        position=positions.tolist(),
-                        velocity=velocities.tolist() if velocities is not None else [],
-                    )
                     self._world.sync_from_joint_state(joint_state)
                 except Exception as e:
                     logger.error(f"Failed to sync joint state to live context: {e}")
@@ -198,7 +203,7 @@ class RobotStateMonitor:
 
         Uses the same canonical-name lookup as _extract_positions.
         """
-        if not msg.velocity or len(msg.velocity) == 0:
+        if len(msg.velocity) == 0:
             return None
 
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
@@ -214,6 +219,14 @@ class RobotStateMonitor:
             velocities.append(msg.velocity[idx])
 
         return np.array(velocities, dtype=np.float64)
+
+    def get_current_joint_state(self) -> JointState | None:
+        """Copy one atomic sample, preserving its source header and joint ordering."""
+        with self._lock:
+            state = self._latest_state
+            if state is None:
+                return None
+            return copy.deepcopy(state)
 
     def get_current_positions(self) -> NDArray[np.float64] | None:
         """Get current joint positions (thread-safe).

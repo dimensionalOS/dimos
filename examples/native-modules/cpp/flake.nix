@@ -13,11 +13,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
-    # Generated LCM message headers, consumed via a FetchContent source override.
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
@@ -26,13 +21,15 @@
     dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
   };
 
-  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, lcm-extended, dimos-lcm, pfr, dimos-native-cpp, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, lcm-extended, pfr, dimos-native-cpp, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        sdk = nix-filter.lib { root = ../../../native/cpp; exclude = [ "build" "target" "result" "__pycache__" ]; };
         pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
         zenohc = zenoh.packages.${system}.zenoh-c;
         zenohcpp = zenoh.packages.${system}.zenoh-cpp;
+        messages = import ../../../native/cpp/messages.nix { inherit pkgs; };
       in {
         # Nothing to lint and no tests here yet; declared so the gate sees the flake.
         checks.lint = pkgs.runCommand "dimos-native-module-examples-cpp-lint" { } "mkdir $out";
@@ -43,15 +40,14 @@
           src = nix-filter.lib { root = ./.; exclude = [ "build" "target" "result" "__pycache__" ]; };
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json zenohc zenohcpp ];
+          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json zenohc zenohcpp messages ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             # The header-only SDK lives outside this dir. A git-tree flake can
             # reach it as a path literal within the repo tree.
-            "-DDIMOS_NATIVE_CPP_DIR=${dimos-native-cpp.packages.${system}.default}"
+            "-DDIMOS_NATIVE_CPP_DIR=${sdk}"
           ];
         };
       });

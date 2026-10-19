@@ -7,31 +7,17 @@
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
-    # The sibling local planner crate it builds on (a path dependency in Cargo.toml), pinned like any shared code.
-    dimos-local-planner.url = "github:dimensionalOS/dimos?dir=dimos/navigation/local_planner/rust";
-    dimos-local-planner.inputs.nixpkgs.follows = "nixpkgs";
-    dimos-local-planner.inputs.nix-filter.follows = "nix-filter";
-    dimos-local-planner.inputs.flake-utils.follows = "flake-utils";
-    dimos-local-planner.inputs.crate2nix.follows = "crate2nix";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, dimos-local-planner }:
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-trajectory-follower";
-        here = "navigation/trajectory_follower/fancy/rust";
-
-        own = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        # The two crates at their repo-relative places, so the path dependency resolves.
-        src = pkgs.runCommand "${name}-src" { } ''
-          mkdir -p $out/${here} $out/navigation/local_planner
-          cp -r ${own}/. $out/${here}
-          cp -r ${dimos-local-planner} $out/navigation/local_planner/rust
-        '';
+        src = import ../../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/navigation/trajectory_follower/fancy/rust" "dimos/navigation/local_planner/rust" ]; };
         generated = crate2nix.tools.${system}.generatedCargoNix {
           inherit name src;
-          cargoToml = "${here}/Cargo.toml";
+          cargoToml = "dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml";
         };
 
         ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" ];

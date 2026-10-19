@@ -16,15 +16,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
 
@@ -38,7 +37,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         detections_2d: ImageDetections2D,
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
         filters: list[PointCloudFilter] | None = None,
     ) -> ImageDetections3DPC:
         """Project every 2D detection into 3D, dropping any that yield no valid points.
@@ -61,8 +60,8 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
                     points_2d,
                     camera_info,
                     world_to_optical_transform,
-                    world_pointcloud.frame_id,
-                    world_pointcloud.ts,
+                    world_pointcloud.header.frame_id,
+                    to_seconds(world_pointcloud.header.stamp),
                     filters,
                     splat_m=quantum / 2 if quantum is not None else None,
                 )
@@ -77,7 +76,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         detections_2d: ImageDetections2D,
         depth: Image,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
         filters: list[PointCloudFilter] | None = None,
     ) -> ImageDetections3DPC:
         """Unproject every detection's depth pixels into 3D, dropping empty results."""

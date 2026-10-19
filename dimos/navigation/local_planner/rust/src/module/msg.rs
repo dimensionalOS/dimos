@@ -17,10 +17,15 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::geometry_msgs::msg::point::Point;
+use dimos_generated_messages::geometry_msgs::msg::pose::Pose;
+use dimos_generated_messages::geometry_msgs::msg::pose_stamped::PoseStamped;
+use dimos_generated_messages::geometry_msgs::msg::quaternion::Quaternion;
+use dimos_generated_messages::geometry_msgs::msg::vector3::Vector3;
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::{error_throttled, Output};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion, Vector3};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::std_msgs::{Header, Time};
 
 /// A plan waypoint as the laws and the planner see it: `(x, y, yaw)`.
 pub type State = [f64; 3];
@@ -45,19 +50,19 @@ pub fn quat_of_yaw(yaw: f64) -> Quaternion {
 
 /// Seconds since the unix epoch as one float, the python `PoseStamped.ts`.
 pub fn secs_of(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    t.sec as f64 + t.nanosec as f64 * 1e-9
 }
 
 /// A float second count as a `Time`, matching `Header.__init__`'s truncation
-/// (`sec = int(ts)`, `nsec = int((ts - sec) * 1e9)`).
+/// (`sec = int(ts)`, `nanosec = int((ts - sec) * 1e9)`).
 pub fn time_of_secs(ts: f64) -> Time {
     if !ts.is_finite() {
-        return Time { sec: 0, nsec: 0 };
+        return Time { sec: 0, nanosec: 0 };
     }
-    let sec = ts.trunc();
+    let sec = ts.floor();
     Time {
         sec: sec.clamp(i32::MIN as f64, i32::MAX as f64) as i32,
-        nsec: ((ts - sec) * 1e9) as i32,
+        nanosec: ((ts - sec) * 1e9) as u32,
     }
 }
 
@@ -71,7 +76,6 @@ pub fn now_secs() -> f64 {
 
 pub fn header(frame_id: &str, ts: f64) -> Header {
     Header {
-        seq: 0,
         stamp: time_of_secs(ts),
         frame_id: frame_id.into(),
     }
@@ -136,8 +140,12 @@ pub fn path_stamps(path: &Path) -> Vec<f64> {
 }
 
 /// A body-frame twist, the only shape either module publishes.
-pub fn twist(vx: f64, vy: f64, wz: f64) -> lcm_msgs::geometry_msgs::Twist {
-    lcm_msgs::geometry_msgs::Twist {
+pub fn twist(
+    vx: f64,
+    vy: f64,
+    wz: f64,
+) -> dimos_generated_messages::geometry_msgs::msg::twist::Twist {
+    dimos_generated_messages::geometry_msgs::msg::twist::Twist {
         linear: Vector3 {
             x: vx,
             y: vy,
@@ -191,8 +199,8 @@ mod tests {
     #[test]
     fn a_non_finite_stamp_does_not_wrap_around() {
         // a saturating `as i32` would give i32::MAX seconds; zero is the honest "no time"
-        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nsec: 0 });
-        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nsec: 0 });
+        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nanosec: 0 });
+        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nanosec: 0 });
     }
 
     #[test]

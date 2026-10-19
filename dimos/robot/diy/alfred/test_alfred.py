@@ -26,7 +26,7 @@ URDF = Path(__file__).parent / "alfred.urdf"
 def test_every_camera_frame_dim_slam_wants_is_rooted_at_base_link():
     """cuVSLAM places no camera at all until every configured frame resolves against
     base_link, so one missing mount edge drops every image instead of degrading."""
-    parents = {t.child_frame_id: t.frame_id for t in mount_transforms()}
+    parents = {t.child_frame_id: t.header.frame_id for t in mount_transforms()}
     for frame in [*IR_ENTITY_BY_FRAME, DEPTH_FRAME]:
         # The driver publishes the imager leaves off its own link; the mount tree owes
         # that link a path to base_link.

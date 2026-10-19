@@ -148,12 +148,12 @@ cd web
 deno run --allow-write=shared/fixtures shared/fixtures/gen.ts
 ```
 
-Three files pin Python encoder output and are generated from Python. `costmap_frames.json` and `voxel_frames.json` hold the zlib bytes of the costmap and voxel encoders, and `lcm_frames.json` holds `lcm_encode()` bytes plus the exported schemas:
+Three files pin Python encoder output and are generated from Python. `costmap_frames.json` and `voxel_frames.json` hold the zlib bytes of the costmap and voxel encoders, and `cdr_frames.json` holds `registry.encode(message)` bytes plus the exported schemas:
 
 ```bash
 uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures
 uv run python -m dimos.web.relay_bridge.gen_voxel_fixtures
-uv run python -m dimos.web.relay_bridge.gen_lcm_fixtures
+uv run python -m dimos.web.relay_bridge.gen_cdr_fixtures
 ```
 
 `deno test`, vitest and pytest all read them. A wire change regenerates them on both sides in the same commit.

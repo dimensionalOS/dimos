@@ -19,6 +19,10 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
@@ -27,8 +31,6 @@ from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import BaseControlTask, CoordinatorState, ResourceClaim
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 
 JOINTS = make_joints("arm", 2)
@@ -53,7 +55,15 @@ class _PoseTask(BaseControlTask):
 
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
         x = state.joints.get_position(JOINTS[0])
-        return {"link_tcp": PoseStamped(frame_id="link_base", position=(x, 0.0, 0.5))}
+        return {
+            "link_tcp": PoseStamped(
+                header=Header(frame_id="link_base", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=x, y=0.0, z=0.5),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        }
 
 
 def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> None:
@@ -81,9 +91,13 @@ def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> N
 
     (message,) = published
     (transform,) = message.transforms
-    assert (transform.frame_id, transform.child_frame_id) == ("world", "link_tcp")
-    assert transform.translation.to_numpy().tolist() == [0.25, 0.0, 0.5]
-    assert transform.ts == joint_states.call_args_list[0].args[0].ts
+    assert (transform.header.frame_id, transform.child_frame_id) == ("world", "link_tcp")
+    assert [
+        transform.transform.translation.x,
+        transform.transform.translation.y,
+        transform.transform.translation.z,
+    ] == [0.25, 0.0, 0.5]
+    assert transform.header.stamp == joint_states.call_args_list[0].args[0].header.stamp
 
 
 def test_only_coordinators_declaring_tf_can_publish_frame_poses() -> None:

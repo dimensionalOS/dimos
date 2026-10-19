@@ -19,14 +19,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 def has_nvidia_gpu() -> bool:

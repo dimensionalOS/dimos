@@ -23,6 +23,7 @@ import sqlite3
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
@@ -35,11 +36,13 @@ from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import pose_from_transform
+from dimos.msgs.time import message_header, to_seconds
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import Pose
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
@@ -47,7 +50,6 @@ if TYPE_CHECKING:
         SemanticSearch as SemanticSearch,
         SemanticSearchConfig as SemanticSearchConfig,
     )
-    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -222,7 +224,7 @@ class RecorderConfig(MemoryModuleConfig):
     # read the active remappings from inside the module (AFAIK), so this config
     # arg does the per-stream rename directly.
     stream_remapping: dict[str, str] = Field(default_factory=dict)
-    # ex: {"depth_image_1": "lz4+lcm"} for lossless depth recording
+    # ex: {"depth_image_1": "lz4+cdr"} for lossless depth recording
     stream_codecs: dict[str, str] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)
@@ -334,7 +336,7 @@ class Recorder(MemoryModule):
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Append each message from *input_topic* to *stream*, attaching world pose via tf.
 
-        Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
+        Stamped messages use their own ``header.frame_id`` and ``header.stamp``; unstamped
         messages (or ones whose frame isn't in the tf graph, e.g. a payload
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
@@ -375,7 +377,8 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return getattr(msg, "ts", None) or time.time()
+        header = message_header(msg)
+        return to_seconds(header.stamp) if header is not None else time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with.
@@ -391,11 +394,12 @@ class Recorder(MemoryModule):
             return cast("Pose | None", await setter(msg))
         if self._tf is None:
             return None
-        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+        header = message_header(msg)
+        frame_id = (header.frame_id if header is not None else "") or self.config.default_frame_id
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
-        return transform.to_pose() if transform is not None else None
+        return pose_from_transform(transform).pose if transform is not None else None
 
     def _collect_pose_setters(self) -> dict[str, PoseSetter]:
         """Map stream name -> bound ``@pose_setter_for`` method."""
@@ -416,7 +420,11 @@ class Recorder(MemoryModule):
         def on_tf(msg: TFMessage) -> None:
             try:
                 for transform in msg.transforms:
-                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+                    tf_stream.append(
+                        TFMessage(transforms=[transform]),
+                        ts=to_seconds(transform.header.stamp),
+                        pose=None,
+                    )
             except sqlite3.ProgrammingError:
                 # A late LCM callback raced teardown and hit the closed store.
                 pass

@@ -21,11 +21,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 
 
@@ -43,7 +45,12 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[HostedStatsModule]:
 
 
 def _cmd(vx: float = 0.3, ts: float = 123.0) -> bytes:
-    return TwistStamped(ts=ts, linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, 0)).lcm_encode()
+    return cdr_encode(
+        TwistStamped(
+            header=Header(stamp=time_from_seconds(ts), frame_id=""),
+            twist=Twist(linear=Vector3(x=vx, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        )
+    )
 
 
 def test_telemetry_without_go2(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,8 +71,8 @@ def test_cmd_raw_republishes_stamped_for_recorder(module: HostedStatsModule) -> 
     module._on_cmd_raw(_cmd(vx=0.5, ts=42.0))
     module.cmd_vel_stamped.publish.assert_called_once()
     published = module.cmd_vel_stamped.publish.call_args[0][0]
-    assert published.ts == 42.0
-    assert published.linear.x == 0.5
+    assert to_seconds(published.header.stamp) == 42.0
+    assert published.twist.linear.x == 0.5
 
 
 def test_cmd_raw_records_stats(module: HostedStatsModule) -> None:
@@ -94,3 +101,10 @@ def test_state_json_ignores_foreign_kind(module: HostedStatsModule) -> None:
     # estop/sport/etc. on the shared state plane are owned by other modules.
     module._on_state_json(json.dumps({"type": "estop", "nonce": "x"}).encode())
     module.video_stats.publish.assert_not_called()
+
+
+def test_cmd_raw_rejects_invalid_ros_nanoseconds(module: HostedStatsModule) -> None:
+    message = cdr_decode(_cmd(), TwistStamped)
+    message.header.stamp.nanosec = 1_000_000_000
+    module._on_cmd_raw(cdr_encode(message))
+    module.cmd_vel_stamped.publish.assert_not_called()

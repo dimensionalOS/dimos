@@ -16,7 +16,7 @@
 
 import json
 
-from dimos.msgs.std_msgs.String import String
+from dimos_generated.std_msgs.msg import String
 
 
 def _invalid_constant(value: str) -> None:
@@ -31,6 +31,6 @@ class JsonCodec:
         return value.data.encode("utf-8")
 
     def decode(self, data: bytes) -> String:
-        value = String(data.decode("utf-8"))
+        value = String(data=data.decode("utf-8"))
         json.loads(value.data, parse_constant=_invalid_constant)
         return value

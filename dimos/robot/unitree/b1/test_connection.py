@@ -27,13 +27,15 @@ import sys
 import threading
 import time
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header, Int32
 import pytest
+
+from dimos.msgs.time import time_from_seconds
 
 _IS_MACOS = sys.platform == "darwin"
 
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Int32 import Int32
+
 from dimos.robot.unitree.b1.connection import MockB1ConnectionModule
 
 
@@ -52,10 +54,8 @@ class TestB1Connection:
 
         # Send a forward command
         twist_stamped = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(1.0, 0, 0),
-            angular=Vector3(0, 0, 0),
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+            twist=Twist(linear=Vector3(x=1.0, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
         )
         conn.handle_twist_stamped(twist_stamped)
 
@@ -100,10 +100,8 @@ class TestB1Connection:
             # Send commands in rapid succession — each resets the 200ms watchdog
             for val in [1.0, 0.8, 0.6, 0.5]:
                 twist = TwistStamped(
-                    ts=time.time(),
-                    frame_id="base_link",
-                    linear=Vector3(val, 0, 0),
-                    angular=Vector3(0, 0, 0),
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                    twist=Twist(linear=Vector3(x=val, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
                 )
                 conn.handle_twist_stamped(twist)
                 time.sleep(0.02)  # 20ms between commands, well under timeout
@@ -134,10 +132,8 @@ class TestB1Connection:
         # Send many commands rapidly (would create many Timer threads in old implementation)
         for i in range(50):
             twist = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=Vector3(i * 0.01, 0, 0),
-                angular=Vector3(0, 0, 0),
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=Vector3(x=i * 0.01, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
             )
             conn.handle_twist_stamped(twist)
             time.sleep(0.01)  # 100Hz command rate
@@ -177,10 +173,8 @@ class TestB1Connection:
         try:
             # Send command
             twist = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=Vector3(1.0, 0, 0),
-                angular=Vector3(0, 0, 0),
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=Vector3(x=1.0, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
             )
             conn.handle_twist_stamped(twist)
             assert conn._current_cmd.ly == 1.0
@@ -220,10 +214,8 @@ class TestB1Connection:
             commands_sent = 0
             while time.time() - start < 1.0:
                 twist = TwistStamped(
-                    ts=time.time(),
-                    frame_id="base_link",
-                    linear=Vector3(0.5, 0, 0),
-                    angular=Vector3(0, 0, 0),
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                    twist=Twist(linear=Vector3(x=0.5, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
                 )
                 conn.handle_twist_stamped(twist)
                 commands_sent += 1
@@ -259,10 +251,8 @@ class TestB1Connection:
         # Send command and record time
         start_time = time.time()
         twist = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(1.0, 0, 0),
-            angular=Vector3(0, 0, 0),
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+            twist=Twist(linear=Vector3(x=1.0, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
         )
         conn.handle_twist_stamped(twist)
 
@@ -303,10 +293,8 @@ class TestB1Connection:
 
         # Send walk command
         twist = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(1.0, 0, 0),
-            angular=Vector3(0, 0, 0),
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+            twist=Twist(linear=Vector3(x=1.0, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
         )
         conn.handle_twist_stamped(twist)
         assert conn.current_mode == 2
@@ -320,7 +308,7 @@ class TestB1Connection:
         assert conn._current_cmd.ly == 0.0  # Watchdog zeroed it
 
         # Now change mode to STAND
-        mode_msg = Int32()
+        mode_msg = Int32(data=0)
         mode_msg.data = 1  # STAND
         conn.handle_mode(mode_msg)
         assert conn.current_mode == 1
@@ -350,10 +338,8 @@ class TestB1Connection:
         # Simulate sending movement commands for a while
         for _i in range(5):
             twist = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=Vector3(1.0, 0, 0),
-                angular=Vector3(0, 0, 0.5),  # Forward and turning
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=Vector3(x=1.0, y=0, z=0), angular=Vector3(x=0, y=0, z=0.5)),
             )
             conn.handle_twist_stamped(twist)
             time.sleep(0.05)  # Send at 20Hz
@@ -381,10 +367,8 @@ class TestB1Connection:
 
             # Verify recovery works - send new command
             twist = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=Vector3(0.5, 0, 0),
-                angular=Vector3(0, 0, 0),
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=Vector3(x=0.5, y=0, z=0), angular=Vector3(x=0, y=0, z=0)),
             )
             conn.handle_twist_stamped(twist)
 
@@ -421,10 +405,10 @@ class TestB1Connection:
         def send_commands(thread_id) -> None:
             for _i in range(10):
                 twist = TwistStamped(
-                    ts=time.time(),
-                    frame_id="base_link",
-                    linear=Vector3(thread_id * 0.1, 0, 0),
-                    angular=Vector3(0, 0, 0),
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                    twist=Twist(
+                        linear=Vector3(x=thread_id * 0.1, y=0, z=0), angular=Vector3(x=0, y=0, z=0)
+                    ),
                 )
                 conn.handle_twist_stamped(twist)
                 time.sleep(0.01)

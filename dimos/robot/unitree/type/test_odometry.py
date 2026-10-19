@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import pytest
 
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.msgs.geometry import yaw
+from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry
 from dimos.utils.testing.replay import SensorReplay
 
 _EXPECTED_TOTAL_RAD = -4.05212
@@ -28,22 +30,24 @@ def test_dataset_size() -> None:
 
 
 def test_odometry_conversion_and_count() -> None:
-    """Each replay entry converts to :class:`Odometry` and count is correct."""
+    """Each replay entry converts to :class:`PoseStamped` and count is correct."""
     for raw in SensorReplay(name="raw_odometry_rotate_walk").iterate():
-        odom = Odometry.from_msg(raw)
+        odom = pose_from_webrtc_odometry(raw)
         assert isinstance(raw, dict)
-        assert isinstance(odom, Odometry)
+        assert isinstance(odom, PoseStamped)
 
 
 def test_total_rotation_travel_iterate() -> None:
     total_rad = 0.0
     prev_yaw: float | None = None
 
-    for odom in SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg).iterate():
-        yaw = odom.orientation.radians.z
+    for odom in SensorReplay(
+        name="raw_odometry_rotate_walk", autocast=pose_from_webrtc_odometry
+    ).iterate():
+        angle = yaw(odom.pose.orientation)
         if prev_yaw is not None:
-            diff = yaw - prev_yaw
+            diff = angle - prev_yaw
             total_rad += diff
-        prev_yaw = yaw
+        prev_yaw = angle
 
     assert total_rad == pytest.approx(_EXPECTED_TOTAL_RAD, abs=0.001)

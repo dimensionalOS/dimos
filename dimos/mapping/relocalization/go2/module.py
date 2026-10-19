@@ -14,14 +14,15 @@
 
 """Go2 relocalization: lidar relocalization plus the premap merged into the live map."""
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from reactivex import combine_latest
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarWindowRelocalization
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import concatenate_clouds, transform_cloud
 from dimos.utils.reactive import backpressure
 
 
@@ -51,12 +52,14 @@ class Go2Relocalization(LidarWindowRelocalization):
             ).subscribe(self._on_merge_input)
         )
 
-    def _on_merge_input(self, pair: tuple[PointCloud2, Transform]) -> None:
+    def _on_merge_input(self, pair: tuple[PointCloud2, TransformStamped]) -> None:
         local, tf = pair
         assert self.premap is not None
-        premap_in_world = self.premap.transform(tf)
+        premap_in_world = transform_cloud(self.premap, tf)
         if self.config.use_carving:
-            grid = VoxelGrid(carve_columns=True, frame_id=local.frame_id, show_startup_log=False)
+            grid = VoxelGrid(
+                carve_columns=True, frame_id=local.header.frame_id, show_startup_log=False
+            )
             try:
                 grid.add_frame(premap_in_world)
                 grid.add_frame(local)
@@ -64,4 +67,4 @@ class Go2Relocalization(LidarWindowRelocalization):
             finally:
                 grid.dispose()
         else:
-            self.merged_map.publish(local + premap_in_world)
+            self.merged_map.publish(concatenate_clouds(local, premap_in_world))

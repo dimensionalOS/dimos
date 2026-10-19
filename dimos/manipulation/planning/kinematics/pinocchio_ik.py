@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import numpy as np
 from numpy.linalg import norm, solve
 import pinocchio
@@ -42,10 +43,8 @@ import pinocchio
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import Pose
     from numpy.typing import NDArray
-
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -211,8 +210,9 @@ class PinocchioIK:
 def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
     """Convert Pose or PoseStamped to pinocchio SE3"""
 
-    position = np.array([pose.x, pose.y, pose.z])
-    quat = pose.orientation
+    value = pose.pose if isinstance(pose, PoseStamped) else pose
+    position = np.array([value.position.x, value.position.y, value.position.z])
+    quat = value.orientation
     rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
     return pinocchio.SE3(rotation, position)
 

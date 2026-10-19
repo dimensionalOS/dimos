@@ -20,14 +20,18 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from dimos_cdrgen.registry import encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
 import typer
 
+from dimos.mapping.cli.streams import select_stream
+
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
@@ -109,7 +113,7 @@ def _accumulate(
     block_count: int,
     device: str,
     graph: PoseGraph | None = None,
-    register: Callable[[Observation[Any]], Transform | None] | None = None,
+    register: Callable[[Observation[Any]], TransformStamped | None] | None = None,
     carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
@@ -122,18 +126,24 @@ def _accumulate(
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.std_msgs.msg import Header
+    import numpy as np
+
     from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.msgs.geometry import transform_from_matrix, transform_matrix
+    from dimos.msgs.pointcloud import transform_cloud
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
             if progress_cb is not None:
                 progress_cb(obs)
-            if len(obs.data) == 0:
+            if obs.data.width * obs.data.height == 0:
                 continue
             # sensor->world via `register`, unless the clouds are already
             # world-registered. graph adds the PGO correction on top
             # (correction ∘ tf), applied after the registration.
-            tf: Transform | None = None
+            tf: TransformStamped | None = None
             if register is not None:
                 tf = register(obs)
                 if tf is None:
@@ -141,9 +151,14 @@ def _accumulate(
             if graph is not None:
                 if obs.pose_tuple is None:
                     continue
-                correction = graph.correction_at(obs.ts)
-                tf = correction if tf is None else correction + tf
-            yield obs if tf is None else obs.derive(data=obs.data.transform(tf))
+                correction = transform_matrix(graph.correction_at(obs.ts).transform)
+                matrix = np.eye(4) if tf is None else transform_matrix(tf.transform)
+                tf = TransformStamped(
+                    header=Header(stamp=obs.data.header.stamp, frame_id="world_corrected"),
+                    child_frame_id=obs.data.header.frame_id,
+                    transform=transform_from_matrix(correction @ matrix),
+                )
+            yield obs if tf is None else obs.derive(data=transform_cloud(obs.data, tf))
 
     vmt = VoxelMapTransformer(
         emit_every=0,  # batch mode: emit once on exhaustion
@@ -158,12 +173,26 @@ def _accumulate(
 
 def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
     """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-    if cloud is None or len(cloud.pointcloud.points) < 20:
+    if cloud is None or cloud.width * cloud.height < 20:
         return cloud
-    clean, _ = cloud.pointcloud_tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
-    return PointCloud2(pointcloud=clean, frame_id=cloud.frame_id, ts=cloud.ts)
+    import numpy as np
+    import open3d as o3d
+
+    from dimos.msgs.pointcloud import (
+        pointcloud_from_xyz,
+        pointcloud_from_xyz_rgb,
+        pointcloud_to_open3d,
+    )
+
+    if {field.name for field in cloud.fields} - {"x", "y", "z", "rgb"}:
+        raise ValueError("map denoising supports only XYZ/RGB point fields")
+    tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(cloud))
+    clean, _ = tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
+    points = clean.point.positions.numpy()
+    if "colors" in clean.point:
+        colors = (np.clip(clean.point.colors.numpy(), 0.0, 1.0) * 255).astype(np.uint8)
+        return pointcloud_from_xyz_rgb(points, colors, header=cloud.header)
+    return pointcloud_from_xyz(points, header=cloud.header)
 
 
 def _log_reconstruction(
@@ -180,17 +209,19 @@ def _log_reconstruction(
     bottom_cutoff: float | None = None,
 ) -> None:
     """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
+    from dimos_generated.geometry_msgs.msg import Point, Pose
     import rerun as rr
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry import pose_from_matrix, pose_matrix, transform_matrix
+    from dimos.visualization.rerun.message_helpers import cloud_archetype
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
     if global_map is not None:
         rr.log(
             "world/raw_map/pointcloud",
-            global_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(global_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if path:
@@ -202,13 +233,13 @@ def _log_reconstruction(
     if pgo_map is not None:
         rr.log(
             "world/pgo_map/pointcloud",
-            pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(pgo_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if full_pgo_map is not None:
         rr.log(
             "world/full_pgo_map/pointcloud",
-            full_pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(full_pgo_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if pgo_path:
@@ -225,8 +256,16 @@ def _log_reconstruction(
     if graph is not None and graph.loops:
         loop_strips = [
             [
-                (lc.source.translation.x, lc.source.translation.y, lc.source.translation.z),
-                (lc.target.translation.x, lc.target.translation.y, lc.target.translation.z),
+                (
+                    lc.source.transform.translation.x,
+                    lc.source.transform.translation.y,
+                    lc.source.transform.translation.z,
+                ),
+                (
+                    lc.target.transform.translation.x,
+                    lc.target.transform.translation.y,
+                    lc.target.transform.translation.z,
+                ),
             ]
             for lc in graph.loops
         ]
@@ -269,23 +308,23 @@ def _log_reconstruction(
             pgo_centers: list[tuple[float, float, float]] = []
             pgo_quats: list[tuple[float, float, float, float]] = []
             for d in marker_dets:
-                raw_tf = Transform(
-                    translation=d.data.center,
-                    rotation=d.data.orientation,
-                    frame_id="world",
-                    child_frame_id=f"marker_{d.data.marker_id}",
-                    ts=d.ts,
+                center = d.data.center
+                raw_pose = Pose(
+                    position=Point(x=center.x, y=center.y, z=center.z),
+                    orientation=d.data.orientation,
                 )
-                corrected = graph.correct(raw_tf)
+                corrected = pose_from_matrix(
+                    transform_matrix(graph.correction_at(d.ts).transform) @ pose_matrix(raw_pose)
+                )
                 pgo_centers.append(
-                    (corrected.translation.x, corrected.translation.y, corrected.translation.z)
+                    (corrected.position.x, corrected.position.y, corrected.position.z)
                 )
                 pgo_quats.append(
                     (
-                        corrected.rotation.x,
-                        corrected.rotation.y,
-                        corrected.rotation.z,
-                        corrected.rotation.w,
+                        corrected.orientation.x,
+                        corrected.orientation.y,
+                        corrected.orientation.z,
+                        corrected.orientation.w,
                     )
                 )
             _log_markers(
@@ -300,9 +339,12 @@ def _log_reconstruction(
 
 
 def main(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
-    lidar_stream: str = typer.Option(
-        "lidar", "--lidar", help="Lidar point-cloud stream to reconstruct"
+    dataset: str = typer.Argument(..., help="Dataset .db or .mcap: bare name or path"),
+    lidar_stream: str | None = typer.Option(
+        None, "--lidar", help="PointCloud2 stream; auto-select only a unique candidate"
+    ),
+    image_stream: str | None = typer.Option(
+        None, "--image", help="Image stream for --markers; auto-select only a unique candidate"
     ),
     seek: float = typer.Option(0.0, "--seek", help="Skip the first N seconds of the recording"),
     duration: float | None = typer.Option(
@@ -318,9 +360,9 @@ def main(
         help="Run pose graph optimization and rebuild from spatially-deduped frames",
     ),
     pgo_tol: float = typer.Option(
-        0.3,
+        0.0,
         "--pgo-tol",
-        help="Spatial dedup tolerance (meters); applies to both raw and --pgo maps. 0 disables dedup (keep every posed frame)",
+        help="Spatial dedup tolerance (meters); applies to both raw and --pgo maps. 0 disables dedup (default; keep every registered frame)",
     ),
     block_count: int = typer.Option(
         2_000_000, "--block-count", help="VoxelBlockGrid capacity (raw and PGO rebuilds)"
@@ -328,7 +370,7 @@ def main(
     export: bool = typer.Option(
         False,
         "--export",
-        help="Export PGO map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
+        help="Export PGO map to ./<dataset>.pc2.cdr in cwd (implies --pgo)",
     ),
     full_pgo: bool = typer.Option(
         False,
@@ -418,27 +460,41 @@ def main(
     ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+    from dimos_generated.std_msgs.msg import Header
     import rerun as rr
 
-    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.camera_info import camera_info_from_yaml
+    from dimos.msgs.image import image_sharpness
     from dimos.navigation.go2.loop_closure.pgo import PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
+    from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
+    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
     from dimos.visualization.rerun.init import rerun_init
 
     db_path = resolve_dataset(dataset)
     store = open_store(db_path)
+    try:
+        types = stream_payload_types(store)
+        selected_lidar = select_stream(types, PointCloud2, lidar_stream, "--lidar")
+        selected_image = (
+            select_stream(types, Image, image_stream, "--image")
+            if markers or image_stream is not None
+            else None
+        )
+        assert selected_lidar is not None
+    except Exception:
+        store.stop()
+        raise
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export or full_pgo:
         pgo = True
 
-    lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
+    lidar = store.stream(selected_lidar, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())
 
@@ -454,7 +510,7 @@ def main(
     tf_buf = StreamTF.from_store(store)
     # Streams are homogeneous: read the cloud frame from the first observation.
     first_obs = next(iter(lidar), None)
-    cloud_frame: str | None = first_obs.data.frame_id if first_obs is not None else None
+    cloud_frame: str | None = first_obs.data.header.frame_id if first_obs is not None else None
 
     world = frame
     if world is None and first_obs is not None and cloud_frame is not None:
@@ -473,7 +529,7 @@ def main(
     # Registration: sensor-frame clouds get a per-frame tf lookup lifting them
     # into the world frame (frames with no tf answer are dropped); clouds
     # already stamped with the world frame accumulate verbatim (register=None).
-    register: Callable[[Observation[Any]], Transform | None] | None = None
+    register: Callable[[Observation[Any]], TransformStamped | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
         # Fail fast when registration is impossible: probe the first cloud's
         # timestamp (unbounded tolerance — "possible at all", not "in range").
@@ -490,13 +546,14 @@ def main(
         print(f"registering clouds {world!r} ← {cloud_frame!r} via tf")
         buf = tf_buf
 
-        def _register(obs: Observation[Any]) -> Transform | None:
-            return buf.get(world, obs.data.frame_id, time_point=obs.ts, time_tolerance=tf_tolerance)
+        def _register(obs: Observation[Any]) -> TransformStamped | None:
+            return buf.get(
+                world, obs.data.header.frame_id, time_point=obs.ts, time_tolerance=tf_tolerance
+            )
 
         register = _register
     elif cloud_frame is not None:
         print(f"clouds already in world frame {world!r}; accumulating verbatim")
-        print("warning: trajectory positions come from stored obs.pose (old dataset)")
 
     def _position(obs: Observation[Any]) -> tuple[float, float, float] | None:
         """Trajectory position for dedup/path: registration tf, else the stored pose."""
@@ -504,45 +561,66 @@ def main(
             tf = register(obs)
             if tf is None:
                 return None
-            return (tf.translation.x, tf.translation.y, tf.translation.z)
+            return (
+                tf.transform.translation.x,
+                tf.transform.translation.y,
+                tf.transform.translation.z,
+            )
         pose = obs.pose
         # Reject placeholder poses: zero translation OR uninitialized rotation.
         # Same condition as pgo_keyframes so dedup and PGO see the same frames.
-        if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+        if (
+            pose is not None
+            and any((pose.position.x, pose.position.y, pose.position.z))
+            and any(
+                (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)
+            )
+        ):
             return (pose.position.x, pose.position.y, pose.position.z)
         return None
 
-    # Spatial dedup: bucket frames by 3D cell using the trajectory position,
-    # keep the latest per cell. Shared by raw and PGO rebuilds. Doesn't touch
-    # obs.data so it stays cheap (no pointcloud loading). With pgo_tol<=0 the
-    # bucketing is disabled and every positioned frame is kept (keyed by index).
-    seen: dict[Any, tuple[Observation[Any], tuple[float, float, float]]] = {}
+    # World-frame accumulation needs no trajectory. Dedup and PGO do.
+    seen: dict[Any, Observation[Any]] = {}
+    path: list[tuple[float, float, float]] = []
     for i, obs in enumerate(lidar):
         pos = _position(obs)
-        if pos is None:
-            continue
-        if pgo_tol > 0:
-            # math.floor so negative coords bucket consistently; int() truncates
-            # toward zero and silently folds -0.5 and 0.5 into the same cell.
-            key: Any = (
-                math.floor(pos[0] / pgo_tol),
-                math.floor(pos[1] / pgo_tol),
-                math.floor(pos[2] / pgo_tol),
+        if register is not None and pos is None:
+            raise typer.BadParameter(
+                f"Missing registration TF at timestamp {obs.ts}", param_hint="--frame"
             )
-        else:
-            key = i
-        seen[key] = (obs, pos)
+        if pgo_tol > 0 and pos is None:
+            raise typer.BadParameter(
+                "Spatial dedup requires trajectory positions; use --pgo-tol 0 for plain accumulation",
+                param_hint="--pgo-tol",
+            )
+        if pgo and (
+            obs.pose is None
+            or not any((obs.pose.position.x, obs.pose.position.y, obs.pose.position.z))
+            or not any(
+                (
+                    obs.pose.orientation.x,
+                    obs.pose.orientation.y,
+                    obs.pose.orientation.z,
+                    obs.pose.orientation.w,
+                )
+            )
+        ):
+            raise typer.BadParameter(
+                "PGO requires valid stored trajectory poses; registration TF alone does not populate them",
+                param_hint="--pgo",
+            )
+        key: Any = i
+        if pgo_tol > 0:
+            assert pos is not None
+            key = tuple(math.floor(value / pgo_tol) for value in pos)
+        seen[key] = obs
 
-    n_kept = len(seen)
-    pct = 100 * n_kept / total if total else 0
-    if pgo_tol > 0:
-        print(f"dedup: kept [{n_kept}/{total}] frames ({pct:.1f}%) at tol={pgo_tol}m")
-    else:
-        print(f"dedup: disabled, kept all [{n_kept}/{total}] positioned frames")
-
-    # Dict insertion order = lidar iteration order = chronological.
-    kept = [obs for obs, _ in seen.values()]
-    path: list[tuple[float, float, float]] = [pos for _, pos in seen.values()]
+    kept = list(seen.values())
+    path = [pos for obs in kept if (pos := _position(obs)) is not None]
+    n_kept = len(kept)
+    if not n_kept:
+        raise typer.BadParameter("No point-cloud observations in the selected interval")
+    print(f"dedup: kept [{n_kept}/{total}] frames at tol={pgo_tol}m")
 
     pgo_map = None
     pgo_path: list[tuple[float, float, float]] = []
@@ -553,7 +631,11 @@ def main(
             graph = lidar.tap(bar).transform(PGO()).last().data
 
         pgo_path = [
-            (kf.optimized.translation.x, kf.optimized.translation.y, kf.optimized.translation.z)
+            (
+                kf.optimized.transform.translation.x,
+                kf.optimized.transform.translation.y,
+                kf.optimized.transform.translation.z,
+            )
             for kf in graph.keyframes
         ]
 
@@ -596,6 +678,9 @@ def main(
             progress_cb=bar,
         )
 
+    if global_map is None:
+        raise typer.BadParameter("Selected observations contain no points to accumulate")
+
     if denoise:
         print("denoising maps (statistical outlier removal)...")
         global_map = _denoise(global_map)
@@ -609,7 +694,8 @@ def main(
         # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
         # --image-pose, swap that stored pose for a different source (e.g.
         # fastlio_odometry), composing the base→optical mount onto it first.
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
+        assert selected_image is not None
+        color_image = store.stream(selected_image, Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:
             from dimos.mapping.cli.pose_fill import pose_fill
@@ -619,7 +705,13 @@ def main(
             )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+        cam_info = (
+            camera_info_from_yaml(
+                camera_info, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+            )
+            if camera_info
+            else front_camera_calibration()
+        )
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,
@@ -631,7 +723,7 @@ def main(
         # than the limits. Defaults match replay_marker.py so positions agree.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
-                QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
+                QualityWindow(image_sharpness, window=marker_quality_window)
             )
             if marker_max_speed > 0:
                 pipeline = pipeline.transform(
@@ -677,14 +769,15 @@ def main(
         subprocess.Popen(["rerun", str(out)])
 
     if export and pgo_map is not None:
-        out_path = Path.cwd() / f"{db_path.stem}.pc2.lcm"
+        out_path = Path.cwd() / f"{db_path.stem}.pc2.cdr"
         print(f"exporting PGO twopass map to {out_path}...")
-        out_path.write_bytes(pgo_map.lcm_encode())
+        out_path.write_bytes(cdr_encode(pgo_map))
         print(f"wrote {out_path}")
         print()
         print("load back with:")
-        print("    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2")
-        print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
+        print("    from dimos_generated.sensor_msgs.msg import PointCloud2")
+        print("    from dimos_cdrgen.registry import decode")
+        print(f'    pcd = decode(open("{out_path.name}", "rb").read(), PointCloud2)')
 
 
 if __name__ == "__main__":

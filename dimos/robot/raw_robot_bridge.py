@@ -36,6 +36,10 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
+from dimos_generated.std_msgs.msg import Float32, Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from PIL import Image as PILImage
 from scipy.spatial.transform import Rotation
@@ -55,15 +59,10 @@ from dimos.evals.constants import (
     RAW_MAX_LINEAR_MPS,
     RAW_TOPIC_PREFIX,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import quaternion_array, vector_array
+from dimos.msgs.image import image_to_rgb, image_view
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -118,27 +117,36 @@ class RawTopics:
 
 def jpeg_bytes(image: Image, quality: int = 90) -> bytes:
     buf = io.BytesIO()
-    PILImage.fromarray(image.to_rgb().as_numpy()).save(buf, format="JPEG", quality=quality)
+    PILImage.fromarray(image_to_rgb(image)).save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
 
 
 def depth_f32(image: Image) -> bytes:
     """Metric optical-axis depth without quantization or image compression."""
-    depth = image.as_numpy()
-    if image.format != ImageFormat.DEPTH or depth.ndim != 2 or depth.dtype.kind != "f":
+    depth = image_view(image)
+    if image.encoding not in {"32FC1", "64FC1"} or depth.ndim != 2 or depth.dtype.kind != "f":
         raise ValueError("Raw depth requires a 2D floating-point DEPTH image in metres")
     return np.ascontiguousarray(depth, dtype="<f4").tobytes()
 
 
 def xyz_f32(cloud: PointCloud2) -> bytes:
-    points, _ = cloud.as_numpy()
+    points = pointcloud_xyz(cloud)
     return np.ascontiguousarray(points, dtype="<f4").tobytes()
 
 
 def odom_json(pose: PoseStamped) -> str:
-    p, q = pose.position, pose.orientation
+    p, q = pose.pose.position, pose.pose.orientation
     return json.dumps(
-        {"t": pose.ts, "x": p.x, "y": p.y, "z": p.z, "qx": q.x, "qy": q.y, "qz": q.z, "qw": q.w}
+        {
+            "t": to_seconds(pose.header.stamp),
+            "x": p.x,
+            "y": p.y,
+            "z": p.z,
+            "qx": q.x,
+            "qy": q.y,
+            "qz": q.z,
+            "qw": q.w,
+        }
     )
 
 
@@ -252,14 +260,18 @@ class RawRobotBridge(Module):
         cfg = self.config
         self._topics = RawTopics(cfg.endpoint, cfg.prefix, listen=True)
         q = cfg.jpeg_quality
-        self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
+        self.color_image.subscribe(
+            lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), to_seconds(img.header.stamp))
+        )
         self.depth_image.subscribe(self._on_depth)
-        self.lidar.subscribe(lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), cloud.ts))
+        self.lidar.subscribe(
+            lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), to_seconds(cloud.header.stamp))
+        )
         self.odom.subscribe(lambda pose: self._put("odom/json", odom_json(pose)))
         self.camera_info.subscribe(
             lambda info: self._put(
                 "camera_info/json",
-                json.dumps({"width": info.width, "height": info.height, "K": info.K}),
+                json.dumps({"width": info.width, "height": info.height, "K": list(info.k)}),
             )
         )
         self.coordinator_joint_state.subscribe(self._on_joint_state)
@@ -280,8 +292,17 @@ class RawRobotBridge(Module):
             self._stop.set()
             if self._drive_thread is not None:
                 self._drive_thread.join(timeout=1.0)
-            self.cmd_vel.publish(Twist())
-            self.ee_twist_command.publish(TwistStamped())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
+            self.ee_twist_command.publish(
+                TwistStamped(
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id=""),
+                    twist=Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
+                )
+            )
             self._topics.close()
             self._topics = None
         super().stop()
@@ -312,17 +333,37 @@ class RawRobotBridge(Module):
         while not self._stop.wait(1.0 / self.config.drive_hz):
             vx, vy, wz = self._base.current()
             if (vx, vy, wz) != (0.0, 0.0, 0.0):
-                self.cmd_vel.publish(Twist(linear=(vx, vy, 0.0), angular=(0.0, 0.0, wz)))
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(x=0.0, y=0.0, z=wz))
+                )
                 moving["base"] = True
             elif moving["base"]:
-                self.cmd_vel.publish(Twist())
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
                 moving["base"] = False
             arm = self._arm.current()
             if any(arm):
-                self.ee_twist_command.publish(TwistStamped(linear=arm[:3], angular=arm[3:]))
+                self.ee_twist_command.publish(
+                    TwistStamped(
+                        header=Header(stamp=time_from_seconds(time.time()), frame_id=""),
+                        twist=Twist(
+                            linear=Vector3(x=arm[0], y=arm[1], z=arm[2]),
+                            angular=Vector3(x=arm[3], y=arm[4], z=arm[5]),
+                        ),
+                    )
+                )
                 moving["arm"] = True
             elif moving["arm"]:
-                self.ee_twist_command.publish(TwistStamped())
+                self.ee_twist_command.publish(
+                    TwistStamped(
+                        header=Header(stamp=time_from_seconds(time.time()), frame_id=""),
+                        twist=Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
+                    )
+                )
                 moving["arm"] = False
 
     def _on_depth(self, image: Image) -> None:
@@ -334,15 +375,15 @@ class RawRobotBridge(Module):
                 logger.warning("Raw depth frames rejected", error=str(exc))
             return
         info = {
-            "t": image.ts,
+            "t": to_seconds(image.header.stamp),
             "width": image.width,
             "height": image.height,
             "dtype": "<f4",
             "unit": "metres",
-            "frame_id": image.frame_id,
+            "frame_id": image.header.frame_id,
         }
-        self._put("camera/depth_info/json", json.dumps(info), image.ts)
-        self._put("camera/depth_f32", payload, image.ts)
+        self._put("camera/depth_info/json", json.dumps(info), to_seconds(image.header.stamp))
+        self._put("camera/depth_f32", payload, to_seconds(image.header.stamp))
 
     def _on_joint_state(self, state: JointState) -> None:
         now = time.monotonic()
@@ -354,7 +395,7 @@ class RawRobotBridge(Module):
         velocities = dict(zip(state.name, state.velocity, strict=False))
         joints = [n for n in state.name if n != gripper_joint]
         message: dict[str, Any] = {
-            "t": state.ts,
+            "t": to_seconds(state.header.stamp),
             "joint_names": joints,
             "positions": [positions[n] for n in joints],
             "velocities": [velocities.get(n, 0.0) for n in joints],
@@ -372,17 +413,17 @@ class RawRobotBridge(Module):
             payload = json.dumps(message, allow_nan=False)
         except ValueError:
             return  # a non-finite joint value would make invalid JSON
-        self._put("arm/state/json", payload, state.ts)
+        self._put("arm/state/json", payload, to_seconds(state.header.stamp))
 
     def _on_tf(self, message: TFMessage) -> None:
         for transform in message.transforms:
             child = transform.child_frame_id
             if child not in (self.config.camera_frame, self.config.ee_frame):
                 continue
-            q = transform.rotation.to_numpy()
+            q = quaternion_array(transform.transform.rotation)
             pose = {
-                "frame": transform.frame_id,
-                "xyz": transform.translation.to_numpy().tolist(),
+                "frame": transform.header.frame_id,
+                "xyz": vector_array(transform.transform.translation).tolist(),
                 "quaternion_xyzw": Rotation.from_quat(q).as_quat().tolist(),
             }
             if child == self.config.ee_frame:
@@ -390,4 +431,8 @@ class RawRobotBridge(Module):
                     self._ee_pose = pose
                     self._ee_seen = time.monotonic()
             else:
-                self._put("camera_pose/json", json.dumps({"t": transform.ts, **pose}), transform.ts)
+                self._put(
+                    "camera_pose/json",
+                    json.dumps({"t": to_seconds(transform.header.stamp), **pose}),
+                    to_seconds(transform.header.stamp),
+                )

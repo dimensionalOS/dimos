@@ -16,6 +16,8 @@
 
 from typing import Protocol
 
+from dimos_generated.std_msgs.msg import Int32
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -23,7 +25,6 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.spec.utils import Spec
 
 

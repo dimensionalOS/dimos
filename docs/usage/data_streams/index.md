@@ -19,7 +19,9 @@ Dimos uses reactive streams (RxPY) to handle sensor data. This approach naturall
 from reactivex import operators as ops
 from dimos.utils.reactive import backpressure
 from dimos.types.timestamped import align_timestamped
-from dimos.msgs.sensor_msgs.Image import sharpness_barrier
+from dimos.msgs.image import image_sharpness, image_view, image_to_rgb
+from dimos.msgs.time import to_seconds
+from dimos.utils.reactive import quality_barrier
 
 # Camera at 30fps, lidar at 10Hz
 camera_stream = camera.observable()
@@ -28,7 +30,7 @@ lidar_stream = lidar.observable()
 # Pipeline: filter blurry frames -> align with lidar -> handle slow consumers
 processed = (
     camera_stream.pipe(
-        sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window (10Hz)
+        quality_barrier(image_sharpness, 10.0),  # Keep sharpest frame per 100ms window (10Hz)
     )
 )
 

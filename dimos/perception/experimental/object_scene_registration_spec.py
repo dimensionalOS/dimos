@@ -14,8 +14,9 @@
 
 from typing import Protocol
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.vision_msgs.msg import Detection3DArray
+
 from dimos.spec.utils import Spec
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
+import copy
 from dataclasses import dataclass, field
 import math
 import threading
@@ -26,6 +27,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pink
 from pydantic import Field
@@ -46,12 +51,10 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -290,7 +293,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
     ) -> JointState | None:
         """Advance the persistent command trajectory by one bounded QP step."""
         with self._command_state_lock:
-            command_state = JointState(self._command_state or measured_state)
+            command_state = copy.deepcopy(self._command_state or measured_state)
             command_increment_history = tuple(
                 increment.copy() for increment in self._command_increment_history
             )
@@ -315,7 +318,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         with self._command_state_lock:
             if self._command_state_generation != generation:
                 return None
-            self._command_state = JointState(result.command)
+            self._command_state = copy.deepcopy(result.command)
             self._command_increment_history.append(result.bounded_increment.copy())
         return result.command
 
@@ -441,7 +444,13 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             command_limit_margin=command_limit_margin,
         )
         return _StreamingStepResult(
-            command=JointState(name=list(joint_names), position=command_positions.tolist()),
+            command=JointState(
+                name=list(joint_names),
+                position=np.asarray(command_positions.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             bounded_increment=bounded_increment,
         )
 
@@ -508,14 +517,13 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         )
         positions = _seed_positions_for_mapping(seed, context.robot.mapping)
         q = self._q_from_dimos_positions(context.robot, positions)
-        base_world = pose_to_matrix(robot_model.base_pose)
+        base_world = pose_matrix(robot_model.base_pose.pose)
         poses: dict[str, PoseStamped] = {}
         for frame_name, frame_context in context.frames.items():
-            pose = matrix_to_pose(base_world @ self._current_frame_matrix(frame_context, q))
+            pose = pose_from_matrix(base_world @ self._current_frame_matrix(frame_context, q))
             poses[frame_name] = PoseStamped(
-                frame_id=robot_model.base_link,
-                position=pose.position,
-                orientation=pose.orientation,
+                header=Header(frame_id=robot_model.base_link, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(position=pose.position, orientation=pose.orientation),
             )
         return poses
 
@@ -727,7 +735,9 @@ class PoseTargetIKTask(BaseControlTask):
             return None
         if result is None:
             return None
-        if result.name != list(self._joint_names) or len(result.position) != len(self._joint_names):
+        if list(result.name) != list(self._joint_names) or len(result.position) != len(
+            self._joint_names
+        ):
             logger.warning("Pink control step returned an invalid joint result", task=self._name)
             return None
 
@@ -780,7 +790,13 @@ class PoseTargetIKTask(BaseControlTask):
             if position is None:
                 return None
             positions.append(position)
-        return JointState(name=list(self._joint_names), position=positions)
+        return JointState(
+            name=list(self._joint_names),
+            position=np.asarray(positions, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def _reset_command_state(self) -> None:
         """Discard the active command trajectory and clear a tracking fault."""

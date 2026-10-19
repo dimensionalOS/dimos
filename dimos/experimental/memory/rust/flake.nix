@@ -15,9 +15,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-memory-recorder";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = import ../../../../native/cdr-source.nix { inherit pkgs; paths = [ "dimos/experimental/memory/rust" ]; };
 
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; cargoToml = "dimos/experimental/memory/rust/Cargo.toml"; };
 
         sysOverrides = {
           libsqlite3-sys = _: {

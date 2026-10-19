@@ -23,8 +23,8 @@ Both the config dataclass and pubsub topics get converted to CLI args passed dow
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.sensor_msgs.msg import Imu
 import time
 
 class MyLidarConfig(NativeModuleConfig):
@@ -230,7 +230,7 @@ A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/nat
 
 ## Examples
 
-For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
+For generated CDR language interop examples (Python, C++, Rust and browser support), see [/examples/language-interop/](/examples/language-interop/README.md).
 
 ### Livox Mid-360 Module
 
@@ -239,8 +239,8 @@ The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors
 ```python skip
 from dimos.core.stream import Out
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.sensor_msgs.msg import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):

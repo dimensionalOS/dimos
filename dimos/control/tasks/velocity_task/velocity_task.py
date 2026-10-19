@@ -38,7 +38,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos_generated.sensor_msgs.msg import JointState
 
 logger = setup_logger()
 
@@ -242,7 +242,7 @@ class JointVelocityTask(BaseControlTask):
         """Uniform stream handler: digest the velocity half of a joint_command."""
         # Position-bearing messages belong to the servo half (the coordinator
         # routes position XOR velocity; positions win when both are present).
-        if msg.position or not msg.velocity:
+        if len(msg.position) or not len(msg.velocity):
             return False
         return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=True)), t_now)
 

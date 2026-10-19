@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+import math
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
+import pytest
+
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import decode_ceilings
 
@@ -26,23 +30,24 @@ MIN_SPEED, MAX_SPEED = GO2.min_speed, GO2.max_speed
 
 def _pose(x: float, y: float, yaw: float = 0.0, ts: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        ts=ts,
-        frame_id="odom",
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        header=Header(stamp=time_from_seconds(ts), frame_id="odom"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=quaternion_from_euler(0, 0, yaw)),
     )
 
 
 def _path(n: int = 21, step: float = 0.1) -> Path:
-    return Path(frame_id="odom", poses=[_pose(i * step, 0.0, ts=1.0) for i in range(n)])
+    return Path(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        poses=[_pose(i * step, 0.0, ts=1.0) for i in range(n)],
+    )
 
 
 def _stamp(path: Path, dts: list[float], t0: float = 0.0) -> Path:
     t = t0
-    path.poses[0].ts = t
+    path.poses[0].header.stamp = time_from_seconds(t)
     for pose, dt in zip(path.poses[1:], dts, strict=True):
         t += dt
-        pose.ts = t
+        pose.header.stamp = time_from_seconds(t)
     return path
 
 
@@ -52,7 +57,7 @@ def test_ceiling_is_segment_length_over_stamp_delta() -> None:
     ceilings = decode_ceilings(path, MIN_SPEED, MAX_SPEED)
     assert ceilings is not None
     # waypoint i carries segment i-1
-    np.testing.assert_allclose(ceilings[1:], speeds, rtol=1e-9)
+    np.testing.assert_allclose(ceilings[1:], speeds, rtol=1e-8)
     assert ceilings[0] == ceilings[1]
 
 
@@ -62,7 +67,7 @@ def test_unstamped_path_decodes_none() -> None:
 
 def test_non_monotone_decodes_none() -> None:
     path = _stamp(_path(), [0.1 / MAX_SPEED] * 20)
-    path.poses[5].ts = 999.0
+    path.poses[5].header.stamp = time_from_seconds(999.0)
     assert decode_ceilings(path, MIN_SPEED, MAX_SPEED) is None
 
 
@@ -71,10 +76,16 @@ def test_fan_inherits_ceiling() -> None:
     poses += [_pose(0.1, 0.0, yaw) for yaw in (0.3, 0.6, 0.9)]  # rotation in place
     poses += [_pose(0.2, 0.0, 0.9)]
     fan_dt = 0.3 / GO2.max_yaw_rate
-    path = _stamp(Path(frame_id="odom", poses=poses), [0.1 / MAX_SPEED] + [fan_dt] * 3 + [0.5])
+    path = _stamp(
+        Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=poses),
+        [0.1 / MAX_SPEED] + [fan_dt] * 3 + [0.5],
+    )
     ceilings = decode_ceilings(path, MIN_SPEED, MAX_SPEED)
     assert ceilings is not None
-    assert ceilings[3] == MAX_SPEED  # fan inherits, does not read as slow motion
+    # ROS time quantizes each waypoint to nanoseconds.
+    assert ceilings[3] == pytest.approx(
+        MAX_SPEED, abs=1e-8
+    )  # fan inherits, does not read as slow motion
 
 
 def test_decode_clips_to_safe_band() -> None:
@@ -86,8 +97,22 @@ def test_decode_clips_to_safe_band() -> None:
 
 
 def test_empty_and_single_pose() -> None:
-    assert decode_ceilings(Path(frame_id="odom", poses=[]), MIN_SPEED, MAX_SPEED) is None
-    assert decode_ceilings(Path(frame_id="odom", poses=[_pose(0, 0)]), MIN_SPEED, MAX_SPEED) is None
+    assert (
+        decode_ceilings(
+            Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=[]),
+            MIN_SPEED,
+            MAX_SPEED,
+        )
+        is None
+    )
+    assert (
+        decode_ceilings(
+            Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=[_pose(0, 0)]),
+            MIN_SPEED,
+            MAX_SPEED,
+        )
+        is None
+    )
 
 
 def test_stall_never_reads_as_schedule() -> None:
@@ -97,3 +122,4 @@ def test_stall_never_reads_as_schedule() -> None:
     ca, cb = decode_ceilings(a, MIN_SPEED, MAX_SPEED), decode_ceilings(b, MIN_SPEED, MAX_SPEED)
     assert ca is not None and cb is not None
     np.testing.assert_allclose(ca, cb)
+    assert math.isclose(to_seconds(b.poses[0].header.stamp), 12345.6)

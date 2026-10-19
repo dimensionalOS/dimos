@@ -23,8 +23,10 @@ from math import floor
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.memory.embed import EmbedImages
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_brightness, image_resize_to_fit, image_sharpness
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -86,14 +88,14 @@ def build_frame_clip_index(
             if bucket in indexed_buckets:
                 continue
             indexed_buckets.add(bucket)
-            yield max(observations, key=lambda obs: obs.data.sharpness)
+            yield max(observations, key=lambda obs: image_sharpness(obs.data))
 
     pipeline = (
         # Skip pose-less frames — they can't answer "where" (world-frame frames need no pose).
         src_stream.filter(
-            lambda obs: obs.pose is not None or (obs.data.frame_id or "") in ("", "world")
+            lambda obs: obs.pose is not None or (obs.data.header.frame_id or "") in ("", "world")
         )
-        .filter(lambda obs: obs.data.brightness > 0.1)
+        .filter(lambda obs: image_brightness(obs.data) > 0.1)
         .transform(best_in_new_buckets)
         .transform(EmbedImages(model))
     )
@@ -102,7 +104,7 @@ def build_frame_clip_index(
         embedded = cast("EmbeddedObservation[Image]", obs)
         payload = obs.data
         if index_store is not None:
-            payload, _scale = payload.resize_to_fit(thumbnail_px, thumbnail_px)
+            payload, _scale = image_resize_to_fit(payload, thumbnail_px, thumbnail_px)
         index.append(
             payload,
             ts=obs.ts,

@@ -12,13 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+"""Generated planner messages retain geometry through the Rerun adapters."""
 
+from functools import partial
+import struct
+
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import (
+    LineSegment3D,
+    LineSegments3D,
+    RegionLineSegments3D,
+    RegionPointCloud2,
+)
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.global_planner.mls_planner import viz
+from dimos.navigation.global_planner.mls_planner.viz import (
+    render_node_edges,
+    render_nodes,
+    render_surface_map,
+)
+
+
+def test_surface_clearance_filter_after_cdr() -> None:
+    cloud = PointCloud2(
+        height=1,
+        width=2,
+        point_step=16,
+        row_step=32,
+        fields=[
+            PointField(name=name, offset=i * 4, datatype=PointField.FLOAT32, count=1)
+            for i, name in enumerate(("x", "y", "z", "intensity"))
+        ],
+        data=np.frombuffer(struct.pack("<8f", 1, 2, 3, 0.1, 4, 5, 6, 0.8), dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=False,
+        is_dense=False,
+    )
+    decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
+    before = cdr_encode(decoded)
+    rendered = render_surface_map(decoded, wall_clearance_m=0.2)
+    assert rendered.positions.as_arrow_array().to_pylist() == [[4.0, 5.0, 6.0]]
+    assert cdr_encode(decoded) == before
+
+
+def test_nodes_lift_and_surface_without_intensity() -> None:
+    cloud = pointcloud_from_xyz(
+        np.array([[1.0, 2.0, 3.0]]), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
+    before = cdr_encode(cloud)
+    np.testing.assert_allclose(
+        render_nodes(cloud).positions.as_arrow_array().to_pylist(), [[1, 2, 3.05]]
+    )
+    assert render_surface_map(cloud).positions.as_arrow_array().to_pylist() == [[1, 2, 3]]
+    assert cdr_encode(cloud) == before
+
+
+def test_weighted_edges_and_empty_messages() -> None:
+    message = LineSegments3D(
+        segments=[
+            LineSegment3D(start=Point(x=0.0, y=0.0, z=0.0), end=Point(x=1, y=0.0, z=0.0), weight=1),
+            LineSegment3D(start=Point(x=1, y=0.0, z=0.0), end=Point(x=2, y=0.0, z=0.0), weight=100),
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
+    decoded = cdr_decode(cdr_encode(message), LineSegments3D)
+    rendered = render_node_edges(decoded)
+    np.testing.assert_allclose(
+        rendered.strips.as_arrow_array().to_pylist(),
+        [[[0, 0, 0.05], [1, 0, 0.05]], [[1, 0, 0.05], [2, 0, 0.05]]],
+    )
+    assert rendered.colors.as_arrow_array().to_pylist() == [0x00FF3CDC, 0xFF003CDC]
+    assert decoded.segments[0].start.z == 0
+    assert (
+        render_node_edges(
+            LineSegments3D(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), segments=[])
+        )
+        .strips.as_arrow_array()
+        .to_pylist()
+        == []
+    )
+    empty = pointcloud_from_xyz(
+        np.empty((0, 3)), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
+    assert render_nodes(empty).positions.as_arrow_array().to_pylist() == []
 
 
 def _rgb(packed: int) -> tuple[int, int, int]:
@@ -62,19 +144,34 @@ def test_graph_nodes_are_lifted_off_the_surface() -> None:
 
 
 def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:
-    cell = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
-    cell.seq = 1 << 16
+    cell = RegionPointCloud2(
+        region_id=1 << 16,
+        cloud=pointcloud_from_xyz(
+            np.array([[1.0, 1.0, 0.0]], dtype=np.float32),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"),
+        ),
+    )
     (path, arch, static) = viz.render_surface_region(cell, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 1
 
-    emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
-    emptied.seq = 1 << 16
+    emptied = RegionPointCloud2(
+        region_id=1 << 16,
+        cloud=pointcloud_from_xyz(
+            np.zeros((0, 3), dtype=np.float32),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"),
+        ),
+    )
     (path, arch, static) = viz.render_surface_region(emptied, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 0
 
-    edges = LineSegments3D(segments=np.zeros((0, 2, 3)), seq=(2 << 16) | 3)
+    edges = RegionLineSegments3D(
+        region_id=(2 << 16) | 3,
+        lines=LineSegments3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"), segments=[]
+        ),
+    )
     (path, arch, static) = viz.render_edge_region(edges)[0]
     assert path == "world/node_edges/2_3" and static
     assert arch.strips.as_arrow_array().to_pylist() == []
