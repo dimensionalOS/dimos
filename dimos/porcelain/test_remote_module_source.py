@@ -196,14 +196,23 @@ def test_connect_restart_invalidates_cache(client):
     assert client.skills.ping() == "pong"
 
 
-def test_connect_unload_invalidates_cache(client):
-    source = client._source
-    source.get_module("StressTestModule")
+def test_connect_unload_stops_stream_subscriptions(client, stream_module, collected):
+    stream = client.get_module("remote/streams").get_stream("messages")
+    (channel,) = [s.channel for s in client.list_streams("remote/streams") if s.name == "messages"]
+    received, event, callback = collected
+    stream.subscribe(callback)
+    stream_module.emit("messages", b"before unload")
+    assert event.wait(timeout=5.0)
+    event.clear()
 
-    client.unload(StressTestModule)
-
-    with pytest.raises(KeyError):
-        source.get_module("StressTestModule")
+    client.unload(StreamModule)
+    publisher = pLCMTransport(channel)
+    try:
+        publisher.publish(b"after unload")
+        assert not event.wait(timeout=1.0)
+    finally:
+        publisher.stop()
+    assert received == [b"before unload"]
 
 
 def test_connect_run_by_name_adds_module(running_app, client):
