@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-08T15:05:55.077947Z"
+exclude-newer = "2026-10-12T05:43:43.370659Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1789,27 +1789,30 @@ wheels = [
 
 [[package]]
 name = "dim-go2-sim"
-version = "0.1.1"
+version = "0.4.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dimos" },
     { name = "fast-simplification" },
     { name = "gltflib" },
     { name = "imageio" },
+    { name = "msgpack" },
     { name = "mujoco" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "pillow" },
     { name = "pygfx" },
     { name = "rendercanvas" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/b5/7280d0cbfd70c97595200d99b5a66274727635bf638b57c631f979d508af/dim_go2_sim-0.1.1.tar.gz", hash = "sha256:00bcabb966f78d451beadcc7d10378fb700623ed4585cee37c73f6f81a0ed454", size = 5291098, upload-time = "2026-10-15T15:05:38.009Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/ce/d2a90063aa04cd5e89bc11c203bb67d588b44dc7524df9a44846fcff5f3f/dim_go2_sim-0.4.13.tar.gz", hash = "sha256:3cca94575b30137937c4ca28edfbe1018aa396fdfae7955490633dd58e798174", size = 5355178, upload-time = "2026-10-19T05:41:53.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/af/2f3fe72f8fd0de5d9c91b6640de0d38e769aed580d9f67c4514369b910f5/dim_go2_sim-0.1.1-py3-none-any.whl", hash = "sha256:35559af7a2b127fbc6d334c1c3e7587917ea88a199118ea905c0a775af102866", size = 5392028, upload-time = "2026-10-15T15:05:36.244Z" },
+    { url = "https://files.pythonhosted.org/packages/52/d6/d54dc5296e934ad900e6ca541521ab97c0e7bc3da0723f96fab6aada750e/dim_go2_sim-0.4.13-py3-none-any.whl", hash = "sha256:dff85d14e44d93d78348d124b77a62c4f261748aa4968c136017cd2f0f797399", size = 5446239, upload-time = "2026-10-19T05:41:51.473Z" },
 ]
 
 [[package]]
@@ -1843,6 +1846,7 @@ dependencies = [
     { name = "eclipse-zenoh" },
     { name = "filelock" },
     { name = "gitpython" },
+    { name = "httpx" },
     { name = "imagecodecs", version = "2025.3.30", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "imagecodecs", version = "2026.3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "imagecodecs", version = "2026.6.26", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -2486,7 +2490,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.1.1" },
+    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.4.13" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
@@ -2510,6 +2514,7 @@ requires-dist = [
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
+    { name = "httpx" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "imagecodecs", specifier = ">=2024.6.1" },
     { name = "ipykernel", marker = "extra == 'misc'" },

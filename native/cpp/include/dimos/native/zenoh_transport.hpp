@@ -60,6 +60,8 @@ struct SessionSettings {
     bool gossip = false;
     std::string interface;
     std::uint64_t connect_timeout_ms = 0;
+    // The one optional field: python sends it only when set. Empty is no namespace.
+    std::string namespace_;
 };
 
 template <class T>
@@ -105,10 +107,14 @@ inline std::optional<SessionSettings> settings_from_launch(const nlohmann::json&
     settings.gossip = require_field<bool>(object, "gossip");
     settings.interface = require_field<std::string>(object, "interface");
     settings.connect_timeout_ms = require_field<std::uint64_t>(object, "connect_timeout_ms");
+    if (object.contains("namespace")) {
+        settings.namespace_ = require_field<std::string>(object, "namespace");
+    }
     // The rust settings deny unknown fields, so a version skew is loud here too.
     static const std::set<std::string> known = {"mode",       "connect", "listen",
                                                 "multicast",  "gossip",  "interface",
-                                                "scout_addr", "connect_timeout_ms"};
+                                                "scout_addr", "connect_timeout_ms",
+                                                "namespace"};
     for (const auto& entry : object.items()) {
         if (known.count(entry.key()) == 0) {
             throw std::runtime_error("zenoh session settings: unknown field '" + entry.key() +
@@ -149,6 +155,9 @@ inline ::zenoh::Config zenoh_config(const SessionSettings& settings) {
     if (settings.connect_timeout_ms > 0) {
         inserts.emplace_back("connect/timeout_ms",
                              nlohmann::json(settings.connect_timeout_ms).dump());
+    }
+    if (!settings.namespace_.empty()) {
+        inserts.emplace_back("namespace", nlohmann::json(settings.namespace_).dump());
     }
     for (const auto& insert : inserts) {
         config.insert_json5(insert.first, insert.second);

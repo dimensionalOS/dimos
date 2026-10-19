@@ -15,8 +15,8 @@
 """A simulator's ground truth, written to a file only the grader reads.
 
 The sandboxed agent sees the robot through the router; this log stays inside the robot
-container's case mount, so grading can use the true pose and every contact without
-the agent ever being able to read them.
+container's case mount, so grading can use the true pose, every contact and where any people
+were without the agent ever being able to read them.
 """
 
 from __future__ import annotations
@@ -27,27 +27,31 @@ import threading
 from typing import IO
 
 from dim_go2_sim import Contacts
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.evals.sandbox.case import CASE_MOUNT
+from dimos.evals.sandbox.case import robot_case_dir
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class GroundTruthLogConfig(ModuleConfig):
-    path: str = f"{CASE_MOUNT}/ground_truth.jsonl"
+    path: str = Field(default_factory=lambda: f"{robot_case_dir()}/ground_truth.jsonl")
     pose_hz: float = 10.0
 
 
 class GroundTruthLog(Module):
-    """JSON lines of the true base pose (at pose_hz) and of every change in contacts."""
+    """JSON lines of the true base pose and of the people's (x, y, yaw), each at pose_hz, and of
+    every change in contacts."""
 
     config: GroundTruthLogConfig
 
     ground_truth: In[PoseStamped]
     contacts: In[Contacts]
+    people: In[PoseArray]
 
     _file: IO[str] | None = None
 
@@ -57,9 +61,10 @@ class GroundTruthLog(Module):
         Path(self.config.path).parent.mkdir(parents=True, exist_ok=True)
         self._file = open(self.config.path, "a", buffering=1)
         self._lock = threading.Lock()
-        self._next_pose_ts = 0.0
+        self._next_pose_ts = self._next_people_ts = 0.0
         self.register_disposable(Disposable(self.ground_truth.subscribe(self._on_pose)))
         self.register_disposable(Disposable(self.contacts.subscribe(self._on_contacts)))
+        self.register_disposable(Disposable(self.people.subscribe(self._on_people)))
 
     @rpc
     def stop(self) -> None:
@@ -80,6 +85,12 @@ class GroundTruthLog(Module):
         self._next_pose_ts = pose.ts + 1.0 / self.config.pose_hz
         p, q = pose.position, pose.orientation
         self._write({"t": pose.ts, "pose": [p.x, p.y, p.z, q.x, q.y, q.z, q.w]})
+
+    def _on_people(self, people: PoseArray) -> None:
+        if people.ts < self._next_people_ts:
+            return
+        self._next_people_ts = people.ts + 1.0 / self.config.pose_hz
+        self._write({"t": people.ts, "people": [[p.x, p.y, p.yaw] for p in people.poses]})
 
     def _on_contacts(self, contacts: Contacts) -> None:
         self._write({"t": contacts.ts, "contacts": [[c.part, c.kind] for c in contacts.contacts]})

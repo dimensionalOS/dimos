@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Grading a Go2 run through a scene package from the simulator's ground truth.
+"""Grading a Go2 run through a scene from the simulator's ground truth.
 
-Everything here reads the log GroundTruthLog writes (true base pose, contacts) and the
-package geometry itself; nothing depends on what the agent built or reports.
+Everything here reads the log GroundTruthLog writes (true base pose, contacts, where the people
+were) and the scene geometry itself; nothing depends on what the agent built or reports.
 
 Map coverage asks what the robot's Mid-360 could have seen: dim-go2-sim's lidar model is
 cast from the true poses against the scene, and compared with what it sees from every
@@ -29,10 +29,14 @@ from dataclasses import dataclass
 from itertools import pairwise
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
+
+if TYPE_CHECKING:
+    from dim_go2_sim.lidar import Raycaster
 
 from dimos.constants import CACHE_DIR
 
@@ -49,6 +53,11 @@ CLEARANCE = 0.35
 SURVEY_YAWS = (0.0, np.pi / 2, np.pi, 3 * np.pi / 2)
 # Contacts closer together than this are one collision.
 COLLISION_GAP_S = 2.0
+# ...and so are contacts until the robot has moved this far from where the last one began
+# (a dog parked with a leg on a sofa chatters in and out of contact for minutes).
+COLLISION_MOVE_M = 0.3
+# The kind of contact dim-go2-sim reports for touching a person.
+PERSON = "person"
 # Bump when the survey changes, so cached references are rebuilt.
 SURVEY_VERSION = 2
 
@@ -59,10 +68,12 @@ class GroundTruth:
     poses: NDArray[np.float64]  # (N, 7) x y z qx qy qz qw, base_link in the world
     contact_t: NDArray[np.float64]  # (M,) times the contact set changed
     contacts: list[list[tuple[str, str]]]  # (part, kind) pairs from that time on
+    people_t: NDArray[np.float64]  # (K,) seconds
+    people: NDArray[np.float64]  # (K, P, 3) x y yaw of each person
 
     @classmethod
     def load(cls, path: Path) -> GroundTruth:
-        pose_t, poses, contact_t, contacts = [], [], [], []
+        pose_t, poses, contact_t, contacts, people_t, people = [], [], [], [], [], []
         lines = path.read_text().splitlines()
         for i, line in enumerate(lines):
             try:
@@ -74,14 +85,20 @@ class GroundTruth:
             if "pose" in record:
                 pose_t.append(record["t"])
                 poses.append(record["pose"])
+            elif "people" in record:
+                people_t.append(record["t"])
+                people.append(record["people"])
             else:
                 contact_t.append(record["t"])
                 contacts.append([tuple(c) for c in record["contacts"]])
+        count = len(people[0]) if people else 0
         return cls(
             np.asarray(pose_t, np.float64),
             np.asarray(poses, np.float64).reshape(-1, 7),
             np.asarray(contact_t, np.float64),
             contacts,
+            np.asarray(people_t, np.float64),
+            np.asarray(people, np.float64).reshape(len(people), count, 3),
         )
 
     def between(self, start: float, end: float = np.inf) -> NDArray[np.float64]:
@@ -89,22 +106,58 @@ class GroundTruth:
         keep = (self.pose_t >= start) & (self.pose_t < end)
         return self.poses[keep]
 
-    def collisions(self, start: float = -np.inf, end: float = np.inf) -> list[float]:
-        """Times the robot hit anything but floor with anything but its feet.
+    def collisions(
+        self, start: float = -np.inf, end: float = np.inf, *, people: bool = False
+    ) -> list[float]:
+        """Times the robot hit anything but floor with anything but its feet; with *people*,
+        times it touched a person (with any part) instead.
 
         A bump chatters in and out of contact; touches within COLLISION_GAP_S of the
-        last one are the same collision.
+        last one, or before the robot has moved COLLISION_MOVE_M from where the last collision
+        began, are the same collision.
         """
+
+        def hit(part: str, kind: str) -> bool:
+            if people:
+                return kind == PERSON
+            return kind != PERSON and (part != "foot" or kind != "floor")
+
         events: list[float] = []
-        touching, last_touch = False, -np.inf
+        touching, last_touch, last_at = False, -np.inf, None
         for t, contacts in zip(self.contact_t, self.contacts, strict=True):
-            now = any(part != "foot" or kind != "floor" for part, kind in contacts)
-            if now and not touching and start <= t < end and t - last_touch > COLLISION_GAP_S:
+            now = any(hit(part, kind) for part, kind in contacts)
+            at = self._position_at(t)
+            moved = last_at is None or float(np.linalg.norm(at - last_at)) >= COLLISION_MOVE_M
+            if (
+                now
+                and not touching
+                and start <= t < end
+                and t - last_touch > COLLISION_GAP_S
+                and moved
+            ):
                 events.append(float(t))
+                last_at = at
             if now or touching:
                 last_touch = float(t)
             touching = now
         return events
+
+    def _position_at(self, t: float) -> NDArray[np.float64]:
+        """The robot's x, y at the last pose logged at or before *t* (the first, before any; the
+        origin with none)."""
+        if not len(self.pose_t):
+            return np.zeros(2)
+        return self.poses[max(int(np.searchsorted(self.pose_t, t, side="right")) - 1, 0), :2]
+
+    def closest_person(self, start: float = -np.inf) -> float:
+        """The nearest the robot's body centre came to a person's, metres, from *start* on."""
+        keep = self.people_t >= start
+        if not keep.any() or not len(self.pose_t) or not self.people.shape[1]:
+            return float("inf")
+        # The robot's pose logged nearest after each people record.
+        at = np.clip(np.searchsorted(self.pose_t, self.people_t[keep]), 0, len(self.poses) - 1)
+        offsets = self.people[keep, :, :2] - self.poses[at, None, :2]
+        return float(np.linalg.norm(offsets, axis=2).min())
 
 
 @dataclass(frozen=True)
@@ -144,22 +197,18 @@ def round_trips(sequence: Iterable[str], a: str, b: str) -> int:
 
 
 class SceneCoverage:
-    """What the Go2's Mid-360, as dim-go2-sim casts it, can see of a scene package, from given
-    poses or from everywhere."""
+    """What the Go2's Mid-360, as dim-go2-sim casts it, can see of a scene (any dim-go2-sim
+    scene.package), from given poses or from everywhere."""
 
     def __init__(self, package: str, start: tuple[float, float, float]) -> None:
         from dim_go2_sim import LidarConfig
-        from dim_go2_sim.lidar import mount_rotation, scene_raycaster
+        from dim_go2_sim.lidar import mount_rotation
         from dim_go2_sim.mid360 import Mid360
 
-        from dimos.simulation.scenes.catalog import resolve_scene_package
-
-        resolved = resolve_scene_package(package)
-        assert resolved is not None and resolved.mujoco_scene_path is not None
         x, y, _ = start  # the robot's start, where the reachable floor is flood-filled from
         self.package = package
         self.start = (x, y)
-        self._raycaster = scene_raycaster(resolved.mujoco_scene_path)
+        self.raycaster = scene_raycaster(package)
         lidar = LidarConfig()
         self._mount = (np.array(lidar.xyz), mount_rotation(lidar.pitch_deg))
         self._max_range = lidar.max_range
@@ -174,7 +223,7 @@ class SceneCoverage:
             rotation = Rotation.from_quat(pose[3:]).as_matrix()
             origin = pose[:3] + rotation @ mount_xyz
             directions = self._directions @ (rotation @ mount_r).T
-            ranges, _ = self._raycaster.cast(origin, directions, self._max_range)
+            ranges, _ = self.raycaster.cast(origin, directions, self._max_range)
             hit = ranges > 0
             points = origin + directions[hit] * ranges[hit, None]
             band = points[(points[:, 2] >= MAP_Z[0]) & (points[:, 2] <= MAP_Z[1])]
@@ -184,7 +233,7 @@ class SceneCoverage:
     def reference(self) -> set[tuple[int, int]]:
         """Cells seen from every reachable free spot on the floor: the complete map."""
         x, y = self.start  # the reachable floor is flood-filled from here
-        name = f"coverage-{self.package}-{x:.2f}_{y:.2f}-v{SURVEY_VERSION}.npy"
+        name = f"coverage-{self.package.replace('/', '_')}-{x:.2f}_{y:.2f}-v{SURVEY_VERSION}.npy"
         cached = CACHE_DIR / "evals" / name
         if cached.is_file():
             return set(map(tuple, np.load(cached).tolist()))
@@ -213,10 +262,10 @@ class SceneCoverage:
 
         def free(i: int, j: int) -> bool:
             origin = np.array([i * SURVEY_STEP, j * SURVEY_STEP, SENSOR_Z])
-            floor, _ = self._raycaster.cast(origin, down, 1.0)
+            floor, _ = self.raycaster.cast(origin, down, 1.0)
             if not 0 < floor[0] <= SENSOR_Z + 0.05:
                 return False
-            near, _ = self._raycaster.cast(origin - [0, 0, 0.3], around, CLEARANCE)
+            near, _ = self.raycaster.cast(origin - [0, 0, 0.3], around, CLEARANCE)
             return bool(np.all(near < 0))
 
         start = (round(self.start[0] / SURVEY_STEP), round(self.start[1] / SURVEY_STEP))
@@ -232,3 +281,20 @@ class SceneCoverage:
                     seen.add(nxt)
                     frontier.append(nxt)
         return cells
+
+
+def scene_raycaster(package: str) -> Raycaster:
+    """Casts against dim-go2-sim's scene *package* alone, as its lidar does: a cooked package's
+    geoms, or a splat scene's surfaces."""
+    from dim_go2_sim import PhysicsConfig, SceneConfig
+    from dim_go2_sim.lidar import Raycaster
+    from dim_go2_sim.module import resolve_scene
+    from dim_go2_sim.world import PREFIX, load_world
+    import mujoco
+
+    scene = resolve_scene(SceneConfig(package=package))
+    model = load_world(scene.mjcf, PhysicsConfig())
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    robot = {b for b in range(model.nbody) if model.body(b).name.startswith(PREFIX)}
+    return Raycaster(model, data, robot, None, 0, scene.lidar_mesh)

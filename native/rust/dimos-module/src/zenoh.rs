@@ -53,6 +53,9 @@ struct SessionSettings {
     gossip: bool,
     interface: String,
     connect_timeout_ms: u64,
+    /// The one optional field: python sends it only when set. Empty is no namespace.
+    #[serde(default)]
+    namespace: String,
 }
 
 /// A setting as the JSON text zenoh's config setter takes.
@@ -104,6 +107,9 @@ impl SessionSettings {
         // retry". Leaving the key unset keeps its own retry policy.
         if self.connect_timeout_ms > 0 {
             inserts.push(("connect/timeout_ms", json_text(&self.connect_timeout_ms)));
+        }
+        if !self.namespace.is_empty() {
+            inserts.push(("namespace", json_text(&self.namespace)));
         }
         for (key, value) in inserts {
             config.insert_json5(key, &value).map_err(to_io)?;
@@ -430,6 +436,19 @@ mod tests {
             r#""wlan0""#
         );
         assert_eq!(config.get_json("connect/timeout_ms").unwrap(), "1000");
+    }
+
+    #[test]
+    fn a_namespace_is_optional_and_reaches_the_session_config_when_sent() {
+        assert!(settings(serde_json::json!({})).namespace.is_empty());
+        let mut sent = launch(serde_json::json!({}));
+        sent["session"]["namespace"] = "evals/run-1".into();
+        let config = SessionSettings::from_launch(&sent)
+            .expect("settings deserialize")
+            .expect("a session was sent")
+            .zenoh_config()
+            .expect("valid settings apply");
+        assert_eq!(config.get_json("namespace").unwrap(), r#""evals/run-1""#);
     }
 
     #[test]

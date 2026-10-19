@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 from dimos.protocol.service.lcmservice import LCMConfig
-from dimos.protocol.service.zenohservice import ALL_INTERFACES, ZenohConfig
+from dimos.protocol.service.zenohservice import ALL_INTERFACES, ZenohConfig, _zenoh_config
 
 # One owner for the wire shape. The Rust suite parses these same files into
 # SessionSettings, so a field either side renames fails one of the two suites.
@@ -64,6 +64,15 @@ def test_derived_settings_are_resolved(zenoh_defaults: None) -> None:
     assert ZenohConfig(scouting=True).to_wire()["interface"] == ALL_INTERFACES
     assert ZenohConfig(scouting_interface="wlan0").to_wire()["interface"] == "wlan0"
     assert ZenohConfig(gossip=None, scouting=True).to_wire()["gossip"] is True
+
+
+def test_a_namespace_goes_on_the_wire_only_when_set(zenoh_defaults: None) -> None:
+    """Unset, the wire is what a native build from before namespaces reads."""
+    assert "namespace" not in ZenohConfig().to_wire()
+    assert ZenohConfig(namespace="evals/run-1").to_wire()["namespace"] == "evals/run-1"
+    assert _zenoh_config(ZenohConfig(namespace="evals/run-1")).get_json("namespace") == (
+        '"evals/run-1"'
+    )
 
 
 def test_lcm_sends_no_session_settings() -> None:

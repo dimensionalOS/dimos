@@ -31,3 +31,4 @@ def zenoh_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "zenoh_multicast", True)
     monkeypatch.setattr(global_config, "zenoh_gossip", None)
     monkeypatch.setattr(global_config, "zenoh_connect_timeout", 1.0)
+    monkeypatch.setattr(global_config, "zenoh_namespace", "")

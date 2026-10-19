@@ -98,6 +98,9 @@ class GlobalConfig(BaseSettings):
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
+    # A key prefix every zenoh session adds on the wire, e.g. evals/run-1: sessions under
+    # another (or none) never see this one's topics. Empty is none.
+    zenoh_namespace: str = ""
     # Off: share a zenoh bus with a stack that already owns the Coordinator name.
     serve_coordinator_rpc: bool = True
     viewer: ViewerBackend = "rerun"

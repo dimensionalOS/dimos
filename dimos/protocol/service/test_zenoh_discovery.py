@@ -82,7 +82,7 @@ def test_unset_gossip_pools_with_its_resolved_value(zenoh_defaults):
 def test_zenoh_knows_every_key_we_write():
     """Zenoh rejects an unknown config key, so a typo in _ZENOH_KEYS fails here."""
     config = zenoh.Config()
-    wire = ZenohConfig().to_wire()
+    wire = ZenohConfig(namespace="evals/run-1").to_wire()
     assert set(wire) == set(_ZENOH_KEYS)
     for name, value in wire.items():
         config.insert_json5(_ZENOH_KEYS[name], json.dumps(value))

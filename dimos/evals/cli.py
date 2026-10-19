@@ -232,6 +232,16 @@ def sandbox(
         help="Zenoh endpoint of a robot already running `dimos evals robot`, in place of each "
         "case's blueprint, e.g. --robot tcp/192.168.123.18:7447",
     ),
+    robot_on_host: bool = typer.Option(
+        False,
+        "--robot-on-host",
+        help="Run each case's robot blueprint on this machine, e.g. for its GPU, not in a container",
+    ),
+    robot_gpu: bool = typer.Option(
+        False,
+        "--robot-gpu",
+        help="Give the robot container this machine's NVIDIA GPUs (NVIDIA Container Toolkit)",
+    ),
     case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
     resume: Path | None = typer.Option(
         None,
@@ -239,6 +249,12 @@ def sandbox(
         help="An earlier sandbox run directory: continue each case's agent session from there",
     ),
     message: str = typer.Option("", "--message", help="With --resume: the agent's next message"),
+    topic_namespace: str | None = typer.Option(
+        None,
+        "--topic-namespace",
+        help="Zenoh namespace of a robot blueprint's hidden dimOS topics; default "
+        "evals/<run>-<case>, '' for none",
+    ),
     print_json: bool = typer.Option(
         False, "--json", help="Print the (selected) cases as JSON instead of running them"
     ),
@@ -268,8 +284,11 @@ def sandbox(
     runner = SandboxRunner(
         agent,
         robot=ExternalRobot(connect=tuple(robot)) if robot else None,
+        robot_on_host=robot_on_host,
+        robot_gpu=robot_gpu,
         resume_from=resume,
         resume_message=message,
+        topic_namespace=topic_namespace,
     )
     results = runner.run(cases, source=suite)
     for r in results:

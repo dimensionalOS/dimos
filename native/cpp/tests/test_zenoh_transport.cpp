@@ -95,6 +95,17 @@ TEST_CASE("the session settings become a zenoh config") {
     CHECK(config.get("scouting/gossip/enabled") == "false");
 }
 
+TEST_CASE("a namespace is optional, and reaches the zenoh config when sent") {
+    auto plain = settings_from_launch(client_launch());
+    REQUIRE(plain.has_value());
+    CHECK(plain->namespace_.empty());
+    nlohmann::json launch = client_launch();
+    launch["session"]["namespace"] = "evals/run-1";
+    auto settings = settings_from_launch(launch);
+    REQUIRE(settings.has_value());
+    CHECK(zenoh_detail::zenoh_config(*settings).get("namespace") == R"("evals/run-1")");
+}
+
 TEST_CASE("publisher qos is read per channel, and unset fields keep defaults") {
     auto qos = parse_channel_qos(nlohmann::json::parse(R"({
       "/a": {"congestion_control": "block", "locality": "session_local",

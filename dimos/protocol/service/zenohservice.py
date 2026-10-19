@@ -101,6 +101,10 @@ def _default_connect_timeout() -> float:
     return global_config.zenoh_connect_timeout
 
 
+def _default_namespace() -> str:
+    return global_config.zenoh_namespace.strip().strip("/")
+
+
 def endpoint_addresses(endpoint: str) -> set[str]:
     """Resolve a locator to the host:port forms a live link may report.
 
@@ -141,6 +145,8 @@ class ZenohConfig(SessionConfig):
     # Seconds to block in start() waiting for the connect endpoints to link.
     # Also bounds zenoh's dial retries at open. 0 skips both.
     connect_timeout: float = Field(default_factory=_default_connect_timeout, ge=0, le=86400)
+    # Key prefix zenoh adds to everything this session declares, invisible to it. Empty is none.
+    namespace: str = Field(default_factory=_default_namespace)
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -190,12 +196,15 @@ class ZenohConfig(SessionConfig):
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen_endpoints))}|{self.multicast_interface}"
             f"|{self.multicast}|{self.scout_addr}|{self.gossip_enabled}"
-            f"|{self.connect_timeout}"
+            f"|{self.connect_timeout}|{self.namespace}"
         )
 
     def to_wire(self) -> dict[str, Any]:
-        """This session as the JSON object a native module reads on stdin."""
-        return {
+        """This session as the JSON object a native module reads on stdin.
+
+        ``namespace`` only when set, so a native build that predates it still reads the rest.
+        """
+        wire: dict[str, Any] = {
             "mode": self.mode,
             "connect": self.connect,
             "listen": self.listen_endpoints,
@@ -205,6 +214,9 @@ class ZenohConfig(SessionConfig):
             "interface": self.multicast_interface,
             "connect_timeout_ms": int(self.connect_timeout * 1000),
         }
+        if self.namespace:
+            wire["namespace"] = self.namespace
+        return wire
 
 
 def _warn_client_single_link(config: ZenohConfig) -> None:
@@ -228,6 +240,7 @@ _ZENOH_KEYS = {
     "interface": "scouting/multicast/interface",
     "gossip": "scouting/gossip/enabled",
     "connect_timeout_ms": "connect/timeout_ms",
+    "namespace": "namespace",
 }
 
 # Settings zenoh decides for itself when we send nothing. An empty listen list

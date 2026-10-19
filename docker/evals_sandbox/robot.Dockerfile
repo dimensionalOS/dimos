@@ -10,8 +10,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential pkg-config \
-        libgl1 libglib2.0-0 libgfortran5 libgomp1 libturbojpeg portaudio19-dev iproute2 \
+        libgl1 libegl1 libglib2.0-0 libvulkan1 mesa-vulkan-drivers libgfortran5 libgomp1 libturbojpeg portaudio19-dev iproute2 \
     && rm -rf /var/lib/apt/lists/*
+
+# NVIDIA's Vulkan and EGL drivers, for a robot container given the GPU (--robot-gpu): the NVIDIA
+# Container Toolkit mounts their libraries but not these manifests. Without the GPU they name a
+# library that isn't there, and the loaders skip them.
+RUN mkdir -p /usr/share/vulkan/icd.d /usr/share/glvnd/egl_vendor.d \
+    && echo '{"file_format_version": "1.0.1", "ICD": {"library_path": "libGLX_nvidia.so.0", "api_version": "1.3"}}' \
+        > /usr/share/vulkan/icd.d/nvidia_icd.json \
+    && echo '{"file_format_version": "1.0.0", "ICD": {"library_path": "libEGL_nvidia.so.0"}}' \
+        > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 ENV XDG_CACHE_HOME=/cache \
     XDG_STATE_HOME=/state \
@@ -26,11 +35,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md setup.py ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv python install "${PYTHON_VERSION}" \
-    && uv sync --frozen --no-install-project --python "${PYTHON_VERSION}"
+    && uv sync --frozen --no-default-groups --extra sim --no-install-project --python "${PYTHON_VERSION}"
 
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --python "${PYTHON_VERSION}"
+    uv sync --frozen --no-default-groups --extra sim --python "${PYTHON_VERSION}"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     VIEWER=none \
