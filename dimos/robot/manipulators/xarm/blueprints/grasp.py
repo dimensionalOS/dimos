@@ -47,6 +47,7 @@ from dimos.robot.manipulators.common.blueprints import (
     trajectory_task,
 )
 from dimos.robot.manipulators.xarm.config import (
+    XARM_APPROACH_OFFSETS,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -225,7 +226,9 @@ _XARM_GRASP_MODULES = (
     ),
 )
 
-xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint())
+xarm_grasp = autoconnect(
+    *_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint(**XARM_APPROACH_OFFSETS._asdict())
+)
 
 xarm_grasp_graspgenx = autoconnect(
     *_XARM_GRASP_MODULES,

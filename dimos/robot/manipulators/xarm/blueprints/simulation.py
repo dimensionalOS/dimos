@@ -32,6 +32,7 @@ from dimos.robot.manipulators.common.blueprints import (
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
+    XARM_APPROACH_OFFSETS,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
@@ -53,7 +54,7 @@ xarm_perception_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    HeuristicGraspModule.blueprint(**XARM_APPROACH_OFFSETS._asdict()),
     MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",

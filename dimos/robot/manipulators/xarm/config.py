@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
+from dimos.manipulation.planning.spec.gripper import ApproachOffsets, ContactPatch, GripperSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
@@ -86,6 +86,15 @@ def xarm_gripper_spec(prefix: str = "") -> GripperSpec:
         closed_joints={f"{prefix}drive_joint": 0.85},
         base_link=f"{prefix}xarm_gripper_base_link",
     )
+
+
+# Where the xArm Gripper's finger pads, fingertips and palm sit along the
+# approach, metres: what approach_offsets() measures from xarm_gripper_spec()
+# and the URDF at link_tcp (a test checks they agree). Heuristic grasps aim the
+# pads with these.
+XARM_APPROACH_OFFSETS = ApproachOffsets(
+    pad_behind_tcp=0.0167, fingertip_reach=0.0031, palm_behind_tcp=0.0499
+)
 
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
