@@ -24,6 +24,8 @@ on:
       - docs/usage/visualization.md
       - native/cpp/**
       - native/rust/dimos-module/**
+      - native/rust/dimos-module-macros/**
+      - native/message-source.nix
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
       - docs/development/messages-external-project.md
@@ -134,3 +136,9 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/test_webcam.py" "$PWD/dimos/hardware/sensors/camera/test_webcam_backend.py" "$PWD/dimos/hardware/sensors/camera/test_module.py" "$PWD/dimos/hardware/sensors/camera/gstreamer/test_generated_frames.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/spec.py dimos/hardware/sensors/camera/webcam.py dimos/hardware/sensors/camera/module.py dimos/hardware/sensors/camera/gstreamer/gstreamer_camera.py dimos/spec/perception.py dimos/visualization/vis_module.py
+      - name: Verify generated native V4L2 producer without a device
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --manifest-path native/rust/dimos-module-macros/Cargo.toml --locked --lib --jobs 2
+          cargo test --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2
+          cargo clippy --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2 -- -D warnings

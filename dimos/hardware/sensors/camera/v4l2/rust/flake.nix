@@ -17,8 +17,31 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-v4l2-camera";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+        # Keep this flake self-contained: shared SDK/configuration arrive through
+        # one fixed-hash project source, rather than paths outside this directory.
+        sharedArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/3d68b9a7966fd7e447642bb72f3dc8ee8579f865";
+          sha256 = "288b8b2bc9b00a3ba8cc58efc6340001b9eca1b9ba9eff01e94ebd487da7d304";
+        };
+        sharedSource = pkgs.runCommand "dimos-cdr-sdk-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sharedArchive} --strip-components=1 -C $out
+        '';
+        messages = import "${sharedSource}/native/message-source.nix" { inherit pkgs; };
+        cameraSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = pkgs.runCommand "dimos-v4l2-cdr-source" { } ''
+          mkdir -p $out/native/rust $out/build/message-source $out/dimos/hardware/sensors/camera/v4l2/rust
+          cp -r ${sharedSource}/native/rust/dimos-module $out/native/rust/
+          cp -r ${sharedSource}/native/rust/dimos-module-macros $out/native/rust/
+          cp -r ${messages.source}/rust $out/build/message-source/rust
+          cp -r ${cameraSource}/. $out/dimos/hardware/sensors/camera/v4l2/rust/
+        '';
+        generated = crate2nix.tools.${system}.generatedCargoNix {
+          inherit name src;
+          cargoToml = "dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml";
+        };
 
         nvidiaDeb = repo: pname: hash: pkgs.fetchurl {
           url = "https://repo.download.nvidia.com/jetson/${repo}/pool/main/n/${pname}/${pname}_36.4.7-20250918154033_arm64.deb";

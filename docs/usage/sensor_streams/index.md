@@ -76,8 +76,7 @@ PTS plus the configured offset in integer nanoseconds. Its existing rejection
 of pre-2000 source timestamps remains in place.
 
 These ports need explicit CDR transport wiring until the default-transport
-cutover is complete. Native V4L2, RealSense and ZED producers are separate
-migration slices. This change does not start cameras or switch robot blueprints.
+cutover is complete. RealSense and ZED producers are separate migration slices. This change does not start cameras or switch robot blueprints.
 
 Run the offline producer checks from the checkout:
 
@@ -95,3 +94,39 @@ libraries/typelibs; they are skipped when that optional binding is absent.
 No test installs system libraries. Constructing a viewer blueprint defers
 backend allocation until startup, so importing a camera module opens no viewer
 multicast socket.
+
+### Native V4L2 producer
+
+`V4L2Camera.jpeg_out` now uses generated `sensor_msgs/msg/CompressedImage`
+values. The Rust worker serializes those values with the SDK CDR codec. Device
+selection, driver-clock correction, JPEG encoding and retries keep their
+existing behavior.
+
+The independent Nix build prepares the generated Rust owner from fixed-hash
+project and upstream inputs. It calls the same Python source-preparation and
+code-generation functions as the main package build; it does not build the
+whole Python runtime or commit upstream `.msg` copies. The SDK source and
+message configuration are pinned to a published project commit. Updating that
+pin is a maintainer action when the SDK or built-in schemas change.
+
+Build without opening a device:
+
+```sh
+cd dimos/hardware/sensors/camera/v4l2/rust
+nix build path:.
+```
+
+For a repository developer using Cargo, first install the checkout normally so
+the package backend prepares `build/message-source/rust`, then run library
+acceptance only:
+
+```sh
+uv pip install -e .
+cargo test --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml \
+  --locked --lib --jobs 2
+```
+
+This needs the native Rust/C toolchains. The library tests check CDR, clock
+correction and software JPEG with synthetic data; they do not open V4L2 or start
+the worker. Jetson driver validation and physical capture remain separate
+hardware acceptance.

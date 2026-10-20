@@ -17,14 +17,53 @@
 
 use std::time::{Duration, Instant};
 
-use dimos_module::{native_config, Module, Output};
-use lcm_msgs::sensor_msgs::CompressedImage;
-use lcm_msgs::std_msgs::{Header, Time};
+use dimos_generated_messages::{
+    builtin_interfaces::msg::time::Time, sensor_msgs::msg::compressed_image::CompressedImage,
+    std_msgs::msg::header::Header,
+};
+use dimos_module::{cdr, native_config, Module, Output};
 use tracing::{info, warn};
 
 use crate::capture::{fourcc, Capture};
 use crate::clock::{driver_clocks, wall_s, CaptureClock};
 use crate::jpeg::encode_packed_422;
+
+fn encode_cdr(message: &CompressedImage) -> Vec<u8> {
+    cdr::encode(message).expect("serialize a valid compressed camera frame")
+}
+
+#[cfg(test)]
+mod cdr_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn compressed_frame_uses_canonical_cdr_header_and_payload() {
+        let message = CompressedImage {
+            header: Header {
+                stamp: Time {
+                    sec: 1_700_000_000,
+                    nanosec: 123_456_789,
+                },
+                frame_id: "camera_optical".into(),
+            },
+            format: "jpeg".into(),
+            data: vec![0xff, 0xd8, 0xff, 0xd9],
+        };
+        let payload = encode_cdr(&message);
+        assert_eq!(&payload[..4], &[0, 1, 0, 0]);
+        assert_eq!(cdr::decode::<CompressedImage>(&payload).unwrap(), message);
+        if let Some(path) = std::env::var_os("DIMOS_CAMERA_CDR_FIXTURE") {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("create a new interop fixture")
+                .write_all(&payload)
+                .expect("write the requested interop fixture");
+        }
+    }
+}
 
 const STATS_EVERY: Duration = Duration::from_secs(10);
 const FRAME_TIMEOUT_MS: i32 = 1000;
@@ -56,7 +95,7 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "v4l2_camera", setup = start)]
 pub struct V4L2Camera {
-    #[output(encode = CompressedImage::encode)]
+    #[output(encode = encode_cdr)]
     jpeg_out: Output<CompressedImage>,
 
     #[config]
@@ -115,7 +154,7 @@ fn pump(
 ) {
     let mut clock = CaptureClock::new(driver_clocks(), wall_s);
     let (width, height) = (config.width as usize, config.height as usize);
-    let (mut timeouts, mut seq) = (0, 0i32);
+    let mut timeouts = 0;
     let (mut frames, mut encode_s, mut window) = (0u32, 0.0, Instant::now());
     loop {
         let frame = match capture.next(FRAME_TIMEOUT_MS) {
@@ -154,17 +193,15 @@ fn pump(
         };
         let message = CompressedImage {
             header: Header {
-                seq,
                 stamp: Time {
                     sec: stamp.trunc() as i32,
-                    nsec: (stamp.fract() * 1e9) as i32,
+                    nanosec: (stamp.fract() * 1e9) as u32,
                 },
                 frame_id: config.frame_id.clone(),
             },
             format: "jpeg".into(),
             data,
         };
-        seq = seq.wrapping_add(1);
         runtime.block_on(output.publish(&message)).ok();
         frames += 1;
         if window.elapsed() >= STATS_EVERY {
