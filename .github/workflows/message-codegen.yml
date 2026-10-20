@@ -65,8 +65,7 @@ on:
       - native/rust/dimos-module-macros/**
       - native/message-source.nix
       - dimos/navigation/go2/loop_closure/**
-      - dimos/mapping/cli/pose_fill.py
-      - dimos/mapping/cli/test_pose_fill.py
+      - dimos/mapping/cli/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
       - docs/development/messages-external-project.md
@@ -384,3 +383,11 @@ jobs:
           .native-review/bin/python -m pip install --no-deps 'gtsam-extended==4.3a1.post1'
           .native-review/bin/python -I -c 'from dimos.navigation.go2.loop_closure import pgo,pgo_auto,pgo_map; from dimos.msgs import pointcloud; from dimos.mapping.voxels import grid; from dimos.mapping.voxels.impl import packed; import gtsam; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (pgo,pgo_auto,pgo_map,pointcloud,grid,packed,gtsam)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/loop_closure/test_pgo.py" "$PWD/dimos/navigation/go2/loop_closure/test_pgo_auto.py" "$PWD/dimos/navigation/go2/loop_closure/test_pgo_map.py" "$PWD/dimos/mapping/voxels/test_stamped.py" "$PWD/dimos/msgs/test_pointcloud.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/go2/loop_closure/{pgo,pgo_auto,pgo_map}.py dimos/msgs/pointcloud.py dimos/mapping/voxels/{grid,impl/packed}.py
+      - name: Verify offline map export, CDR replay and actual marker CLI
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.cli import map,view,replay,replay_marker; from dimos.visualization.rerun import cdr; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (map,view,replay,replay_marker,cdr)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/mapping/cli/test_cli.py::test_view_pc2"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/cli/{map,view,replay,replay_marker}.py dimos/visualization/rerun/cdr.py

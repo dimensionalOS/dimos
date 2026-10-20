@@ -91,15 +91,39 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
     )
 
 
-def cloud_archetype(message: PointCloud2) -> rr.Points3D:
+def cloud_archetype(
+    message: PointCloud2,
+    *,
+    voxel_size: float = 0.05,
+    mode: str = "points",
+    bottom_cutoff: float | None = None,
+    height_colors: bool = False,
+) -> rr.Points3D | rr.Boxes3D:
+    """Render plain cloud values, keeping color/geometry filters aligned.
+
+    Existing bridge defaults use screen-space dots. Offline map tools explicitly
+    select world-space spheres/boxes and the existing height-based turbo colors.
+    """
+    from matplotlib import colormaps
     import rerun as rr
 
     points, colors = pointcloud_xyz(message), pointcloud_rgb(message)
     keep = np.isfinite(points).all(axis=1)
+    if bottom_cutoff is not None:
+        keep &= points[:, 2] >= bottom_cutoff
+    points = points[keep]
+    if colors is not None:
+        colors = colors[keep]
+    elif height_colors and len(points):
+        z = points[:, 2]
+        levels = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
+        colors = (colormaps["turbo"](levels)[:, :3] * 255).astype(np.uint8)
+    if mode == "boxes":
+        return rr.Boxes3D(centers=points, half_sizes=[voxel_size / 2] * 3, colors=colors)
     return rr.Points3D(
-        points[keep],
-        colors=colors[keep] if colors is not None else None,
-        radii=rr.components.Radius.ui_points(2.0),
+        points,
+        colors=colors,
+        radii=rr.components.Radius.ui_points(2.0) if mode == "points" else voxel_size / 2,
     )
 
 

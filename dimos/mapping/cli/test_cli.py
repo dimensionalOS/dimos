@@ -29,8 +29,14 @@ from pathlib import Path
 import traceback
 from types import SimpleNamespace
 
+from dimos_cdrgen.registry import encode
+import numpy as np
 import pytest
 from typer.testing import CliRunner
+
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.
@@ -152,7 +158,7 @@ def test_pose_fill_snippet(dataset: str, tmp_path: Path) -> None:
     assert out.exists()
 
     from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.sensor_msgs.msg import PointCloud2
 
     store = SqliteStore(path=str(out), must_exist=True)
     try:
@@ -226,15 +232,12 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
 
 
 def test_view_pc2(tmp_path: Path) -> None:
-    import numpy as np
-
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-    pc2 = tmp_path / "map.pc2.lcm"
-    cloud = PointCloud2.from_numpy(
-        np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
+    pc2 = tmp_path / "map.pc2.cdr"
+    cloud = pointcloud_from_xyz(
+        np.random.default_rng(0).random((256, 3)),
+        header=Header(stamp=time_from_seconds(0), frame_id="world"),
     )
-    pc2.write_bytes(cloud.lcm_encode())
+    pc2.write_bytes(encode(cloud))
 
     out = tmp_path / "view.rrd"
     res = _run("view", str(pc2), "--out", str(out))
