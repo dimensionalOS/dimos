@@ -12,6 +12,9 @@ on:
       - dimos/message_codegen/**
       - dimos/core/cdr_transport.py
       - dimos/core/test_cdr_transport.py
+      - dimos/web/**
+      - web/**
+      - docs/web/bridge.md
       - native/cpp/**
       - native/rust/dimos-module/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
@@ -96,3 +99,14 @@ jobs:
           .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py"
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib cdr::tests --jobs 2
+      - name: Verify generated browser schemas, relay encoding and web consumers
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install aioquic langchain-core
+          .native-review/bin/python -I -m pytest --noconftest -p dimos.web.relay_bridge.conftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/test_codecs.py" "$PWD/dimos/web/test_cockpit.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_module.py"
+          cd web/sdk
+          ../../.venv/bin/deno task test
+          ../../.venv/bin/deno task check
+          cd ../cockpit
+          ../../.venv/bin/deno task test
+          ../../.venv/bin/deno task check

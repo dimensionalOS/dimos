@@ -27,9 +27,11 @@ from collections.abc import AsyncIterator, Callable, Sequence
 import threading
 import time
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.web.relay_bridge import relay_bridge_module
 from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, DataFrame, IceServer, Msg, RtcTrack
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
@@ -257,6 +259,10 @@ def patch_relay(
 
     monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
     monkeypatch.setattr(RelayClient, "connect", fake_connect)
+    # Module construction starts RPC before the relay itself. Keep this
+    # no-network harness off native sockets as well as off WebTransport.
+    monkeypatch.setattr(ZenohRPC, "start", Mock())
+    monkeypatch.setattr(ZenohRPC, "serve_module_rpc", Mock())
 
 
 def make_bridge(

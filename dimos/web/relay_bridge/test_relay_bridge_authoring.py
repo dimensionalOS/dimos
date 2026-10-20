@@ -27,6 +27,7 @@ import pickle
 import struct
 from typing import Any
 
+from dimos_cdrgen.registry import encode as encode_cdr
 from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
@@ -36,6 +37,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
+from dimos.messages.geometry_msgs.msg import PoseStamped as GeneratedPoseStamped
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -50,6 +52,7 @@ from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.channels import RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
+from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
     FakeTransport,
@@ -208,6 +211,41 @@ def test_authored_specs_drive_generated_port(monkeypatch) -> None:
 
         push(module, clients[0], Subs(chs=[], n=2))
         assert wait_until(lambda: not nav.subscribers)
+    finally:
+        stop_module(module)
+
+
+def test_generated_cdr_is_encoded_only_for_subscribed_viewers(monkeypatch) -> None:
+    blueprint = cockpit(
+        channels=[
+            Channel(
+                "generated_pose",
+                GeneratedPoseStamped,
+                encoding="geometry_msgs/msg/PoseStamped.cdr.v1",
+                max_hz=1000.0,
+            )
+        ]
+    )
+    module, clients = start_authored(monkeypatch, blueprint, wire=("generated_pose",))
+    try:
+        transport = transport_of(module, "generated_pose")
+        msg = build_messages()[0][1]
+        transport.publish(msg)
+        flush_loop(module)
+        assert clients[0].frames == []
+        push(module, clients[0], Subs(chs=["generated_pose"], n=1))
+        assert wait_until(lambda: transport.subscribers)
+        transport.publish(msg)
+        assert wait_until(lambda: clients[0].frames)
+        channel, payload, delivery, meta = clients[0].frames[0]
+        assert (channel, payload, delivery, meta) == (
+            "generated_pose",
+            encode_cdr(msg),
+            "reliable",
+            None,
+        )
+        push(module, clients[0], Subs(chs=[], n=2))
+        assert wait_until(lambda: not transport.subscribers)
     finally:
         stop_module(module)
 

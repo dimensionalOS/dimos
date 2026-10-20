@@ -1,0 +1,139 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Regenerate browser fixtures with: python -m dimos.web.relay_bridge.gen_cdr_fixtures."""
+
+import base64
+import json
+from typing import Any
+
+from dimos_cdrgen.definitions import Definitions
+from dimos_cdrgen.registry import encode as cdr_encode
+import numpy as np
+
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos.messages.sensor_msgs.msg import Image, Imu, JointState
+from dimos.messages.std_msgs.msg import Empty, Header, Int64, String
+from dimos.web.cdr_codec import CDR_V1_SUFFIX, export_schema
+from dimos.web.relay_bridge.locate import find_web_dir
+
+
+def build_messages() -> list[tuple[str, Any]]:
+    header = Header(stamp=Time(sec=1757400000, nanosec=500000123), frame_id="map")
+    return [
+        (
+            "pose_stamped",
+            PoseStamped(
+                header=header,
+                pose=Pose(
+                    position=Point(x=1.5, y=-2.5, z=0.25),
+                    orientation=Quaternion(z=0.6, w=0.8, x=0.0, y=0.0),
+                ),
+            ),
+        ),
+        (
+            "custom_segments",
+            LineSegments3D(
+                header=header,
+                segments=[
+                    LineSegment3D(
+                        start=Point(x=1, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=4
+                    )
+                ],
+            ),
+        ),
+        (
+            "image",
+            Image(
+                header=header,
+                width=2,
+                height=1,
+                encoding="rgb8",
+                step=6,
+                data=np.array([0, 1, 2, 253, 254, 255], dtype=np.uint8),
+                is_bigendian=0,
+            ),
+        ),
+        (
+            "imu",
+            Imu(
+                header=header,
+                orientation_covariance=np.asarray(range(9), dtype=np.float64),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+                angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+                linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+                linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+            ),
+        ),
+        (
+            "joints",
+            JointState(
+                header=header,
+                name=["joint_a", "joint_b"],
+                position=np.array([1.5, -2.5], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+        ),
+        ("int64", Int64(data=-9007199254740993)),
+        ("empty", Empty()),
+        ("string", String(data="robot 🦾 café")),
+    ]
+
+
+def build_vectors() -> list[dict[str, Any]]:
+    definitions = {message.name: message for message in Definitions([], installed=True).resolve()}
+
+    def walk(msg: Any) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for field in definitions[msg.__msgtype__].fields:
+            value = getattr(msg, field.name)
+            convert = (
+                walk
+                if field.type.nested
+                else (
+                    str
+                    if field.type.name in ("int64", "uint64")
+                    else lambda x: x.item() if isinstance(x, np.generic) else x
+                )
+            )
+            result[field.name] = (
+                [convert(item) for item in value] if field.type.is_array else convert(value)
+            )
+        return result
+
+    return [
+        {
+            "name": name,
+            "encoding": msg.__msgtype__ + CDR_V1_SUFFIX,
+            "schema": export_schema(type(msg)),
+            "value": walk(msg),
+            "payload_b64": base64.b64encode(cdr_encode(msg)).decode(),
+            "big_endian_b64": base64.b64encode(cdr_encode(msg, little_endian=False)).decode(),
+        }
+        for name, msg in build_messages()
+    ]
+
+
+def main() -> None:
+    path = find_web_dir() / "shared" / "fixtures" / "cdr_frames.json"
+    path.write_text(json.dumps({"vectors": build_vectors()}, indent=2, ensure_ascii=False) + "\n")
+    print(path)
+
+
+if __name__ == "__main__":
+    main()
