@@ -30,11 +30,12 @@ import rerun.blueprint as rrb
 from dimos.core.cdr_transport import CdrTransport
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_rgbd
-from dimos.visualization.rerun.cdr import generated_archetypes
+from dimos.visualization.rerun.cdr import camera_pinhole, generated_archetypes
 
 
 def run(output: Path) -> None:
@@ -57,7 +58,12 @@ def run(output: Path) -> None:
     )
     calibration = camera_info_from_intrinsics(2, 2, 0.5, 0.5, 2, 2, header=message.header)
     cloud = pointcloud_from_rgbd(image, depth, calibration, depth_scale=0.001)
-    messages: dict[str, Any] = {"pose": message, "image": image, "cloud": cloud}
+    messages: dict[str, Any] = {
+        "pose": message,
+        "image": image,
+        "cloud": cloud,
+        "camera_info": calibration,
+    }
     config: dict[str, Any] = dict(
         mode="peer", listen=["tcp/127.0.0.1:0"], scouting=False, multicast=False, gossip=False
     )
@@ -73,10 +79,14 @@ def run(output: Path) -> None:
             recording.set_time(
                 "source", timestamp=np.datetime64(stamp.sec * 1_000_000_000 + stamp.nanosec, "ns")
             )
-            entries = generated_archetypes(value, "world/" + topic)
-            assert entries is not None
-            for entry in entries:
-                recording.log(entry[0], entry[1], strict=True)
+            if isinstance(value, CameraInfo):
+                # A spatial image needs its calibration, not just pixel bytes.
+                recording.log("world/image", camera_pinhole(value), strict=True)
+            else:
+                entries = generated_archetypes(value, "world/" + topic)
+                assert entries is not None
+                for entry in entries:
+                    recording.log(entry[0], entry[1], strict=True)
         except Exception as error:
             errors.append(error)
         finally:

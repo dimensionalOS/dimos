@@ -52,6 +52,7 @@ def test_actual_loopback_example_preserves_pose_axes_values_and_nanoseconds(
     assert "Points3D:positions" in result.stdout
     assert "Points3D:colors" in result.stdout
     assert "Image:buffer" in result.stdout
+    assert "Pinhole:image_from_camera" in result.stdout
     assert "Generated RGB pixels" in result.stdout
     repeated = subprocess.run(command, capture_output=True, text=True, timeout=30)
     assert repeated.returncode != 0

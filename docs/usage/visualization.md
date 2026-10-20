@@ -183,7 +183,7 @@ python examples/message-viewer/demo_cdr_rerun.py pose.rrd
 rerun pose.rrd
 ```
 
-The example sends generated pose, RGB image and RGBD-projected cloud bytes over
+The example sends generated pose, RGB image, CameraInfo and RGBD-projected cloud bytes over
 discovery-disabled loopback Zenoh/CDR, then writes a real Rerun recording. Its
 layout shows pose axes, colored points, exact message values and RGB pixels.
 For this demonstration only, it explicitly
