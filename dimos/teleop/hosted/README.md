@@ -86,7 +86,7 @@ only**. That's why we need two reliable channels — one for each direction:
 
 | Channel | Direction | Reliable? | What it carries |
 |---|---|---|---|
-| `cmd_unreliable` | operator → robot | no (unordered, 0 retransmits) | TwistStamped / Joy / PoseStamped LCM |
+| `cmd_unreliable` | operator → robot | no (unordered, 0 retransmits) | TwistStamped / Joy / PoseStamped CDR frames |
 | `state_reliable` | operator → robot | yes | JSON: `ping`, `clock_report`, `video_stats`, `estop`, `camera_select`, `nav_goal` |
 | `state_reliable_back` | robot → operator | yes | JSON: `pong`, `robot_telemetry`, `cmd_ack` |
 | `map_unreliable` | robot → operator | no (lossy) | JSON: minimap occupancy grid + odom pose |
@@ -201,3 +201,22 @@ selected legacy classes keep separate paths during migration, with no decoder
 fallback. Plain XCDR1 encapsulation is checked before decoding at the transport,
 WebXR command-frame, `CdrCodec` storage and explicit conversion entrypoints. The registry
 remains the field serializer; this adds no second codec or runtime generator.
+
+
+The Go2 drive plane uses generated `TwistStamped` frames on the same
+`cmd_unreliable` channel. Its guard publishes generated `Twist` on the
+namespaced local drive chain through the selected LCM or Zenoh backend.
+Stale/future/reordered commands, E-STOP, velocity limits, idle-zero suppression
+and the moving-to-zero release edge keep their existing behavior. Header
+ordering uses integer nanoseconds; clamping never mutates the operator input.
+The driver converts to its internal numerical twist only at the SDK boundary.
+
+The map consumer accepts canonical `OccupancyGrid` and `PoseStamped`, then
+publishes the existing capped PNG/JSON presentation payload; this does not
+change the operator minimap protocol. Offline tests exercise actual framed
+CDR -> Go2 guard -> local CDR -> MovementManager -> driver adapter with the
+external provider and driver mocked:
+
+```sh
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_go2_command.py dimos/teleop/hosted/test_map_compress.py
+```
