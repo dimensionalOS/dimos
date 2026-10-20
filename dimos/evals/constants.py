@@ -167,17 +167,24 @@ Grasps:
                                  best ones IK reaches from the current joints, best first. Each
                                  gives the TCP position and orientation for arm.move_pose, the
                                  approach direction, a pre-grasp pose back along it, the
-                                 object's width between the jaws and a score. They point
-                                 straight down at the centre of the object's footprint, jaws
-                                 across its narrow side, and read only the surfaces the camera
-                                 saw; suited to small box-like objects. An open container wider
-                                 than the jaws (a bin) gets grasps on its walls instead: jaws
-                                 across one wall, a little below its rim. Collisions are not
-                                 checked, and the proposals do not know the task; choose the one
-                                 that suits it. localize merges every view of an object into its
-                                 cloud; when the surfaces seen span only a few millimetres, the
-                                 camera saw just the top: look from another angle and localize
-                                 again before asking for grasps.
+                                 object's width between the jaws, a score and a note on why it
+                                 was proposed or what is uncertain. The default proposer,
+                                 "heuristic", points straight down at the centre of the object's
+                                 footprint, jaws across its narrow side (small box-like objects),
+                                 or, for an open container wider than the jaws (a bin), across
+                                 one wall a little below its rim; it is instant and predictable.
+                                 It does not check collisions, and no proposer knows the task;
+                                 choose the grasp that suits it.
+  app.skills.grasps(object_id="31e1f624", proposer="graspgenx", max_tilt=45)
+                                 a learned model's grasps from any direction (other shapes,
+                                 rims, handles), ranked by its confidence; grasps that would hit
+                                 what the camera saw around the object, or go below the table,
+                                 are dropped and counted. max_tilt (degrees from straight down)
+                                 is optional. If this robot's stack does not serve graspgenx,
+                                 grasps says so.
+                                 Both read only the surfaces the camera saw, merged over every
+                                 view: when the cloud is small or spans only a few millimetres,
+                                 look from another angle and localize again before asking.
 
 Other streams: app.list_streams() lists every module's streams, and app.peek_stream(name) reads
 any of them except the simulator's ground truth (exact object poses, the scene camera), which

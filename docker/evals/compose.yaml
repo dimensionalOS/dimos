@@ -26,6 +26,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # A shared GraspGenX server for grasps(proposer="graspgenx"); empty leaves it off.
+      GRASPPROPOSALS__GRASPGENX_URL: ${GRASPPROPOSALS__GRASPGENX_URL:-}
     volumes:
       - ${EVAL_RUNS_DIR:-./eval-runs}:/state
       # Private per container: a shared pid-keyed registry deletes others' live runs.
