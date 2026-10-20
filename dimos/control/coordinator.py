@@ -32,7 +32,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.command_state import CommandState
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
     HardwareComponent,
@@ -65,7 +64,6 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -155,8 +153,8 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
-    # Complete intended command interface values for recording.
-    coordinator_joint_command: Out[ControlValues]
+    # Intended position-command updates for recording.
+    coordinator_joint_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -171,8 +169,6 @@ class ControlCoordinator(Module):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-
-        self._command_state = CommandState()
 
         # Connected hardware (keyed by hardware_id)
         self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
@@ -385,7 +381,6 @@ class ControlCoordinator(Module):
                 )
 
             self._hardware[component.hardware_id] = connected
-            self._command_state.register(connected)
 
             for joint_name in connected.joint_names:
                 self._joint_to_hardware[joint_name] = component.hardware_id
@@ -427,7 +422,6 @@ class ControlCoordinator(Module):
 
             interface.disconnect()
             del self._hardware[hardware_id]
-            self._command_state.remove(hardware_id)
             logger.info(f"Removed hardware {hardware_id}")
         self._sync_stream_subscriptions()
         return True
@@ -924,7 +918,6 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_command_callback=self.coordinator_joint_command.publish,
-            command_state=self._command_state,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses

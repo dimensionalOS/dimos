@@ -203,10 +203,7 @@ def test_gripper_command_reaches_sdk_once_in_native_units(
         ),
     )
 
-    assert hardware.write_command(
-        {**dict.fromkeys(make_joints("arm", 7), 0.0), "arm/gripper": 850.0},
-        ControlMode.SERVO_POSITION,
-    )
+    assert hardware.write_command({"arm/gripper": 850.0}, ControlMode.SERVO_POSITION)
 
     sdk = _FakeXArmSdk.instances[-1]
     assert sdk.servo_joint_commands == [[0.0] * 7]

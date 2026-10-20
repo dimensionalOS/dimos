@@ -229,65 +229,33 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 | `first_timestamp()`                              | Get first timestamp                   |
 | `load(name)`                                     | Load specific frame by name/index     |
 
-## Record coordinator commands
+
+## Record coordinator position commands
 
 `ControlCoordinator.coordinator_joint_command` publishes the existing LCM
-`control_msgs.ControlValues` type. `interface_names` names each joint and the
-quantity commanded; the parallel `values` array contains its intended target:
+`JointState` type. Targets come from routed commands after task computation/IK
+and arbitration. `name` and `position` contain only this tick's intended position
+updates, in configured joint order and native units, including gripper updates.
+`velocity` and `effort` are empty. POSITION and SERVO_POSITION are included;
+other modes and twist bases are excluded. `ts` is taken immediately before the
+first position dispatch in the batch. Publication happens outside the hardware lock.
 
-```text
-arm/joint1/position    0.25
-base/vx/velocity     -0.40
-```
+Partial commands remain partial. Missing joints are not filled from feedback or
+held targets, and empty ticks publish nothing. Hardware behavior is unchanged.
+A message records sending intent even if the write fails, not successful execution.
 
-POSITION and SERVO_POSITION use `/position`, VELOCITY uses `/velocity`, and TORQUE
-uses `/effort`. The wire message omits the exact `ControlMode`: POSITION and
-SERVO_POSITION are indistinguishable. Offline consumers must use an explicit robot
-configuration; a bare joint name cannot reconstruct arbitrary dynamic mode changes.
-Quantity suffixes identify what each number means, not adapter mode or execution.
-Unsupported adapter modes remain unsupported and are rejected before changing holds.
-
-CC owns the command state after IK, existing task constraints, and arbitration.
-Position commands initialize from feedback on first use and retain omitted targets.
-Manipulator velocity commands zero omitted joints without changing position holds.
-Twist bases start at zero velocity and retain omitted velocities. Interfaces receive
-complete commands and perform conversion, mode switching, and I/O. Output follows
-hardware registration and configured joint order, in native adapter units.
-
-Output waits until all hardware has a defined complete command. Failed adapter
-writes retain intended targets; readiness-gated updates retain the previous command.
-Idle output adds no hardware writes. Removing hardware clears its CC state, while
-state persists across tick-loop restarts. The stream records intentions, not adapter
-acceptance, physical execution, or transformations inside a driver.
-
-`source_ts` is Unix time at the batch-write completion boundary, separate from
-measured-state time. This recording output does not establish a control-session
-protocol through `epoch` or `sequence`. Publication runs outside the hardware lock;
-subscriber exceptions do not suppress measured-state or TF output.
-
-Define the following in an importable Blueprint module. `robot_blueprint` is your
-existing graph containing one coordinator:
+Add this input to your existing recorder subclass and autoconnect it to the robot
+Blueprint, just like `coordinator_joint_state`:
 
 ```python skip
-from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
-from dimos.experimental.memory.rust_recorder import RustRecorder, RustMcapStoreConfig
-from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.experimental.memory.rust_recorder import RustRecorder
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class ActionRecorder(RustRecorder):
-    coordinator_joint_command: In[ControlValues]
-
-
-recording_blueprint = autoconnect(
-    robot_blueprint,
-    ActionRecorder.blueprint(
-        store=RustMcapStoreConfig(path="commands.mcap"),
-        record_tf=False,
-        stream_codecs={"coordinator_joint_command": "lcm"},
-    ),
-)
+    coordinator_joint_command: In[JointState]
 ```
 
-The Rust recorder stores LCM bytes and reads `source_ts` from the existing schema.
-No Python pickle or new LCM definition is required. Normal shutdown flushes storage.
+The existing Rust recorder supports JointState LCM bytes and its source timestamp.
+No schema, dependency, or recorder changes are needed.

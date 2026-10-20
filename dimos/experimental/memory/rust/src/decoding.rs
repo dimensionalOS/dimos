@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use anyhow::{Context, Result};
-use lcm_msgs::control_msgs::ControlValues;
 use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::geometry_msgs::{
     PointStamped, PoseStamped, PoseWithCovarianceStamped, TwistStamped, TwistWithCovarianceStamped,
@@ -133,14 +132,6 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
         }};
     }
 
-    if payload_type == "dimos.msgs.control_msgs.ControlValues.ControlValues" {
-        let command = ControlValues::decode(data).context("invalid LCM ControlValues")?;
-        anyhow::ensure!(
-            command.source_ts.is_finite(),
-            "command source timestamp must be finite"
-        );
-        return Ok(command.source_ts);
-    }
     let (sec, nsec) = match payload_type {
         "dimos.msgs.geometry_msgs.PointStamped.PointStamped" => stamped!(PointStamped),
         "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped" => stamped!(PoseStamped),
@@ -210,33 +201,6 @@ mod tests {
             timestamp_field: field.map(str::to_string),
             json_schema: None,
         }
-    }
-
-    #[test]
-    fn control_values_preserve_write_time_and_lcm_payload() {
-        let command = ControlValues {
-            source: "ControlCoordinator".into(),
-            source_ts: 123.25,
-            epoch: 0,
-            sequence: 0,
-            interface_names: vec!["arm/joint1/position".into(), "base/vx/velocity".into()],
-            values: vec![0.25, -0.4],
-        };
-        let stream = StreamConfig {
-            port: "commands".into(),
-            name: "commands".into(),
-            payload_type: "dimos.msgs.control_msgs.ControlValues.ControlValues".into(),
-            codec: Codec::Lcm,
-            timestamp_field: None,
-            json_schema: None,
-        };
-        let result = decode(&stream, &command.encode(), 999.0).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ts, 123.25);
-        let DecodedPayload::Lcm(bytes) = &result[0].payload else {
-            panic!("not LCM");
-        };
-        assert_eq!(*bytes, command.encode());
     }
 
     #[test]

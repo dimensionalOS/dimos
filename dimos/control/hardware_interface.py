@@ -25,6 +25,7 @@ so the tick loop treats them uniformly.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
@@ -44,7 +45,7 @@ class ConnectedHardware:
 
     Wraps a ManipulatorAdapter with coordinator-specific features:
     - Joint names from HardwareComponent config
-    - Receives complete commands prepared by the coordinator
+    - Hold-last-value for partial commands
     - Converts between joint names and array indices
 
     Gripper joints are the trailing entries of ``component.joints`` and
@@ -63,6 +64,10 @@ class ConnectedHardware:
         self._component = component
         self._joint_names: list[JointName] = list(component.joints)
 
+        # Track last commanded values for hold-last behavior
+        self._last_commanded: dict[str, float] = {}
+        self._initialized = False
+        self._warned_unknown_joints: set[str] = set()
         self._current_mode: ControlMode | None = None
 
     @property
@@ -130,19 +135,40 @@ class ConnectedHardware:
         }
 
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
-        """Write a complete coordinator-prepared command.
+        """Write commands - allows partial joint sets, holds last for missing.
+
+        This is critical for:
+        - Partial WBC overrides
+        - Safety controllers
+        - Mixed task ownership
 
         Args:
-            commands: Complete {joint_name: value} in native adapter units
+            commands: {joint_name: value} - can be partial
             mode: Control mode
 
         Returns:
             True if command was sent successfully
         """
-        if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION, ControlMode.VELOCITY):
-            logger.warning(f"Hardware {self.hardware_id} does not support {mode.name}")
-            return False
-        ordered = [commands[name] for name in self._joint_names]
+        if mode != ControlMode.VELOCITY and not self._initialized:
+            self._initialize_last_commanded()
+
+        unknown = set(commands) - set(self._joint_names)
+        for joint_name in unknown - self._warned_unknown_joints:
+            logger.warning(
+                "Hardware received command for unknown joint",
+                hardware_id=self.hardware_id,
+                joint_name=joint_name,
+                valid_joints=self._joint_names,
+            )
+        self._warned_unknown_joints.update(unknown)
+
+        if mode == ControlMode.VELOCITY:
+            ordered = [commands.get(name, 0.0) for name in self._joint_names]
+        else:
+            for joint_name, value in commands.items():
+                if joint_name in self._joint_names:
+                    self._last_commanded[joint_name] = value
+            ordered = self._build_ordered_command()
 
         # Switch control mode if needed
         if mode != self._current_mode:
@@ -151,9 +177,37 @@ class ConnectedHardware:
                 return False
             self._current_mode = mode
 
-        if mode == ControlMode.VELOCITY:
-            return self._adapter.write_joint_velocities(ordered)
-        return self._adapter.write_joint_positions(ordered)
+        match mode:
+            case ControlMode.POSITION | ControlMode.SERVO_POSITION:
+                return self._adapter.write_joint_positions(ordered)
+            case ControlMode.VELOCITY:
+                return self._adapter.write_joint_velocities(ordered)
+            case ControlMode.TORQUE:
+                logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
+                return False
+            case _:
+                return False
+
+    def _initialize_last_commanded(self) -> None:
+        """Initialize last_commanded with current hardware positions."""
+        for _ in range(10):
+            try:
+                current = self._adapter.read_joint_positions()
+                for i, name in enumerate(self._joint_names):
+                    self._last_commanded[name] = current[i]
+
+                self._initialized = True
+                return
+            except Exception:
+                time.sleep(0.01)
+
+        raise RuntimeError(
+            f"Hardware {self.hardware_id} failed to read initial positions after retries"
+        )
+
+    def _build_ordered_command(self) -> list[float]:
+        """Build ordered command list from last_commanded dict."""
+        return [self._last_commanded[name] for name in self._joint_names]
 
 
 class ConnectedTwistBase(ConnectedHardware):
@@ -166,7 +220,7 @@ class ConnectedTwistBase(ConnectedHardware):
     - Positions come from odometry (or zeros if unavailable)
     - Efforts are always zero
     - write_command always sends velocities regardless of mode
-    - Initial zero velocities and partial holds are prepared in the coordinator
+    - No retry loop for initialization (twist bases start at zero velocity)
     """
 
     _twist_adapter: TwistBaseAdapter
@@ -179,6 +233,12 @@ class ConnectedTwistBase(ConnectedHardware):
         self._twist_adapter = adapter
         self._component = component
         self._joint_names = component.joints
+
+        # Twist bases start at zero velocity — no need to read from hardware
+        self._last_commanded: dict[str, float] = {name: 0.0 for name in self._joint_names}
+        self._initialized = True
+        self._warned_unknown_joints: set[str] = set()
+        self._current_mode: ControlMode | None = None
 
     @property
     def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
@@ -218,13 +278,25 @@ class ConnectedTwistBase(ConnectedHardware):
         """Write velocity commands — always sends velocities regardless of mode.
 
         Args:
-            commands: Complete {joint_name: velocity} in native adapter units
+            commands: {joint_name: velocity} - can be partial
             _mode: Control mode (ignored — twist bases always use velocity)
 
         Returns:
             True if command was sent successfully
         """
-        ordered = [commands[name] for name in self._joint_names]
+        # Update last commanded for joints we received
+        for joint_name, value in commands.items():
+            if joint_name in self._last_commanded:
+                self._last_commanded[joint_name] = value
+            elif joint_name not in self._warned_unknown_joints:
+                logger.warning(
+                    f"TwistBase {self.hardware_id} received command for unknown joint "
+                    f"{joint_name}. Valid joints: {self._joint_names}"
+                )
+                self._warned_unknown_joints.add(joint_name)
+
+        # Build ordered velocity list and send
+        ordered = self._build_ordered_command()
         return self._twist_adapter.write_velocities(ordered)
 
 
@@ -282,6 +354,11 @@ class ConnectedWholeBody(ConnectedHardware):
         self._kp_by_name = dict(zip(self._joint_names, self._kp, strict=False))
         self._kd_by_name = dict(zip(self._joint_names, self._kd, strict=False))
 
+        self._last_commanded: dict[str, float] = {}
+        self._initialized = False
+        self._warned_unknown_joints: set[str] = set()
+        self._current_mode: ControlMode | None = None
+
     @property
     def adapter(self) -> WholeBodyAdapter:  # type: ignore[override]
         """The underlying whole-body adapter."""
@@ -333,9 +410,22 @@ class ConnectedWholeBody(ConnectedHardware):
             )
             return False
 
+        if not self._initialized and not self._try_initialize_last_commanded():
+            return False
+
+        for joint_name, value in commands.items():
+            if joint_name in self._joint_names:
+                self._last_commanded[joint_name] = value
+            elif joint_name not in self._warned_unknown_joints:
+                logger.warning(
+                    f"WholeBody {self.hardware_id} received command for unknown joint "
+                    f"{joint_name}. Valid joints: {self._joint_names}"
+                )
+                self._warned_unknown_joints.add(joint_name)
+
         motor_cmds = [
             MotorCommand(
-                q=commands[name],
+                q=self._last_commanded[name],
                 dq=0.0,
                 kp=self._kp_by_name[name],
                 kd=self._kd_by_name[name],
@@ -348,3 +438,13 @@ class ConnectedWholeBody(ConnectedHardware):
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Direct pass-through to adapter for full MotorCommand control."""
         return self._wb_adapter.write_motor_commands(commands)
+
+    def _try_initialize_last_commanded(self) -> bool:
+        """Non-blocking init. Returns True once motor_states is cached."""
+        if not self._wb_adapter.has_motor_states():
+            return False
+        states = self._wb_adapter.read_motor_states()
+        for i, name in enumerate(self._joint_names):
+            self._last_commanded[name] = states[i].q
+        self._initialized = True
+        return True
