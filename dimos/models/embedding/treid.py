@@ -19,11 +19,11 @@ warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", cate
 
 from functools import cached_property
 
-from dimos.messages.sensor_msgs.msg import Image
 import torch
 import torch.nn.functional as functional
 from torchreid import utils as torchreid_utils
 
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.image import image_to_bgr
