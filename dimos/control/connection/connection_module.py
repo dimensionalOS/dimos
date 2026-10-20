@@ -79,12 +79,36 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 Values = dict[str, float]
-#: One subscription to make: the input port, its converter and the
-#: converter's second argument.
-_Listener = tuple[In[Any], Callable[[Any, Any], Values], Any]
-#: One output to publish: the port, and how to build its message from the
-#: checked readings, called as ``build(values, ts=unix_time)``.
-_Output = tuple[Out[Any], Callable[..., Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Listener:
+    """One input port to subscribe to, and how to turn its messages into values.
+
+    Attributes:
+        port: The input port.
+        convert: Turns a message into named values, called as
+            ``convert(message, argument)``.
+        argument: The second argument ``convert`` needs, e.g. the base's name.
+    """
+
+    port: In[Any]
+    convert: Callable[[Any, Any], Values]
+    argument: Any
+
+
+@dataclass(frozen=True, slots=True)
+class _Output:
+    """One output port to publish readings on.
+
+    Attributes:
+        port: The output port.
+        build: Builds its message from the checked readings, called as
+            ``build(values, ts=unix_time)``.
+    """
+
+    port: Out[Any]
+    build: Callable[..., Any]
 
 
 class ConnectionConfig(ModuleConfig):
@@ -291,7 +315,7 @@ class ConnectionModule(Module, ABC):
 
         self.connect()
         self._connected = True
-        self._subscriptions = [self._listen(*listener) for listener in listeners]
+        self._subscriptions = [self._listen(listener) for listener in listeners]
         self._state_thread = threading.Thread(
             target=self._state_loop, daemon=True, name=f"{self._label}-state"
         )
@@ -354,8 +378,8 @@ class ConnectionModule(Module, ABC):
         except (ValueError, FrameRejectedError) as error:
             self._report(f"bad readings: {error}")
             return
-        for port, build in self._outputs:
-            port.publish(build(checked, ts=now))
+        for output in self._outputs:
+            output.port.publish(output.build(checked, ts=now))
         with self._lock:
             self._last_state_time = now
 
@@ -366,11 +390,13 @@ class ConnectionModule(Module, ABC):
             port = self.inputs[name]
             if isinstance(spec, TwistPort):
                 base = self._part(description, ResourceKind.BASE)
-                listeners.append((port, twist_to_values, base))
+                listeners.append(_Listener(port, twist_to_values, base))
             elif isinstance(spec, JointPort):
-                listeners.append((port, joint_state_to_values, (spec.interface,)))
+                listeners.append(_Listener(port, joint_state_to_values, (spec.interface,)))
             elif isinstance(spec, MotorPort):
-                listeners.append((port, motor_command_to_values, motor_joints([description])))
+                listeners.append(
+                    _Listener(port, motor_command_to_values, motor_joints([description]))
+                )
         return listeners
 
     def _plan_outputs(self, description: ControlDescription) -> list[_Output]:
@@ -390,26 +416,26 @@ class ConnectionModule(Module, ABC):
                     groups.setdefault(fields, []).append(name)
             port = self.outputs[reported[JointState]]
             for joints in groups.values():
-                outputs.append((port, functools.partial(joint_state_from_values, joints=joints)))
+                outputs.append(
+                    _Output(port, functools.partial(joint_state_from_values, joints=joints))
+                )
         if PoseStamped in reported:
             base = self._part(description, ResourceKind.BASE)
             pose = functools.partial(pose_from_values, base=base, frame_id=self._odom_frame())
-            outputs.append((self.outputs[reported[PoseStamped]], pose))
+            outputs.append(_Output(self.outputs[reported[PoseStamped]], pose))
         if Twist in reported:
             base = self._part(description, ResourceKind.BASE)
             speed = functools.partial(_measured_twist, base)
-            outputs.append((self.outputs[reported[Twist]], speed))
+            outputs.append(_Output(self.outputs[reported[Twist]], speed))
         if Imu in reported:
             imu = self._part(description, ResourceKind.SENSOR)
             imu_msg = functools.partial(imu_from_values, sensor=imu, frame_id=self.frame_id)
-            outputs.append((self.outputs[reported[Imu]], imu_msg))
+            outputs.append(_Output(self.outputs[reported[Imu]], imu_msg))
         return outputs
 
-    def _listen(
-        self, port: In[Any], convert: Callable[[Any, Any], Values], argument: Any
-    ) -> DisposableBase:
-        """Pass this robot's values from each message on ``port`` to ``_apply``,
-        newest message only. ``convert(message, argument)`` gives the values.
+    def _listen(self, listener: _Listener) -> DisposableBase:
+        """Pass this robot's values from each message on the listener's port to
+        ``_apply``, newest message only.
 
         A JointState names its joints, so one naming none of this robot's is
         dropped before it can displace one that does. Handling runs on the
@@ -422,16 +448,16 @@ class ConnectionModule(Module, ABC):
 
         async def handle(msg: Any) -> None:
             try:
-                values = convert(msg, argument)
+                values = listener.convert(msg, listener.argument)
             except ValueError as error:
-                self._report(f"{port.name}: {error}", rejection=True)
+                self._report(f"{listener.port.name}: {error}", rejection=True)
                 return
             mine = {key: value for key, value in values.items() if key.startswith(prefix)}
             if mine:
                 self._apply(mine)
 
         return self.process_observable(
-            port.pure_observable().pipe(ops.filter(carries_mine)), handle
+            listener.port.pure_observable().pipe(ops.filter(carries_mine)), handle
         )
 
     def _apply(self, values: Values) -> None:
