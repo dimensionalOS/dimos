@@ -155,6 +155,7 @@ blueprint set.
 | `cluster_radius_m` | the answer | sightings this close are one object |
 | `fuse_voxel_m` | the answer | resolution of the object's cloud |
 | `candidate_floor` | what is read | detector score that forms a box; lower means more boxes and more GPU memory |
+| `embed_hz` | what is read | index frames embedded per second, capped at the camera's publish rate |
 | `max_object_extent_m`, `min_points`, `min_camera_range_m` | what is read | size, points and camera distance a sighting needs |
 | `verify_radius_m`, `peak_prominence` | what is read | how many frames retrieval hands to the detector |
 

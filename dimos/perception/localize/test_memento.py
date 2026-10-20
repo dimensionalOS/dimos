@@ -31,8 +31,8 @@ import numpy as np
 import pytest
 
 from dimos.perception.localize.localize import LocalizeTrace, answer_window, memory_key
-from dimos.perception.localize.localize_params import XARM_PARAMS
 from dimos.perception.localize.memento import Gap, Memento, Sighting
+from dimos.perception.localize.tools.tool_localize import XARM_PARAMS
 from dimos.perception.localize.types import Localization, LocalizeParams
 
 LABELS = ["book", "pen", "red marker", "yellow sticky notes"]
@@ -546,3 +546,97 @@ def test_forgotten_time_is_read_again_and_only_it(desk: Desk) -> None:
     book = ask(desk, memento, ["book"], (0, 100))["book"]
     assert desk.reads[1] == {"book": ((0, 50),)}
     assert spans(book) == [(55, 100), (0, 50)]
+
+
+def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
+    from dimos_lcm.sensor_msgs import CameraInfo
+
+    from dimos.memory.store.memory import MemoryStore
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.perception.localize.localize import index_frames
+    from dimos.perception.localize.rig import Rig, RigCamera, camera_hz
+    from dimos.perception.localize.tools.tool_localize import GO2_PARAMS, parse_params
+    from dimos.protocol.tf.tf import MultiTBuffer
+
+    assert XARM_PARAMS.embed_hz == 1.0
+    assert GO2_PARAMS.embed_hz == 3.0
+    base, fields = parse_params('{"base": "xarm", "embed_hz": 6.0}', XARM_PARAMS)
+    p6 = replace(base, **fields)
+    assert p6.embed_hz == 6.0
+    assert memory_key(p6) != memory_key(XARM_PARAMS)
+
+    store = MemoryStore()
+    color = store.stream("color_image", Image)
+    # 15 Hz camera stream over 2 seconds (31 frames, dt = 1/15 s)
+    for k in range(31):
+        ts = 10.0 + k / 15.0
+        img = Image.from_numpy(
+            np.full((16, 16, 3), 128, dtype=np.uint8),
+            format=ImageFormat.RGB,
+            frame_id="cam",
+            ts=ts,
+        )
+        color.append(img, ts=ts)
+
+    hz = camera_hz(color)
+    assert hz == 15.0
+
+    tf = MultiTBuffer(buffer_size=math.inf)
+    for k in range(31):
+        tf.receive_transform(Transform(frame_id="world", child_frame_id="cam", ts=10.0 + k / 15.0))
+    rig = Rig(
+        cameras={"cam": RigCamera(info=CameraInfo(), color=color, depth=None, hz=hz)},
+        tf=tf,
+        world_frame="world",
+    )
+
+    assert rig.cap_embed_hz(3.0) == 3.0
+    assert rig.cap_embed_hz(6.0) == 6.0
+    assert rig.cap_embed_hz(30.0) == 15.0
+    with pytest.raises(ValueError):
+        rig.cap_embed_hz(0.0)
+
+    assert index_frames(rig, color, embed_hz=30.0).count() == 31
+    assert index_frames(rig, color, embed_hz=15.0).count() == 31
+    assert index_frames(rig, color, embed_hz=3.0).count() < 31
+    store.stop()
+
+
+def test_thin_mask_depth_lift() -> None:
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
+    from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+
+    img = Image.from_numpy(
+        np.zeros((100, 100, 3), dtype=np.uint8),
+        format=ImageFormat.RGB,
+        frame_id="cam",
+        ts=1.0,
+    )
+    pliers_mask = np.zeros((100, 100), dtype=np.uint8)
+    pliers_mask[30:40, 20:80] = 255  # 600 px thin strip
+
+    det_pliers = Detection2DSeg(
+        bbox=(20.0, 30.0, 80.0, 40.0),
+        track_id=1,
+        class_id=1,
+        confidence=0.4,
+        name="black needle nose pliers",
+        ts=1.0,
+        image=img,
+        mask=pliers_mask,
+    )
+
+    depth = Image.from_numpy(
+        np.full((100, 100), 400, dtype=np.uint16),
+        format=ImageFormat.DEPTH16,
+        frame_id="cam",
+        ts=1.0,
+    )
+    info = CameraInfo(height=100, width=100, K=[100.0, 0.0, 50.0, 0.0, 100.0, 50.0, 0.0, 0.0, 1.0])
+    lifted = Detection3DPC.from_depth(det_pliers, depth, info, Transform.identity())
+    assert lifted is not None
+    assert len(lifted.pointcloud) >= 300

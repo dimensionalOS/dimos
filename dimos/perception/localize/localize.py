@@ -26,7 +26,7 @@ rather than a guess.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import heapq
 import json
@@ -51,7 +51,7 @@ from dimos.perception.localize.association import (
     Groups,
 )
 from dimos.perception.localize.memento import Gap, Memento, Reader, Sighting, Span
-from dimos.perception.localize.rig import Rig
+from dimos.perception.localize.rig import Rig, camera_hz
 from dimos.perception.localize.support_plane import (
     SupportPlane,
     fit_support_plane,
@@ -159,31 +159,47 @@ def _lift(
     return valid
 
 
-def index_frames(rig: Rig, feed: Stream[Any, Any]) -> Stream[Any, Any]:
+def index_frames(
+    rig: Rig, feed: Stream[Any, Any], embed_hz: float | None = None
+) -> Stream[Any, Any]:
     """One camera's frames worth embedding: lit, sharpest per slot, world-posed, camera-tagged."""
-    return (
-        feed.filter(lambda obs: obs.data.brightness > 0.1)
-        .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
-        .map(
-            lambda obs: obs.derive(
-                data=obs.data,
-                pose=rig.camera_pose(obs.ts, obs.data.frame_id),
-                tags={**obs.tags, "camera": obs.data.frame_id},
-            )
-        )
-        .filter(lambda obs: obs.pose is not None)
+    hz = rig.cap_embed_hz(embed_hz if embed_hz is not None else rig.embed_hz)
+    cam_hz = camera_hz(feed)
+    if cam_hz is not None:
+        hz = min(hz, cam_hz)
+    lit = feed.filter(lambda obs: obs.data.brightness > 0.1)
+    slotted = (
+        lit
+        if cam_hz is not None and hz >= cam_hz
+        else lit.transform(QualityWindow(lambda img: img.sharpness, window=1.0 / hz))
     )
+    return slotted.map(
+        lambda obs: obs.derive(
+            data=obs.data,
+            pose=rig.camera_pose(obs.ts, obs.data.frame_id),
+            tags={**obs.tags, "camera": obs.data.frame_id},
+        )
+    ).filter(lambda obs: obs.pose is not None)
 
 
-def embed_index(rig: Rig, embedder: EmbeddingModel, t0: float, t1: float) -> Stream[Any, Any]:
+def embed_index(
+    rig: Rig,
+    embedder: EmbeddingModel,
+    t0: float,
+    t1: float,
+    embed_hz: float | None = None,
+) -> Stream[Any, Any]:
     """Embedded, world-posed frame index over ``[t0, t1]``, every camera merged in time.
 
     Built once per window and handed to every ``localize`` call on it. Only the
     pose, the embedding and the sharpness are kept; the pixels are re-read from
     the color stream for the frames that reach the detector.
     """
+    hz = rig.cap_embed_hz(embed_hz if embed_hz is not None else rig.embed_hz)
+    rig.embed_hz = hz
     first, *rest = [
-        index_frames(rig, cam.color.after(t0).before(t1)) for cam in rig.cameras.values()
+        index_frames(rig, cam.color.after(t0).before(t1), embed_hz=hz)
+        for cam in rig.cameras.values()
     ]
     feed = (
         first.transform(lambda upstream: heapq.merge(upstream, *rest, key=lambda obs: obs.ts))
@@ -218,7 +234,8 @@ def retrieve(
     within ``verify_radius_m``.
     """
     index_count = index.count()
-    settled = _settled(index, params.settled_window_fraction / rig.embed_hz)
+    hz = rig.cap_embed_hz(params.embed_hz)
+    settled = _settled(index, params.settled_window_fraction / hz)
     source = index.filter(lambda obs: obs.id in settled)
 
     candidate_ids: set[int] = set()
@@ -420,6 +437,7 @@ def localize(
     overlapping earlier ones detects only its unread gap. ``traces``, one per
     query, collect what a renderer needs.
     """
+    params = replace(params, embed_hz=rig.cap_embed_hz(params.embed_hz))
     label_traces: list[LocalizeTrace | None] = (
         list(traces) if traces is not None else [None] * len(queries)
     )
