@@ -31,8 +31,8 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import UInt32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
@@ -119,8 +119,8 @@ class LeRobotPolicyModule(IsolatedPythonModule):
 
     color_image: In[Image]
     coordinator_joint_state: In[JointState]
-    button_pressed: In[Buttons]
-    teleop_buttons: In[Buttons]
+    button_pressed: In[UInt32]
+    teleop_buttons: In[UInt32]
 
     _control: PolicyControlSpec
 

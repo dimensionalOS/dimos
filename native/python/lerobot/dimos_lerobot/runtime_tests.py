@@ -15,6 +15,7 @@
 """Behavior tests for the isolated LeRobot runtime."""
 
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from threading import Event, Thread
 import time
 from typing import Any, Protocol
@@ -35,9 +36,12 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.cdr_transport import CdrTransport
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, UInt32
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
@@ -134,11 +138,6 @@ class RuntimeFactory(Protocol):
 
 @pytest.fixture
 def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
-    mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
-    mocker.patch.object(LCMRPC, "__init__", return_value=None)
-    mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
-    mocker.patch.object(LCMRPC, "start", return_value=None)
-    mocker.patch.object(LCMRPC, "stop", return_value=None)
     built: list[LeRobotPolicyRuntime] = []
 
     def _make(
@@ -217,6 +216,16 @@ def _action_chunk(steps: int = 3) -> NDArray[np.float32]:
     ) / np.float32(10)
 
 
+def _state(timestamp, names, positions):
+    return JointState(
+        Header(time_from_seconds(timestamp), "arm"),
+        list(names),
+        np.asarray(positions, dtype=np.float64),
+        np.empty(0),
+        np.empty(0),
+    )
+
+
 def _provide_observation(
     module: LeRobotPolicyRuntime,
     *,
@@ -229,8 +238,12 @@ def _provide_observation(
     rgb[..., 2] = 30
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
-    module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
+    module._on_color_image(
+        image_from_array(
+            rgb, encoding="rgb8", header=Header(time_from_seconds(timestamp), "camera")
+        )
+    )
+    module._on_joint_state(_state(timestamp, JOINTS, values))
     return rgb, values, timestamp
 
 
@@ -366,10 +379,10 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
     pressed.right_primary = True
 
     def stop_from_button() -> None:
-        module._on_button_pressed(pressed)
+        module._on_button_pressed(UInt32(pressed.data))
         stop_finished.set()
 
-    module._on_button_pressed(pressed)
+    module._on_button_pressed(UInt32(pressed.data))
     assert execute_started.wait(timeout=1.0)
     stop_thread = Thread(target=stop_from_button)
     stop_thread.start()
@@ -582,9 +595,13 @@ def test_preflight_rejects_invalid_live_joints(
     module, control = make_runtime(policy)
     timestamp = time.time()
     module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
+        image_from_array(
+            np.zeros((4, 5, 3), dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(time_from_seconds(timestamp), "camera"),
+        )
     )
-    module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
+    module._on_joint_state(_state(timestamp, names, positions))
 
     status = module.preflight_rollout()
 
@@ -596,20 +613,24 @@ def test_preflight_rejects_invalid_live_joints(
 @pytest.mark.parametrize(
     ("image", "image_format"),
     [
-        (np.zeros((8, 8, 3), dtype=np.uint8), ImageFormat.RGB),
-        (np.zeros((4, 5, 3), dtype=np.uint8), ImageFormat.BGR),
+        (np.zeros((8, 8, 3), dtype=np.uint8), "rgb8"),
+        (np.zeros((4, 5, 3), dtype=np.uint8), "bgr8"),
     ],
 )
 def test_preflight_requires_exact_live_rgb_contract(
     make_runtime: RuntimeFactory,
     image: NDArray[np.uint8],
-    image_format: ImageFormat,
+    image_format: str,
 ) -> None:
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
+    module._on_color_image(
+        image_from_array(
+            image, encoding=image_format, header=Header(time_from_seconds(timestamp), "camera")
+        )
+    )
+    module._on_joint_state(_state(timestamp, JOINTS, [0.0] * len(JOINTS)))
 
     status = module.preflight_rollout()
 
@@ -671,12 +692,12 @@ def test_grip_takeover_stops_rollout_until_explicit_restart(
     held = Buttons()
     setattr(held, grip, True)
 
-    module._on_teleop_buttons(held)
+    module._on_teleop_buttons(UInt32(held.data))
     wait_until(lambda: not module.rollout_status()["active"], timeout=1)
     assert module.start_rollout()["active"] is False
     assert "release" in (module.rollout_status()["last_error"] or "")
     submissions = control.execute_trajectory.call_count
-    module._on_teleop_buttons(Buttons())
+    module._on_teleop_buttons(UInt32(0))
     assert module.rollout_status()["active"] is False
     assert control.execute_trajectory.call_count == submissions
     _provide_observation(module)
@@ -704,8 +725,8 @@ def test_grip_during_inference_discards_result_without_blocking_input(
         assert predicting.wait(timeout=1)
         held = Buttons()
         held.right_grip = True
-        module._on_teleop_buttons(held)
-        module._on_teleop_buttons(Buttons())
+        module._on_teleop_buttons(UInt32(held.data))
+        module._on_teleop_buttons(UInt32(0))
         assert module._stop_event.is_set()
         control.execute_trajectory.assert_not_called()
     finally:
@@ -722,5 +743,81 @@ def test_stopping_inactive_policy_leaves_planner_trajectory_alone(
     module.stop_rollout()
     held = Buttons()
     held.right_grip = True
-    module._on_teleop_buttons(held)
+    module._on_teleop_buttons(UInt32(held.data))
     control.cancel_trajectory.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_runtime_consumes_actual_cdr_ports_with_padded_pixels_and_owned_state(
+    make_runtime,
+    backend,
+    mocker,
+):
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    epoch = 1_700_000_000
+    mocker.patch.object(policy_runtime.time, "time", return_value=float(epoch))
+    options = (
+        {"url": "memq://"}
+        if backend == "lcm"
+        else {
+            "scouting": False,
+            "multicast": False,
+            "gossip": False,
+            "connect": [],
+            "listen": ["tcp/127.0.0.1:0"],
+        }
+    )
+    with ExitStack() as cleanup:
+        wires = {}
+        for name, kind in [
+            ("color_image", Image),
+            ("coordinator_joint_state", JointState),
+            ("button_pressed", UInt32),
+            ("teleop_buttons", UInt32),
+        ]:
+            wire = CdrTransport("/policy/" + name, kind, backend=backend, **options)
+            cleanup.callback(wire.stop)
+            wires[name] = wire
+            module.set_transport(name, wire)
+        module.start()
+        pixels = np.full((4, 17), 99, dtype=np.uint8)
+        pixels[:, :15] = np.arange(60, dtype=np.uint8).reshape(4, 15)
+        image = Image(Header(Time(epoch, 1), "camera"), 4, 5, "rgb8", 0, 17, pixels.ravel())
+        state = _state(epoch, JOINTS, [0.0, 0.1, 0.2, 0.3])
+        state.header.stamp.nanosec = 1
+        wires["color_image"].publish(image)
+        wires["coordinator_joint_state"].publish(state)
+        wait_until(lambda: module.rollout_status()["observations_ready"], timeout=5)
+        observed, joints, _ = module._snapshot_observation(epoch)
+        np.testing.assert_array_equal(observed, np.arange(60, dtype=np.uint8).reshape(4, 5, 3))
+        np.testing.assert_allclose(joints, [0.0, 0.1, 0.2, 0.3])
+        assert module._latest_joint_state.header.stamp.nanosec == 1
+        # Direct callback ownership also holds before the transport has copied anything.
+        module._on_color_image(image)
+        module._on_joint_state(state)
+        image.data[:] = 0
+        state.position[:] = 0
+        again, joints, _ = module._snapshot_observation(epoch)
+        np.testing.assert_array_equal(again, observed)
+        np.testing.assert_allclose(joints, [0.0, 0.1, 0.2, 0.3])
+        wires["teleop_buttons"].publish(UInt32(1 << Buttons.BITS["left_grip"]))
+        wait_until(lambda: module._manual_control, timeout=5)
+        control.execute_trajectory.assert_not_called()
+
+
+def test_malformed_canonical_rgb_does_not_replace_valid_policy_observation(make_runtime):
+    module, _ = make_runtime(FakePolicy(_action_chunk()))
+    pixels, _, timestamp = _provide_observation(module)
+    malformed = Image(
+        Header(time_from_seconds(timestamp), "camera"),
+        4,
+        5,
+        "rgb8",
+        0,
+        15,
+        np.zeros(1, dtype=np.uint8),
+    )
+    module._on_color_image(malformed)
+    observed, _, _ = module._snapshot_observation(timestamp)
+    np.testing.assert_array_equal(observed, pixels)
