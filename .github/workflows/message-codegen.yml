@@ -132,7 +132,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y liblcm-dev
+          sudo apt-get install -y liblcm-dev libportaudio2
           mkdir -p build/sdk-deps
           curl --fail --location --retry 3 https://github.com/eclipse-zenoh/zenoh-c/releases/download/1.10.1/zenoh-c-1.10.1-x86_64-unknown-linux-gnu-standalone.zip -o build/sdk-deps/zenoh-c.zip
           echo '9ee0f2d732b0f3042a7e1cd3076042a2bc3ac0415587c40bc3ed7b8b62fbde11  build/sdk-deps/zenoh-c.zip' | sha256sum --check
@@ -153,6 +153,13 @@ jobs:
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
           .native-review/bin/python -I -c 'from dimos.memory import module; from dimos.memory.store import mcap; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,mcap)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/test_module.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/store/test_mcap.py"
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
+      - name: Verify Go2 CDR boundaries with stubbed drivers and installed code
+        if: runner.os == 'Linux'
+        run: |
+          # Import-only SDK subset, pinned to uv.lock. Audio/hardware APIs are never called.
+          uv pip install --python .native-review/bin/python 'aiortc==1.14.0'
+          uv pip install --python .native-review/bin/python --no-deps 'unitree-webrtc-connect==2.1.2' 'wasmtime==41.0.0' 'pycryptodome==3.23.0' 'curl-cffi==0.15.0' 'sounddevice==0.5.5'
+          LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree.go2 import connection; from dimos.robot.unitree.go2.blueprints.basic import unitree_go2_basic; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,unitree_go2_basic)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/test_connection.py" "$PWD/dimos/robot/unitree/go2/blueprints/basic/test_unitree_go2_basic.py"
       - name: Verify generated browser schemas, relay encoding and web consumers
         if: runner.os == 'Linux'
         run: |
