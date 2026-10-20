@@ -23,6 +23,7 @@ import pytest
 import rerun as rr
 
 from dimos.core.cdr_transport import CdrTransport
+from dimos.core.global_config import GlobalConfig
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PointStamped
 from dimos.messages.sensor_msgs.msg import Image
@@ -30,8 +31,9 @@ from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, _resolve_pubsubs
 from dimos.visualization.rerun.cdr import cloud_archetype, generated_archetypes, image_archetype
+from dimos.visualization.vis_module import vis_module
 from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
 
 
@@ -161,3 +163,18 @@ def test_cloud_renderer_filters_nonfinite_positions_with_matching_colors() -> No
     archetype = cloud_archetype(cloud)
     assert archetype.positions.as_arrow_array().to_pylist() == [[1, 2, 3], [4, 5, 6]]
     assert archetype.colors.as_arrow_array().to_pylist() == [0xFF0000FF, 0x0000FFFF]
+
+
+@pytest.mark.parametrize("backend", ["zenoh", "lcm"])
+def test_blueprint_does_not_construct_pubsubs_and_resolution_keeps_backend(mocker, backend) -> None:
+    lcm = mocker.patch("dimos.visualization.rerun.bridge.LCM")
+    zenoh = mocker.patch("dimos.visualization.rerun.bridge.Zenoh")
+    config = Config(g=GlobalConfig(transport=backend))
+    assert config.pubsubs is None
+    vis_module("rerun")
+    lcm.assert_not_called()
+    zenoh.assert_not_called()
+    resolved = _resolve_pubsubs(config)
+    expected = zenoh if backend == "zenoh" else lcm
+    expected.assert_called_once_with()
+    assert resolved == [expected.return_value]

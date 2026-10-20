@@ -26,7 +26,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import duration_from_seconds, time_from_nanoseconds, to_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 # Add system path for gi module if needed
@@ -37,7 +40,8 @@ import gi  # type: ignore[import-not-found,import-untyped]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found,import-untyped]
+gi.require_version("GstVideo", "1.0")
+from gi.repository import GLib, Gst, GstVideo  # type: ignore[import-not-found,import-untyped]
 
 logger = setup_logger(level=logging.INFO)
 
@@ -101,6 +105,7 @@ class GstreamerCameraModule(Module):
         self._cleanup_reconnect_timer()
 
         if not self.running:
+            super().stop()
             return
 
         self.running = False
@@ -251,12 +256,15 @@ class GstreamerCameraModule(Module):
         if buffer.pts != Gst.CLOCK_TIME_NONE:
             # Convert nanoseconds to seconds and add offset
             # This is the absolute time from when the frame was captured
-            timestamp = (buffer.pts / 1e9) + self.config.timestamp_offset
+            stamp_ns = int(buffer.pts) + to_nanoseconds(
+                duration_from_seconds(self.config.timestamp_offset)
+            )
+            timestamp = stamp_ns / 1e9
 
             # Skip frames with invalid timestamps (before year 2000)
             # This filters out initial gray frames with relative timestamps
             year_2000_timestamp = 946684800.0  # January 1, 2000 00:00:00 UTC
-            if timestamp < year_2000_timestamp:
+            if stamp_ns < int(year_2000_timestamp) * 1_000_000_000:
                 logger.debug(f"Skipping frame with invalid timestamp: {timestamp:.6f}")
                 return Gst.FlowReturn.OK
 
@@ -272,18 +280,22 @@ class GstreamerCameraModule(Module):
         try:
             # Convert buffer data to numpy array
             # The videoconvert element outputs BGR format
-            data = np.frombuffer(map_info.data, dtype=np.uint8)
-
-            # Reshape to image dimensions
-            # For BGR format, we have 3 channels
-            image_array = data.reshape((height, width, 3))
+            info = GstVideo.VideoInfo.new_from_caps(caps)
+            if info.finfo.name != "BGR":
+                raise ValueError("The camera pipeline must supply BGR pixels")
+            image_array = np.ndarray(
+                (height, width, 3),
+                dtype=np.uint8,
+                buffer=map_info.data,
+                offset=info.offset[0],
+                strides=(info.stride[0], 3, 1),
+            )
 
             # Create an Image message with the absolute timestamp
-            image_msg = Image(
-                data=image_array.copy(),  # Make a copy to ensure data persistence
-                format=ImageFormat.BGR,
-                frame_id=self.frame_id,
-                ts=timestamp,
+            image_msg = image_from_array(
+                image_array,
+                encoding="bgr8",
+                header=Header(frame_id=self.frame_id, stamp=time_from_nanoseconds(stamp_ns)),
             )
 
             # Publish the image

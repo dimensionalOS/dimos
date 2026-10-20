@@ -15,9 +15,8 @@
 from typing import Protocol
 
 from dimos.core.stream import Out
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image as ImageMsg
 from dimos.msgs.nav_msgs.Odometry import Odometry as OdometryMsg
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 

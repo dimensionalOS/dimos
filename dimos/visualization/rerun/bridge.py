@@ -283,7 +283,9 @@ class Config(ModuleConfig):
     honored.
     """
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    # Construct the selected backend only when the bridge starts. Creating a
+    # blueprint or importing a camera module must not open multicast sockets.
+    pubsubs: list[SubscribeAllCapable[Any, Any]] | None = None
     # Explicit subscriptions for the proposal's generated CDR channels. Each
     # transport belongs to this bridge; legacy discovery/defaults stay intact.
     cdr_transports: dict[str, CdrTransport[Any]] = field(default_factory=dict)

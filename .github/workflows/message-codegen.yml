@@ -17,6 +17,9 @@ on:
       - docs/web/bridge.md
       - dimos/visualization/rerun/**
       - dimos/msgs/**
+      - dimos/hardware/sensors/camera/**
+      - dimos/spec/perception.py
+      - dimos/visualization/vis_module.py
       - examples/message-viewer/**
       - docs/usage/visualization.md
       - native/cpp/**
@@ -126,3 +129,8 @@ jobs:
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_image_views.py" "$PWD/dimos/msgs/test_image_compression.py" "$PWD/dimos/msgs/test_pointcloud.py" "$PWD/dimos/msgs/test_pointcloud_colors.py" "$PWD/dimos/msgs/test_camera_info.py" "$PWD/dimos/msgs/test_geometry.py" "$PWD/dimos/msgs/test_time.py"
           .native-review/bin/python -m pip install 'mypy>=1.13,<2' types-PyYAML
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/image.py dimos/msgs/pointcloud.py dimos/msgs/camera_info.py dimos/msgs/geometry.py dimos/msgs/time.py dimos/visualization/rerun/cdr.py dimos/visualization/rerun/bridge.py examples/message-viewer/demo_cdr_rerun.py
+      - name: Verify generated Python camera producers without hardware
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/test_webcam.py" "$PWD/dimos/hardware/sensors/camera/test_webcam_backend.py" "$PWD/dimos/hardware/sensors/camera/test_module.py" "$PWD/dimos/hardware/sensors/camera/gstreamer/test_generated_frames.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/spec.py dimos/hardware/sensors/camera/webcam.py dimos/hardware/sensors/camera/module.py dimos/hardware/sensors/camera/gstreamer/gstreamer_camera.py dimos/spec/perception.py dimos/visualization/vis_module.py
