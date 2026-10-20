@@ -15,15 +15,16 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
+from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
-from dimos.messages.nav_msgs.msg import Path as CdrPath
+from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.occupancy import CostValues
 
 
 def make_path_mask(
-    occupancy_grid: _GridT,
+    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
     path: Path | CdrPath,
     robot_width: float,
     pose_index: int = 0,
