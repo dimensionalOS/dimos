@@ -159,7 +159,7 @@ class WebXRTeleopModule(Module):
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
 
-        self._command_types: dict[str, type[CdrPoseStamped] | type[CdrJoy]] = {
+        self._command_types: dict[str, type[Any]] = {
             "pose": CdrPoseStamped,
             "joy": CdrJoy,
         }

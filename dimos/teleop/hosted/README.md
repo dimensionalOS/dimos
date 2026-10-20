@@ -117,3 +117,48 @@ session accumulates half-dead pushes and the second bridge 502s with
 Robot-side auto-redial is not yet implemented (a follow-up). TURN has landed
 (`_fetch_ice_servers` fetches broker-minted creds, STUN fallback), so it is no
 longer blocked on that.
+
+
+## Arm command encoding on the CDR proposal
+
+`ArmCommandModule` accepts the existing relay data-frame envelope on the raw
+`cmd_unreliable` plane. Its `pose`, `joy` and `twist` channels carry canonical CDR
+`geometry_msgs/msg/PoseStamped`, `sensor_msgs/msg/Joy` and
+`geometry_msgs/msg/TwistStamped`. Frame metadata declares `encoding: "cdr"` and
+that exact type identity. The provider still forwards opaque bytes; it does not
+negotiate schemas or decode legacy fingerprints as a fallback.
+
+The full ROS message definitions come from the installed DimOS package, including
+dependencies. For example, an operator application's build can export the schema
+manifest using the same registry as the robot:
+
+```python
+import json
+from dimos_cdrgen.registry import schema
+
+names = {"pose": "geometry_msgs/msg/PoseStamped",
+         "joy": "sensor_msgs/msg/Joy",
+         "twist": "geometry_msgs/msg/TwistStamped"}
+manifest = {channel: {"type": name, "definition": schema(name)}
+            for channel, name in names.items()}
+print(json.dumps(manifest))
+```
+
+The shipped `dimos/teleop/webxr/web/static/command_codec.mjs` encoder consumes
+this manifest and emits the shared frame format. Its fixed Foxglove dependencies
+and import map are in the adjacent `index.html`. An external hosted operator
+client must adopt this encoding before connecting to this proposal; its code and
+broker credentials are not included in this repository. The arm module does not
+start an embedded WebXR server, so no new hosted HTTP schema endpoint is implied.
+The Go2 hosted command plane is a separate migration boundary.
+
+Pose/twist timestamps and per-hand ordering are checked before dispatch. Output
+headers retain source nanoseconds; the existing UI scale, E-STOP, gripper
+normalization and coordinator task routing remain. Integer timestamp watermarks
+also distinguish commands less than one floating-point second ULP apart.
+
+Run the offline command-plane checks without a broker, robot or XR server:
+
+```sh
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_arm_command.py
+```
