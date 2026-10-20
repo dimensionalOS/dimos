@@ -17,6 +17,10 @@ on:
       - docs/web/bridge.md
       - dimos/visualization/rerun/**
       - dimos/msgs/**
+      - dimos/protocol/tf/**
+      - dimos/memory/**
+      - dimos/protocol/cdr_mcap.py
+      - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
       - dimos/spec/perception.py
       - dimos/visualization/vis_module.py
@@ -142,3 +146,8 @@ jobs:
           cargo test --manifest-path native/rust/dimos-module-macros/Cargo.toml --locked --lib --jobs 2
           cargo test --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2
           cargo clippy --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2 -- -D warnings
+      - name: Verify generated TF buffers and recorded lookups
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o $'markers=self_hosted: optional host dependency case\nskipif_aarch64: optional architecture case' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/protocol/tf/test_tf.py" "$PWD/dimos/protocol/tf/test_static_tf_publisher.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/protocol/test_cdr_mcap.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/protocol/tf/tf.py dimos/protocol/tf/static_tf_publisher.py dimos/memory/tf.py
