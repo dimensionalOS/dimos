@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
 import numpy as np
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.msgs.image import image_from_array, image_to_bgr
 from dimos.msgs.time import time_from_seconds, to_seconds
