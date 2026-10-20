@@ -46,6 +46,27 @@ provide matching dimOS wheels and their build dependencies to pip. Pip does not
 read another checkout's `[tool.uv.sources]`. For offline builds use a complete
 wheelhouse with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=/path/to/wheels`.
 
+## Try an unpublished proposal commit
+
+The versioned configuration above assumes matching released dimOS artifacts. For
+reviewing this proposal without publishing, first install its Git commit and
+build tools into your active environment. From this PR checkout:
+
+```sh
+commit="$(git rev-parse HEAD)"
+pip install "dimos[message-build] @ git+https://github.com/dimensionalOS/dimos.git@$commit" 'setuptools>=77' wheel
+cd examples/external-messages
+pip install --no-build-isolation .
+```
+
+The explicit review-only option reuses that installed backend and its built-in
+types. Otherwise pip's isolated build could select the public dimOS version,
+which does not contain this proposal. The matching-wheelhouse option above also
+supports isolation. Neither route requires a registry publication. The Git source
+installation needs a C++ compiler for dimOS's existing A* extension; it does not
+compile the message SDK. Ordinary users of released wheels do not need this
+review setup.
+
 ## Install and use from Python
 
 ```sh
