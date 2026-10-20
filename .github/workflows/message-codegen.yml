@@ -231,6 +231,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.galaxea.r1pro import connection,head_cameras,lio; from dimos.hardware.drive_trains.transport import adapter; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,head_cameras,lio,adapter)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/galaxea/r1pro/test_cdr_streams.py" "$PWD/dimos/robot/galaxea/r1pro/test_head_cameras.py" "$PWD/dimos/hardware/whole_body/transport/test_adapter.py" "$PWD/dimos/protocol/pubsub/impl/test_cdr_ros_conversion.py"
+      - name: Verify canonical collection recordings and real dataset format exports
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --python .native-review/bin/python 'h5py==3.15.1' 'pandas==2.3.3' 'pyarrow==26.0.0' 'av==16.1.0'
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.imitation.collection import episode_monitor,recorder; from dimos.imitation.dataprep import core,build; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (episode_monitor,recorder,core,build)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/imitation/collection" "$PWD/dimos/imitation/dataprep" "$PWD/dimos/imitation/test_datacollection_e2e.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |

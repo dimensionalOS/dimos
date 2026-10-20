@@ -112,3 +112,25 @@ example, Python quality-inspection API, alignment rules, and output provenance.
   causally, including accepted history before episode start.
 - **Old vs new sessions** — recordings made before the `coordinator_joint_state`
   rename use the old stream name; point a matching config at them, or re-record.
+
+## Offline encoding checks
+
+Collection ports use generated `Image`, `JointState`, `UInt32` buttons and
+`String` status values. EpisodeStatus keeps its existing JSON body inside the
+CDR String; episode boundaries use that body's source timestamp. SQLite stores
+these typed values as CDR, and MCAP readers use complete `ros2msg` schemas.
+Historical LCM/JPEG-in-LCM MCAP recordings require explicit conversion before
+DataPrep; changing a stream name does not migrate their encoding.
+
+With the development and learning test dependencies installed, run without a
+robot, camera, checkpoint or training job:
+
+```bash
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest -o addopts='' --import-mode=importlib -q \
+  dimos/imitation/collection dimos/imitation/dataprep \
+  dimos/imitation/test_datacollection_e2e.py
+```
+
+This checks CDR button-to-recorder transport, source timestamps, padded image
+rows, joint-name ordering, episode selection and actual HDF5/LeRobot dataset
+exports. Policy inference has its own isolated runtime and acceptance tests.

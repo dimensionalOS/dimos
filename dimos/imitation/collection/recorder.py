@@ -30,15 +30,14 @@ from typing import Any
 from dimos.core.stream import In
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.memory.module import Recorder, RecorderConfig
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import String
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
 
 
 class CollectionRecorderConfig(RecorderConfig):
     record_tf: bool = False
-    stream_codecs: dict[str, str] = {"status": "json"}
+    stream_codecs: dict[str, str] = {}
 
 
 class CollectionRecorder(Recorder):

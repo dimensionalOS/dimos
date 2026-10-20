@@ -26,7 +26,8 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModuleConfig,
 )
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -89,7 +90,7 @@ def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
-    assert status.type.__name__ == "String"
+    assert status.type is String
 
 
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:

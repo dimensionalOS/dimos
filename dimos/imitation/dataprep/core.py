@@ -38,27 +38,58 @@ from numpy.typing import NDArray
 
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.schema import (
-    DEFAULT_FPS as DEFAULT_FPS,
-    DataPrepConfig as DataPrepConfig,
-    DatasetSchema as DatasetSchema,
-    Episode as Episode,
-    EpisodeExtractor as EpisodeExtractor,
-    EpisodeQualityReport as EpisodeQualityReport,
-    EpisodeReport as EpisodeReport,
-    FeatureSpec as FeatureSpec,
-    IncompleteEpisode as IncompleteEpisode,
-    Inspector as Inspector,
-    OutputConfig as OutputConfig,
-    QualityConfig as QualityConfig,
-    Sample as Sample,
-    SourceKind as SourceKind,
-    SyncConfig as SyncConfig,
-    Writer as Writer,
-    validate_source_kinds as validate_source_kinds,
+    DEFAULT_FPS,
+    DataPrepConfig,
+    DatasetSchema,
+    Episode,
+    EpisodeExtractor,
+    EpisodeQualityReport,
+    EpisodeReport,
+    FeatureSpec,
+    IncompleteEpisode,
+    Inspector,
+    OutputConfig,
+    QualityConfig,
+    Sample,
+    SourceKind,
+    SyncConfig,
+    Writer,
+    validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
+from dimos.msgs.image import image_view
+from dimos.msgs.time import time_from_seconds
+
+__all__ = [
+    "DEFAULT_FPS",
+    "DataPrepConfig",
+    "DatasetSchema",
+    "Episode",
+    "EpisodeExtractor",
+    "EpisodeQualityReport",
+    "EpisodeReport",
+    "FeatureSpec",
+    "IncompleteEpisode",
+    "Inspector",
+    "OutputConfig",
+    "QualityConfig",
+    "Sample",
+    "SourceKind",
+    "SyncConfig",
+    "Writer",
+    "extract_episodes",
+    "get_inspector",
+    "get_writer",
+    "inspect_episode_quality",
+    "inspect_episodes",
+    "is_image_array",
+    "iter_episode_samples",
+    "resolve_field",
+    "summarize_lengths",
+    "validate_source_kinds",
+]
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -88,6 +119,8 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
       - `ref.field` set: `getattr(msg, ref.field)` (or `msg[ref.field]`
         for dict payloads) then coerce.
     """
+    if isinstance(msg, Image) and ref.field in {None, "data"}:
+        return image_view(msg)
     value: Any
     if isinstance(msg, JointState) and ref.field in {"position", "velocity", "effort"}:
         by_name = _joint_values(msg, ref.field)
@@ -315,6 +348,16 @@ def _source_messages(
         yield observation.ts, observation.data
 
 
+def _joint_position_state(timestamp: float, targets: dict[str, float]) -> JointState:
+    return JointState(
+        Header(time_from_seconds(timestamp), ""),
+        list(targets),
+        np.asarray(list(targets.values()), dtype=np.float64),
+        np.empty(0, dtype=np.float64),
+        np.empty(0, dtype=np.float64),
+    )
+
+
 def _joint_position_updates(
     messages: Iterator[tuple[float, Any]], start_ts: float, stream: str
 ) -> Iterator[tuple[float, JointState]]:
@@ -325,12 +368,12 @@ def _joint_position_updates(
         if not seeded and timestamp >= start_ts:
             yield (
                 start_ts,
-                JointState(ts=start_ts, name=list(targets), position=list(targets.values())),
+                _joint_position_state(start_ts, targets),
             )
             seeded = True
         try:
             if not isinstance(message, JointState):
-                raise ValueError("joint_position_updates requires JointState messages")
+                raise TypeError("joint_position_updates requires JointState messages")
             update = _joint_values(message, "position")
             if not all(math.isfinite(value) for value in update.values()):
                 raise ValueError("JointState update contains non-finite values")
@@ -340,10 +383,10 @@ def _joint_position_updates(
         if timestamp >= start_ts:
             yield (
                 timestamp,
-                JointState(ts=timestamp, name=list(targets), position=list(targets.values())),
+                _joint_position_state(timestamp, targets),
             )
     if not seeded:
-        yield start_ts, JointState(ts=start_ts, name=list(targets), position=list(targets.values()))
+        yield start_ts, _joint_position_state(start_ts, targets)
 
 
 def _episode_features(

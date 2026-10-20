@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 import weakref
 
-from mcap.writer import Writer as McapWriter
+from dimos_cdrgen.registry import encode, schema
+from mcap.writer import CompressionType, Writer as McapWriter
 import numpy as np
 import pytest
 
@@ -35,40 +36,36 @@ from dimos.imitation.dataprep.schema import (
     Sample,
     SyncConfig,
 )
-from dimos.memory.codecs.jpeg import JpegCodec
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.memory.codecs.cdr import CdrCodec
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 
 
-def _register_channel(
-    writer: McapWriter,
-    name: str,
-    payload_type: type[Any],
-    message_encoding: str = "lcm",
-) -> int:
+def _register_channel(writer: McapWriter, name: str, payload_type: type[Any]) -> int:
+    schema_id = writer.register_schema(
+        name=payload_type.__msgtype__,
+        encoding="ros2msg",
+        data=schema(payload_type.__msgtype__).encode("utf-8"),
+    )
     return writer.register_channel(
         topic=name,
-        message_encoding=message_encoding,
-        schema_id=0,
-        metadata={
-            "dimos.payload_type": f"{payload_type.__module__}.{payload_type.__qualname__}",
-            "dimos.observation_time": "publish_time",
-        },
+        message_encoding="cdr",
+        schema_id=schema_id,
+        metadata={"dimos.observation_time": "publish_time"},
     )
 
 
 def _write_message(writer: McapWriter, channel_id: int, ts: float, message: Any) -> None:
     timestamp_ns = round(ts * 1_000_000_000)
+    if isinstance(message, EpisodeStatus):
+        message = String(message.to_json())
     writer.add_message(
         channel_id=channel_id,
         log_time=timestamp_ns,
         publish_time=timestamp_ns,
-        data=message.to_json().encode("utf-8")
-        if isinstance(message, EpisodeStatus)
-        else (message if isinstance(message, bytes) else message.lcm_encode()),
+        data=message if isinstance(message, bytes) else encode(message),
     )
 
 
@@ -77,14 +74,14 @@ def _write_collection(path: Path) -> None:
         writer = McapWriter(output)
         writer.start(profile="dimos", library="test")
         channels = {
-            "color_image": _register_channel(writer, "color_image", Image, "jpeg"),
+            "color_image": _register_channel(writer, "color_image", Image),
             "coordinator_joint_state": _register_channel(
                 writer, "coordinator_joint_state", JointState
             ),
             "applied_joint_position_command": _register_channel(
                 writer, "applied_joint_position_command", JointState
             ),
-            "status": _register_channel(writer, "status", String, "json"),
+            "status": _register_channel(writer, "status", String),
         }
         _write_message(
             writer,
@@ -105,13 +102,10 @@ def _write_collection(path: Path) -> None:
                 writer,
                 channels["color_image"],
                 ts,
-                JpegCodec().encode(
-                    Image(
-                        ts=ts,
-                        frame_id="wrist_camera_link",
-                        format=ImageFormat.RGB,
-                        data=np.full((8, 8, 3), index, dtype=np.uint8),
-                    )
+                image_from_array(
+                    np.full((8, 8, 3), index, dtype=np.uint8),
+                    encoding="rgb8",
+                    header=Header(time_from_seconds(ts), "wrist_camera_link"),
                 ),
             )
             _write_message(
@@ -119,12 +113,11 @@ def _write_collection(path: Path) -> None:
                 channels["coordinator_joint_state"],
                 ts,
                 JointState(
-                    ts=ts,
-                    frame_id="coordinator",
+                    header=Header(time_from_seconds(ts), "coordinator"),
                     name=["shoulder", "wrist"],
-                    position=[float(index), float(index + 1)],
-                    velocity=[0.0, 0.0],
-                    effort=[0.0, 0.0],
+                    position=np.asarray([float(index), float(index + 1)], dtype=np.float64),
+                    velocity=np.zeros(2, dtype=np.float64),
+                    effort=np.zeros(2, dtype=np.float64),
                 ),
             )
             _write_message(
@@ -132,12 +125,13 @@ def _write_collection(path: Path) -> None:
                 channels["applied_joint_position_command"],
                 ts,
                 JointState(
-                    ts=ts,
-                    frame_id="coordinator",
+                    header=Header(time_from_seconds(ts), "coordinator"),
                     name=["shoulder", "wrist"],
-                    position=[float(index) + 0.25, float(index) + 1.25],
-                    velocity=[],
-                    effort=[],
+                    position=np.asarray(
+                        [float(index) + 0.25, float(index) + 1.25], dtype=np.float64
+                    ),
+                    velocity=np.empty(0, dtype=np.float64),
+                    effort=np.empty(0, dtype=np.float64),
                 ),
             )
         _write_message(
@@ -223,40 +217,44 @@ def test_mcap_recording_inspects_and_produces_valid_samples(tmp_path: Path) -> N
     np.testing.assert_array_equal(received[0].action["action"], [0.25, 1.25])
 
 
-@pytest.mark.parametrize("encoding", ["lcm", "lz4+lcm"])
-def test_recording_metadata_decodes_typed_messages(tmp_path: Path, encoding: str) -> None:
+@pytest.mark.parametrize("compression", [CompressionType.NONE, CompressionType.ZSTD])
+def test_recording_schemas_decode_canonical_messages_with_chunk_compression(tmp_path, compression):
     path = tmp_path / "recording.mcap"
-    message = JointState(ts=12.5, name=["arm/joint1"], position=[0.25])
-    codec = LcmCodec(JointState)
-    payload = Lz4Codec(codec).encode(message) if encoding == "lz4+lcm" else codec.encode(message)
+    message = JointState(
+        Header(time_from_seconds(12.5), "arm"),
+        ["arm/joint1"],
+        np.asarray([0.25]),
+        np.empty(0),
+        np.empty(0),
+    )
     with path.open("wb") as file:
-        writer = McapWriter(file)
+        writer = McapWriter(file, compression=compression)
         writer.start()
-        channel = _register_channel(writer, "measured", JointState, encoding)
-        _write_message(writer, channel, 11.5, payload)
+        channel = _register_channel(writer, "measured", JointState)
+        _write_message(writer, channel, 11.5, message)
         writer.finish()
-
     with _open_recording(path) as store:
         observation = store.stream("measured").first()
         assert observation.ts == 11.5
-        assert observation.data.lcm_encode() == message.lcm_encode()
+        assert type(observation.data) is JointState
+        assert encode(observation.data) == encode(message)
 
 
-def test_missing_message_package_reports_the_recorded_type(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encoding", ["lcm", "lz4+lcm", "jpeg"])
+def test_historical_typed_recording_requires_explicit_conversion(tmp_path, encoding):
     path = tmp_path / "recording.mcap"
     with path.open("wb") as file:
         writer = McapWriter(file)
         writer.start()
         channel = writer.register_channel(
             topic="custom_state",
-            message_encoding="lcm",
+            message_encoding=encoding,
             schema_id=0,
             metadata={"dimos.payload_type": "missing_recording_package.State"},
         )
         _write_message(writer, channel, 1.0, b"unused")
         writer.finish()
-
-    with pytest.raises(ImportError, match="custom_state.*missing_recording_package.State"):
+    with pytest.raises(ValueError, match="custom_state.*historical encoding.*convert"):
         _open_recording(path)
 
 
@@ -266,14 +264,15 @@ def test_sample_emission_does_not_keep_every_decoded_camera_frame(tmp_path, mock
     config = _config(recording, tmp_path / "dataset")
     config.observation["camera_alias"] = config.observation["observation.images.wrist"]
     decoded = []
-    decode = JpegCodec.decode
+    decode = CdrCodec.decode
 
     def track_decode(codec, payload):
         image = decode(codec, payload)
-        decoded.append(weakref.ref(image.data))
+        if isinstance(image, Image):
+            decoded.append(weakref.ref(image.data))
         return image
 
-    mocker.patch.object(JpegCodec, "decode", autospec=True, side_effect=track_decode)
+    mocker.patch.object(CdrCodec, "decode", autospec=True, side_effect=track_decode)
     with _open_recording(recording) as store:
         episode = extract_episodes(store, config.episodes)[0]
         samples = iter_episode_samples(
