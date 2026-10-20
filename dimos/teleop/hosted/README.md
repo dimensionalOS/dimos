@@ -162,3 +162,23 @@ Run the offline command-plane checks without a broker, robot or XR server:
 ```sh
 DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_arm_command.py
 ```
+
+
+## Camera values and video transport
+
+The camera mux ports and hosted blueprint image bindings use generated
+`sensor_msgs/msg/Image` values. Cropping, resizing and the optional latency strip
+use external pixel helpers; single-camera source headers retain their exact
+nanoseconds. A new multicamera composite has a new `camera_mux` header. Mixed
+RGB8/BGR8 tiles are converted to the composite's declared encoding so their
+visible colors agree; incompatible channel layouts still drop the composite.
+
+WebRTC video remains an RTP media track. Its adapter respects row padding,
+converts supported 16-bit gray/depth display values to RGB, crops odd dimensions
+before the existing H264 encoder and waits for a valid frame after malformed or
+unsupported input. The offline regression runs the actual generated codec, mux
+port, video transport and encoder with only the external provider mocked:
+
+```sh
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_camera_mux.py dimos/protocol/pubsub/impl/webrtc/providers/test_video_track.py
+```
