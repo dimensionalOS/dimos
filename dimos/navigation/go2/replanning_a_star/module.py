@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 import os
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.geometry_msgs.msg import PointStamped, Pose, PoseStamped, Quaternion, Twist
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos.messages.std_msgs.msg import Bool, String
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 from dimos.utils.logging_config import setup_logger
@@ -78,13 +75,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         super().start()
 
         self.register_disposable(Disposable(self.odom.subscribe(self._planner.handle_odom)))
-        self.register_disposable(
-            Disposable(
-                self.odometry.subscribe(
-                    lambda msg: self._planner.handle_odom(msg.to_pose_stamped())
-                )
-            )
-        )
+        self.register_disposable(Disposable(self.odometry.subscribe(self._handle_odometry)))
         self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
         )
@@ -96,11 +87,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         )
 
         self.register_disposable(
-            Disposable(
-                self.clicked_point.subscribe(
-                    lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
-                )
-            )
+            Disposable(self.clicked_point.subscribe(self._handle_clicked_point))
         )
 
         if self.stop_movement.transport is not None:
@@ -127,6 +114,21 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._planner.stop()
 
         super().stop()
+
+    def _handle_odometry(self, msg: Odometry) -> None:
+        self._planner.handle_odom(
+            PoseStamped(header=deepcopy(msg.header), pose=deepcopy(msg.pose.pose))
+        )
+
+    def _handle_clicked_point(self, msg: PointStamped) -> None:
+        self._planner.handle_goal_request(
+            PoseStamped(
+                header=deepcopy(msg.header),
+                pose=Pose(
+                    position=deepcopy(msg.point), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+                ),
+            )
+        )
 
     def _on_stop_movement(self, msg: Bool) -> None:
         if msg.data:

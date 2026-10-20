@@ -21,12 +21,8 @@ on:
       - dimos/memory/**
       - dimos/mapping/occupancy/**
       - dimos/mapping/voxels/**
-      - dimos/navigation/go2/replanning_a_star/min_cost_astar.py
-      - dimos/navigation/go2/replanning_a_star/test_generated_astar.py
-      - dimos/navigation/go2/replanning_a_star/goal_validator.py
-      - dimos/navigation/go2/replanning_a_star/path_clearance.py
-      - dimos/navigation/go2/replanning_a_star/path_distancer.py
-      - dimos/navigation/go2/replanning_a_star/test_generated_safety.py
+      - dimos/navigation/base.py
+      - dimos/navigation/go2/replanning_a_star/**
       - dimos/mapping/pointclouds/occupancy.py
       - dimos/mapping/odometry_hist.py
       - dimos/mapping/test_generated_odometry_hist.py
@@ -281,3 +277,10 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.navigation.go2.replanning_a_star import goal_validator, path_clearance, path_distancer; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (goal_validator, path_clearance, path_distancer)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_safety.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_mask.py dimos/navigation/go2/replanning_a_star/goal_validator.py dimos/navigation/go2/replanning_a_star/path_clearance.py dimos/navigation/go2/replanning_a_star/path_distancer.py
+      - name: Verify actual generated replanning Module and controller commands
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.replanning_a_star import module, global_planner, local_planner, controllers, navigation_map, position_tracker, replan_limiter; import dimos.msgs.occupancy as occupancy; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,global_planner,local_planner,controllers,navigation_map,position_tracker,replan_limiter,occupancy)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_planner.py" "$PWD/dimos/navigation/go2/replanning_a_star/test_global_planner.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/occupancy.py dimos/navigation/base.py dimos/navigation/go2/replanning_a_star/{global_planner,local_planner,controllers,position_tracker,navigation_map,module,module_spec,spec,replan_limiter}.py

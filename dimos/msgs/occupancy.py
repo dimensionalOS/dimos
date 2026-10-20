@@ -156,3 +156,12 @@ def occupancy_from_array(
         ),
         data=np.asarray(cells.astype(np.int8).reshape(-1), dtype=np.int8),
     )
+
+
+def occupancy_cell_value(message: OccupancyGrid, point: Point) -> int:
+    """Read a world cell, retaining the planner's unknown result outside the map."""
+    x, y = world_to_grid(message, point)
+    column, row = int(x), int(y)
+    if not (0 <= column < message.info.width and 0 <= row < message.info.height):
+        return CostValues.UNKNOWN
+    return int(occupancy_view(message)[row, column])

@@ -19,10 +19,16 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos.msgs.geometry import yaw
 from dimos.utils.trigonometry import angle_diff
+
+
+def _velocity(linear: float = 0.0, angular: float = 0.0) -> Twist:
+    return Twist(
+        linear=Vector3(x=float(linear), y=0.0, z=0.0),
+        angular=Vector3(x=0.0, y=0.0, z=float(angular)),
+    )
 
 
 class Controller(Protocol):
@@ -52,15 +58,15 @@ class PController:
         self._control_frequency = control_frequency
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
-        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+        current_pos = np.array([current_odom.pose.position.x, current_odom.pose.position.y])
         direction = lookahead_point - current_pos
         distance = np.linalg.norm(direction)
 
         if distance < 1e-6:
             # Robot is coincidentally at the lookahead point; skip this cycle.
-            return Twist()
+            return _velocity()
 
-        robot_yaw = current_odom.orientation.euler[2]
+        robot_yaw = yaw(current_odom.pose.orientation)
         desired_yaw = np.arctan2(direction[1], direction[0])
         yaw_error = angle_diff(desired_yaw, robot_yaw)
 
@@ -74,10 +80,7 @@ class PController:
         linear_velocity = self._speed * (1.0 - abs(yaw_error) / self._rotation_threshold)
         linear_velocity = self._apply_min_velocity(linear_velocity, self._min_linear_velocity)
 
-        return Twist(
-            linear=Vector3(linear_velocity, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
+        return _velocity(linear_velocity, angular_velocity)
 
     def rotate(self, yaw_error: float) -> Twist:
         angular_velocity = self._compute_angular_velocity(yaw_error)
@@ -108,10 +111,7 @@ class PController:
         if self._global_config.simulation and abs(angular_velocity) < 0.8:
             angular_velocity = 0.8 * np.sign(angular_velocity)
 
-        return Twist(
-            linear=Vector3(0.0, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
+        return _velocity(angular=angular_velocity)
 
 
 class PdController(PController):
