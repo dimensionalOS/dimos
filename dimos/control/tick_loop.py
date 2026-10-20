@@ -434,8 +434,7 @@ class TickLoop:
     ) -> None:
         """Write commands to all hardware interfaces."""
         hardware = self._hardware
-        names: list[str] = []
-        values: list[float] = []
+        joint_commands: dict[str, float] = {}
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -446,9 +445,11 @@ class TickLoop:
                         and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
                         and hardware[hw_id].component.hardware_type != HardwareType.BASE
                     ):
-                        joints = [name for name in hardware[hw_id].joint_names if name in positions]
-                        names.extend(joints)
-                        values.extend(positions[name] for name in joints)
+                        joint_commands.update(
+                            (name, positions[name])
+                            for name in hardware[hw_id].joint_names
+                            if name in positions
+                        )
                     try:
                         accepted = hardware[hw_id].write_command(positions, mode)
                         if not accepted:
@@ -457,14 +458,14 @@ class TickLoop:
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
-        if names and self._publish_command_callback is not None:
+        if joint_commands and self._publish_command_callback is not None:
             try:
                 self._publish_command_callback(
                     JointState(
                         ts=time.time(),
                         frame_id=self._frame_id,
-                        name=names,
-                        position=values,
+                        name=list(joint_commands),
+                        position=list(joint_commands.values()),
                         velocity=[],
                         effort=[],
                     )
