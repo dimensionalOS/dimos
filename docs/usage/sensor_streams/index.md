@@ -76,7 +76,7 @@ PTS plus the configured offset in integer nanoseconds. Its existing rejection
 of pre-2000 source timestamps remains in place.
 
 These ports need explicit CDR transport wiring until the default-transport
-cutover is complete. RealSense and ZED producers are separate migration slices. This change does not start cameras or switch robot blueprints.
+cutover is complete. ZED producers remain a separate migration slice. This change does not start cameras or switch robot blueprints.
 
 Run the offline producer checks from the checkout:
 
@@ -130,3 +130,48 @@ This needs the native Rust/C toolchains. The library tests check CDR, clock
 correction and software JPEG with synthetic data; they do not open V4L2 or start
 the worker. Jetson driver validation and physical capture remain separate
 hardware acceptance.
+
+### Native RealSense producer
+
+`RealSenseCamera` uses generated values on all camera ports:
+
+| Ports | Value type |
+| --- | --- |
+| `color_image`, `depth_image`, `infrared_left`, `infrared_right` | `sensor_msgs/msg/Image` |
+| `camera_info`, `depth_camera_info`, `infrared_left_camera_info`, `infrared_right_camera_info` | `sensor_msgs/msg/CameraInfo` |
+| `pointcloud` | `sensor_msgs/msg/PointCloud2` |
+| `imu` | `sensor_msgs/msg/Imu` |
+| `imu_info` | `dimos_msgs/msg/ImuInfo` |
+| `tf` | `tf2_msgs/msg/TFMessage` |
+
+The IMU noise message is generated from the project-owned definition; it no
+longer uses a handwritten LCM fingerprint/encoder. Calibration, RGBD projection,
+IMU pairing, frame names and capture configuration retain their existing roles.
+The Rust TF handle retains its lookup/publish operations. RealSense selects CDR
+through explicit codec hooks; an existing bare `#[tf]` declaration retains its
+existing wire format. The graph's existing floating-point seconds API remains
+unchanged; raw messages use the generated Time fields.
+
+The RealSense Nix build uses the same isolated source assembly as V4L2, with its
+own pinned SDK/configuration snapshot. To build and run library regression tests
+without starting a camera:
+
+```sh
+cd dimos/hardware/sensors/camera/realsense/rust
+nix build path:.#tests
+```
+
+For a Cargo developer with the checkout installed and `librealsense2` available
+through pkg-config:
+
+```sh
+cargo test --manifest-path dimos/hardware/sensors/camera/realsense/rust/Cargo.toml \
+  --locked --bin realsense_native --jobs 2 -- tests:: --skip bench::
+```
+
+These tests use real SDK intrinsics values and synthetic frame data. They check
+canonical CDR in both byte orders, normalized time, calibration, point/color
+alignment and source headers. They do not enumerate or capture from devices.
+Nix execution, physical camera behavior and platform-specific drivers require
+separate verification; the local regression build used an isolated official
+librealsense 2.56.5 build tree without system installation.

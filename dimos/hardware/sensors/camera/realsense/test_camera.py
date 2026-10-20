@@ -17,6 +17,7 @@
 import json
 from pathlib import Path
 import sys
+from typing import get_args, get_type_hints
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -64,3 +65,7 @@ def test_ports_match_registry() -> None:
     registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)
+    hints = get_type_hints(RealSenseCamera)
+    for name, expected in {**registry["outputs"], **registry["inputs"]}.items():
+        value_type = get_args(hints[name])[0]
+        assert value_type.__msgtype__ == expected

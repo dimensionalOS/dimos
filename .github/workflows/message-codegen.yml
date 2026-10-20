@@ -107,7 +107,7 @@ jobs:
         run: |
           .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py"
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
-          cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib cdr::tests --jobs 2
+          cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
       - name: Verify generated browser schemas, relay encoding and web consumers
         if: runner.os == 'Linux'
         run: |
@@ -134,8 +134,8 @@ jobs:
       - name: Verify generated Python camera producers without hardware
         if: runner.os == 'Linux'
         run: |
-          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/test_webcam.py" "$PWD/dimos/hardware/sensors/camera/test_webcam_backend.py" "$PWD/dimos/hardware/sensors/camera/test_module.py" "$PWD/dimos/hardware/sensors/camera/gstreamer/test_generated_frames.py"
-          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/spec.py dimos/hardware/sensors/camera/webcam.py dimos/hardware/sensors/camera/module.py dimos/hardware/sensors/camera/gstreamer/gstreamer_camera.py dimos/spec/perception.py dimos/visualization/vis_module.py
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/test_webcam.py" "$PWD/dimos/hardware/sensors/camera/test_webcam_backend.py" "$PWD/dimos/hardware/sensors/camera/test_module.py" "$PWD/dimos/hardware/sensors/camera/realsense/test_camera.py" "$PWD/dimos/hardware/sensors/camera/gstreamer/test_generated_frames.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/realsense/camera.py dimos/hardware/sensors/camera/spec.py dimos/hardware/sensors/camera/webcam.py dimos/hardware/sensors/camera/module.py dimos/hardware/sensors/camera/gstreamer/gstreamer_camera.py dimos/spec/perception.py dimos/visualization/vis_module.py
       - name: Verify generated native V4L2 producer without a device
         if: runner.os == 'Linux'
         run: |
