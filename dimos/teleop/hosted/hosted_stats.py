@@ -33,11 +33,19 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.messages.geometry_msgs.msg import TwistStamped
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.msgs.protocol import decode_cdr
+from dimos.msgs.time import to_seconds
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    ProtocolError,
+    decode_data_frame,
+    peek_data_frame_lengths,
+)
 
 logger = setup_logger()
 
@@ -60,7 +68,7 @@ class HostedStatsModule(Module):
     robot_state: In[bytes]
     telemetry_out: Out[bytes]
     robot_telemetry: Out[bytes]
-    video_stats: Out[VideoStats]
+    video_stats: Out[Joy]
     cmd_vel_stamped: Out[TwistStamped]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -108,7 +116,7 @@ class HostedStatsModule(Module):
         kind = msg.get("type")
         if kind == "video_stats":
             try:
-                self.video_stats.publish(VideoStats.from_dict(msg))
+                self.video_stats.publish(VideoStats.from_dict(msg).to_joy())
             except (TypeError, ValueError):
                 logger.warning("state_reliable: malformed video_stats, dropping")
         elif kind == "clock_report":
@@ -124,10 +132,21 @@ class HostedStatsModule(Module):
         if isinstance(data, str):
             data = data.encode()
         try:
-            cmd = TwistStamped.lcm_decode(data)
-        except Exception:
+            lengths = peek_data_frame_lengths(data)
+            if lengths is None or lengths[2] != len(data):
+                return
+            frame = decode_data_frame(data)
+            metadata = frame.header.meta or {}
+            if (
+                metadata.get("encoding") != "cdr"
+                or metadata.get("type") != TwistStamped.__msgtype__
+            ):
+                return
+            cmd = decode_cdr(frame.payload, TwistStamped)
+            timestamp = to_seconds(cmd.header.stamp)
+        except (ProtocolError, ValueError, TypeError):
             return
-        self._cmd_stats.record(cmd.ts, nbytes=len(data))
+        self._cmd_stats.record(timestamp, nbytes=len(data))
         self.cmd_vel_stamped.publish(cmd)
 
     def _on_robot_state(self, data: Any) -> None:
@@ -148,7 +167,7 @@ class HostedStatsModule(Module):
             try:
                 soc = self.go2.battery_soc()
             except Exception:
-                pass
+                logger.debug("Battery telemetry RPC unavailable", exc_info=True)
         return {
             "type": "robot_telemetry",
             "cmd": self._cmd_stats.snapshot(),

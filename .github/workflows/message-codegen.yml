@@ -205,6 +205,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.teleop.hosted import go2_command, map_compress; from dimos.teleop.hosted.blueprints import cloudflare; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (go2_command,map_compress,cloudflare)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/teleop/hosted/test_go2_command.py" "$PWD/dimos/teleop/hosted/test_map_compress.py"
+      - name: Verify canonical hosted stats and actual teleop recording/report close-reopen
+        if: runner.os == 'Linux'
+        run: |
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.teleop.hosted import hosted_stats; from dimos.teleop.utils import recorder, report, video_stats; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (hosted_stats,recorder,report,video_stats)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/teleop/hosted/test_hosted_stats.py" "$PWD/dimos/teleop/utils/test_video_stats.py" "$PWD/dimos/teleop/utils/test_recorder.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,11 +32,12 @@ from typing import Any
 import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import UInt32
+from dimos.msgs.time import message_header, to_seconds
 from dimos.teleop.utils.stream_stats import pcts
 from dimos.teleop.utils.video_stats import VideoStats
-from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -48,8 +48,8 @@ _STREAM_TYPES = {
     "cmd_vel_stamped": TwistStamped,
     "left_controller_output": PoseStamped,
     "right_controller_output": PoseStamped,
-    "teleop_buttons": Buttons,
-    "video_stats": VideoStats,
+    "teleop_buttons": UInt32,
+    "video_stats": Joy,
 }
 
 
@@ -113,7 +113,9 @@ def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
             out[name] = []
             continue
         stream: Any = store.stream(name, msg_type)
-        out[name] = [obs.data for obs in stream]
+        out[name] = [
+            VideoStats.from_joy(obs.data) if name == "video_stats" else obs.data for obs in stream
+        ]
     return out
 
 
@@ -133,21 +135,29 @@ def _read_telemetry(store: SqliteStore) -> list[dict[str, Any]]:
     return frames
 
 
+def _source_seconds(value: Any) -> float | None:
+    header = message_header(value)
+    if header is not None:
+        return to_seconds(header.stamp)
+    # VideoStats is a local report helper. UInt32 buttons have no source stamp.
+    return float(value.ts) if isinstance(value, VideoStats) else None
+
+
 def _run_duration(records: dict[str, list[Any]]) -> float:
     """Wall-clock span across every stream in this recording."""
     all_ts: list[float] = []
     for rs in records.values():
-        all_ts.extend(getattr(m, "ts", 0.0) for m in rs if getattr(m, "ts", 0.0) > 0)
+        all_ts.extend(ts for m in rs if (ts := _source_seconds(m)) is not None and ts > 0)
     if len(all_ts) < 2:
         return 0.0
     return max(all_ts) - min(all_ts)
 
 
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
-    """Stats for one twist/pose/buttons stream, from each message's ``.ts``
-    (sender stamp). Buttons lacks ``.ts``, so its rate/jitter are ``None``."""
+    """Stats for one twist/pose/buttons stream, from each generated message's Header
+    (sender stamp). UInt32 buttons lack a Header, so its rate/jitter are ``None``."""
     count = len(records)
-    tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
+    tss = [ts for m in records if (ts := _source_seconds(m)) is not None]
 
     intervals_ms = (np.diff(sorted(tss)) * 1000.0).tolist() if len(tss) >= 2 else []
     span = (tss[-1] - tss[0]) if len(tss) >= 2 else 0.0

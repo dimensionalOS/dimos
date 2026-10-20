@@ -14,8 +14,8 @@
 
 """Operator-side video health snapshot, sampled in the browser via getStats().
 
-Rides on ``sensor_msgs.Joy`` positional ``axes[]`` (like ``Buttons`` on
-``UInt32``) to stay wire-compatible with dimos_lcm without a new LCM type.
+Uses generated ``sensor_msgs/Joy`` positional ``axes[]`` as its explicit
+wire value. The helper remains internal; its field layout is unchanged.
 Teleop-only, so it lives in ``teleop/utils``, not ``dimos.msgs``.
 """
 
@@ -23,17 +23,13 @@ from __future__ import annotations
 
 import math
 import time
-from typing import BinaryIO
 
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
+import numpy as np
 
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.types.timestamped import Timestamped
-
-
-def _sec_nsec(ts: float) -> list[int]:
-    s = int(ts)
-    return [s, int((ts - s) * 1_000_000_000)]
-
 
 # Positional layout inside the carrier's axes[] array. Add new metrics at the
 # end so existing recordings stay readable.
@@ -53,7 +49,7 @@ _AXES = (
 
 class VideoStats(Timestamped):
     """One operator-side video-health snapshot (browser getStats, ~1 Hz),
-    shipped to the robot and published on an ``Out[VideoStats]`` port. Integer
+    adapted to generated ``Joy`` for typed ports. Integer
     fields ride the float32 ``axes[]`` — exact up to 2^24."""
 
     msg_name = "sensor_msgs.VideoStats"
@@ -137,26 +133,22 @@ class VideoStats(Timestamped):
             self.e2e_latency_ms,
         ]
 
-    def lcm_encode(self) -> bytes:
-        lcm_msg = LCMJoy()
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = _sec_nsec(self.ts)
-        lcm_msg.header.frame_id = self.frame_id
-        axes = self._as_axes()
-        lcm_msg.axes_length = len(axes)
-        lcm_msg.axes = axes
-        lcm_msg.buttons_length = 0
-        lcm_msg.buttons = []
-        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
+    def to_joy(self) -> Joy:
+        """Construct the canonical wire value; no codec work happens in this helper."""
+        return Joy(
+            header=Header(time_from_seconds(self.ts), self.frame_id),
+            axes=np.asarray(self._as_axes(), dtype=np.float32),
+            buttons=np.empty(0, dtype=np.int32),
+        )
 
     @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO) -> VideoStats:
-        lcm_msg = LCMJoy.lcm_decode(data)
-        axes = list(lcm_msg.axes) if lcm_msg.axes else []
-        # Pad short arrays so older recordings (fewer metrics) still decode.
+    def from_joy(cls, message: Joy) -> VideoStats:
+        """Read the positional metrics, padding a shorter canonical layout with zero."""
+        axes = message.axes.tolist()
         axes += [0.0] * (len(_AXES) - len(axes))
-        return cls(
-            ts=lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000),
-            frame_id=lcm_msg.header.frame_id or "video",
+        result = cls(
+            ts=to_seconds(message.header.stamp),
+            frame_id=message.header.frame_id or "video",
             fps=axes[0],
             kbps=axes[1],
             width=int(axes[2]),
@@ -168,6 +160,9 @@ class VideoStats(Timestamped):
             freezes=int(axes[8]),
             e2e_latency_ms=axes[9],
         )
+        # A received zero stamp is real metadata, not the helper's constructor default.
+        result.ts = to_seconds(message.header.stamp)
+        return result
 
     def __str__(self) -> str:
         return (

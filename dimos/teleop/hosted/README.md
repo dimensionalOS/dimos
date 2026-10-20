@@ -220,3 +220,21 @@ external provider and driver mocked:
 ```sh
 DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_go2_command.py dimos/teleop/hosted/test_map_compress.py
 ```
+
+
+`HostedStatsModule` taps the same CDR frames and republishes generated
+`TwistStamped` for `TeleopRecorder`. Browser video-health JSON is adapted to
+canonical `sensor_msgs/Joy`; its ten positional axes keep their existing order.
+The local `VideoStats` helper is converted explicitly with `to_joy()` /
+`from_joy()`, rather than acting as a separate wire type.
+
+`TeleopRecorder` records generated poses/twists, `UInt32` button masks and `Joy`
+video stats through the normal CDR storage codec. Its report reads the same
+canonical types after reopening SQLite, preserving original source stamps in
+recorded payloads. Timestamp-free buttons still report a count without an
+invented sender rate. Historical LCM recordings require explicit conversion;
+there is no automatic old-format decoding path.
+
+```sh
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_hosted_stats.py dimos/teleop/utils/test_video_stats.py dimos/teleop/utils/test_recorder.py
+```

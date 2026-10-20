@@ -29,11 +29,10 @@ from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import UInt32
 from dimos.teleop.utils.report import generate_report
-from dimos.teleop.utils.video_stats import VideoStats
-from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,9 +49,9 @@ class TeleopRecorder(Recorder):
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
-    teleop_buttons: In[Buttons]
+    teleop_buttons: In[UInt32]
     cmd_vel_stamped: In[TwistStamped]
-    video_stats: In[VideoStats]
+    video_stats: In[Joy]
     robot_telemetry: In[bytes]
     config: TeleopRecorderConfig
     # Per-run path (stem + timestamp), held here so we don't mutate config.

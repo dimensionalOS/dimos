@@ -18,37 +18,47 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import json
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_cdrgen.registry import encode
 import pytest
 
-from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.time import time_from_seconds
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
+from dimos.teleop.utils.video_stats import VideoStats
+from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 
 
 @pytest.fixture
-def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[HostedStatsModule]:
-    """A HostedStatsModule with its tap-path state initialized for real (only the
-    framework Module.__init__ is skipped) and its ports / driver ref / config mocked."""
-    monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
-    module = HostedStatsModule()
-    module.go2 = MagicMock()
-    module.config = SimpleNamespace(telemetry_hz=3.0)
+def module(mocker) -> Iterator[HostedStatsModule]:
+    instance = HostedStatsModule()
+    mocker.patch.object(instance, "go2", MagicMock())
     for port in ("cmd_vel_stamped", "video_stats", "telemetry_out"):
-        setattr(module, port, MagicMock())
-    yield module
+        mocker.patch.object(getattr(instance, port), "publish")
+    yield instance
+    instance.stop()
 
 
 def _cmd(vx: float = 0.3, ts: float = 123.0) -> bytes:
-    return TwistStamped(ts=ts, linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, 0)).lcm_encode()
+    value = TwistStamped(
+        Header(time_from_seconds(ts), "operator"), Twist(Vector3(vx, 0, 0), Vector3(0, 0, 0))
+    )
+    return encode_data_frame(
+        FrameHeader(
+            ch="twist",
+            seq=0,
+            ts=ts,
+            delivery="latest",
+            meta={"encoding": "cdr", "type": TwistStamped.__msgtype__},
+        ),
+        encode(value),
+    )
 
 
-def test_telemetry_without_go2(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
-    module = HostedStatsModule()
+def test_telemetry_without_go2(module, mocker) -> None:
+    mocker.patch.object(module, "go2", None)
     module._on_robot_state(b'{"robot_type": "arm"}')
 
     payload = module._telemetry_payload()
@@ -64,8 +74,8 @@ def test_cmd_raw_republishes_stamped_for_recorder(module: HostedStatsModule) -> 
     module._on_cmd_raw(_cmd(vx=0.5, ts=42.0))
     module.cmd_vel_stamped.publish.assert_called_once()
     published = module.cmd_vel_stamped.publish.call_args[0][0]
-    assert published.ts == 42.0
-    assert published.linear.x == 0.5
+    assert published.header.stamp == time_from_seconds(42.0)
+    assert published.twist.linear.x == 0.5
 
 
 def test_cmd_raw_records_stats(module: HostedStatsModule) -> None:
@@ -94,3 +104,52 @@ def test_state_json_ignores_foreign_kind(module: HostedStatsModule) -> None:
     # estop/sport/etc. on the shared state plane are owned by other modules.
     module._on_state_json(json.dumps({"type": "estop", "nonce": "x"}).encode())
     module.video_stats.publish.assert_not_called()
+
+
+@pytest.mark.parametrize("damage", ["foreign", "encoding", "trailing", "encapsulation"])
+def test_malformed_or_foreign_frames_do_not_record_stats_and_valid_frames_recover(module, damage):
+    frame = _cmd()
+    if damage == "trailing":
+        frame += b"extra"
+    elif damage == "encapsulation":
+        value = decode_data_frame(frame)
+        frame = encode_data_frame(value.header, b"bad!" + value.payload[4:])
+    else:
+        frame = (
+            frame.replace(b"cdr", b"raw")
+            if damage == "encoding"
+            else frame.replace(b"TwistStamped", b"OtherMessage")
+        )
+    module._on_cmd_raw(frame)
+    module.cmd_vel_stamped.publish.assert_not_called()
+    assert module._cmd_stats.snapshot() is None
+    module._on_cmd_raw(_cmd(ts=1.0))
+    assert module._cmd_stats.snapshot() is None
+    module._on_cmd_raw(_cmd(ts=1.05))
+    assert module.cmd_vel_stamped.publish.call_count == 2
+    assert module._cmd_stats.snapshot() is not None
+
+
+def test_video_json_is_adapted_to_canonical_positional_joy(module):
+    module._on_state_json(
+        json.dumps(
+            {
+                "type": "video_stats",
+                "ts": 42.25,
+                "fps": 30,
+                "kbps": 1000,
+                "width": 640,
+                "height": 480,
+            }
+        ).encode()
+    )
+    value = module.video_stats.publish.call_args.args[0]
+    assert value.__msgtype__ == "sensor_msgs/msg/Joy"
+    helper = VideoStats.from_joy(value)
+    assert (helper.ts, helper.fps, helper.kbps, helper.width, helper.height) == (
+        42.25,
+        30,
+        1000,
+        640,
+        480,
+    )
