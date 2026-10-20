@@ -103,7 +103,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           .native-review/bin/python -m pip install aioquic langchain-core
-          .native-review/bin/python -I -m pytest --noconftest -p dimos.web.relay_bridge.conftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/test_codecs.py" "$PWD/dimos/web/test_cockpit.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_module.py"
+          # Import the installed package before pytest imports checkout tests.
+          # Wheels omit conftest.py; load only the checkout's web fixtures.
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --confcutdir="$PWD/dimos/web" --import-mode=importlib -o addopts='' -q "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/test_codecs.py" "$PWD/dimos/web/test_cockpit.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_module.py"
           cd web/sdk
           ../../.venv/bin/deno task test
           ../../.venv/bin/deno task check
