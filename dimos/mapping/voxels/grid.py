@@ -23,6 +23,7 @@ from numpy.typing import NDArray
 
 from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
+from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
@@ -108,7 +109,7 @@ class VoxelGrid:
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
 
-    def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
+    def reproject(self, place: Callable[[CdrCloud], CdrCloud]) -> None:
         """Move every voxel to where `place` puts its stamped original position."""
         self._check_disposed()
         if not isinstance(self._impl, PackedVoxels):
