@@ -222,9 +222,10 @@ class WorkerManagerPython:
 
     def _select_worker(self, dedicated: bool = False) -> PythonWorker:
         """Pick a worker for a new module and mark it dedicated if needed."""
+        candidates = [w for w in self._workers if not w.dedicated and w.pid is not None]
         if dedicated:
-            for w in self._workers:
-                if not w.dedicated and w.module_count == 0:
+            for w in candidates:
+                if w.module_count == 0:
                     w.dedicated = True
                     return w
             self.add_workers(1)
@@ -232,7 +233,6 @@ class WorkerManagerPython:
             w.dedicated = True
             return w
 
-        candidates = [w for w in self._workers if not w.dedicated]
         if not candidates:
             self.add_workers(1)
             return self._workers[-1]

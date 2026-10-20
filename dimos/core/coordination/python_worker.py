@@ -264,12 +264,17 @@ class PythonWorker:
         if self._conn is None:
             raise RuntimeError("Worker process not started")
 
-        with self._lock:
-            self._conn.send(UndeployModuleRequest(module_id=module_id))
-            response: WorkerResponse = self._conn.recv()
-
-        if response.error:
-            raise RuntimeError(f"Failed to undeploy module: {response.error}")
+        try:
+            with self._lock:
+                self._conn.send(UndeployModuleRequest(module_id=module_id))
+                response: WorkerResponse = self._conn.recv()
+        except (BrokenPipeError, EOFError, ConnectionResetError):
+            # A dead worker cannot stop its module; a live worker must acknowledge teardown.
+            if self._process is None or self._process.exitcode is None:
+                raise
+        else:
+            if response.error:
+                raise RuntimeError(f"Failed to undeploy module: {response.error}")
 
         self._modules.pop(module_id, None)
 
@@ -441,9 +446,10 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             return WorkerResponse(result=method(*args, **kwargs))
 
         case UndeployModuleRequest(module_id=module_id):
-            instance = state.instances.pop(module_id, None)
-            if instance is not None:
-                instance.stop()
+            stopping_instance = state.instances.get(module_id)
+            if stopping_instance is not None:
+                stopping_instance.stop_and_wait()
+                del state.instances[module_id]
             return WorkerResponse(result=True)
 
         case SuppressConsoleRequest():

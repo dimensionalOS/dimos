@@ -13,7 +13,14 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from contextlib import suppress
+from multiprocessing.connection import wait
+import os
+from pathlib import Path
 import pickle
+import signal
+import sys
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol
@@ -45,6 +52,7 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.native_module import NativeModule
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
@@ -53,6 +61,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
+from dimos.utils.testing.waiting import wait_until
 
 
 class Data1:
@@ -94,6 +103,52 @@ class ModuleB(Module):
 
 class ModuleC(Module):
     data3: In[Data3]
+
+
+class RestartNativeModule(NativeModule):
+    @rpc
+    def get_pid(self) -> int:
+        return os.getpid()
+
+    @rpc
+    def register_probe(self, name: str) -> None:
+        self.rpc.serve_rpc(self.get_pid, name)
+
+    @rpc
+    def stop(self) -> None:
+        with Path(self.config.extra_env["STOP_LOG"]).open("a") as log:
+            log.write("stop\n")
+        super().stop()
+
+    def _close_module(self) -> None:
+        if path := self.config.extra_env.get("STOP_BLOCK"):
+            block = Path(path)
+            if block.exists():
+                block.with_suffix(".entered").touch()
+                wait_until(lambda: not block.exists(), timeout=30.0)
+        super()._close_module()
+
+
+class RestartFailureModule(Module):
+    def __init__(self, directory: Path, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._directory = directory
+
+    @rpc
+    def get_pid(self) -> int:
+        return os.getpid()
+
+    @rpc
+    def register_probe(self, name: str) -> None:
+        self.rpc.serve_rpc(self.get_pid, name)
+
+    @rpc
+    def stop(self) -> None:
+        with (self._directory / "stops").open("a") as log:
+            log.write(f"{os.getpid()}\n")
+        if (self._directory / "fail").exists():
+            raise RuntimeError("stop failed")
+        super().stop()
 
 
 class SourceModule(Module):
@@ -1250,3 +1305,202 @@ def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     looper.join(timeout=5)
     assert not looper.is_alive()
     assert stopped.is_set()
+
+
+@pytest.fixture
+def native_test_process(tmp_path: Path) -> Path:
+    script = tmp_path / "child.py"
+    script.write_text(
+        "import os, signal, sys\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "def stop(*_):\n"
+        "    if not (root / 'block').exists():\n"
+        "        sys.exit(0)\n"
+        "    (root / 'stopping').touch()\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        "pid_file = root / f'pid-{os.getpid()}'\n"
+        "pid_file.write_text(str(os.getpid()))\n"
+        "pid_file.replace(root / 'pid')\n"
+        "while True: signal.pause()\n"
+    )
+    return script
+
+
+def test_restart_waits_for_native_teardown(
+    dynamic_coordinator, tmp_path, mocker, native_test_process
+) -> None:
+    """A shared worker must finish one stop before reusing the RPC name."""
+    block = tmp_path / "block"
+    block.touch()
+    stop_log = tmp_path / "stops"
+    try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(
+                RestartNativeModule.blueprint(
+                    executable=sys.executable,
+                    extra_args=[str(native_test_process), str(tmp_path)],
+                    extra_env={"STOP_LOG": str(stop_log)},
+                    shutdown_timeout=5.0,
+                ),
+                ModuleA.blueprint(),
+            )
+        )
+        manager = dynamic_coordinator._managers["python"]
+        assert len(manager.workers) == 1
+        assert manager.workers[0].module_count == 2
+        wait_until(lambda: (tmp_path / "pid").exists(), timeout=5.0)
+        old_pid = int((tmp_path / "pid").read_text())
+        old_proxy = dynamic_coordinator.get_instance(RestartNativeModule)
+        old_stop = old_proxy.stop
+
+        def stop_and_wait() -> None:
+            old_stop()
+            wait_until(lambda: (tmp_path / "stopping").exists(), timeout=5.0)
+
+        # If restart sends an RPC stop, let it begin before worker undeploy.
+        mocker.patch.object(old_proxy, "stop", side_effect=stop_and_wait)
+        close_client = mocker.spy(old_proxy, "stop_rpc_client")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            restarted = pool.submit(
+                dynamic_coordinator.restart_module, RestartNativeModule, reload_source=False
+            )
+            try:
+                wait_until(lambda: (tmp_path / "stopping").exists(), timeout=5.0)
+                assert not restarted.done()
+            finally:
+                block.unlink(missing_ok=True)
+                with suppress(ProcessLookupError):
+                    os.kill(old_pid, signal.SIGTERM)
+            new_proxy = restarted.result(timeout=10.0)
+        assert new_proxy is not old_proxy
+        wait_until(lambda: int((tmp_path / "pid").read_text()) != old_pid, timeout=5.0)
+        os.kill(int((tmp_path / "pid").read_text()), 0)
+        assert stop_log.read_text().splitlines() == ["stop"]
+        close_client.assert_called_once_with()
+        assert dynamic_coordinator.get_instance(ModuleA).get_name() == "A, Module A"
+    finally:
+        block.unlink(missing_ok=True)
+
+
+def test_restart_waits_for_native_watchdog_cleanup(
+    dynamic_coordinator, tmp_path, native_test_process
+) -> None:
+    block = tmp_path / "cleanup.block"
+    block.touch()
+    stop_log = tmp_path / "stops"
+    try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(
+                RestartNativeModule.blueprint(
+                    executable=sys.executable,
+                    extra_args=[str(native_test_process), str(tmp_path)],
+                    extra_env={"STOP_LOG": str(stop_log), "STOP_BLOCK": str(block)},
+                    shutdown_timeout=5.0,
+                ),
+                ModuleA.blueprint(),
+            )
+        )
+        manager = dynamic_coordinator._managers["python"]
+        assert len(manager.workers) == 1
+        assert manager.workers[0].module_count == 2
+        proxy = dynamic_coordinator.get_instance(RestartNativeModule)
+        sibling = dynamic_coordinator.get_instance(ModuleA)
+        worker_pid = proxy.get_pid()
+        probe = f"{proxy.remote_name}/old-{worker_pid}"
+        proxy.register_probe(probe)
+        wait_until(lambda: (tmp_path / "pid").exists(), timeout=5.0)
+        old_pid = int((tmp_path / "pid").read_text())
+        os.kill(old_pid, signal.SIGKILL)
+        wait_until(lambda: block.with_suffix(".entered").exists(), timeout=5.0)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            restarted = pool.submit(
+                dynamic_coordinator.restart_module, RestartNativeModule, reload_source=False
+            )
+            try:
+                wait_until(lambda: len(stop_log.read_text().splitlines()) == 2, timeout=5.0)
+                result, unsubscribe = sibling.rpc.call_sync(
+                    f"{proxy.remote_name}/stop", ([], {}), rpc_timeout=2
+                )
+                unsubscribe()
+                assert result is None
+                with pytest.raises(FuturesTimeoutError):
+                    restarted.result(timeout=1.0)
+                result, unsubscribe = sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=2)
+                unsubscribe()
+                assert result == worker_pid
+            finally:
+                block.unlink(missing_ok=True)
+            replacement = restarted.result(timeout=10.0)
+
+        assert replacement is not proxy
+        wait_until(lambda: int((tmp_path / "pid").read_text()) != old_pid, timeout=5.0)
+        os.kill(int((tmp_path / "pid").read_text()), 0)
+        assert stop_log.read_text().splitlines() == ["stop", "stop", "stop"]
+        assert sibling.get_name() == "A, Module A"
+        with pytest.raises(TimeoutError):
+            sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=1)
+    finally:
+        block.unlink(missing_ok=True)
+
+
+def test_restart_retries_failed_stop_on_shared_worker(dynamic_coordinator, tmp_path) -> None:
+    failure = tmp_path / "fail"
+    failure.touch()
+    try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(RestartFailureModule.blueprint(directory=tmp_path), ModuleA.blueprint())
+        )
+        proxy = dynamic_coordinator.get_instance(RestartFailureModule)
+        sibling = dynamic_coordinator.get_instance(ModuleA)
+        manager = dynamic_coordinator._managers["python"]
+        workers = manager.workers
+        assert len(workers) == 1
+        assert workers[0].module_count == 2
+        old_pid = proxy.get_pid()
+        probe = f"{proxy.remote_name}/old-{old_pid}"
+        proxy.register_probe(probe)
+        result, unsubscribe = sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=2)
+        unsubscribe()
+        assert result == old_pid
+
+        with pytest.raises(RuntimeError, match="stop failed"):
+            dynamic_coordinator.restart_module(RestartFailureModule, reload_source=False)
+
+        assert dynamic_coordinator.get_instance(RestartFailureModule) is proxy
+        assert manager.workers == workers
+        assert workers[0].module_count == 2
+        assert proxy.get_pid() == old_pid
+        assert sibling.get_name() == "A, Module A"
+        assert (tmp_path / "stops").read_text().splitlines() == [str(old_pid)]
+
+        failure.unlink()
+        replacement = dynamic_coordinator.restart_module(RestartFailureModule, reload_source=False)
+        assert (tmp_path / "stops").read_text().splitlines() == [str(old_pid), str(old_pid)]
+        assert replacement is not proxy
+        assert dynamic_coordinator.get_instance(RestartFailureModule) is replacement
+        assert replacement.get_pid() != old_pid
+        assert sibling.get_name() == "A, Module A"
+        with pytest.raises(TimeoutError):
+            sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=1)
+    finally:
+        failure.unlink(missing_ok=True)
+
+
+def test_restart_recovers_dead_worker(dynamic_coordinator, mocker) -> None:
+    dynamic_coordinator.load_module(ModuleA)
+    manager = dynamic_coordinator._managers["python"]
+    dead_worker = manager.workers[0]
+    old_proxy = dynamic_coordinator.get_instance(ModuleA)
+    close_client = mocker.spy(old_proxy, "stop_rpc_client")
+    process = dead_worker._process
+    process.terminate()
+    assert wait([process.sentinel], timeout=5) == [process.sentinel]
+
+    replacement = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+    assert replacement is not old_proxy
+    assert replacement.get_name() == "A, Module A"
+    assert dynamic_coordinator.get_instance(ModuleA) is replacement
+    assert dead_worker not in manager.workers
+    close_client.assert_called_once_with()
