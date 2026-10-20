@@ -1,5 +1,5 @@
 {
-  description = "depth2depth_cloud native module for DimOS: the depth2depth crate behind an LCM wrapper";
+  description = "depth2depth_cloud native module for DimOS: the depth2depth crate with CDR messages over the selected transport";
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
@@ -32,7 +32,30 @@
         cudaPackages = if system == "aarch64-linux" then pkgs.cudaPackages_12_6 else pkgs.cudaPackages_12_8;
 
         name = "dimos-depth2depth-cloud";
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sharedArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/b547716883d0f2619e53d241351357347400a40a";
+          sha256 = "1ec7f63d9ff57a3e5f151009a2b71472b2c90a3c4f17c29f98a6215cbef18c6b";
+        };
+        sharedSource = pkgs.runCommand "dimos-depth-cloud-sdk-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sharedArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${sharedSource}/native/message-source.nix" { inherit pkgs; }).source;
+        # Cargo resolves only these explicit local paths. No checkout or generation
+        # process is needed at runtime; the message derivation is shared with pip.
+        src = pkgs.runCommand "depth-cloud-cdr-source" { } ''
+          cp -r ${moduleSource} $out
+          chmod -R u+w $out
+          mkdir -p $out/sdk
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/Cargo.toml \
+            --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../build/message-source/rust' 'messages'
+        '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];

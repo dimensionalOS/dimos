@@ -23,6 +23,7 @@ on:
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
       - dimos/perception/detection/**
+      - dimos/perception/depth2depth_cloud/**
       - dimos/perception/fiducial/**
       - dimos/perception/localize/**
       - dimos/perception/detection/project.py
@@ -205,5 +206,12 @@ jobs:
       - name: Verify generated ZED frames without the proprietary SDK
         if: runner.os == 'Linux'
         run: |
-          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/zed/test_messages.py"
+          .native-review/bin/python -I -c 'from dimos.hardware.sensors.camera.zed import messages, compat; import pytest; import sys; assert all("site-packages" in str(module.__file__) for module in (messages, compat)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/zed/test_messages.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/zed/camera.py dimos/hardware/sensors/camera/zed/compat.py dimos/hardware/sensors/camera/zed/messages.py
+      - name: Verify native generated depth-cloud messages and point layouts
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.perception.depth2depth_cloud import module; import pytest; import sys; assert "site-packages" in str(module.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/depth2depth_cloud/test_depth2depth_cloud_config.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/depth2depth_cloud/module.py
+          cargo test --locked --manifest-path dimos/perception/depth2depth_cloud/rust/Cargo.toml -j 2 --lib
+          cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml -j 2 pointcloud::tests
