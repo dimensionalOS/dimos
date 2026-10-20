@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(acme_telemetry_consumer LANGUAGES CXX)
+find_package(DimosMessages CONFIG REQUIRED)
+dimos_message_project()
+add_executable(telemetry_relay cpp/relay.cpp)
+target_link_libraries(telemetry_relay PRIVATE acme_telemetry::messages)

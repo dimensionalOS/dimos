@@ -1,0 +1,17 @@
+[package]
+name = "acme-telemetry-messages"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+dimos-generated-messages = "=0.0.14"
+serde = {version = "1", features = ["derive"]}
+serde-big-array = "=0.5.1"
+heapless = {version = "=0.8.0", features = ["serde"]}
+re_cdr = "=0.1.0"
+
+[build-dependencies]
+dimos-message-build = "=0.1.0"

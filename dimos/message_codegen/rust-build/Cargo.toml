@@ -1,0 +1,13 @@
+[package]
+name = "dimos-message-build"
+version = "0.1.0"
+edition = "2021"
+description = "Cargo build hook for the shared DimOS message project plan"
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+ros2msg = "=0.5.3"
+serde_json = "1"
+heck = "=0.5.0"

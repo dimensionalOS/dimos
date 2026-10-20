@@ -109,3 +109,5 @@ optuna.db
 
 # Prepared from schema-sources.json; keep downloaded schemas out of Git.
 /packages/dimos-generated/interfaces/
+
+/dimos/message_codegen/rust-build/Cargo.lock

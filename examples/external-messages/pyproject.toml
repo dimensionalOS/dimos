@@ -1,0 +1,15 @@
+[build-system]
+requires = ["dimos[message-build]==0.0.14"]
+build-backend = "dimos.message_codegen.backend"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+description = "One custom message shared by Python, C++ and Rust"
+requires-python = ">=3.12"
+
+[tool.dimos.messages]
+languages = ["python", "cpp", "rust"]
+
+[tool.dimos.messages.dependencies]
+"dimos.messages" = "0.0.14"

@@ -52,3 +52,7 @@ global-exclude conftest.py
 include packages/dimos-generated/catalog.json packages/dimos-generated/schema-sources.json
 recursive-include packages/dimos-generated/custom *.msg LICENSE
 recursive-include packages/dimos-generated/interfaces *.msg *LICENSE*
+
+# Ordinary external CMake builds locate this installed integration.
+recursive-include dimos/message_codegen/cmake *.cmake
+recursive-include dimos/message_codegen/rust-build Cargo.toml *.rs

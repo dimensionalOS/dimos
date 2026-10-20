@@ -54,6 +54,9 @@ exclude = [
     "**/*.tcss",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
+    "message_codegen/cmake/*.cmake",
+    "message_codegen/rust-build/Cargo.toml",
+    "message_codegen/rust-build/src/*.rs",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -193,6 +196,8 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
+message-build = ["tomli-w>=1.0,<2", "dimos-cdrgen[native]==0.1.1"]
+
 misc = [
     "ipykernel",
     # Embedding models and their undeclared runtime imports.
@@ -403,7 +408,7 @@ autofix = ["ruff==0.14.3"]
 
 # Project deps shared by `tests` and `lint`.
 project-deps = [
-    "dimos[web,visualization,webrtc]",
+    "dimos[web,visualization,webrtc,message-build]",
     # Blackwell (sm_120) needs torch 2.7 from pytorch-cu128. Cap below 2.8.
     "torch>=2.1,<2.8",
     "torchvision>=0.16,<0.23",

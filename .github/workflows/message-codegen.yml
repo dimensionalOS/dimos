@@ -8,9 +8,11 @@ on:
       - packages/dimos-generated/**
       - scripts/*builtin*
       - examples/message-package/**
+      - examples/external-messages/**
       - dimos/message_codegen/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
+      - docs/development/messages-external-project.md
       - pyproject.toml
       - uv.lock
       - .github/workflows/message-codegen.yml
@@ -32,7 +34,7 @@ jobs:
       - name: Install published generator and consumer test tools
         run: |
           uv venv .venv --python 3.12 --seed
-          uv pip install --python .venv/bin/python 'dimos-cdrgen[native,prepare]==0.1.1' numpy build pybind11 'deno==2.6.10' pytest pytest-mock pytest-asyncio pytest-env
+          uv pip install --python .venv/bin/python 'dimos-cdrgen[native,prepare]==0.1.1' numpy build pybind11 filelock tomli-w 'deno==2.6.10' pytest pytest-mock pytest-asyncio pytest-env
       - name: Verify DimOS SDK, installed Python consumer and C++ consumer
         run: |
           .venv/bin/python -m pytest --noconftest -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_integration.py dimos/message_codegen/test_build.py
@@ -40,10 +42,28 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m build --no-isolation
+      - name: Install the local shared build adapter and verify project planning
+        run: |
+          .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+          .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_project.py
       - name: Prepare offline acceptance wheelhouse
-        run: .venv/bin/python -m pip wheel 'dimos-cdrgen[prepare]==0.1.1' 'deno==2.6.10' 'setuptools>=70' wheel pybind11 --wheel-dir build/bundle-wheelhouse
+        run: |
+          root_wheel=(dist/dimos-*.whl)
+          .venv/bin/python -m pip wheel "${root_wheel[0]}[message-build]" 'dimos-cdrgen[prepare]==0.1.1' 'deno==2.6.10' 'setuptools>=77' wheel pybind11 --wheel-dir build/bundle-wheelhouse
       - name: Verify installed main wheel, source, editable and external type identity
         env:
           DIMOS_BUNDLE_DIST: ${{ github.workspace }}/dist
           DIMOS_BUNDLE_WHEELHOUSE: ${{ github.workspace }}/build/bundle-wheelhouse
         run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_bundled.py
+      - name: Verify ordinary isolated external package installs
+        env:
+          DIMOS_EXTERNAL_WHEELHOUSE: ${{ github.workspace }}/build/bundle-wheelhouse
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_project_install.py
+      - name: Verify ordinary external CMake and Cargo builds
+        env:
+          DIMOS_EXTERNAL_NATIVE_PYTHON: ${{ github.workspace }}/.native-review/bin/python
+          DIMOS_MESSAGE_NATIVE_CACHE: ${{ github.workspace }}/build/native-project-cache
+        run: |
+          uv venv .native-review --python 3.12 --seed
+          .native-review/bin/python -m pip install --no-index --find-links build/bundle-wheelhouse 'dimos[message-build]==0.0.14'
+          .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py

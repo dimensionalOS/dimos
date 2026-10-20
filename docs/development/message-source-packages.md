@@ -45,3 +45,6 @@ native dependencies in a temporary cache; use `DIMOS_NATIVE_TEST_CACHE` to reuse
 a writable cache, or `DIMOS_NATIVE_SOURCE_DIRS` with `DIMOS_OFFLINE=1` for
 pre-fetched source directories. Generic generator regression tests stay in the
 library repository.
+
+For ordinary pip, CMake and Cargo authoring, see the self-contained
+[external message project walkthrough](/docs/development/messages-external-project.md).
