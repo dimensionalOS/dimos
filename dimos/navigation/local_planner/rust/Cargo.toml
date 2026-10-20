@@ -6,10 +6,8 @@ description = "The SE(2) local planner: the search, the path dialect, and (featu
 license = "Apache-2.0"
 
 [lib]
-# Must match the #[pymodule] fn name in python.rs.
 name = "dimos_local_planner"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "local_planner"
@@ -19,9 +17,7 @@ required-features = ["module"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
-numpy = { version = "0.25", optional = true }
-dimos-module = { path = "../../../../native/rust/dimos-module", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -29,18 +25,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 validator = { version = "0.21", features = ["derive"], optional = true }
 
 [features]
-# `cargo test --no-default-features` runs the pure-Rust tests without linking
-# Python; maturin builds with defaults and gets the extension module.
-# Nothing by default: `python` is the pyo3 extension the parity tests import,
-# `module` the native module that runs on the robot. They never build together.
+# Nothing by default: `module` is the native module that runs on the robot.
 default = []
-python = ["dep:pyo3", "dep:numpy"]
 module = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
 # `Emb::fixture()`, a test body for this crate and its dependants.
 test-bodies = []
 
-[dev-dependencies]
-dimos-local-planner = { path = ".", features = ["test-bodies", "module"] }
+# `cargo test --features module,test-bodies` runs everything; without them the module's and fixture tests skip.
+[[test]]
+name = "invariants"
+required-features = ["test-bodies"]
 
 [package.metadata.dimos.module.local_planner]
 path = "dimos_local_planner::module::planner::LocalPlanner"
@@ -54,11 +48,8 @@ tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.local_planner.outputs]
 path = "nav_msgs.Path"
+ground_support = "sensor_msgs.PointCloud2"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
-
-# Not a member of the repo's top-level cargo workspace: this crate keeps its own
-# Cargo.lock, as it did before the workspace root existed.
-[workspace]

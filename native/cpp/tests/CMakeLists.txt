@@ -25,10 +25,11 @@ target_link_libraries(dimos_native_tests PRIVATE
   doctest::doctest
 )
 target_compile_options(dimos_native_tests PRIVATE -Wall -Wextra -Werror)
-# The session goldens live with the rust suite, which owns the wire shape
-# alongside dimos/protocol/service/test_zenoh_wire.py.
+# fixtures/ is a copy of native/rust/dimos-module/tests/fixtures, which owns the wire
+# shape alongside dimos/protocol/service/test_zenoh_wire.py; that test keeps the two
+# identical. A copy, because a nix build of this directory sees nothing outside it.
 target_compile_definitions(dimos_native_tests PRIVATE
-  DIMOS_NATIVE_GOLDENS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../rust/dimos-module/tests/fixtures"
+  DIMOS_NATIVE_GOLDENS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)

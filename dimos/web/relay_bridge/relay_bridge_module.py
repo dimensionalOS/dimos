@@ -334,14 +334,8 @@ class RelayBridgeModule(Module):
                     )
             self._manifest = manifest.model_dump()
             self._url = self.config.relay_url or self.config.g.relay_url
-            self._ca = (
-                (self.config.relay_ca or self.config.g.relay_ca) if self._url is not None else None
-            )
-            self._key = (
-                (self.config.relay_key or self.config.g.relay_key)
-                if self._url is not None
-                else None
-            )
+            self._ca = self.config.relay_ca if self._url is not None else None
+            self._key = self.config.relay_key if self._url is not None else None
             if self._url is not None and self.config.serve_dir is not None:
                 raise RuntimeError(
                     "serve_dir requires the spawned local relay (--local-relay); "

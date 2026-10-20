@@ -20,6 +20,12 @@ use std::path::Path;
 const JETSON_MULTIMEDIA_API: &str = "/usr/src/jetson_multimedia_api/include";
 const JETSON_LIBS: &str = "/usr/lib/aarch64-linux-gnu/nvidia";
 
+/// A path from the environment (the nix build supplies NVIDIA's packaged copies), else the JetPack install.
+fn env_or(name: &str, default: &str) -> String {
+    println!("cargo:rerun-if-env-changed={name}");
+    std::env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(v4l2_capture)");
     println!("cargo:rerun-if-changed=csrc/capture.c");
@@ -27,14 +33,17 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
         return;
     }
+    let api = env_or("JETSON_MULTIMEDIA_API", JETSON_MULTIMEDIA_API);
+    let libs = env_or("JETSON_LIBS", JETSON_LIBS);
     let mut build = cc::Build::new();
     build.file("csrc/capture.c").warnings(true);
-    if Path::new(JETSON_MULTIMEDIA_API).exists() {
+    if Path::new(&api).exists() {
         build
             .define("DIMOS_JETSON_HW", None)
-            .include(JETSON_MULTIMEDIA_API)
-            .include(format!("{JETSON_MULTIMEDIA_API}/libjpeg-8b"));
-        println!("cargo:rustc-link-search=native={JETSON_LIBS}");
+            .include(&api)
+            .include(format!("{api}/libjpeg-8b"));
+        println!("cargo:rustc-link-search=native={libs}");
+        // At runtime the libraries come from the JetPack install, whichever copy it was linked against.
         println!("cargo:rustc-link-arg=-Wl,-rpath,{JETSON_LIBS}");
         println!("cargo:rustc-link-lib=dylib=nvbufsurface");
         println!("cargo:rustc-link-lib=dylib=nvbufsurftransform");

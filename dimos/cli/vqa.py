@@ -32,6 +32,20 @@ def generate(
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
+    quality_window: float | None = typer.Option(
+        None,
+        min=0,
+        help=(
+            "In range mode, keep the sharpest color_image per this many seconds "
+            "via mem QualityWindow (cannot combine with --stride)"
+        ),
+    ),
+    min_brightness: float | None = typer.Option(
+        None,
+        min=0,
+        max=1,
+        help="Drop frames at or below this brightness before QualityWindow (requires --quality-window)",
+    ),
     output: Path | None = typer.Option(
         None,
         help="Destination directory; must be absent or empty",
@@ -52,6 +66,8 @@ def generate(
             start=start,
             stop=stop,
             stride=stride,
+            quality_window=quality_window,
+            min_brightness=min_brightness,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:

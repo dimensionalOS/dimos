@@ -88,7 +88,7 @@ fn update_hinted(
     Ok(py.allow_threads(|| hinted_impl(pose, &rows, clr.as_deref(), stamps.as_deref(), &cfg)))
 }
 
-/// Twin of `profile.encode_precision`: per-waypoint stamps carrying the profile.
+/// `stamps::encode_precision`: per-waypoint stamps carrying the profile.
 #[pyfunction]
 #[pyo3(signature = (path, clearance, t0, emb))]
 fn encode_precision(
@@ -105,7 +105,7 @@ fn encode_precision(
     Ok(py.allow_threads(|| stamps::encode_precision(&rows, &clr, t0, &gov)))
 }
 
-/// Twin of the python `cKDTree` version. `xy` is (N, 2) float64 waypoints, `points`
+/// `clearance::path_clearance`. `xy` is (N, 2) float64 waypoints, `points`
 /// the (M, 3) float32 hard set (every row counts, z unread).
 #[pyfunction]
 #[pyo3(signature = (xy, points, half_width))]

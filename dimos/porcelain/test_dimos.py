@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
 from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import global_config
@@ -317,23 +318,24 @@ def test_skills_accessible(running_app):
 
 
 def test_connected_run_by_name_adds_module(running_app, client):
-    client.run("mcp-server")
-    assert "McpServer" in client._source.list_module_names()
-    assert "McpServer" in running_app._source.list_module_names()
+    client.run("demo-calculator-skill")
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
+    assert "DemoCalculatorSkill" in running_app._source.list_module_names()
     assert {module.instance_name for module in client.list_modules()} >= {
         "StressTestModule",
-        "McpServer",
+        "DemoCalculatorSkill",
     }
 
 
 def test_connected_run_by_class_adds_module(client):
-    client.run(McpServer)
-    assert "McpServer" in client._source.list_module_names()
+    client.run(DemoCalculatorSkill)
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
 
 
-def test_connected_run_by_blueprint_object(client):
-    client.run(McpServer.blueprint())
+def test_connected_run_by_blueprint_object(client, mcp_port, mcp_url):
+    client.run(McpServer.blueprint(host="localhost", port=mcp_port))
     assert "McpServer" in client._source.list_module_names()
+    assert client.McpServer.mcp_url() == mcp_url
 
 
 def test_connected_restart_no_reload(client):
