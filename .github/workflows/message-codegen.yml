@@ -249,6 +249,16 @@ jobs:
           cd native/python/lerobot
           uv run --isolated --locked --group tests --with-editable ../../.. python -m pytest --confcutdir=. -o addopts='' -q dimos_lerobot/runtime_tests.py
           uv run --isolated --locked --group tests --with-editable ../../.. python -m mypy --follow-imports=silent dimos_lerobot/runtime.py
+      - name: Verify DimSim browser and bounded CPU physics CDR interoperability
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_DIMSIM_DENO: ${{ github.workspace }}/.venv/bin/deno
+        run: |
+          cd misc/DimSim
+          ../../.venv/bin/deno install --no-lock
+          ../../.venv/bin/deno run --allow-all --unstable-net cli/cli.ts build
+          cd ../..
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree import dimsim_connection; import pytest; import sys; assert "site-packages" in str(dimsim_connection.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/test_dimsim_connection.py" "$PWD/dimos/simulation/dimsim/test_dimsim_process.py" "$PWD/dimos/robot/unitree/go2/test_connection.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |

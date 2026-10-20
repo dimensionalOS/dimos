@@ -35,6 +35,15 @@ const SCENES_DIR = resolve(PROJECT_DIR, "scenes");
  * --no-lock keeps the repo's deno.lock (which tracks only JSR deps for
  * the CLI) from being polluted with the frontend's npm dep graph.
  */
+// The CDR producer and browser bundle must move together, including cached checkouts.
+async function cdrBuildFingerprint(projectDir: string): Promise<string> {
+  const inputs = ["src/bridge.ts", "src/engine.js", "cli/bridge/cdr.ts",
+    "cli/bridge/cdr_schemas.json", "package.json", "package-lock.json"];
+  const sources = await Promise.all(inputs.map(async name => [name, await Deno.readTextFile(`${projectDir}/${name}`)]));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(sources)));
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, "0")).join("");
+}
+
 async function tryBuildFromSource(
   projectDir: string,
   distDir: string,
@@ -53,6 +62,8 @@ async function tryBuildFromSource(
   // bare imports (three, rapier, etc.) via node_modules at build time.
   try {
     await Deno.stat(`${projectDir}/node_modules`);
+    await Deno.stat(`${projectDir}/node_modules/@foxglove/rosmsg/package.json`);
+    await Deno.stat(`${projectDir}/node_modules/@foxglove/rosmsg2-serialization/package.json`);
   } catch {
     console.log(`[dimsim] node_modules/ not found — running 'deno install' (one-time)...`);
     const install = new Deno.Command(Deno.execPath(), {
@@ -80,6 +91,7 @@ async function tryBuildFromSource(
 
   try {
     await Deno.stat(`${distDir}/index.html`);
+    await Deno.writeTextFile(`${distDir}/.dimos-cdr-build.sha256`, await cdrBuildFingerprint(projectDir));
     return true;
   } catch {
     console.error(`[dimsim] Build completed but ${distDir}/index.html is missing.`);
@@ -91,7 +103,8 @@ async function tryBuildFromSource(
 async function resolveDistDir(): Promise<string> {
   try {
     await Deno.stat(`${LOCAL_DIST_DIR}/index.html`);
-    return LOCAL_DIST_DIR;
+    const previous = await Deno.readTextFile(`${LOCAL_DIST_DIR}/.dimos-cdr-build.sha256`);
+    if (previous === await cdrBuildFingerprint(PROJECT_DIR)) return LOCAL_DIST_DIR;
   } catch { /* not found — fall through to build */ }
 
   if (await tryBuildFromSource(PROJECT_DIR, LOCAL_DIST_DIR)) {
