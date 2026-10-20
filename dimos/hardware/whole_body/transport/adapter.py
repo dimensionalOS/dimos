@@ -15,7 +15,11 @@
 """Transport-based whole-body adapter: bridges coordinator ↔ Module via pub/sub.
 
 Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
-/{hardware_id}/motor_command. ``network_interface`` is accepted but ignored.
+/{hardware_id}/motor_command. The normal factory selects generated CDR on the
+configured LCM/Zenoh backend. ``network_interface`` is accepted but ignored.
+The existing ``transport_lcm`` registry key keeps its name and API; encoding
+follows the canonical message type, while internal MotorState/MotorCommand
+numerical values are adapted explicitly at these three wire edges.
 """
 
 from __future__ import annotations
@@ -24,12 +28,14 @@ from collections.abc import Callable
 import threading
 from typing import Any
 
+import numpy as np
+
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -135,11 +141,12 @@ class TransportWholeBodyAdapter:
             return False
 
         msg = MotorCommandArray(
-            q=[c.q for c in commands],
-            dq=[c.dq for c in commands],
-            kp=[c.kp for c in commands],
-            kd=[c.kd for c in commands],
-            tau=[c.tau for c in commands],
+            header=header_now(),
+            q=np.asarray([c.q for c in commands], dtype=np.float64),
+            dq=np.asarray([c.dq for c in commands], dtype=np.float64),
+            kp=np.asarray([c.kp for c in commands], dtype=np.float64),
+            kd=np.asarray([c.kd for c in commands], dtype=np.float64),
+            tau=np.asarray([c.tau for c in commands], dtype=np.float64),
         )
         self._motor_command_transport.publish(msg)
         return True

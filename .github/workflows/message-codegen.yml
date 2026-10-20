@@ -218,6 +218,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.core import transport; from dimos.protocol.pubsub.impl import rospubsub, rospubsub_conversion; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (transport,rospubsub,rospubsub_conversion)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/protocol/pubsub/impl/test_cdr_ros_conversion.py" "$PWD/dimos/core/test_transport_factory.py"
+      - name: Verify canonical whole-body default wires and fake SDK admission safety
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --python .native-review/bin/python 'onnxruntime==1.24.1'
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.hardware.whole_body.transport import adapter; from dimos.robot.unitree.g1 import wholebody_connection; from dimos.robot.galaxea.r1pro import connection; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (adapter,wholebody_connection,connection)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/whole_body/transport/test_adapter.py" "$PWD/dimos/robot/unitree/g1/test_wholebody_connection.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |

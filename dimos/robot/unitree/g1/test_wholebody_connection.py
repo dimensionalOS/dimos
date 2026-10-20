@@ -17,10 +17,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from types import SimpleNamespace
 
+import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.msgs.time import header_now
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
@@ -69,11 +71,12 @@ def _wire(connection, soft_start_seconds):
 
 def _command():
     return MotorCommandArray(
-        q=[1.0] * _NUM_MOTORS,
-        dq=[0.0] * _NUM_MOTORS,
-        kp=[100.0] * _NUM_MOTORS,
-        kd=[5.0] * _NUM_MOTORS,
-        tau=[8.0] * _NUM_MOTORS,
+        header=header_now(),
+        q=np.full(_NUM_MOTORS, 1.0, dtype=np.float64),
+        dq=np.full(_NUM_MOTORS, 0.0, dtype=np.float64),
+        kp=np.full(_NUM_MOTORS, 100.0, dtype=np.float64),
+        kd=np.full(_NUM_MOTORS, 5.0, dtype=np.float64),
+        tau=np.full(_NUM_MOTORS, 8.0, dtype=np.float64),
     )
 
 
@@ -118,7 +121,9 @@ def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
 def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    command = _command()
+    command.q = np.zeros(5, dtype=np.float64)
+    connection._on_motor_command(command)
 
     assert publisher.frames == []
 

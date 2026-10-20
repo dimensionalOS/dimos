@@ -60,20 +60,19 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import Out
-from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
@@ -550,16 +549,18 @@ _coordinator = _G1GrootCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
-        ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
+        ("joint_command", JointState): CdrTransport.spec("/g1/joint_command", JointState),
+        ("g1_joints", JointState): CdrTransport.spec(_G1_JOINTS_TOPIC, JointState),
+        ("cmd_vel", Twist): CdrTransport.spec(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
         # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
-        ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-        ("imu", Imu): LCMTransport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): LCMTransport("/g1/motor_command", MotorCommandArray),
+        ("motor_states", JointState): CdrTransport.spec("/g1/motor_states", JointState),
+        ("imu", Imu): CdrTransport.spec("/g1/imu", Imu),
+        ("motor_command", MotorCommandArray): CdrTransport.spec(
+            "/g1/motor_command", MotorCommandArray
+        ),
     }
 )
 

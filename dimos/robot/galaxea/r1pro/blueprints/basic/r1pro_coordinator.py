@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,20 +30,20 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
@@ -161,6 +160,13 @@ def _zenoh_transport(
     *,
     latest_wins: bool = False,
 ) -> TransportSpec:
+    if hasattr(msg_type, "__msgtype__"):
+        return CdrTransport.spec(
+            f"dimos/{topic.lstrip('/')}",
+            msg_type,
+            backend="zenoh",
+            qos=QOS_LATEST_WINS if latest_wins else None,
+        )
     return ZenohTransport.spec(
         ZenohTopic(
             f"dimos/{topic.lstrip('/')}",
