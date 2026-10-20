@@ -47,3 +47,8 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
+
+# Built-in message inputs are prepared automatically during source builds; the sdist is self-contained.
+include packages/dimos-generated/catalog.json packages/dimos-generated/schema-sources.json
+recursive-include packages/dimos-generated/custom *.msg LICENSE
+recursive-include packages/dimos-generated/interfaces *.msg *LICENSE*

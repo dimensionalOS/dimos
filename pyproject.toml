@@ -2,6 +2,8 @@
 requires = [
     "setuptools>=70",
     "wheel",
+    "dimos-cdrgen[prepare]==0.1.1",
+    "deno==2.6.10",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -21,7 +23,7 @@ build-backend = "setuptools.build_meta"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".", "build/message-source/python"]
 include = ["dimos*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
@@ -35,6 +37,8 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+"dimos.messages" = ["py.typed", "*.pyi", "**/*.pyi"]
+"dimos.messages_schemas" = ["schemas.json", "schemas/**/*", "package/**/*"]
 # Recursive: matches the extension anywhere under dimos/. Add a line when code
 # starts loading a new data type. NOTE: ".txt" is intentionally scoped (a bare
 # "**/*.txt" would grab CMakeLists.txt from native build dirs).
@@ -100,6 +104,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-cdrgen==0.1.1",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",
@@ -426,7 +431,7 @@ project-deps = [
 ]
 
 tests = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.1",
     "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
@@ -485,7 +490,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.1",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -874,3 +879,13 @@ ignore = [
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
 ]
+
+[tool.dimos.messages]
+source = "packages/dimos-generated/interfaces"
+module = "dimos_generated"
+python-module = "dimos.messages"
+catalog = "packages/dimos-generated/catalog.json"
+resources = ["packages/dimos-generated/schema-sources.json", "packages/dimos-generated/interfaces/licenses/dimos_msgs-LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_geometry_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_nav_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_sensor_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_shape_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_std_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_trajectory_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_common_interfaces_visualization_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_rcl_interfaces_licenses_ros2_rcl_interfaces_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_geometry2_licenses_ros2_geometry2_LICENSE", "packages/dimos-generated/interfaces/licenses/ros-perception_vision_msgs_licenses_ros-perception_vision_msgs_LICENSE", "packages/dimos-generated/interfaces/licenses/ros2_rosidl_licenses_ros2_rosidl_LICENSE", "packages/dimos-generated/interfaces/licenses/foxglove_schemas_licenses_foxglove_schemas_LICENSE"]
+
+[project.entry-points."dimos.messages"]
+dimos = "dimos.messages_schemas.provider"

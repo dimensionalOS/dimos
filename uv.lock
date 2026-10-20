@@ -1839,6 +1839,7 @@ name = "dimos"
 version = "0.0.14"
 source = { editable = "." }
 dependencies = [
+    { name = "dimos-cdrgen" },
     { name = "annotation-protocol" },
     { name = "attrs" },
     { name = "bleak" },
@@ -2517,6 +2518,7 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dimos-cdrgen", specifier = "==0.1.1" },
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
     { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
@@ -2687,7 +2689,7 @@ lint = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "dimos-cdrgen", specifier = "==0.1.1" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2763,7 +2765,7 @@ tests = [
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "dimos-cdrgen", specifier = "==0.1.1" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2824,7 +2826,7 @@ tests-self-hosted = [
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "dimos-cdrgen", specifier = "==0.1.1" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2879,7 +2881,7 @@ tests-self-hosted = [
 
 [[package]]
 name = "dimos-cdrgen"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "empy" },
@@ -2889,9 +2891,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/1a/31327fa4bb2a240783d0b41e315be2a4485eabf07ab032f49c6328f5f51b/dimos_cdrgen-0.1.0.tar.gz", hash = "sha256:69ea4955e64a769d56d4bd5e0fff44c98f96c29c5608125cd011cef2740624f0", size = 75010, upload-time = "2026-10-15T05:00:09.663Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/74/fff6dcefc9591dd179b50931eda73f24f1b9673c1971099506e115bf33cc/dimos_cdrgen-0.1.1.tar.gz", hash = "sha256:a529745a35954f0725ad9479a0346917756447b194fa1509c3336d3eb4e86385", size = 76682, upload-time = "2026-10-19T22:29:59.807Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/9c/086701c3249ed2caabe83cea008c3e08bd6063c48a1df852fbca6aadff50/dimos_cdrgen-0.1.0-py3-none-any.whl", hash = "sha256:6731e8900f7e61af419b8c77599587f32677c9d64f27ac15f5e78be4b76bc011", size = 70183, upload-time = "2026-10-15T05:00:08.098Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/05/cb085e18549a5eced615840b2f607a9c342a8a49c69012964f0568aa309b/dimos_cdrgen-0.1.1-py3-none-any.whl", hash = "sha256:f85923440196a3028dbd974a913b0ef9320eb12b57770f722e96bc1645a351a2", size = 71015, upload-time = "2026-10-19T22:29:58.404Z" },
 ]
 
 [[package]]

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from enum import IntEnum
 from functools import lru_cache
 import time
 from typing import TYPE_CHECKING, BinaryIO
@@ -28,6 +27,7 @@ import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
+from dimos.msgs.occupancy import CostValues as CostValues, block_max_reduce as block_max_reduce
 from dimos.types.timestamped import Timestamped
 
 
@@ -95,44 +95,6 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
-
-
-def block_max_reduce(cells: NDArray[np.int8], factor: int) -> NDArray[np.int8]:
-    """Coarsen an occupancy grid by taking the max of factor x factor blocks.
-
-    Block maximum (not mean) so coarsening never erases an obstacle; a block
-    is unknown (-1) only when every cell in it is unknown. Trailing remainder
-    rows/cols are trimmed, keeping row 0/col 0 - the origin corner - so the
-    grid origin stays valid. Grids thinner than `factor` pass through.
-    """
-    h, w = cells.shape[:2]
-    new_h, new_w = h // factor, w // factor
-    if new_h == 0 or new_w == 0:
-        return cells
-    trimmed = cells[: new_h * factor, : new_w * factor]
-    blocks = trimmed.reshape(new_h, factor, new_w, factor)
-    # Sink unknown below every known value for the max, then map it back.
-    as_int = blocks.astype(np.int16)
-    known = np.where(as_int < 0, -1000, as_int)
-    reduced = known.max(axis=(1, 3))
-    reduced[reduced == -1000] = -1
-    result: NDArray[np.int8] = reduced.astype(np.int8)
-    return result
-
-
-class CostValues(IntEnum):
-    """Standard cost values for occupancy grid cells.
-
-    These values follow the ROS nav_msgs/OccupancyGrid convention:
-    - 0: Free space
-    - 1-99: Occupied space with varying cost levels
-    - 100: Lethal obstacle (definitely occupied)
-    - -1: Unknown space
-    """
-
-    UNKNOWN = -1  # Unknown space
-    FREE = 0  # Free space
-    OCCUPIED = 100  # Occupied/lethal space
 
 
 class OccupancyGrid(Timestamped):

@@ -62,12 +62,12 @@ def test_installed_message_consumer(tmp_path: Path) -> None:
     source.parent.mkdir(parents=True)
     source.write_text("int32 value\n")
     (project / "pyproject.toml").write_text("""[build-system]
-requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.0"]
+requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.1"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "dimos-cdr-consumer"
 version = "0.1.0"
-dependencies = ["dimos-cdrgen==0.1.0"]
+dependencies = ["dimos-cdrgen==0.1.1"]
 [tool.dimos.messages]
 source = "interfaces"
 """)
@@ -113,7 +113,7 @@ assert decode(encode(value), Tick).value == 17
 @pytest.fixture(scope="session")
 def native_build_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # Native generator prerequisites are build tools, isolated from DimOS runtime deps.
-    # In particular, cdrgen0.1.0's PyYAML pin must not downgrade the runtime lock.
+    # In particular, native build dependencies must not downgrade the runtime lock.
     environment = tmp_path_factory.mktemp("cdr-native-toolchain") / "venv"
     run("uv", "venv", "--python", sys.executable, str(environment), cwd=environment.parent)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -125,7 +125,7 @@ def native_build_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
         *offline_args,
         "--python",
         str(python),
-        "dimos-cdrgen[native]==0.1.0",
+        "dimos-cdrgen[native]==0.1.1",
         cwd=environment.parent,
     )
     return python
