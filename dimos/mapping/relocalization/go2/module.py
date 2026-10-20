@@ -14,14 +14,24 @@
 
 """Go2 relocalization: lidar relocalization plus the premap merged into the live map."""
 
+from copy import deepcopy
+
+import numpy as np
 from reactivex import combine_latest
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarWindowRelocalization
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.msgs.pointcloud import (
+    concatenate_clouds,
+    pointcloud_from_xyz,
+    pointcloud_xyz,
+    transform_cloud,
+)
+from dimos.msgs.time import to_seconds
 from dimos.utils.reactive import backpressure
 
 
@@ -51,17 +61,30 @@ class Go2Relocalization(LidarWindowRelocalization):
             ).subscribe(self._on_merge_input)
         )
 
-    def _on_merge_input(self, pair: tuple[PointCloud2, Transform]) -> None:
+    def _on_merge_input(self, pair: tuple[PointCloud2, TransformStamped]) -> None:
         local, tf = pair
         assert self.premap is not None
-        premap_in_world = self.premap.transform(tf)
+        premap_in_world = transform_cloud(self.premap, tf)
         if self.config.use_carving:
-            grid = VoxelGrid(carve_columns=True, frame_id=local.frame_id, show_startup_log=False)
+            grid = VoxelGrid(
+                carve_columns=True, frame_id=local.header.frame_id, show_startup_log=False
+            )
             try:
-                grid.add_frame(premap_in_world)
-                grid.add_frame(local)
-                self.merged_map.publish(grid.get_global_pointcloud2())
+                grid.add_points(
+                    np.asarray(pointcloud_xyz(premap_in_world), dtype=np.float32),
+                    timestamp=to_seconds(premap_in_world.header.stamp),
+                )
+                grid.add_points(
+                    np.asarray(pointcloud_xyz(local), dtype=np.float32),
+                    timestamp=to_seconds(local.header.stamp),
+                )
+                self.merged_map.publish(
+                    pointcloud_from_xyz(
+                        grid.get_global_pointcloud().point["positions"].numpy(),
+                        header=deepcopy(local.header),
+                    )
+                )
             finally:
                 grid.dispose()
         else:
-            self.merged_map.publish(local + premap_in_world)
+            self.merged_map.publish(concatenate_clouds(local, premap_in_world))

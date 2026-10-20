@@ -35,11 +35,16 @@ for a rig that is not in there yet.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
+from packaging.version import Version
 
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.geometry import inverse_transform, transform_from_matrix
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -65,7 +70,7 @@ class _Prepared(NamedTuple):
 class RelocAttempt(NamedTuple):
     """One decided attempt: the ``world -> map`` fix if accepted, and what it was scored on."""
 
-    fix: Transform | None
+    fix: TransformStamped | None
     result: RegistrationResult
 
 
@@ -187,11 +192,16 @@ class LidarRelocalizer:
             return pcd
 
         coarse = normals(cloud.voxel_down_sample(cfg.voxel_coarse), cfg.voxel_coarse)
-        fpfh = reg.compute_fpfh_feature(
-            coarse,
-            o3d.geometry.KDTreeSearchParamHybrid(
-                radius=cfg.voxel_coarse * cfg.fpfh_radius_factor, max_nn=cfg.fpfh_max_nn
-            ),
+        search = o3d.geometry.KDTreeSearchParamHybrid(
+            radius=cfg.voxel_coarse * cfg.fpfh_radius_factor, max_nn=cfg.fpfh_max_nn
+        )
+        # Open3D 0.20 requires indices; older supported versions compute all
+        # points with the two-argument API. Both paths describe every point.
+        features: Callable[..., Feature] = reg.compute_fpfh_feature
+        fpfh = (
+            features(coarse, search, indices=list(range(len(coarse.points))))
+            if Version(o3d.__version__) >= Version("0.20")
+            else features(coarse, search)
         )
         fine = normals(cloud.voxel_down_sample(cfg.voxel_fine), cfg.voxel_fine)
         return _Prepared(coarse=coarse, fpfh=fpfh, fine=fine)
@@ -259,7 +269,7 @@ class LidarRelocalizer:
 
     def relocalize(
         self, local_map: PointCloud, world_frame: str, map_frame: str
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
         return self.attempt(local_map, world_frame, map_frame).fix
 
@@ -269,7 +279,9 @@ class LidarRelocalizer:
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)
-        placement = Transform.from_matrix(
-            np.asarray(result.transformation), frame_id=map_frame, child_frame_id=world_frame
+        placement = TransformStamped(
+            header=Header(frame_id=map_frame, stamp=time_from_nanoseconds(0)),
+            child_frame_id=world_frame,
+            transform=transform_from_matrix(np.asarray(result.transformation)),
         )
-        return RelocAttempt(placement.inverse(), result)
+        return RelocAttempt(inverse_transform(placement), result)

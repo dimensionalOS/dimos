@@ -37,8 +37,8 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module

@@ -39,34 +39,40 @@ MRO and ``start()`` chains through ``super()``.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from typing import Any
 
+from dimos_cdrgen.registry import decode
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.geometry import quaternion_euler
+from dimos.msgs.time import header_now
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-MAP_SUFFIX = ".pc2.lcm"
+MAP_SUFFIX = ".pc2.cdr"
 
 
-def yaw_deg(tf: Transform) -> float:
-    return math.degrees(tf.rotation.euler.z)
+def yaw_deg(tf: TransformStamped) -> float:
+    return math.degrees(quaternion_euler(tf.transform.rotation)[2])
 
 
-def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
+def fix_stream(
+    fixes: Observable[TransformStamped], interval: float
+) -> Observable[TransformStamped]:
     """Every accepted fix as it lands, then again every ``interval`` s (once only if <= 0)."""
 
-    def now_and_again(fix: Transform) -> Observable[Transform]:
+    def now_and_again(fix: TransformStamped) -> Observable[TransformStamped]:
         again = rx.interval(interval).pipe(ops.map(lambda _: fix)) if interval > 0 else rx.empty()
         return rx.concat(rx.of(fix), again)
 
@@ -75,7 +81,7 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 class Config(ModuleConfig):
     # Premap stem or path, e.g. `--map-file=go2_hongkong_office_twopass_map`;
-    # `.pc2.lcm` is appended if absent. Without one the module runs but never
+    # `.pc2.cdr` is appended if absent. Without one the module runs but never
     # attempts a fix.
     map_file: str | None = None
     # What the live fixed frame is called, whatever the odometry is in
@@ -102,16 +108,14 @@ class RelocalizationModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.fixes: Subject[Transform] = Subject()
+        self.fixes: Subject[TransformStamped] = Subject()
         self.premap: PointCloud2 | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            fix_stream(self.fixes, self.config.tf_interval).subscribe(
-                lambda tf: self.tf.publish(TFMessage(tf.now()))
-            )
+            fix_stream(self.fixes, self.config.tf_interval).subscribe(self._publish_fix)
         )
         if not self.config.map_file:
             logger.info("Relocalization module disabled (no map_file configured)")
@@ -119,11 +123,16 @@ class RelocalizationModule(Module):
         self._load_premap(self.config.map_file)
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
+    def _publish_fix(self, fix: TransformStamped) -> None:
+        published = deepcopy(fix)
+        published.header = header_now(fix.header.frame_id)
+        self.tf.publish(TFMessage(transforms=[published]))
+
     def _load_premap(self, map_file: str) -> None:
         path = resolve_named_path(map_file, MAP_SUFFIX)
-        premap = PointCloud2.lcm_decode(path.read_bytes())
+        premap = decode(path.read_bytes(), PointCloud2)
 
-        premap.frame_id = self.config.map_frame
+        premap.header.frame_id = self.config.map_frame
         self.premap = premap
 
         self.register_disposable(
@@ -141,19 +150,19 @@ class RelocalizationModule(Module):
         """Whether to keep attempting. Implementations gate their input on this."""
         return not (self._placed and self.config.relocalize_once)
 
-    def submit(self, tf: Transform, source: str = "") -> None:
+    def submit(self, tf: TransformStamped, source: str = "") -> None:
         """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""
         world, map_frame = self.config.world_frame, self.config.map_frame
-        assert (tf.frame_id, tf.child_frame_id) == (world, map_frame), (
+        assert (tf.header.frame_id, tf.child_frame_id) == (world, map_frame), (
             f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
-            f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
+            f"got {tf.header.frame_id!r} -> {tf.child_frame_id!r}"
         )
         logger.info(
             "relocalize fix",
             source=source,
             world=world,
             map_frame=map_frame,
-            translation=str(tf.translation),
+            translation=str(tf.transform.translation),
             yaw_deg=round(yaw_deg(tf), 1),
         )
         self.fixes.on_next(tf)

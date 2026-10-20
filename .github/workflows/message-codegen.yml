@@ -67,6 +67,8 @@ on:
       - dimos/navigation/go2/loop_closure/**
       - dimos/robot/unitree/type/lidar.py
       - dimos/robot/unitree/type/test_lidar.py
+      - dimos/mapping/relocalization/**
+      - docs/capabilities/navigation/relocalization.md
       - dimos/mapping/cli/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
@@ -401,3 +403,11 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.navigation.go2.loop_closure import module; from dimos.robot.unitree.type import lidar; import gtsam; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,gtsam)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/loop_closure/test_generated_module.py" "$PWD/dimos/robot/unitree/type/test_lidar.py" -k 'not test_init'
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/go2/loop_closure/module.py dimos/robot/unitree/type/lidar.py
+      - name: Verify canonical premap loading, TF publication and CPU map placement
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.relocalization import module; from dimos.mapping.relocalization.lidar import module as lidar,relocalize; from dimos.mapping.relocalization.go2 import module as go2; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,relocalize,go2)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/test_module.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/{module,blueprints}.py dimos/mapping/relocalization/lidar/{module,relocalize}.py dimos/mapping/relocalization/go2/module.py
