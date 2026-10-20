@@ -17,6 +17,7 @@
 import json
 from unittest.mock import Mock
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 import rerun as rr
@@ -24,9 +25,13 @@ import rerun as rr
 from dimos.core.cdr_transport import CdrTransport
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PointStamped
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.visualization.rerun.bridge import RerunBridgeModule
-from dimos.visualization.rerun.cdr import generated_archetypes
+from dimos.visualization.rerun.cdr import cloud_archetype, generated_archetypes, image_archetype
 from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
 
 
@@ -110,3 +115,49 @@ def test_bridge_default_renderer_handles_generated_pose(bridge, mocker) -> None:
         "world/pose/message",
     ]
     assert isinstance(log.call_args_list[0].args[1], rr.Transform3D)
+
+
+@pytest.mark.parametrize("shape", [(1, 2), (2, 1)])
+def test_single_row_or_column_rgb_keeps_dimensions_and_color_bytes(shape) -> None:
+    pixels = np.array([[[255, 0, 0], [0, 255, 0]]], dtype=np.uint8).reshape(*shape, 3)
+    image = decode(encode(image_from_array(pixels, encoding="rgb8")), Image)
+    archetype = image_archetype(image)
+    assert archetype.format.as_arrow_array().to_pylist()[0]["height"] == shape[0]
+    assert archetype.format.as_arrow_array().to_pylist()[0]["width"] == shape[1]
+    assert archetype.buffer.as_arrow_array().to_pylist() == [[255, 0, 0, 0, 255, 0]]
+
+
+def test_big_endian_depth_renderer_preserves_values_and_units() -> None:
+    pixels = np.array([[1, 256, 65535]], dtype=">u2")
+    archetype = image_archetype(image_from_array(pixels, encoding="16UC1"))
+    assert isinstance(archetype, rr.DepthImage)
+    assert archetype.meter.as_arrow_array().to_pylist() == [1000.0]
+    raw = bytes(archetype.buffer.as_arrow_array().to_pylist()[0])
+    np.testing.assert_array_equal(np.frombuffer(raw, dtype=np.uint16), pixels.ravel())
+
+
+@pytest.mark.parametrize("camera_first", [False, True])
+def test_calibration_attaches_in_both_arrival_orders(bridge, mocker, camera_first) -> None:
+    header = build_messages()[0][1].header
+    image = image_from_array(np.zeros((1, 2, 3), dtype=np.uint8), encoding="rgb8", header=header)
+    calibration = camera_info_from_intrinsics(10, 20, 1, 0.5, 2, 1, header=header)
+    log = mocker.patch.object(rr, "log")
+    samples = [(calibration, "/calibration"), (image, "/image")]
+    for message, topic in samples if camera_first else reversed(samples):
+        bridge._on_message(message, topic)
+    pinholes = [call for call in log.call_args_list if isinstance(call.args[1], rr.Pinhole)]
+    assert len(pinholes) == 1
+    assert pinholes[0].args[0] == "world/image"
+    assert pinholes[0].args[1].parent_frame.as_arrow_array().to_pylist() == ["tf#/map"]
+
+
+def test_cloud_renderer_filters_nonfinite_positions_with_matching_colors() -> None:
+    header = build_messages()[0][1].header
+    cloud = pointcloud_from_xyz_rgb(
+        np.array([[1, 2, 3], [float("nan"), 0, 0], [4, 5, 6]]),
+        np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8),
+        header=header,
+    )
+    archetype = cloud_archetype(cloud)
+    assert archetype.positions.as_arrow_array().to_pylist() == [[1, 2, 3], [4, 5, 6]]
+    assert archetype.colors.as_arrow_array().to_pylist() == [0xFF0000FF, 0x0000FFFF]

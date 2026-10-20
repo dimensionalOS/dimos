@@ -49,6 +49,10 @@ def test_actual_loopback_example_preserves_pose_axes_values_and_nanoseconds(
     assert "2023-11-14T22:13:20.123456789" in result.stdout
     assert '"nanosec": 123456789' in result.stdout
     assert "Exact message values" in result.stdout
+    assert "Points3D:positions" in result.stdout
+    assert "Points3D:colors" in result.stdout
+    assert "Image:buffer" in result.stdout
+    assert "Generated RGB pixels" in result.stdout
     repeated = subprocess.run(command, capture_output=True, text=True, timeout=30)
     assert repeated.returncode != 0
     assert "FileExistsError" in repeated.stderr

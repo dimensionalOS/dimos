@@ -150,7 +150,8 @@ Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.
 
 Generated message classes are plain values. The Rerun bridge supplies the
 PoseStamped/PointStamped adapters, including pose axes and a text view of every
-field. An explicit CDR subscription is independent of legacy pubsub discovery:
+field, plus raw/compressed image, depth, CameraInfo and colored point-cloud
+adapters. An explicit CDR subscription is independent of legacy pubsub discovery:
 
 ```python
 from dimos.core.cdr_transport import CdrTransport
@@ -170,8 +171,9 @@ transport instance in `cdr_transports` belongs to the bridge; use a separate
 instance for the producer. Header stamps use a source timeline with exact
 nanoseconds, including zero. Header frames remain named `tf#/<frame_id>` frames;
 they are not silently reinterpreted as world coordinates. The existing TF tree
-must locate that frame for a shared spatial view. Other generated message
-domains still need their own adapters; this does not change transport defaults.
+must locate that frame for a shared spatial view. CameraInfo attaches to images
+in the same Header frame in either arrival order. Mapping/control and remaining
+generated domains still need their own adapters; transport defaults are unchanged.
 
 To see an actual offline exchange, from this checkout with its normal installed
 DimOS environment:
@@ -181,10 +183,61 @@ python examples/message-viewer/demo_cdr_rerun.py pose.rrd
 rerun pose.rrd
 ```
 
-The example sends generated PoseStamped bytes over discovery-disabled loopback
-Zenoh/CDR, then writes a real Rerun recording. Its layout shows the pose axes and
-complete message values side by side. For this demonstration only, it explicitly
+The example sends generated pose, RGB image and RGBD-projected cloud bytes over
+discovery-disabled loopback Zenoh/CDR, then writes a real Rerun recording. Its
+layout shows pose axes, colored points, exact message values and RGB pixels.
+For this demonstration only, it explicitly
 places the message's map frame at the viewer origin. It refuses an existing
 output, needs no robot, and does not start the module coordinator or change host
 configuration. CI runs this exact example and reads the RRD back with the
-pinned Rerun CLI to check geometry, axes, fields and nanosecond timestamps.
+pinned Rerun CLI to check geometry, axes, image/point buffers and nanosecond timestamps.
+
+## Arrays and compression for generated sensors
+
+Image values hold ROS fields; array operations are separate helpers:
+
+```python
+import numpy as np
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import header_now
+
+rgb = np.array([[[255, 0, 0], [0, 255, 0]], [[0, 0, 255], [255, 255, 255]]], dtype=np.uint8)
+image = image_from_array(rgb, encoding="rgb8", header=header_now("camera_optical"))
+pixels = image_view(image)
+```
+
+`image_from_array` copies its input. `image_view` borrows a read-only view that
+keeps storage alive and respects row padding and byte order. Use `pixels.copy()`
+when you need independent writable data. These helpers require generated
+`dimos.messages` values; legacy convenience classes retain their old path.
+
+Project a matching color/depth pair using explicit camera calibration and units:
+
+```python
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.pointcloud import pointcloud_from_rgbd, pointcloud_xyz
+
+depth = image_from_array(np.full((2, 2), 1000, dtype=np.uint16), encoding="16UC1", header=image.header)
+camera = camera_info_from_intrinsics(2, 2, 0.5, 0.5, 2, 2, header=image.header)
+cloud = pointcloud_from_rgbd(image, depth, camera, depth_scale=0.001)
+xyz = pointcloud_xyz(cloud)
+```
+
+Integer depth is scaled to meters; `32FC1` depth is already meters. Invalid,
+nonpositive or truncated depths are excluded. The cloud keeps the depth Header
+and RGB colors. Structured cloud views retain field counts, endian and row
+padding; selection and transforms preserve extra fields rather than rebuilding
+only XYZ. Calibration dimensions and focal lengths are validated.
+
+Compression is explicit and keeps source metadata:
+
+```python
+from dimos.msgs.image import compressed_image_from_image, image_from_compressed
+
+encoded = compressed_image_from_image(image, format="png")
+restored = image_from_compressed(encoded)
+```
+
+JPEG is lossy color/gray; PNG preserves uint16 depth. JXL is an explicit consumer
+extension and preserves uint16/float32 depth losslessly. The Rerun adapter keeps
+depth units and normalizes byte order without changing source CDR values.
