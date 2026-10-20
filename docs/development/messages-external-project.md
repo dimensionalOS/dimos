@@ -331,3 +331,9 @@ time, frame and sequence are preserved.
 LCM-encoded topics. This suffix identifies encoding/type, not a negotiated schema
 hash; both endpoints must install compatible definitions. Changing the default
 transport factories remains a separate cutover.
+
+Run the manual coordinator demo in an interactive terminal and decline any
+optional host-memory setup recommendation from the existing coordinator.
+The demo refuses non-interactive manual startup so that recommendation cannot be
+auto-accepted. Its actual pytest acceptance uses the repository's normal test
+path that skips system configuration.

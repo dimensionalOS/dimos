@@ -221,3 +221,17 @@ def test_installed_sdk_modules_exchange_cdr_through_actual_coordinator(tmp_path)
     assert (
         "PASS: coordinator Python -> C++ -> Rust -> Python over loopback Zenoh CDR" in result.stdout
     )
+    manual_env = dict(env)
+    manual_env.pop("PYTEST_VERSION", None)
+    refused = subprocess.run(
+        [str(python), "demo_modules.py"],
+        cwd=project,
+        env=manual_env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert refused.returncode != 0
+    assert "interactive terminal and decline optional host setup" in refused.stderr

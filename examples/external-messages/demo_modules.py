@@ -19,8 +19,10 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import socket
+import sys
 import threading
 import time
 
@@ -82,6 +84,12 @@ class RustRelay(NativeModule):
 
 
 def run(cpp: Path, rust: Path) -> None:
+    # The existing coordinator may offer optional host setup. Its pytest path
+    # skips those checks; manual runs must keep its confirmation interactive.
+    if not os.environ.get("PYTEST_VERSION") and not sys.stdin.isatty():
+        raise RuntimeError(
+            "Run this manual demo in an interactive terminal and decline optional host setup"
+        )
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         endpoint = f"tcp/127.0.0.1:{reservation.getsockname()[1]}"

@@ -67,3 +67,9 @@ A temporary loopback Zenoh router connects all three; discovery/multicast are
 disabled. The demo validates the exact same final values and Header identity and
 stops its modules and subscriptions. The SDK codecs are explicit, so existing
 module defaults are unchanged. See the embedded guide above for the port code.
+
+Run the manual coordinator demo in an interactive terminal and decline any
+optional host-memory setup recommendation from the existing coordinator.
+The demo refuses non-interactive manual startup so that recommendation cannot be
+auto-accepted. Its actual pytest acceptance uses the repository's normal test
+path that skips system configuration.
