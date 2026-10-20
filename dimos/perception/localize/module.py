@@ -61,7 +61,7 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize_params import XARM_PARAMS, parse_params
+from dimos.perception.localize.localize_params import MANIPULATION_PARAMS, parse_params
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
@@ -96,7 +96,7 @@ class PerceptionLocalizeConfig(ModuleConfig):
     detector: str = "owlv2"
     segmenter: str = "edgetam"
     # the rig's params, a localize_params preset or built from one; localize() can change them
-    params: LocalizeParams = XARM_PARAMS
+    params: LocalizeParams = MANIPULATION_PARAMS
 
 
 class PerceptionLocalize(Module):
@@ -254,9 +254,10 @@ class PerceptionLocalize(Module):
         seconds. What earlier calls proved is remembered and still answered.
 
         ``params`` changes the module's params for this call only: a preset,
-        ``xarm`` or ``dual_yam`` (desk) or ``go2`` (room), switches to it; a
-        JSON object sets LocalizeParams fields on the module's params, or on the
-        preset its "base" key names, e.g. '{"accept_score": 0.45}'.
+        ``manipulation`` / ``xarm`` or ``dual_yam`` (desk) or ``navigation`` /
+        ``go2`` / ``g1`` (room), switches to it; a JSON object sets
+        LocalizeParams fields on the module's params, or on the preset its
+        "base" key names, e.g. '{"accept_score": 0.45}'.
 
         Usage guide: dimos/perception/localize/SKILL.md.
         """

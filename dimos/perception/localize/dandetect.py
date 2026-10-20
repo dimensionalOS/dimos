@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
 from dimos.perception.localize.localize import index_frames, localize
-from dimos.perception.localize.localize_params import XARM_PARAMS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,10 +87,10 @@ def _owlv2() -> Detector:
 
 @dataclass(frozen=True)
 class Option:
-    """A registered model: how to build it, and the score fields its scale shifts."""
+    """A registered model: how to build it, and the score deltas its scale shifts from OWLv2."""
 
     build: str | Callable[[], Any]  # "module:attr" of a class or factory, or the callable
-    shift: dict[str, Any] = field(default_factory=dict)
+    shift: dict[str, float] = field(default_factory=dict)
 
 
 EMBEDDERS: dict[str, Option] = {
@@ -102,11 +101,11 @@ DETECTORS: dict[str, Option] = {
     "owlv2": Option(_owlv2),
     "omdet": Option(
         "dimos.perception.detection.detectors.omdet:OmDetDetector",
-        {"candidate_floor": 0.15, "accept_score": 0.30},
+        {"candidate_floor": -0.10, "accept_score": -0.10},
     ),
     "gdino": Option(
         "dimos.perception.detection.detectors.grounding_dino:GroundingDinoDetector",
-        {"candidate_floor": 0.35, "accept_score": 0.55},
+        {"candidate_floor": 0.10, "accept_score": 0.15},
     ),
 }
 SEGMENTERS: dict[str, Option] = {
@@ -162,16 +161,16 @@ class DanDetector(Resource):
         del self.embedder, self.detector, self.segmenter
 
     def shifted(self, base: LocalizeParams, fields: dict[str, Any] | None = None) -> LocalizeParams:
-        """``base`` on these models' score scales, then ``fields``.
+        """``base`` shifted onto these models' score scales, then ``fields``.
 
-        A model's shift replaces only the scores ``base`` keeps at the xArm's,
-        which were fit on OWLv2; params with scores of their own keep them.
+        Each model's shift is a delta relative to the OWLv2 baseline that all
+        presets in ``localize_params`` were fit on; explicit overrides in
+        ``fields`` take precedence.
         """
         shifts = {
-            key: value
+            key: round(getattr(base, key) + delta, 6)
             for option in self.options
-            for key, value in option.shift.items()
-            if getattr(base, key) == getattr(XARM_PARAMS, key)
+            for key, delta in option.shift.items()
         }
         return replace(base, **{**shifts, **(fields or {})})
 

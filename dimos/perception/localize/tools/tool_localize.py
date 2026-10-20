@@ -51,7 +51,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
-from dimos.perception.localize.localize_params import PRESETS, XARM_PARAMS, parse_params
+from dimos.perception.localize.localize_params import MANIPULATION_PARAMS, PRESETS, parse_params
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
 from dimos.perception.localize.types import Localization
 from dimos.utils.data import get_data
@@ -466,9 +466,10 @@ def main() -> int:
     if rig.lidar is not None:
         rig.lidar = rig.lidar.after(after).before(before)
     detector = DanDetector(args.embedder, args.detector, args.segmenter)
-    base, fields = parse_params(args.params, XARM_PARAMS)
+    base, fields = parse_params(args.params, MANIPULATION_PARAMS)
     params = detector.shifted(base, fields)
-    name = next(n for n, p in PRESETS.items() if p == base)
+    spec = args.params.strip()
+    name = spec if spec in PRESETS else next(n for n, p in PRESETS.items() if p == base)
     changed = {k: v for k, v in asdict(params).items() if v != getattr(base, k)}
     print(f"stages: {' + '.join(detector.names)}; params: {name} {changed or ''}".rstrip())
 

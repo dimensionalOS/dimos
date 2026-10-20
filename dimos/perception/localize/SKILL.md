@@ -128,9 +128,10 @@ names:
 
 | `params` | constant | rig |
 |---|---|---|
-| `"xarm"` | `XARM_PARAMS` | desk: a wrist camera over a tabletop |
+| `"manipulation"` / `"xarm"` | `MANIPULATION_PARAMS` / `XARM_PARAMS` | desk: a wrist camera over a tabletop |
 | `"dual_yam"` | `DUAL_YAM_PARAMS` | desk: dual OpenYAM arms whose D405 wrist cameras see objects from 7 cm |
-| `"go2"` | `GO2_PARAMS` | room: a walking robot, furniture-sized objects, a 5 cm lidar map |
+| `"navigation"` / `"go2"` | `NAVIGATION_PARAMS` / `GO2_PARAMS` | room: a walking robot, furniture-sized objects, a 5 cm lidar map |
+| `"g1"` | `G1_PARAMS` | room: a walking robot with dense depth (`min_points=30`) |
 
 `params` changes the module's params for that call only. The next call without
 it is back on the module's, the ones its blueprint set.

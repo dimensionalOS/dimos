@@ -28,8 +28,8 @@ from typing import Any
 
 from dimos.perception.localize.types import LocalizeParams
 
-# desk scale: a wrist camera over a tabletop, the xArm recordings
-XARM_PARAMS = LocalizeParams(
+# desk scale: a wrist or overhead camera over a tabletop
+MANIPULATION_PARAMS = LocalizeParams(
     candidate_floor=0.25,
     accept_score=0.40,
     min_views=2,
@@ -51,13 +51,10 @@ XARM_PARAMS = LocalizeParams(
     plane_cell_m=2.0,
 )
 
-# the desk seen by dual OpenYAM wrist D405s, which see objects from 7 cm
-DUAL_YAM_PARAMS = replace(XARM_PARAMS, min_camera_range_m=0.07)
-
 # room scale: a walking robot, furniture-sized objects, viewpoints meters apart,
 # the lidar a 5 cm voxel map
-GO2_PARAMS = replace(
-    XARM_PARAMS,
+NAVIGATION_PARAMS = replace(
+    MANIPULATION_PARAMS,
     candidate_floor=0.18,
     accept_score=0.32,
     cluster_radius_m=0.30,
@@ -70,10 +67,21 @@ GO2_PARAMS = replace(
     fuse_voxel_m=0.03,
 )
 
+# per-rig presets derived from the manipulation and navigation baselines
+XARM_PARAMS = MANIPULATION_PARAMS
+# the desk seen by dual OpenYAM wrist D405s, which see objects from 7 cm
+DUAL_YAM_PARAMS = replace(MANIPULATION_PARAMS, min_camera_range_m=0.07)
+GO2_PARAMS = NAVIGATION_PARAMS
+# walking robot with dense depth instead of a 5 cm lidar map
+G1_PARAMS = replace(NAVIGATION_PARAMS, min_points=30)
+
 PRESETS: dict[str, LocalizeParams] = {
+    "manipulation": MANIPULATION_PARAMS,
+    "navigation": NAVIGATION_PARAMS,
     "xarm": XARM_PARAMS,
     "dual_yam": DUAL_YAM_PARAMS,
     "go2": GO2_PARAMS,
+    "g1": G1_PARAMS,
 }
 
 
