@@ -209,6 +209,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.teleop.hosted import hosted_stats; from dimos.teleop.utils import recorder, report, video_stats; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (hosted_stats,recorder,report,video_stats)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/teleop/hosted/test_hosted_stats.py" "$PWD/dimos/teleop/utils/test_video_stats.py" "$PWD/dimos/teleop/utils/test_recorder.py"
+      - name: Verify canonical G1 simulator and SDK boundaries without hardware
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --python .native-review/bin/python 'mujoco==3.10.0'
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree.g1 import connection, mujoco_sim, g1_tf_publisher; from dimos.robot.unitree.go2 import connection as go2; from dimos.robot.unitree.type import conversion; from dimos.robot.unitree import mujoco_connection; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,mujoco_sim,g1_tf_publisher,go2,conversion,mujoco_connection)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/test_mujoco_connection.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |
