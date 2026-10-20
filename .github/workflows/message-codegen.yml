@@ -192,6 +192,11 @@ jobs:
         run: |
           uv pip install --python .native-review/bin/python 'fastapi==0.129.0' 'uvicorn==0.40.0' 'sse-starlette==3.2.0' 'python-multipart==0.0.27' 'httpx==0.28.1' 'ffmpeg-python==0.2.0' 'soundfile==0.13.1' 'pin==4.1.0' 'pin-pink==4.3.0' 'qpsolvers==4.12.0' 'GitPython==3.1.52'
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.teleop.webxr import module, extensions, blueprints; from dimos.teleop.hosted import arm_command; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,extensions,blueprints,arm_command)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/teleop/webxr/test_module.py" "$PWD/dimos/teleop/webxr/test_body_tracking.py" "$PWD/dimos/teleop/webxr/test_blueprints.py" "$PWD/dimos/teleop/hosted/test_arm_command.py"
+      - name: Verify typed WebRTC and scoped XCDR1 transport-storage validation
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --python .native-review/bin/python 'aiohttp==3.14.1'
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.core import transport, cdr_transport; from dimos.memory.codecs import cdr; from dimos.msgs import protocol; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (transport,cdr_transport,cdr,protocol)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/protocol/pubsub/impl/webrtc/test_transport.py" "$PWD/dimos/core/test_cdr_transport.py" "$PWD/dimos/memory/codecs/test_codecs.py"
       - name: Verify canonical camera mux and real offline H264 encoding
         if: runner.os == 'Linux'
         run: |

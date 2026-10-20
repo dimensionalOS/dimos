@@ -930,7 +930,8 @@ def test_command_schemas_and_static_module_dependencies_are_available(module, mo
 
 
 @pytest.mark.parametrize(
-    "change", ["legacy", "wrong_type", "wrong_encoding", "truncated", "trailing"]
+    "change",
+    ["legacy", "wrong_type", "wrong_encoding", "truncated", "trailing", "bad_encapsulation"],
 )
 def test_noncanonical_command_frames_do_not_update_controller_state(module, change):
     pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
@@ -944,6 +945,18 @@ def test_noncanonical_command_frames_do_not_update_controller_state(module, chan
         frame = encode_data_frame(
             FrameHeader(ch="pose", seq=0, ts=0.0, delivery="latest", meta=metadata),
             encode(generated),
+        )
+    elif change == "bad_encapsulation":
+        generated = _wire_message(pose)
+        frame = encode_data_frame(
+            FrameHeader(
+                ch="pose",
+                seq=0,
+                ts=0.0,
+                delivery="latest",
+                meta={"encoding": "cdr", "type": generated.__msgtype__},
+            ),
+            b"bad!" + encode(generated)[4:],
         )
     elif change == "truncated":
         frame = frame[:-1]

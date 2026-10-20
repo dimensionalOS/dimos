@@ -21,11 +21,12 @@ from functools import partial
 import threading
 from typing import Any, Literal, TypeVar
 
-from dimos_cdrgen.registry import decode, encode, message_types
+from dimos_cdrgen.registry import encode, message_types
 
 from dimos.core.global_config import global_config
 from dimos.core.stream import Stream
 from dimos.core.transport import PubSubTransport
+from dimos.msgs.protocol import decode_cdr as decode
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohPubSubBase, ZenohQoS
 from dimos.protocol.service.lcmservice import LCMConfig

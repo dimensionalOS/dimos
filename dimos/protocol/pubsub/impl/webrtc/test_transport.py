@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 import pickle
 import struct
 
+from dimos_cdrgen.registry import decode, encode
 from pydantic import ValidationError
 import pytest
 
@@ -28,6 +30,13 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Twist as CdrTwist,
+    TwistStamped as CdrTwistStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Header, Int32, String
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
@@ -36,6 +45,7 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     ProviderConfig,
 )
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 
 # ─── Mock provider ───────────────────────────────────────────────────
 
@@ -512,3 +522,121 @@ def test_subscribe_all_fires_once_per_message() -> None:
     ps.subscribe("u", lambda data, t: None)
     ps.publish("u", b"y")
     assert seen == [(b"x", "t"), (b"y", "u")]
+
+
+@pytest.fixture
+def cdr_resources(request):
+    config = MockConfig(name=request.node.name)
+    provider = config.provider()
+    with ExitStack() as resources:
+        resources.callback(provider.stop)
+        yield config, provider, resources
+
+
+def test_generated_values_multiplex_as_cdr_and_keep_exact_type_header_and_sequence(cdr_resources):
+    config, provider, resources = cdr_resources
+    first = MockTransport("cmd_unreliable", CdrTwistStamped, config=config)
+    second = MockTransport("cmd_unreliable", String, config=config)
+    resources.callback(first.stop)
+    resources.callback(second.stop)
+    received, strings, frames = [], [], []
+    resources.callback(first.subscribe(received.append))
+    resources.callback(second.subscribe(strings.append))
+    resources.callback(provider.subscribe("cmd_unreliable", lambda data, _: frames.append(data)))
+    message = CdrTwistStamped(
+        Header(Time(1_789_654_321, 1), "base"),
+        CdrTwist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
+    )
+    first.publish(message)
+    second.publish(String("status"))
+    first.publish(message)
+    assert received == [message, message]
+    assert all(value is not message for value in received)
+    assert all(type(value) is CdrTwistStamped for value in received)
+    assert strings == [String("status")]
+    headers = [decode_data_frame(value).header for value in frames]
+    assert [value.seq for value in headers] == [0, 0, 1]
+    assert headers[0].meta == {"encoding": "cdr", "type": "geometry_msgs/msg/TwistStamped"}
+    assert decode(decode_data_frame(frames[0]).payload, CdrTwistStamped).header.stamp == Time(
+        1_789_654_321, 1
+    )
+    assert not hasattr(received[0], "lcm_encode")
+
+
+@pytest.mark.parametrize("variant", ["foreign", "legacy", "bare", "trailing", "payload"])
+def test_generated_receiver_drops_mismatched_or_malformed_frames_then_recovers(
+    cdr_resources, variant
+):
+    config, provider, resources = cdr_resources
+    transport = MockTransport("cmd_unreliable", Int32, config=config)
+    resources.callback(transport.stop)
+    received = []
+    resources.callback(transport.subscribe(received.append))
+    header = FrameHeader(
+        ch="number",
+        seq=0,
+        ts=1.0,
+        delivery="latest",
+        meta={"encoding": "cdr", "type": "std_msgs/msg/Int32"},
+    )
+    frames = {
+        "foreign": encode_data_frame(
+            header.model_copy(update={"meta": {"encoding": "cdr", "type": "std_msgs/msg/String"}}),
+            encode(String("foreign")),
+        ),
+        "legacy": FakeLCMMsg(2.0).lcm_encode(),
+        "bare": encode(Int32(2)),
+        "trailing": encode_data_frame(header, encode(Int32(2))) + b"tail",
+        "payload": encode_data_frame(header, b"malformed"),
+    }
+    provider.publish("cmd_unreliable", frames[variant])
+    assert received == []
+    provider.publish("cmd_unreliable", encode_data_frame(header, encode(Int32(3))))
+    assert received == [Int32(3)]
+
+
+def test_wrong_generated_value_and_unowned_type_fail_before_provider_start(cdr_resources, mocker):
+    config, provider, resources = cdr_resources
+    start = mocker.spy(provider, "start")
+    transport = MockTransport("cmd_unreliable", Int32, config=config)
+    resources.callback(transport.stop)
+    with pytest.raises(TypeError, match="declared type"):
+        transport.publish(String("wrong"))
+    start.assert_not_called()
+
+    class Imposter:
+        __msgtype__ = "std_msgs/msg/Int32"
+
+    with pytest.raises(TypeError, match="registry-owned"):
+        MockTransport("cmd_unreliable", Imposter, config=config)
+    start.assert_not_called()
+
+
+def test_generated_transport_pickle_preserves_owner_and_provider_configuration(cdr_resources):
+    config, provider, resources = cdr_resources
+    original = MockTransport("cmd_unreliable", Int32, config=config)
+    restored = pickle.loads(pickle.dumps(original))
+    resources.callback(original.stop)
+    resources.callback(restored.stop)
+    received = []
+    resources.callback(restored.subscribe(received.append))
+    original.publish(Int32(29))
+    assert restored._msg_type is Int32
+    assert restored._config == config
+    assert restored._config.provider() is provider
+    assert received == [Int32(29)]
+
+
+def test_explicit_legacy_and_generated_decoders_do_not_fallback_on_shared_channel(cdr_resources):
+    config, provider, resources = cdr_resources
+    current = MockTransport("cmd_unreliable", Int32, config=config)
+    legacy = MockTransport("cmd_unreliable", FakeLCMMsg, config=config)
+    resources.callback(current.stop)
+    resources.callback(legacy.stop)
+    current_values, legacy_values = [], []
+    resources.callback(current.subscribe(current_values.append))
+    resources.callback(legacy.subscribe(legacy_values.append))
+    current.publish(Int32(3))
+    legacy.publish(FakeLCMMsg(4.0))
+    assert current_values == [Int32(3)]
+    assert [value.value for value in legacy_values] == [4.0]

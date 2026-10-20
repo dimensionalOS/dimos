@@ -182,3 +182,22 @@ port, video transport and encoder with only the external provider mocked:
 ```sh
 DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/teleop/hosted/test_camera_mux.py dimos/protocol/pubsub/impl/webrtc/providers/test_video_track.py
 ```
+
+
+Typed data-channel transports retain their existing constructor and blueprint
+syntax. A generated registry-owned type selects CDR automatically:
+
+```python
+from dimos.core.transport import CloudflareTransport
+from dimos.messages.geometry_msgs.msg import TwistStamped
+
+command_transport = CloudflareTransport.spec("cmd_unreliable", TwistStamped)
+```
+
+The provider still forwards opaque bytes on the same physical channel. Generated
+values use the shared data-frame envelope with `encoding: "cdr"` and an exact
+message type; typed subscriptions demultiplex that type. Raw bytes and explicitly
+selected legacy classes keep separate paths during migration, with no decoder
+fallback. Plain XCDR1 encapsulation is checked before decoding at the transport,
+WebXR command-frame, `CdrCodec` storage and explicit conversion entrypoints. The registry
+remains the field serializer; this adds no second codec or runtime generator.

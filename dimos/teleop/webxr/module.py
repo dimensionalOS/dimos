@@ -53,6 +53,7 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
 from dimos.messages.std_msgs.msg import Header, String, UInt32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.protocol import validate_cdr_payload
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
@@ -270,6 +271,7 @@ class WebXRTeleopModule(Module):
                 or metadata.get("type") != message_type.__msgtype__
             ):
                 return False
+            validate_cdr_payload(frame.payload)
             return self._decoders[frame.header.ch](frame.payload) is not False
         except (ProtocolError, ValueError):
             logger.warning("Dropping malformed WebXR command frame")

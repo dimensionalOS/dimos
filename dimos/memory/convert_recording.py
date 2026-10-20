@@ -37,7 +37,6 @@ import tempfile
 from typing import Any
 
 from dimos_cdrgen.registry import (
-    decode as cdr_decode,
     encode as cdr_encode,
     initialize,
     message_types,
@@ -54,6 +53,7 @@ import sqlite_vec
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.utils.validation import validate_identifier
+from dimos.msgs.protocol import decode_cdr as cdr_decode
 from dimos.protocol.cdr_mcap import CdrMcapWriter
 
 # Deliberate, reviewable mappings. No suffix-based arbitrary Python imports.

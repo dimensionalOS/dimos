@@ -25,10 +25,11 @@ from typing import (
     cast,
 )
 
+from dimos_cdrgen.registry import encode as cdr_encode, message_types
 import numpy as np
 
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.protocol import DimosMsg
+from dimos.msgs.protocol import DimosMsg, decode_cdr as cdr_decode
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
@@ -41,6 +42,13 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils import colors
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    FrameHeader,
+    ProtocolError,
+    decode_data_frame,
+    encode_data_frame,
+    peek_data_frame_lengths,
+)
 
 logger = setup_logger()
 
@@ -280,23 +288,22 @@ class DDSTransport(PubSubTransport[T]):
         return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
-M = TypeVar("M", bound=DimosMsg)
-
-
 def _rebuild_webrtc_transport(
-    cls: type[WebRTCTransport[M]], topic: str, msg_type: type[M] | None, config: ProviderConfig
-) -> WebRTCTransport[M]:
+    cls: type[WebRTCTransport[T]], topic: str, msg_type: type[T] | None, config: ProviderConfig
+) -> WebRTCTransport[T]:
     return cls(topic, msg_type, config=config)
 
 
-class WebRTCTransport(PubSubTransport[M]):
+class WebRTCTransport(PubSubTransport[T]):
     """Transport over WebRTC DataChannels.
 
     Subclasses bind a backend by setting ``_config_cls``; the base class can
-    also be used directly with an explicit ``config``. Two modes:
+    also be used directly with an explicit ``config``. Encoding follows the declared type:
 
     * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
-    * **Typed LCM** (``msg_type=SomeMsg``): LCM-encoded on ``broadcast()``,
+    * **Generated values**: CDR in the shared data-frame envelope, with exact
+      type metadata. Foreign types on a multiplexed channel are skipped.
+    * **Explicit legacy classes**: LCM-encoded on ``broadcast()``,
       LCM-decoded on ``subscribe()`` (foreign types on the shared channel are skipped) — so multiple
       transports sharing one multiplexed DataChannel each receive only
       their own message type.
@@ -315,13 +322,20 @@ class WebRTCTransport(PubSubTransport[M]):
     def __init__(
         self,
         topic: str,
-        msg_type: type[M] | None = None,
+        msg_type: type[T] | None = None,
         *,
         config: ProviderConfig | None = None,
         **config_kwargs: Any,
     ) -> None:
         super().__init__(topic)
+        self._cdr_name: str | None = None
+        if msg_type is not None and hasattr(msg_type, "__msgtype__"):
+            name = getattr(msg_type, "__msgtype__", None)
+            if not isinstance(name, str) or message_types().get(name) is not msg_type:
+                raise TypeError("CDR transport requires a generated, registry-owned message class")
+            self._cdr_name = name
         self._msg_type = msg_type
+        self._sequence = 0
         self._config = config or self._config_cls(**config_kwargs)
         self._pubsub: WebRTCPubSub | None = None
         # Guards first-use init: concurrent subscribe()/broadcast() must not
@@ -333,15 +347,35 @@ class WebRTCTransport(PubSubTransport[M]):
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
 
-    def broadcast(self, _: Stream[M] | None, msg: M) -> None:
+    def broadcast(self, _: Stream[T] | None, msg: T) -> None:
+        data: bytes | T
+        if self._cdr_name is not None:
+            assert self._msg_type is not None
+            if not isinstance(msg, self._msg_type):
+                raise TypeError("Message does not match the transport's declared type")
+            payload = cdr_encode(msg)
+            with self._init_lock:
+                sequence = self._sequence
+                self._sequence += 1
+            data = encode_data_frame(
+                FrameHeader(
+                    ch=str(self.topic),
+                    seq=sequence,
+                    ts=time.time(),
+                    delivery="latest",
+                    meta={"encoding": "cdr", "type": self._cdr_name},
+                ),
+                payload,
+            )
+        else:
+            data = cast("DimosMsg", msg).lcm_encode() if self._msg_type is not None else msg
         if not self._started:
             self.start()
         assert self._pubsub is not None
-        data = msg.lcm_encode() if self._msg_type is not None else msg
         self._pubsub.publish(self.topic, data)  # type: ignore[arg-type]
 
     def subscribe(
-        self, callback: Callable[[M], None], selfstream: Stream[M] | None = None
+        self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
     ) -> Callable[[], None]:
         if not self._started:
             self.start()
@@ -351,14 +385,27 @@ class WebRTCTransport(PubSubTransport[M]):
             msg_type = self._msg_type
 
             def _typed_cb(data: bytes, _topic: str) -> None:
-                # The channel is multiplexed (e.g. the browser sends Twists and
-                # Poses on cmd_unreliable); lcm_decode verifies the wire
-                # fingerprint and raises on other types — skip those.
+                # The physical channel is multiplexed. The declared generated
+                # type selects CDR; explicitly legacy classes retain their codec.
+                # Neither path tries the other decoder on a mismatch.
                 try:
-                    msg = msg_type.lcm_decode(data)
-                except ValueError:
+                    if self._cdr_name is not None:
+                        lengths = peek_data_frame_lengths(data)
+                        if lengths is None or lengths[2] != len(data):
+                            return
+                        frame = decode_data_frame(data)
+                        metadata = frame.header.meta or {}
+                        if (
+                            metadata.get("encoding") != "cdr"
+                            or metadata.get("type") != self._cdr_name
+                        ):
+                            return
+                        msg = cdr_decode(frame.payload, msg_type)
+                    else:
+                        msg = cast("T", cast("type[DimosMsg]", msg_type).lcm_decode(data))
+                except (ProtocolError, ValueError):
                     return
-                callback(msg)  # type: ignore[arg-type]
+                callback(msg)
 
             return self._pubsub.subscribe(self.topic, _typed_cb)
         return self._pubsub.subscribe(self.topic, lambda msg, _topic: callback(msg))  # type: ignore[arg-type]
@@ -374,7 +421,7 @@ class WebRTCTransport(PubSubTransport[M]):
         self._started = False
 
 
-class CloudflareTransport(WebRTCTransport[M]):
+class CloudflareTransport(WebRTCTransport[T]):
     """WebRTC via the hosted teleop broker + Cloudflare Realtime SFU.
 
     Config kwargs flow into :class:`BrokerConfig`; unset fields fall back to

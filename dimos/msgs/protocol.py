@@ -12,7 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
+
+from dimos_cdrgen.registry import decode as _registry_decode
+
+_Message = TypeVar("_Message")
+
+
+def validate_cdr_payload(data: bytes) -> None:
+    """Require a standalone plain XCDR1 representation in either byte order."""
+    if len(data) < 4 or data[:2] not in (b"\x00\x00", b"\x00\x01"):
+        raise ValueError("Expected standalone XCDR1 encapsulation")
+
+
+def decode_cdr(data: bytes, message_type: type[_Message]) -> _Message:
+    """Validate encapsulation, then leave field decoding to the installed codec.
+
+    The installed serializer treats the endian marker permissively; arbitrary
+    leading bytes must not become valid values at runtime boundaries.
+    """
+    validate_cdr_payload(data)
+    return _registry_decode(data, message_type)
 
 
 @runtime_checkable

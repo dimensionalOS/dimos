@@ -27,13 +27,14 @@ import numpy as np
 import pytest
 
 from dimos.memory.codecs.base import Codec, codec_for, codec_from_id, codec_id
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCdrCodec, JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image as GeneratedImage, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos.messages.std_msgs.msg import Header, Int32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.image import image_from_array, image_to_rgb
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -272,3 +273,11 @@ def test_color_cache_reopens_jpeg_cdr_with_exact_source_header(tmp_path, encodin
         )
     with pytest.raises(TypeError, match="generated Image"):
         codec_from_id("jpegcdr", f"{PointCloud2.__module__}.{PointCloud2.__qualname__}")
+
+
+@pytest.mark.parametrize("payload", [b"malformed", b"\x00\x07\x00\x00" + bytes(4)])
+def test_cdr_storage_rejects_wrong_encapsulation_before_decoding_fields(payload):
+    codec = CdrCodec(Int32)
+    with pytest.raises(ValueError, match="XCDR1 encapsulation"):
+        codec.decode(payload)
+    assert codec.decode(codec.encode(Int32(29))) == Int32(29)

@@ -20,7 +20,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
-from dimos_cdrgen.registry import decode as cdr_decode
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode, schema as cdr_schema
 import lz4.frame
 from mcap.reader import make_reader
 from mcap.writer import Writer
@@ -457,3 +457,23 @@ def test_nonempty_numeric_and_byte_arrays_preserve_values(tmp_path, typename):
         np.testing.assert_array_equal(actual, expected_array)
     if typename.endswith("JointState"):
         assert value.name == ["left", "right"]
+
+
+def test_cdr_input_with_wrong_encapsulation_publishes_no_converted_output(tmp_path):
+    source, output = tmp_path / "bad-cdr.mcap", tmp_path / "converted.mcap"
+    with source.open("wb") as handle:
+        writer = Writer(handle)
+        writer.start()
+        schema_id = writer.register_schema(
+            "std_msgs/msg/String", "ros2msg", cdr_schema("std_msgs/msg/String").encode()
+        )
+        channel = writer.register_channel("status", "cdr", schema_id)
+        payload = cdr_encode(String("body is otherwise valid"))
+        writer.add_message(channel, 1, b"bad!" + payload[4:], 1)
+        writer.finish()
+    original = source.read_bytes()
+    with pytest.raises(ValueError, match="XCDR1 encapsulation"):
+        convert(source, output)
+    assert source.read_bytes() == original
+    assert not output.exists()
+    assert not Path(str(output) + ".conversion.jsonl").exists()

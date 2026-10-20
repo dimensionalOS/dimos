@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from dimos_cdrgen.registry import decode, encode, message_types
+from dimos_cdrgen.registry import encode, message_types
+
+from dimos.msgs.protocol import decode_cdr as decode
 
 T = TypeVar("T")
 
