@@ -73,7 +73,9 @@ class GraspProposals(Module):
         """Grasp poses for an object localize reported: the best ones IK reaches, best first.
 
         proposer "heuristic": straight down at the centre of the object's footprint, jaws
-        across its narrow side; one or two grasps, instant. Suits small box-like objects.
+        across its narrow side; one or two grasps, instant. Suits small box-like objects. An
+        open container wider than the jaws (a bin, a tray) is grasped on its walls instead:
+        straight down, jaws across one wall, a little below its rim, long walls first.
         proposer "graspgenx": a learned model's grasps from any direction, ranked by its
         confidence; suits other shapes, rims and handles. Both read only the surfaces the
         camera saw.
@@ -107,6 +109,12 @@ class GraspProposals(Module):
         if frame != self.config.planning_frame:
             return f"The grasps came back in frame {frame!r}, not {self.config.planning_frame!r}."
         if not proposals.candidates:
+            if proposer == "heuristic":
+                return (
+                    f"heuristic proposed no grasps for {object_id}: it is wider than the jaws "
+                    f"({self.config.max_jaw_span:.3f} m) on every side and its inside was not "
+                    "seen below its rim, so no wall to hold either."
+                )
             return f"{proposer} proposed no grasps for {object_id}."
         return self._describe(object_id, proposer, cloud, proposals, max(count, 1))
 
@@ -153,16 +161,36 @@ class GraspProposals(Module):
         for rank, i in enumerate(reachable[:count], start=1):
             grasp, approach = grasps[i], approaches[i]
             jaw = grasp.orientation.rotate_vector(Vector3(0.0, 1.0, 0.0))
-            along_jaw = points @ np.asarray([jaw.x, jaw.y, jaw.z], dtype=np.float32)
-            width = float(np.quantile(along_jaw, 0.98) - np.quantile(along_jaw, 0.02))
+            width = _jaw_width(points, grasp, jaw, self.config.max_jaw_span)
             lines.append(
                 f"{rank}. position {_xyz(grasp.position)} orientation {_xyzw(grasp)}; "
                 f"approach {_approach(approach)}, jaw yaw "
-                f"{math.degrees(math.atan2(jaw.y, jaw.x)):.0f}deg, object width between the "
-                f"jaws {width:.3f} m, score {checked[i].score:.2f}; "
+                f"{math.degrees(math.atan2(jaw.y, jaw.x)):.0f}deg, "
+                + (
+                    f"object width between the jaws {width:.3f} m"
+                    if width is not None
+                    else "object between the jaws not seen"
+                )
+                + f", score {checked[i].score:.2f}; "
                 f"pre-grasp {_xyz(pregrasps[i].position)}"
             )
         return "\n".join(lines)
+
+
+def _jaw_width(
+    points: np.ndarray, grasp: PoseStamped, jaw: Vector3, max_jaw_span: float
+) -> float | None:
+    """Width of the object between the jaws: the points within reach of the closing jaws (half
+    their span either side along the jaw axis, a finger's breadth across it, near the grasp's
+    height), so a grasp on one wall of a container reports the wall, not the container."""
+    axis = np.asarray([jaw.x, jaw.y, jaw.z], dtype=np.float32)
+    rel = points - np.asarray([grasp.position.x, grasp.position.y, grasp.position.z], np.float32)
+    along_jaw = rel @ axis
+    across = np.linalg.norm(rel[:, :2] - np.outer(along_jaw, axis[:2]), axis=1)
+    near = (np.abs(along_jaw) < max_jaw_span / 2.0) & (across < 0.02) & (np.abs(rel[:, 2]) < 0.02)
+    if near.sum() < 5:
+        return None  # e.g. a container's wall the camera saw only edge-on
+    return float(np.quantile(along_jaw[near], 0.98) - np.quantile(along_jaw[near], 0.02))
 
 
 def _xyz(v: Vector3) -> str:

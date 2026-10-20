@@ -170,7 +170,9 @@ Grasps:
                                  object's width between the jaws and a score. They point
                                  straight down at the centre of the object's footprint, jaws
                                  across its narrow side, and read only the surfaces the camera
-                                 saw; suited to small box-like objects. Collisions are not
+                                 saw; suited to small box-like objects. An open container wider
+                                 than the jaws (a bin) gets grasps on its walls instead: jaws
+                                 across one wall, a little below its rim. Collisions are not
                                  checked, and the proposals do not know the task; choose the one
                                  that suits it. localize merges every view of an object into its
                                  cloud; when the surfaces seen span only a few millimetres, the

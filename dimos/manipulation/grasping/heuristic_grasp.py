@@ -35,6 +35,17 @@ from dimos.msgs.std_msgs.Header import Header
 
 # Fraction of the XY points, farthest from the median, dropped as depth noise before the fit.
 _TRIM_QUANTILE = 0.02
+# An open container too wide for the jaws is held by a wall. A wall's own points lie within
+# _WALL_BAND of the footprint's edge; one not seen sits _WALL_HALF beyond the floor's edge; a wall
+# grasp closes _WALL_GRIP above the floor; and the footprint's middle must be seen at least
+# _OPEN_DROP below the top to count as open. Walls are assumed this thick or less on each side of
+# the footprint when deciding whether the jaws reach around an open container.
+_WALL_BAND = 0.01
+_WALL_HALF = 0.004
+_WALL_GRIP = 0.03
+_OPEN_DROP = 0.03
+_WALL_MARGIN = 0.01
+_MIN_WALL_POINTS = 5
 
 
 class HeuristicGraspConfig(ModuleConfig):
@@ -65,7 +76,11 @@ def top_down_grasps(
     seen and at least ``grasp_depth`` below the top: a camera above an object may see only its
     top, and a grasp there closes on nothing. The footprint is the smallest rectangle around the XY points, so its sides follow
     the object's faces at any yaw. The first candidate closes the jaws across the short side;
-    a second closes them across the long side when the jaws open that wide."""
+    a second closes them across the long side when the jaws open that wide.
+
+    An object wider than the jaws on both sides is grasped on a wall when it is an open
+    container (its inside seen well below its rim): jaws across the wall, a little below the
+    rim, the long walls ahead of the short ones. A solid object that wide gets no grasp."""
     if object_pointcloud.ts is None or not math.isfinite(float(object_pointcloud.ts)):
         raise ValueError("object pointcloud must have a finite timestamp")
     if not object_pointcloud.frame_id:
@@ -78,6 +93,15 @@ def top_down_grasps(
 
     (cx, cy), sides, short_yaw = _footprint(points[:, :2])
     low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
+    # The jaws cannot close across it (or barely: an open container is seen from inside its
+    # walls, so its outside is wider than its footprint): grasp a wall.
+    if (sides[0] > max_jaw_span - 2 * _WALL_MARGIN and _is_open(points, high_z)) or sides[
+        0
+    ] > max_jaw_span:
+        return GraspCandidateArray(
+            Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
+            _wall_grasps(points, (cx, cy), sides, short_yaw, float(high_z)),
+        )
     position = Vector3(cx, cy, float(min((low_z + high_z) / 2.0, high_z - grasp_depth)))
     candidates = [GraspCandidate(_top_down(position, short_yaw), score=1.0)]
     if max(sides) <= max_jaw_span and not math.isclose(sides[0], sides[1], rel_tol=0.05):
@@ -85,6 +109,66 @@ def top_down_grasps(
     return GraspCandidateArray(
         Header(float(object_pointcloud.ts), object_pointcloud.frame_id), candidates
     )
+
+
+def _wall_grasps(
+    points: NDArray[np.float32],
+    centre: tuple[float, float],
+    sides: tuple[float, float],
+    short_yaw: float,
+    high_z: float,
+) -> list[GraspCandidate]:
+    """Top-down grasps on the walls of an open container, jaws across each wall at its middle,
+    ``_WALL_GRIP`` above the floor seen inside (lower when the wall's seen top is lower). From
+    above, a camera sees mostly the floor and little of the walls, so a wall with too few points
+    of its own is placed just beyond the floor's edge. None when the footprint's middle is not
+    seen below the top (a solid top)."""
+    across = np.asarray([math.cos(short_yaw), math.sin(short_yaw)])  # along the short side
+    along = np.asarray([-across[1], across[0]])  # along the long side
+    xy = points[:, :2] - np.asarray(centre)
+    v, u, z = xy @ across, xy @ along, points[:, 2]
+    half_short, half_long = sides[0] / 2.0, sides[1] / 2.0
+    middle = (np.abs(u) < half_long / 2.0) & (np.abs(v) < half_short / 2.0)
+    if not middle.any() or np.quantile(z[middle], 0.9) > high_z - _OPEN_DROP:
+        return []
+    floor = float(np.median(z[middle]))
+    candidates = []
+    # Long walls first: held at its middle, a long wall leaves the load closest under the jaws.
+    for normal, tangent, half_t, n_axis, jaw_yaw, score in (
+        (v, u, half_long, across, short_yaw, 0.9),
+        (u, v, half_short, along, short_yaw + math.pi / 2.0, 0.6),
+    ):
+        for sign in (1.0, -1.0):
+            outward = sign * normal
+            edge = float(np.quantile(outward, 0.98))
+            # Away from the corners, where the neighbouring walls' points lie.
+            wall = (
+                (outward > edge - _WALL_BAND)
+                & (z > floor + 0.01)
+                & (np.abs(tangent) < half_t * 0.7)
+            )
+            grip = floor + _WALL_GRIP
+            if wall.sum() >= _MIN_WALL_POINTS:
+                n = float(np.median(outward[wall]))
+                grip = min(grip, float(np.quantile(z[wall], 0.98)) - 0.005)
+            else:
+                n = edge + _WALL_HALF
+            if grip < floor + 0.015:
+                continue
+            xy_w = np.asarray(centre) + n_axis * (sign * n)
+            position = Vector3(float(xy_w[0]), float(xy_w[1]), grip)
+            candidates.append(GraspCandidate(_top_down(position, jaw_yaw), score=score))
+    return candidates
+
+
+def _is_open(points: NDArray[np.float32], high_z: float) -> bool:
+    """Whether the middle of the cloud's footprint is seen well below its top: an open container."""
+    (cx, cy), sides, short_yaw = _footprint(points[:, :2])
+    across = np.asarray([math.cos(short_yaw), math.sin(short_yaw)])
+    along = np.asarray([-across[1], across[0]])
+    xy = points[:, :2] - np.asarray([cx, cy])
+    middle = (np.abs(xy @ along) < sides[1] / 4.0) & (np.abs(xy @ across) < sides[0] / 4.0)
+    return bool(middle.any()) and float(np.quantile(points[middle, 2], 0.9)) <= high_z - _OPEN_DROP
 
 
 def _footprint(xy: NDArray[np.float32]) -> tuple[tuple[float, float], tuple[float, float], float]:

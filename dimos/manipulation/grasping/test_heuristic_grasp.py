@@ -141,6 +141,73 @@ def test_too_long_a_side_is_not_offered(module: HeuristicGraspModule) -> None:
     assert len(proposals.candidates) == 1
 
 
+def _bin(yaw: float, size: tuple[float, float] = (0.30, 0.10), wall: float = 0.005) -> np.ndarray:
+    """An open bin's floor, wall faces and rims as a camera above sees them, 6 cm deep, turned
+    ``yaw`` about z, centred at (0.56, 0.0) with its floor at z 0.80."""
+    rng = np.random.default_rng(1)
+    length, width = size
+    floor = np.column_stack([rng.uniform(-0.5, 0.5, (600, 2)) * [length, width], np.full(600, 0.0)])
+    walls = []
+    for axis, half, other in ((0, length / 2, width / 2), (1, width / 2, length / 2)):
+        for sign in (1.0, -1.0):
+            n = 300
+            local = np.zeros((n, 3))
+            local[:, axis] = sign * (half - rng.uniform(0.0, wall, n))
+            local[:, 1 - axis] = rng.uniform(-other, other, n)
+            local[:, 2] = rng.uniform(0.0, 0.06, n)
+            local[: n // 4, 2] = 0.06  # the rim's top face, seen from above
+            walls.append(local)
+    local = np.vstack([floor, *walls])
+    turn = np.asarray([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
+    xy = local[:, :2] @ turn.T + np.asarray([0.56, 0.0])
+    return np.column_stack([xy, local[:, 2] + 0.80])
+
+
+@pytest.mark.parametrize("yaw_deg", [0.0, 25.0, -60.0])
+def test_an_open_bin_wider_than_the_jaws_is_grasped_on_its_walls(
+    module: HeuristicGraspModule, yaw_deg: float
+) -> None:
+    yaw = math.radians(yaw_deg)
+    proposals = module.propose_grasps(_cloud(_bin(yaw)))
+
+    assert len(proposals.candidates) == 4
+    long_walls, short_walls = proposals.candidates[:2], proposals.candidates[2:]
+    assert all(c.score > s.score for c in long_walls for s in short_walls)
+    side = np.asarray(
+        [-math.sin(yaw), math.cos(yaw)]
+    )  # the bin's short side, across the long walls
+    for c in long_walls:
+        p = c.pose.position
+        offset = np.asarray([p.x - 0.56, p.y])
+        # On a long wall (about 5 cm from the middle), at its middle, 3 cm above the floor.
+        assert abs(offset @ side) == pytest.approx(0.0475, abs=4e-3)
+        assert abs(offset @ np.asarray([math.cos(yaw), math.sin(yaw)])) < 0.02
+        assert p.z == pytest.approx(0.83, abs=3e-3)
+        jaw = c.pose.orientation.rotate_vector(Vector3(0.0, 1.0, 0.0))
+        assert abs(jaw.x * side[0] + jaw.y * side[1]) == pytest.approx(1.0, abs=1e-3)
+        assert c.pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0)).z == pytest.approx(-1.0)
+
+
+def test_unseen_walls_are_placed_just_beyond_the_floor(module: HeuristicGraspModule) -> None:
+    # What localize gave in the sim: the bin's floor and one end wall's inner face, no side walls.
+    cloud = _bin(0.0, size=(0.29, 0.086))
+    keep = (cloud[:, 2] < 0.801) | (cloud[:, 0] > 0.56 + 0.14)
+    proposals = module.propose_grasps(_cloud(cloud[keep]))
+
+    long_walls = [c for c in proposals.candidates if c.score == pytest.approx(0.9)]
+    assert len(long_walls) == 2
+    for c in long_walls:
+        p = c.pose.position
+        assert abs(p.y) == pytest.approx(0.043 + 0.004, abs=3e-3)
+        assert p.z == pytest.approx(0.83, abs=3e-3)
+
+
+def test_a_solid_object_wider_than_the_jaws_gets_no_grasp(module: HeuristicGraspModule) -> None:
+    proposals = module.propose_grasps(_cloud(_block(0.3, size=(0.12, 0.12))))
+
+    assert proposals.candidates == []
+
+
 @pytest.mark.parametrize(
     "points, frame_id, timestamp, error",
     [
