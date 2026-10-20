@@ -31,8 +31,7 @@ import threading
 import time
 from typing import Any, TypeVar
 
-from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
+from dimos_cdrgen.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,15 +43,23 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
+from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.time import to_seconds
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
 # Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    ProtocolError,
+    decode_data_frame,
+    peek_data_frame_lengths,
+)
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
@@ -145,11 +152,11 @@ class WebXRTeleopModule(Module):
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
 
-        # Fingerprint-based message dispatch table
-        self._decoders: dict[bytes, Any] = {
-            LCMPoseStamped._get_packed_fingerprint(): self._on_pose_bytes,
-            LCMJoy._get_packed_fingerprint(): self._on_joy_bytes,
+        self._command_types: dict[str, type[CdrPoseStamped] | type[CdrJoy]] = {
+            "pose": CdrPoseStamped,
+            "joy": CdrJoy,
         }
+        self._decoders = {"pose": self._on_pose_bytes, "joy": self._on_joy_bytes}
 
         # Tracked here so subclasses can push from non-asyncio threads.
         # _clients_lock guards add/discard/snapshot of the set across the
@@ -176,6 +183,16 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/config")
         async def teleop_config() -> dict[str, Any]:
             return self._webxr_client_config()
+
+        @self._web_server.app.get("/teleop/schema")
+        async def command_schemas() -> dict[str, dict[str, str]]:
+            return {
+                channel: {
+                    "type": message_type.__msgtype__,
+                    "definition": cdr_schema(message_type.__msgtype__),
+                }
+                for channel, message_type in self._command_types.items()
+            }
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -233,13 +250,23 @@ class WebXRTeleopModule(Module):
         }
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
-        fingerprint = data[:8]
-        decoder = self._decoders.get(fingerprint)
-        if decoder is None:
-            logger.warning("Unknown WebXR message fingerprint", fingerprint=fingerprint.hex())
+        try:
+            lengths = peek_data_frame_lengths(data)
+            if lengths is None or lengths[2] != len(data):
+                return False
+            frame = decode_data_frame(data)
+            message_type = self._command_types.get(frame.header.ch)
+            metadata = frame.header.meta or {}
+            if (
+                message_type is None
+                or metadata.get("encoding") != "cdr"
+                or metadata.get("type") != message_type.__msgtype__
+            ):
+                return False
+            return self._decoders[frame.header.ch](frame.payload) is not False
+        except (ProtocolError, ValueError):
+            logger.warning("Dropping malformed WebXR command frame")
             return False
-        decoder(data)
-        return True
 
     def _dispatch_text_message(self, payload: str) -> bool:
         try:
@@ -444,8 +471,15 @@ class WebXRTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Decode LCM bytes into PoseStamped, transform to robot frame."""
-        msg = PoseStamped.lcm_decode(data)
+        """Decode canonical CDR, adapting only at the existing pose-math boundary."""
+        wire = cdr_decode(data, CdrPoseStamped)
+        position, rotation = wire.pose.position, wire.pose.orientation
+        msg = PoseStamped(
+            ts=to_seconds(wire.header.stamp),
+            frame_id=wire.header.frame_id,
+            position=(position.x, position.y, position.z),
+            orientation=(rotation.x, rotation.y, rotation.z, rotation.w),
+        )
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
@@ -453,8 +487,14 @@ class WebXRTeleopModule(Module):
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
-        """Decode LCM bytes into Joy, parse into WebXRControllerState."""
-        msg = Joy.lcm_decode(data)
+        """Decode canonical CDR, retaining the internal controller-state API."""
+        wire = cdr_decode(data, CdrJoy)
+        msg = Joy(
+            ts=to_seconds(wire.header.stamp),
+            frame_id=wire.header.frame_id,
+            axes=wire.axes.tolist(),
+            buttons=wire.buttons.tolist(),
+        )
         hand = self._resolve_hand(msg.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
