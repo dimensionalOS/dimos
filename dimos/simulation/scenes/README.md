@@ -130,9 +130,8 @@ dimos \
   --simulation mujoco \
   --scene-package none \
   --viewer rerun \
-  --rerun-open native \
   --n-workers 12 \
-  run unitree-g1-groot-wbc
+  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
 ```
 
 Office:
@@ -142,9 +141,8 @@ dimos \
   --simulation mujoco \
   --scene-package office \
   --viewer rerun \
-  --rerun-open native \
   --n-workers 12 \
-  run unitree-g1-groot-wbc
+  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
 ```
 
 Supermarket:
@@ -154,9 +152,8 @@ dimos \
   --simulation mujoco \
   --scene-package supermarket \
   --viewer rerun \
-  --rerun-open native \
   --n-workers 12 \
-  run unitree-g1-groot-wbc
+  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
 ```
 
 Prefer headless MuJoCo with Rerun native for normal testing. Opening the MuJoCo

@@ -36,6 +36,10 @@
               defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
                 # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
                 stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; };
+                # Two lcm-msgs 0.1.0 ride along (dimos-module's rust-codegen pin and our v0.1.6 tag).
+                # buildRustCrate names and ids a crate by name and version alone, so the two would
+                # collide; the rev in the version tells them apart.
+                lcm-msgs = attrs: { version = "${attrs.version}+${builtins.substring 0 8 (attrs.src.rev or "")}"; };
                 cyclonedds-sys = cyclonedds;
                 ${name} = cyclonedds;
               };

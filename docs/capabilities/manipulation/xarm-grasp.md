@@ -11,12 +11,11 @@ room scene with `--simulation`:
 | `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
-dimos run xarm-grasp-graspgenx --xarm7-ip 192.168.1.x     # hardware
-dimos run xarm-grasp-graspgenx --simulation mujoco        # the room scene
+dimos run xarm-grasp-graspgenx --controlcoordinator.addresses '{"arm": "192.168.1.x"}'  # hardware
+dimos run xarm-grasp-graspgenx --simulation mujoco                                       # the room scene
 ```
 
-Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
-`--simulation` set and everything reverts to MuJoCo regardless of the IP.
+On hardware the arm needs its address, from the flag above or a saved config file (see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration)). With `--simulation` a saved address is ignored and everything runs in MuJoCo.
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 

@@ -46,8 +46,9 @@ fn basic_config() -> Config {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     }
 }
 
@@ -363,8 +364,9 @@ fn ground_clipping_single_ray() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -521,8 +523,9 @@ fn stair_clipping_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase
@@ -605,8 +608,9 @@ fn landing_floor_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -677,8 +681,9 @@ fn landing_grazed_from_below() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -818,8 +823,9 @@ fn grazing_ray_spares_planar_floor() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();

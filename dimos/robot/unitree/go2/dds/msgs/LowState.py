@@ -49,8 +49,7 @@ class LowState(PrettyMsg):
     power_a: float
     fan_frequency: np.ndarray  # u16[4]
     reserve: int
-    # NOTE: the SDK's trailing `crc` (uint32) is absent on this Go2's firmware
-    # wire format — verified against the recording (body ends after `reserve`).
+    crc: int
 
     __cdr_fields__ = [
         ("head", ("array", "u8", 2)),
@@ -74,4 +73,5 @@ class LowState(PrettyMsg):
         ("power_a", "f32"),
         ("fan_frequency", ("array", "u16", 4)),
         ("reserve", "u32"),
+        ("crc", "u32"),
     ]

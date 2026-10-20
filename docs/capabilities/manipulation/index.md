@@ -434,7 +434,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --xarm7-ip <ip>
+dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -542,3 +542,5 @@ planner is locked for its whole native call.
 | [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
+
+Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

@@ -82,6 +82,7 @@ def make_piper_hardware(
     adapter_kwargs: dict[str, object] | None = None,
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
+    mock_without_address: bool = False,
 ) -> HardwareComponent:
     kwargs = _adapter_kwargs(home_joints)
     if adapter_kwargs:
@@ -90,13 +91,11 @@ def make_piper_hardware(
     initial_positions = kwargs.get("initial_positions")
     if gripper and isinstance(initial_positions, list):
         kwargs["initial_positions"] = [*initial_positions, 0.0]
-    limits: JointLimits | None = None
-    if adapter_type == "mock":
-        limits = JointLimits(
-            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
-            position_upper=[*([math.pi] * 6), *([0.08] * len(gripper_joints))],
-            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
-        )
+    mock_limits = JointLimits(
+        position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+        position_upper=[*([math.pi] * 6), *([0.08] * len(gripper_joints))],
+        velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+    )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -104,8 +103,9 @@ def make_piper_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        limits=limits,
+        limits=mock_limits if adapter_type == "mock" else None,
         adapter_kwargs=kwargs,
+        mock_limits=mock_limits if mock_without_address else None,
     )
 
 
@@ -114,22 +114,15 @@ def piper_hardware(
     *,
     gripper: bool = True,
     mock_without_address: bool = True,
+    address: str | None = None,
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
+    """The Piper on a CAN interface; in simulation it attaches to the blueprint's MujocoSimModule."""
     if global_config.simulation:
         return make_piper_hardware(
             hw_id,
             adapter_type="sim_mujoco",
-            address=str(PIPER_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    address = global_config.can_port or "can0"
-    if mock_without_address and not global_config.can_port:
-        return make_piper_hardware(
-            hw_id,
             gripper=gripper,
             home_joints=home_joints,
             canonical_joint_names=canonical_joint_names,
@@ -137,10 +130,11 @@ def piper_hardware(
     return make_piper_hardware(
         hw_id,
         adapter_type="piper",
-        address=address,
+        address=address if mock_without_address else address or "can0",
         gripper=gripper,
         home_joints=home_joints,
         canonical_joint_names=canonical_joint_names,
+        mock_without_address=mock_without_address,
     )
 
 
