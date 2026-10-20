@@ -23,6 +23,7 @@ on:
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
       - dimos/perception/detection/**
+      - dimos/models/embedding/**
       - dimos/perception/experimental/moduleDB.py
       - dimos/models/vl/base.py
       - dimos/models/vl/qwen.py
@@ -167,3 +168,11 @@ jobs:
           .native-review/bin/python -m pip install 'https://download-r2.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=8f8b3cfc53010a4b4a3c7ecb88c212e9decc4f5eeb6af75c3c803937d2d60947'
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional project fixture case' --strict-markers -q "$PWD/dimos/perception/detection/type/detection2d/test_generated_bbox.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_filters.py" "$PWD/dimos/perception/detection/type/detection3d/test_imageDetections3D.py" "$PWD/dimos/perception/detection/type/detection3d/test_marker.py" "$PWD/dimos/models/vl/test_base.py" "$PWD/dimos/perception/detection/detectors/test_generated_images.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/type dimos/perception/detection/module2D.py dimos/perception/detection/module3D.py dimos/perception/detection/detectors/base.py dimos/perception/detection/detectors/yolo.py dimos/perception/detection/detectors/person/yolo.py dimos/perception/detection/detectors/grounding_dino.py dimos/perception/detection/detectors/omdet.py dimos/perception/detection/detectors/owlv2.py dimos/perception/detection/detectors/yoloe.py dimos/perception/experimental/moduleDB.py dimos/models/vl/base.py dimos/models/vl/qwen.py dimos/types/timestamped.py --exclude '(test_.*|conftest\.py)'
+      - name: Verify generated tracking and embedding image boundaries
+        if: runner.os == 'Linux'
+        env:
+          HF_HUB_OFFLINE: '1'
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/detection/reid/test_generated_module.py" "$PWD/dimos/models/embedding/test_generated_images.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/person_tracker.py dimos/perception/detection/reid/module.py dimos/models/embedding/base.py dimos/models/embedding/clip.py dimos/models/embedding/dino.py dimos/models/embedding/siglip.py dimos/models/embedding/siglip2.py dimos/models/embedding/treid.py dimos/types/timestamped.py
