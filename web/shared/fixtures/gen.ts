@@ -23,7 +23,7 @@ import {
   type Msg,
   PROTOCOL_VERSION,
 } from "../protocol.ts";
-import { ManifestError, parseManifest } from "../manifest.ts";
+import { ManifestError, parseManifest, TRACK_ENCODING } from "../manifest.ts";
 
 function b64(bytes: Uint8Array): string {
   let s = "";
@@ -34,6 +34,16 @@ function b64(bytes: Uint8Array): string {
 // Shared by the pub vector and pub_tx_frame: the frame payload must be
 // exactly the JSON.stringify of the pub's data (the relay's forwarding rule).
 const pubData = { text: "Salut, robotule! β", urgency: 0.75 };
+
+// Abridged SDPs for the rtc vectors (CRLF line ends like the real thing).
+const sdpOffer = "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n" +
+  "a=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\n" +
+  "a=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n" +
+  "c=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n";
+const sdpAnswer = "v=0\r\no=- 7 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\n" +
+  "m=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\n" +
+  "a=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\n" +
+  "a=mid:1\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\n";
 
 const controlMsgs: Record<string, Msg> = {
   hello_robot: {
@@ -150,6 +160,34 @@ const controlMsgs: Record<string, Msg> = {
     message: "publish peste limită β",
     requestId: "s7k2β-1",
   },
+  rtc_ice: {
+    t: "rtc_ice",
+    iceServers: [
+      { urls: ["stun:stun.cloudflare.com:3478"] },
+      {
+        urls: [
+          "turn:turn.cloudflare.com:3478?transport=udp",
+          "turns:turn.cloudflare.com:443?transport=tcp",
+        ],
+        username: "utilizator-β",
+        credential: "parolă-fixture",
+      },
+    ],
+  },
+  rtc_offer_robot: {
+    t: "rtc_offer",
+    sdp: sdpOffer,
+    tracks: [{ ch: "color_image", mid: "0" }, { ch: "rear_camera", mid: "1" }],
+  },
+  rtc_offer_viewer: { t: "rtc_offer", sdp: sdpOffer },
+  rtc_offer_pull: {
+    t: "rtc_offer",
+    sdp: sdpOffer,
+    tracks: [{ ch: "color_image", mid: "3" }],
+    robotId: "go2-lab",
+  },
+  rtc_answer: { t: "rtc_answer", sdp: sdpAnswer },
+  rtc_stalled: { t: "rtc_stalled", ch: "color_image" },
 };
 
 const teleopMsgs: Record<string, Msg> = {
@@ -207,6 +245,20 @@ const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> =
     },
     payload: new TextEncoder().encode(JSON.stringify(pubData)),
   },
+  // The robot's rtc_offer and rtc_stalled and the relay's rtc_answer reuse
+  // the datagram encoding like control_hello.
+  control_rtc_offer: {
+    header: { ch: CONTROL_CHANNEL, seq: 4, ts: 1752576001.5, delivery: "reliable" },
+    payload: encodeDatagram(controlMsgs.rtc_offer_robot),
+  },
+  control_rtc_answer: {
+    header: { ch: CONTROL_CHANNEL, seq: 5, ts: 1752576001.75, delivery: "reliable" },
+    payload: encodeDatagram(controlMsgs.rtc_answer),
+  },
+  control_rtc_stalled: {
+    header: { ch: CONTROL_CHANNEL, seq: 6, ts: 1752576002, delivery: "reliable" },
+    payload: encodeDatagram(controlMsgs.rtc_stalled),
+  },
 };
 
 // Manifest vectors: valid cases pin normalization, invalid cases pin the
@@ -224,6 +276,7 @@ const chImageFull = {
   maxHz: 15.5,
   params: { quality: 75.5 },
 };
+const chTrack = { ch: "color_image", encoding: TRACK_ENCODING, delivery: "latest", maxHz: 15.5 };
 const chCostmap = {
   ch: "global_costmap",
   encoding: "costmap.zlib.v1",
@@ -428,6 +481,12 @@ const manifestCases: Record<string, unknown> = {
     version: 1,
     channels: [{ ...chImage, dir: "tx" }],
     panels: [{ id: "cam", kind: "video", channels: ["color_image"] }],
+  },
+  video_panel_webrtc: { version: 1, channels: [chTrack], panels: [pCamera] },
+  video_panel_webrtc_wrong_delivery: {
+    version: 1,
+    channels: [{ ...chTrack, delivery: "reliable" }],
+    panels: [pCamera],
   },
   map2d_panel_full: {
     version: 1,

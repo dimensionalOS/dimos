@@ -5,6 +5,7 @@
  *
  * Usage:
  *   dimsim dev   [--scene <name>] [--port <n>]              Dev server + browser
+ *   dimsim build                                            Build dist/ without starting anything
  *   dimsim eval <workflow>                                  Run one workflow (auto --connect)
  *   dimsim eval  [--headless] [--parallel N] [--render gpu] Headless CI evals
  *   dimsim eval list                                        List eval workflows
@@ -108,6 +109,7 @@ DimSim CLI — 3D simulation + eval harness for dimos
 
 Commands:
   dimsim dev   [options]         Dev server (open browser, optional eval)
+  dimsim build                   Build the frontend (dist/) without starting anything
   dimsim eval list               List installed eval workflows
   dimsim eval <workflow>         Run one workflow against an already-running bridge
   dimsim eval  [options]         Run eval workflows (headless CI)
@@ -193,6 +195,15 @@ async function main() {
   }
 
   const port = parseInt(opts.port as string) || 8090;
+
+  // ── Build ───────────────────────────────────────────────────────────
+  // Materialize dist/ (and node_modules/) ahead of `dev`, so a cold checkout
+  // doesn't build inside the caller's startup window. CI runs this first.
+  if (subcommand === "build") {
+    const distDir = await resolveDistDir();
+    console.log(`[dimsim] Frontend ready: ${distDir}`);
+    Deno.exit(0);
+  }
 
   // ── Dev ─────────────────────────────────────────────────────────────
   if (subcommand === "dev") {

@@ -18,7 +18,8 @@ Relay discovery and `RelayClient.connect` are replaced by fakes and fake
 transports sit under the module's `In` streams (module_test_support.py), so lazy
 subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
 observable directly. cockpit()-authored channels and the publish path are
-covered in test_relay_bridge_authoring.py.
+covered in test_relay_bridge_authoring.py, WebRTC video in
+test_relay_bridge_rtc.py.
 """
 
 from __future__ import annotations
@@ -40,7 +41,6 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -48,7 +48,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.module_test_support import (
@@ -65,6 +66,7 @@ from dimos.web.relay_bridge.module_test_support import (
     push,
     wait_until,
 )
+from dimos.web.relay_bridge.pacing import passes_rate_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
@@ -74,12 +76,7 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    default_manifest,
-    resolve_robot_info,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
 
 
@@ -137,9 +134,9 @@ def test_manifest_and_robot_info_content() -> None:
 
     info = resolve_robot_info(config)
     assert (info.id, info.name) == ("go2-lab", "Lab")
-    # Fallback chain: explicit id -> global robot_id -> hostname.
+    # An unspecified id uses the hostname.
     fallback = resolve_robot_info(RelayBridgeConfig())
-    assert fallback.id == (RelayBridgeConfig().g.robot_id or socket.gethostname())
+    assert fallback.id == socket.gethostname()
     assert fallback.name == fallback.id
 
 
@@ -241,7 +238,7 @@ def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     accepted = [
         now
         for now in times
-        if relay_bridge_module._passes_rate_gate(
+        if passes_rate_gate(
             last_input,
             "color_image",
             now,
@@ -992,7 +989,7 @@ def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
         seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1032,26 +1029,6 @@ def test_relay_key_reaches_hello(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_relay_key_falls_back_to_global_config(monkeypatch) -> None:
-    # RELAY_KEY (env or .env) lands in GlobalConfig; the module reads it when
-    # its own field is unset. The autouse fixture restores global_config.
-    client = FakeClient()
-
-    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
-        return client
-
-    patch_relay(monkeypatch, fake_connect)
-    global_config.update(relay_key="global-key-0123456789abcdef")
-    module = RelayBridgeModule(
-        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
-    )
-    try:
-        module.start()
-        assert client.hello_token == "global-key-0123456789abcdef"
-    finally:
-        stop_module(module)
-
-
 def test_local_relay_ignores_relay_key(monkeypatch) -> None:
     # A spawned local relay has no auth file: the key is never sent to it.
     client = FakeClient()
@@ -1059,7 +1036,7 @@ def test_local_relay_ignores_relay_key(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1374,7 +1351,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
     assert twists[1].is_zero()
-    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
     settle(module)
@@ -1672,7 +1649,7 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         elapsed = time.monotonic() - started
         assert not release_encode.is_set()
         assert twists[1].is_zero()
-        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
         assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
         push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
         assert wait_until(lambda: len(twists) == 3)

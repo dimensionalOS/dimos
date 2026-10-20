@@ -26,7 +26,6 @@ top of it) can't tell sim from real.
 from __future__ import annotations
 
 from pathlib import Path
-import time
 from typing import Any
 
 from dimos.hardware.spec import JointLimits
@@ -83,37 +82,18 @@ class SimMujocoG1WholeBodyAdapter:
     # Lifecycle
 
     def connect(self) -> bool:
-        # Attach with retry - MujocoSimModule may still be starting up.
-        deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
-        while True:
-            try:
-                self._shm = ManipShmReader(self._shm_key)
-                break
-            except FileNotFoundError:
-                if time.monotonic() > deadline:
-                    logger.error(
-                        "SimMujocoG1WholeBodyAdapter: SHM buffers not found",
-                        address=self._address,
-                        shm_key=self._shm_key,
-                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
-                    )
-                    return False
-                time.sleep(_ATTACH_RETRY_POLL_S)
-
-        # Wait for the sim to signal ready (engine connected, first
-        # joint-state packet written).  Without this the first
-        # read_motor_states() returns zeros and the WBC obs is junk.
-        deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
-        while not self._shm.is_ready():
-            if time.monotonic() > deadline:
-                logger.error(
-                    "SimMujocoG1WholeBodyAdapter: sim module not ready",
-                    timeout_s=_READY_WAIT_TIMEOUT_S,
-                )
-                self._shm.cleanup()
-                self._shm = None
-                return False
-            time.sleep(_READY_WAIT_POLL_S)
+        self._shm = ManipShmReader.wait_for_live(
+            self._shm_key,
+            attach_timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+            ready_timeout_s=_READY_WAIT_TIMEOUT_S,
+            poll_s=min(_ATTACH_RETRY_POLL_S, _READY_WAIT_POLL_S),
+        )
+        if self._shm is None:
+            logger.error(
+                "SimMujocoG1WholeBodyAdapter: no fresh joint state became ready",
+                shm_key=self._shm_key,
+            )
+            return False
 
         self._connected = True
         logger.info(
@@ -132,7 +112,7 @@ class SimMujocoG1WholeBodyAdapter:
         self._connected = False
 
     def is_connected(self) -> bool:
-        return self._connected and self._shm is not None
+        return self._live_shm() is not None
 
     # IO (WholeBodyAdapter protocol)
 
@@ -151,7 +131,7 @@ class SimMujocoG1WholeBodyAdapter:
         # Sim ground truth is available the moment SHM attaches.
         # No ramp-up window like real DDS adapters need before the
         # first state msg arrives.
-        return self._connected and self._shm is not None
+        return self._live_shm() is not None
 
     def read_imu(self) -> IMUState:
         if not self.has_motor_states():
@@ -172,9 +152,9 @@ class SimMujocoG1WholeBodyAdapter:
         return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self.is_connected():
+        shm = self._live_shm()
+        if shm is None:
             return False
-        assert self._shm is not None
         if len(commands) != _NUM_MOTORS:
             logger.error(
                 f"SimMujocoG1WholeBodyAdapter: expected {_NUM_MOTORS} commands, got {len(commands)}"
@@ -187,5 +167,20 @@ class SimMujocoG1WholeBodyAdapter:
         kp = [cmd.kp for cmd in commands]
         kd = [cmd.kd for cmd in commands]
         tau = [cmd.tau for cmd in commands]
-        self._shm.write_pd_tau_command(q, kp, kd, tau)
+        shm.write_pd_tau_command(q, kp, kd, tau)
         return True
+
+    def _live_shm(self) -> ManipShmReader | None:
+        shm = self._shm
+        if not self._connected or shm is None:
+            return None
+        if shm.is_live():
+            return shm
+        shm.cleanup()
+        self._shm = None
+        self._connected = False
+        logger.error(
+            "SimMujocoG1WholeBodyAdapter: joint state stopped updating",
+            shm_key=self._shm_key,
+        )
+        return None

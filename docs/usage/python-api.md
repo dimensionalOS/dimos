@@ -142,6 +142,29 @@ cv2.imshow("color_image", img.data)
 cv2.waitKey(0)
 ```
 
+## Subscribing to streams
+
+Connect to a running system, list its wired streams, and subscribe through a
+module proxy:
+
+```python skip
+app = Dimos.connect()
+print(app.list_streams())
+unsubscribe = app.Detection3DModule.get_stream("detections").subscribe(print)
+input("Press Enter to stop listening")
+unsubscribe()
+```
+
+`list_streams(module)` filters by module name or proxy. Each result includes the
+stream's name, message type, module instance, direction and transport channel.
+Connected input, output and IO ports expose subscriptions. Messages use the
+existing stream transport directly; the client must have its message types
+installed. WebRTC streams require the hosted operator client.
+
+Stream handles are cached for the connection. Reconnect after changing stream
+wiring. Closing the connected app releases its stream transports while the
+running system continues.
+
 ## Remote mode
 
 Start a coordinator first (via CLI or another script), then connect to it:

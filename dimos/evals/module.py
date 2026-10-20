@@ -78,17 +78,17 @@ class EvalModule(Module):
             provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, {}),
         )
         s = summarize(results)
-        return SkillResult.ok(
+        return SkillResult(
             f"{s.n} cases: mean={s.mean_score:.2f} pass={s.pass_rate:.0%} errors={s.errors}",
-            run_dir=str(runner.run_dir),
+            metadata={"run_dir": str(runner.run_dir)},
         )
 
     @skill
     def list_eval_suites(self) -> SkillResult:
         """List available eval suite module paths."""
-        return SkillResult.ok(", ".join(list_suites()))
+        return SkillResult(", ".join(list_suites()))
 
     @skill
     def list_eval_agents(self) -> SkillResult:
         """List available agent module paths."""
-        return SkillResult.ok(", ".join(list_agents()))
+        return SkillResult(", ".join(list_agents()))

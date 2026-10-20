@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import io
 import math
 import struct
-from threading import Event
+from threading import Event, Thread
 import time
 from typing import Any
 import wave
@@ -87,11 +87,7 @@ def make_voice(monkeypatch: pytest.MonkeyPatch) -> Iterator[_MakeVoice]:
     modules: list[VoiceInput] = []
     normalize_audio = AudioNormalizer._normalize_audio
 
-    def make(*, real_decode: bool = False, **config: Any) -> _Harness:
-        module = VoiceInput(**config)
-        modules.append(module)
-        harness = _Harness(module)
-
+    def make(*, real_decode: bool = False, start: bool = True, **config: Any) -> _Harness:
         def record_normalized(normalizer: AudioNormalizer, event: AudioEvent) -> AudioEvent:
             normalized = normalize_audio(normalizer, event)
             harness.events.append(normalized)
@@ -120,10 +116,15 @@ def make_voice(monkeypatch: pytest.MonkeyPatch) -> Iterator[_MakeVoice]:
                 )
 
             monkeypatch.setattr(voice_input_module, "decode_audio_bytes", fake_decode)
+        # The pipeline builds from the constructor, so the patches come first.
+        module = VoiceInput(**config)
+        modules.append(module)
+        harness = _Harness(module)
         # In ports deliver through a transport; the test thread plays LCM.
         module.audio_in.transport = FakeTransport()
         module.human_input.subscribe(harness.texts.append)
-        module.start()
+        if start:
+            module.start()
         return harness
 
     yield make
@@ -307,3 +308,66 @@ def test_stop_joins_worker(make_voice: _MakeVoice) -> None:
     assert h.module._thread.is_alive()
     h.module.stop()
     assert not h.module._thread.is_alive()
+
+
+def test_stop_disposes_transcripts_still_in_flight(
+    make_voice: _MakeVoice, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Transcription runs on the worker thread. When it outlasts the join in
+    # stop(), the late transcript must not become an agent command.
+    monkeypatch.setattr(voice_input_module, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.05)
+    entered = Event()
+    release = Event()
+    h = make_voice()
+
+    def blocking_transcribe(event: AudioEvent) -> str:
+        entered.set()
+        release.wait(timeout=5.0)
+        return "walk forward"
+
+    h.transcribe = blocking_transcribe
+    h.send(_chunk(seq=0, data=b"late"))
+    h.send(_chunk(seq=1, final=True))
+    assert entered.wait(timeout=5.0)
+    h.module.stop()
+    assert h.module._thread.is_alive()
+    release.set()
+    h.module._thread.join(timeout=5.0)
+    assert h.texts == []
+
+
+def test_pipeline_build_failure_fails_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_pipeline() -> None:
+        raise RuntimeError("no whisper backend")
+
+    monkeypatch.setattr(voice_input_module, "whisper_pipeline", broken_pipeline)
+    module = VoiceInput()
+    try:
+        with pytest.raises(RuntimeError, match="no whisper backend"):
+            module.start()
+    finally:
+        module.stop()
+
+
+def test_start_waits_for_the_pipeline(
+    make_voice: _MakeVoice, monkeypatch: pytest.MonkeyPatch, wait_until: Any
+) -> None:
+    release = Event()
+    build_pipeline = voice_input_module.whisper_pipeline
+
+    def gated_pipeline() -> Any:
+        release.wait(timeout=5.0)
+        return build_pipeline()
+
+    monkeypatch.setattr(voice_input_module, "whisper_pipeline", gated_pipeline)
+    h = make_voice(start=False)
+    starter = Thread(target=h.module.start)
+    starter.start()
+    starter.join(timeout=0.2)
+    assert starter.is_alive()
+    release.set()
+    starter.join(timeout=5.0)
+    assert not starter.is_alive()
+    h.send(_chunk(seq=0, data=b"ready"))
+    h.send(_chunk(seq=1, final=True))
+    wait_until(lambda: h.texts == ["heard 5 samples"], timeout=5.0)

@@ -61,7 +61,11 @@ class HttpCloudRequest:
 
     def put(self, url: str, body: bytes) -> None:
         with urllib.request.urlopen(
-            urllib.request.Request(url, data=body, method="PUT"), timeout=self.timeout
+            # urllib's default form content-type makes some S3-compatible servers parse the body
+            urllib.request.Request(
+                url, data=body, method="PUT", headers={"Content-Type": "application/octet-stream"}
+            ),
+            timeout=self.timeout,
         ):
             pass
 

@@ -22,7 +22,11 @@ from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
+    from dimos.core.coordination.module_coordinator import (
+        ModuleCoordinator,
+        ModuleDescriptor,
+    )
+    from dimos.core.introspection.module.info import StreamDescriptor
 
 logger = setup_logger()
 
@@ -45,6 +49,9 @@ class LocalModuleSource(ModuleSource):
 
     def list_module_descriptors(self) -> list[ModuleDescriptor]:
         return self._coordinator.list_modules()
+
+    def list_stream_descriptors(self) -> list[StreamDescriptor]:
+        return self._coordinator.list_streams()
 
     def get_module(self, name: str) -> ModuleHandle:
         if name in self._coordinator._deployed_modules:

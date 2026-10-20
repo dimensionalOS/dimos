@@ -14,12 +14,10 @@
 
 from __future__ import annotations
 
-from collections import deque
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 import threading
-import time
 from typing import Any, Literal
 
 import zenoh
@@ -130,10 +128,6 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
     return Topic(topic=key_expr, lcm_type=default_lcm_type)
 
 
-# Messages a keyed channel may hold between drains before the oldest is dropped.
-UNCONFLATED_QUEUE_LEN = 256
-
-
 class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     """Raw bytes pub/sub over Zenoh.
 
@@ -149,8 +143,6 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self._drain_stops: list[Callable[[], None]] = []
         self._subscriber_lock = threading.Lock()
         self._stopped = False
-        # Keyed messages subscribe_all shed because its queue was full.
-        self.unconflated_dropped = 0
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
         """Drop the live publishers, subscribers and locks on top of the session."""
@@ -179,12 +171,13 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         The publisher is declared with the first publish's QoS; the cache is
         keyed by key expression, so a different QoS on a later publish to the
         same key is ignored.
+
+        The caller must hold _publisher_lock through the subsequent put().
         """
-        with self._publisher_lock:
-            if key_expr not in self._publishers:
-                kwargs = qos.publisher_kwargs() if qos is not None else {}
-                self._publishers[key_expr] = self.session.declare_publisher(key_expr, **kwargs)
-            return self._publishers[key_expr]
+        if key_expr not in self._publishers:
+            kwargs = qos.publisher_kwargs() if qos is not None else {}
+            self._publishers[key_expr] = self.session.declare_publisher(key_expr, **kwargs)
+        return self._publishers[key_expr]
 
     def publish(self, topic: Topic, message: bytes) -> None:
         """Publish bytes to a Zenoh key expression.
@@ -196,8 +189,11 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         key_expr = _topic_to_key_expr(topic)
         qos = topic.qos if isinstance(topic, Topic) else None
         try:
-            publisher = self._get_publisher(key_expr, qos)
-            publisher.put(message)
+            # put() releases the GIL while borrowing the native publisher. Keep
+            # stop() from undeclaring it until that borrow has been released.
+            with self._publisher_lock:
+                publisher = self._get_publisher(key_expr, qos)
+                publisher.put(message)
         except Exception:
             logger.error(f"Error publishing to {key_expr}", exc_info=True)
 
@@ -239,42 +235,33 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         return unsubscribe
 
     def subscribe_all(
-        self, callback: Callable[[bytes, Topic], Any], unconflated: Collection[str] = ()
+        self,
+        callback: Callable[[bytes, Topic], Any],
+        keyed: Mapping[str, Callable[[bytes], Hashable]] | None = None,
     ) -> Callable[[], None]:
         """Subscribe to all dimos topics, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
-        Channels named in `unconflated` deliver every message in order instead, through a
-        bounded queue, for streams where each message is a different key.
+        A channel in `keyed` delivers the latest message per key instead, in the order
+        each key first arrived, so a burst of distinct keys loses none of them.
         """
         latest: dict[str, tuple[bytes, Topic]] = {}
-        ordered: deque[tuple[bytes, Topic]] = deque(maxlen=UNCONFLATED_QUEUE_LEN)
-        keyed = {name.strip("/") for name in unconflated}
+        pending: dict[tuple[str, Hashable], tuple[bytes, Topic]] = {}
+        key_of = {name.strip("/"): key for name, key in (keyed or {}).items()}
         lock = threading.Lock()
         wake = threading.Event()
         stop = threading.Event()
-        last_drop_warning = 0.0
 
         def collect(msg: bytes, topic: Topic) -> None:
-            nonlocal last_drop_warning
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
-            # or every message of a keyed channel in order.
+            # or per key on a keyed channel.
+            name = topic.topic
+            key = key_of.get(name.removeprefix("dimos/")) if isinstance(name, str) else None
             with lock:
-                name = topic.topic
-                if isinstance(name, str) and name.removeprefix("dimos/") in keyed:
-                    if len(ordered) == ordered.maxlen:
-                        ordered.popleft()
-                        self.unconflated_dropped += 1
-                        if time.monotonic() - last_drop_warning > 1.0:
-                            last_drop_warning = time.monotonic()
-                            logger.warning(
-                                "subscribe_all dropped the oldest message of a keyed channel",
-                                topic=topic.topic,
-                                dropped=self.unconflated_dropped,
-                            )
-                    ordered.append((msg, topic))
-                else:
+                if key is None:
                     latest[str(topic)] = (msg, topic)
+                else:
+                    pending[(str(topic), key(msg))] = (msg, topic)
             wake.set()
 
         def drain() -> None:
@@ -282,11 +269,13 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 wake.wait()
                 wake.clear()
                 with lock:
-                    batch = list(ordered)
-                    ordered.clear()
+                    batch = list(pending.values())
+                    pending.clear()
                     batch.extend(latest.values())
                     latest.clear()
                 for msg, topic in batch:
+                    if stop.is_set():
+                        return
                     try:
                         callback(msg, topic)
                     except Exception:
@@ -297,7 +286,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         def stop_drain() -> None:
             stop.set()
             wake.set()  # unblock the drain so it observes the stop flag
-            thread.join(timeout=2.0)
+            if threading.current_thread() is not thread:
+                thread.join(timeout=2.0)
 
         # Register the stop callback and launch the drain thread under the lock so
         # stop() can't run between them and miss the thread. If stop() already ran,

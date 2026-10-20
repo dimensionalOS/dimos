@@ -16,6 +16,7 @@
 | `dimos run unitree-go2-detection` | Navigation + object detection |
 | `dimos --record run unitree-go2` | Navigation + record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
 | `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
+| `dimos --record run unitree-go2-joystick-record` | Teleop from the local keyboard window + record `joystick`, `cmd_vel` and every sensor; no mapper, viewer capped at 2 GB |
 | `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.lcm` premap |
 
 ## Deep Dive
@@ -25,5 +26,5 @@
 - [Relocalization](/docs/capabilities/navigation/relocalization.md): record → `dimos map global --export` → replay or live deploy
 - [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md): LCM, SHM, DDS
+- [Transports](/docs/usage/transports/index.md): Zenoh, LCM, DDS
 - [Blueprints](/docs/usage/blueprints.md): composing modules

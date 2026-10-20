@@ -32,7 +32,6 @@ Usage:
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.experimental.robot.bosdyn.spot.rerun import (
     spot_body_static_overrides,
@@ -44,16 +43,11 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-# Compose only the Rerun bridge (+ its websocket server) directly instead of the
-# shared `vis_module`: replay just needs the 3D viewer, and `vis_module` also
-# bundles the WebsocketVisModule, which auto-opens the 7779 Command Center tab.
 spot_replay = autoconnect(
     SpotReplay.blueprint(),
     OdometryHist.blueprint(),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],
-        rerun_open=global_config.rerun_open,
-        rerun_web=global_config.rerun_web,
         blueprint=spot_camera_layout,
         # Replay has no costmap, so drop the default z lift and draw the trail
         # on the ground where Spot actually walked.

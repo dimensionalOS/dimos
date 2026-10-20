@@ -30,6 +30,11 @@ from collections.abc import Callable, Sequence
 import math
 from typing import TypeVar
 
+import numpy as np
+
+from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.types import Outcome, recording
+
 T = TypeVar("T")
 
 
@@ -147,6 +152,107 @@ def within(band: float) -> Callable[[float, float], float]:
 def ramp(distance: float, band: float) -> float:
     """Distance (meters) -> [0, 1] credit inside ``band``."""
     return max(0.0, 1.0 - distance / band)
+
+
+def lifted(body: str, *, by_m: float) -> Callable[[Outcome], float]:
+    """How far the body ended above where it started, full credit at ``by_m``."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                start = first_body_transform(store, body).translation.z
+                end = last_body_transform(store, body).translation.z
+            except LookupError:
+                return 0.0
+        return min(max((end - start) / by_m, 0.0), 1.0)
+
+    return grade
+
+
+def stacked_on(
+    top: str, base: str, *, rise_m: tuple[float, float], band_m: float
+) -> Callable[[Outcome], float]:
+    """``top`` ended resting on ``base``: its centre ``rise_m`` above the base's, 1.0 centred and
+    0.0 at ``band_m`` off. A body held higher than the resting height scores 0.0."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                t = last_body_transform(store, top).translation
+                b = last_body_transform(store, base).translation
+            except LookupError:
+                return 0.0
+        if not rise_m[0] <= t.z - b.z <= rise_m[1]:
+            return 0.0
+        return ramp(math.hypot(t.x - b.x, t.y - b.y), band=band_m)
+
+    return grade
+
+
+def opened_door(outcome: Outcome) -> float:
+    with recording(outcome) as store:
+        try:
+            frame = last_body_transform(store, "Door_frame").rotation.to_rotation_matrix()
+            panel = last_body_transform(store, "Door_door").rotation.to_rotation_matrix()
+        except LookupError:
+            return 0.0
+    relative = frame.T @ panel
+    return float(math.atan2(relative[1, 0], relative[0, 0]) >= 0.3)
+
+
+def placed_can(outcome: Outcome) -> float:
+    with recording(outcome) as store:
+        try:
+            can = last_body_transform(store, "Can_main")
+            marker = last_body_transform(store, "VisualCan_main")
+        except LookupError:
+            return 0.0
+    delta = (can.translation - marker.translation).to_numpy()
+    return float(
+        np.all(np.abs(delta) <= [0.05, 0.075, 0.005])
+        and can.rotation.to_rotation_matrix()[2, 2] > 0.98
+    )
+
+
+def seated_nut(outcome: Outcome) -> float:
+    with recording(outcome) as store:
+        try:
+            nut = last_body_transform(store, "SquareNut_main")
+            peg = last_body_transform(store, "peg1")
+        except LookupError:
+            return 0.0
+    delta = (nut.translation - peg.translation).to_numpy()
+    # The seated nut's centre is 2 cm below the exported peg body's origin.
+    return float(
+        np.linalg.norm(delta[:2]) < 0.007
+        and abs(delta[2] + 0.02) < 0.004
+        and abs(nut.rotation.to_rotation_matrix()[2, 2]) > 0.98
+    )
+
+
+def hung_tool(outcome: Outcome) -> float:
+    """Geometric assembly/hanging proxy from body poses; does not check contact or release."""
+    with recording(outcome) as store:
+        try:
+            stand = last_body_transform(store, "stand_root")
+            frame = last_body_transform(store, "frame_root")
+            hole = last_body_transform(store, "tool_hole1_root")
+        except LookupError:
+            return 0.0
+    stand_r = stand.rotation.to_rotation_matrix()
+    frame_r = frame.rotation.to_rotation_matrix()
+    # Local offsets from the exported frame tip, stand slot and horizontal hook.
+    tip_world = frame.translation.to_numpy() + frame_r @ np.array([0.04375, 0, -0.13445])
+    tip_in_stand = stand_r.T @ (tip_world - stand.translation.to_numpy())
+    hole_in_frame = frame_r.T @ (hole.translation - frame.translation).to_numpy()
+    return float(
+        stand_r[2, 2] > 0.98
+        and np.dot(stand_r[:, 2], frame_r[:, 2]) > 0.98
+        and np.linalg.norm(tip_in_stand - np.array([0, 0.045, -0.07])) < 0.01
+        and -0.043 < hole_in_frame[0] < 0.04375
+        and math.hypot(hole_in_frame[1], hole_in_frame[2] - 0.08625) < 0.007
+        and abs(np.dot(hole.rotation.to_rotation_matrix()[:, 2], frame_r[:, 0])) > 0.95
+    )
 
 
 def judge(rubric: str, *, model: str = "openai:gpt-5.6-luna") -> Callable[[str, str], float]:

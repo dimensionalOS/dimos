@@ -43,11 +43,11 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
+from dimos.evals.constants import RAW_README
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -122,7 +122,7 @@ class FakeEnvironment(Environment):
     """A frozen recording that records lifecycle calls."""
 
     def __init__(self, path: Path, calls: list[str]) -> None:
-        super().__init__()
+        super().__init__(agent_artifacts=("recording",))
         self.path = path
         self.calls = calls
         self.settled_budget: float | None = None
@@ -221,13 +221,18 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    launched = mocker.patch(
+        "dimos.evals.environments.dataset.launched_mcp_url",
+        return_value="http://127.0.0.1:9993/mcp",
+    )
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     env = Dataset(dataset)
 
     try:
         running = env.start(("mcp-server", "mcp-client"))
-        assert running.mcp_url == default_mcp_url()
+        # The endpoint is the one the launched process registered, not a guess.
+        assert running.mcp_url == "http://127.0.0.1:9993/mcp"
     finally:
         env.stop()
 
@@ -235,11 +240,13 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     assert proc.simulator is None
     proc.start.assert_called_once_with()
     proc.stop.assert_called_once_with()
-    adapter.assert_called_once_with(default_mcp_url())
+    assert launched.call_args.args[0] is proc.process
+    adapter.assert_called_once_with("http://127.0.0.1:9993/mcp")
 
 
 def test_dataset_cleans_up_when_mcp_is_not_ready(dataset: str, mocker: MockerFixture) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = False
     env = Dataset(dataset)
@@ -255,6 +262,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     store = mocker.patch("dimos.evals.environments.dataset.open_dataset").return_value
     store.stop.side_effect = RuntimeError("cleanup failed")
@@ -277,6 +285,9 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc.global_args = []
+    proc.extra_env = {}
+    mocker.patch("dimos.evals.environments.sim.launched_mcp_url", return_value="http://x/mcp")
     adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
@@ -303,7 +314,8 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "--disable",
             "patrolling-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == ["--record"]
+        assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0
@@ -454,6 +466,21 @@ def test_runner_uses_unique_directory_when_timestamps_match(
     assert first.run_dir.parent == second.run_dir.parent == tmp_path
     assert first.run_dir.name.startswith("run-20260831-120000-")
     assert second.run_dir.name.startswith("run-20260831-120000-")
+
+
+@pytest.mark.parametrize(("open_output", "mode"), [(None, 0o700), ("1", 0o777)])
+def test_run_dir_is_private_unless_opened(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, open_output: str | None, mode: int
+) -> None:
+    if open_output is None:
+        monkeypatch.delenv("DIMOS_EVALS_OPEN_OUTPUT", raising=False)
+    else:
+        monkeypatch.setenv("DIMOS_EVALS_OPEN_OUTPUT", open_output)
+    runner = EvalRunner(out_dir=tmp_path)
+
+    runner.run([], FakeAgent())
+
+    assert runner.run_dir.stat().st_mode & 0o777 == mode
 
 
 def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
@@ -658,6 +685,31 @@ def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
     case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
     result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))[0]
     assert result.error == "missing artifacts: ['recording']" and not graded
+
+
+def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
+    seen: dict[str, set[str]] = {}
+
+    class WithAnswers(FakeEnvironment):
+        def start(self, modules: Sequence[str]) -> RunningEnvironment:
+            return RunningEnvironment(
+                mcp_url="", streams=(), artifacts={"recording": self.path, "answers": self.path}
+            )
+
+    class Looking(FakeAgent):
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            seen["agent"] = set(env.artifacts)
+            return super().run(inputs, env, run_dir, timeout_s=timeout_s)
+
+    def grade(outcome: Outcome) -> float:
+        seen["grader"] = set(outcome.artifacts)
+        return 1.0
+
+    case = EvalCase(id="c", inputs="x", environment=WithAnswers(tmp_path, []), grade=grade)
+    EvalRunner(out_dir=tmp_path).run([case], Looking(answer="ok"))
+    assert seen == {"agent": {"recording"}, "grader": {"recording", "answers"}}
 
 
 def test_recording_helper_opens_the_artifact(dataset: str) -> None:
@@ -948,7 +1000,9 @@ def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> No
 def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
     from dimos.evals.environments.dimsim import DimSimEnvironment
 
-    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True, raw_bridge=True)
+    env = DimSimEnvironment(
+        blueprint=["unitree-go2"], attach=True, raw_bridge=True, raw_guide=RAW_README
+    )
     env.config.launch_timeout_s = 1.0
     with pytest.raises(RuntimeError, match="raw-robot-bridge"):
         env.start(())

@@ -73,7 +73,7 @@ def mcp_call_tool(
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
     timeout: int = typer.Option(
-        None, "--timeout", "-t", help="Seconds to wait for the tool (default: mcp_timeout)"
+        None, "--timeout", "-t", help="Seconds to wait for the tool (default: 30 seconds)"
     ),
 ) -> None:
     """Call an MCP tool by name."""

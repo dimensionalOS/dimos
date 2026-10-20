@@ -27,6 +27,7 @@ import pytest
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
+    blueprint_from_run_id,
     cleanup_stale,
     generate_run_id,
     list_runs,
@@ -72,6 +73,39 @@ class TestRunEntryCRUD:
 
         entry.remove()
         assert not entry.registry_path.exists()
+
+    def test_scoped_secrets_are_not_persisted(self, tmp_registry: Path) -> None:
+        entry = _make_entry(
+            config_overrides={
+                "go2connection": {"aes_128_key": "private-aes", "replay_exit": True},
+                "typesafenavigationagent.api-key": "private-api",
+                "relaybridgemodule": {"relay_key": "private-relay", "robot_id": "test-robot"},
+            },
+            original_argv=[
+                "dimos",
+                "run",
+                "unitree-go2",
+                "--go2connection.aes-128-key",
+                "private-aes",
+                "--typesafenavigationagent.api-key=private-api",
+                "--relaybridgemodule.relay-key=private-relay",
+                "--go2connection.replay-exit",
+            ],
+        )
+        entry.save()
+        loaded = RunEntry.load(entry.registry_path)
+
+        assert loaded.config_overrides == {
+            "go2connection": {"replay_exit": True},
+            "relaybridgemodule": {"robot_id": "test-robot"},
+        }
+        assert loaded.original_argv == [
+            "dimos",
+            "run",
+            "unitree-go2",
+            "--go2connection.replay-exit",
+        ]
+        assert "private-" not in entry.registry_path.read_text()
 
     def test_save_creates_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         nested = tmp_path / "a" / "b" / "c"
@@ -127,8 +161,17 @@ class TestGenerateRunId:
 
     def test_generate_run_id_format(self):
         rid = generate_run_id("unitree-go2")
-        # Pattern: YYYYMMDD-HHMMSS-<name>
-        assert re.match(r"^\d{8}-\d{6}-unitree-go2$", rid), f"unexpected format: {rid}"
+        # Pattern: YYYYMMDD-HHMMSS-<4 hex>-<name>
+        assert re.match(r"^\d{8}-\d{6}-[0-9a-f]{4}-unitree-go2$", rid), f"unexpected format: {rid}"
+
+    def test_same_second_runs_differ(self):
+        assert generate_run_id("unitree-go2") != generate_run_id("unitree-go2")
+
+    def test_blueprint_round_trips(self):
+        assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
+        assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
+        assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
+        assert blueprint_from_run_id("downloads") is None
 
     def test_sanitizes_slashes(self):
         rid = generate_run_id("path/to/bp")

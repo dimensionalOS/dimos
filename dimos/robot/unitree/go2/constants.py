@@ -17,7 +17,9 @@
 # Robot footprint in meters. Length is forward x, width is left y.
 ROBOT_LENGTH = 0.6858
 ROBOT_WIDTH = 0.3175
-# Ground to the tallest point.
-ROBOT_HEIGHT = 0.45
+# Ground to the tallest point, the top of the Mid-360 at walking height plus margin.
+ROBOT_HEIGHT = 0.60
 # Ground to the base_link origin while standing.
 BASE_LINK_HEIGHT = 0.287
+# Seconds without a cmd_vel before the robot is told to stop.
+CMD_VEL_TIMEOUT = 0.2

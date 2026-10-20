@@ -15,8 +15,8 @@
 
 """3d navigation on Go2 with ray tracing and MLS planning.
 
-The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
-the sensor lives elsewhere.
+The Mid-360 driver needs the sensor's address. Pass ``--lidar-ip`` or set
+``MID360__LIDAR_IP``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -33,6 +33,7 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.robot.unitree.go2.nav_3d_config import (
+    NAV_VIEWER_TOPICS,
     mls_planner_config,
     ray_tracing_config,
     relocalization,
@@ -42,17 +43,14 @@ from dimos.robot.unitree.go2.nav_3d_config import (
 from dimos.visualization.vis_module import vis_module
 
 # What the planner searched over, by changed cell: surface, nodes and weighted edges.
-planner_viz_hz = 2.0
+planner_viz_hz = 10.0
+# The viewer runs beside the bridge and loses no cells, so only changed cells are sent.
+viz_sweep_cells = 0
 
 
 _nav_rerun_config = {
     **rerun_config,
-    "max_hz": {
-        **rerun_config["max_hz"],
-        # Rate-limited at the source by global_emit_every, roughly every 5s.
-        "world/global_map": 0,
-        "world/local_map": 0.5,
-    },
+    "topics": list(NAV_VIEWER_TOPICS),
     # Ring buffer replayed to a connecting viewer. Small so connect catches up fast.
     "memory_limit": "64MB",
     # The robot box hangs off base_link on its own entity: a static transform
@@ -60,12 +58,7 @@ _nav_rerun_config = {
     "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m),
     "visual_override": {
         **rerun_config["visual_override"],
-        # The raw premap is millions of points. The viewer gets its voxels on map_regions.
-        "world/loaded_map": None,
         "world/camera_info": None,
-        "world/color_image": None,
-        "world/lidar": None,
-        "world/lidar_raw": None,
         **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
     },
 }
@@ -74,6 +67,7 @@ unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
     GO2Connection.blueprint(
+        obstacle_avoidance=False,
         lidar=False,
         camera=False,
         motion_mode="mcf",
@@ -88,15 +82,19 @@ unitree_go2_nav_3d = autoconnect(
     mid360_for_pointlio(),
     PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
-    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
-    MLSPlannerNative.blueprint(
-        **mls_planner_config.model_copy(update={"viz_publish_hz": planner_viz_hz}).model_dump(
+    RayTracingVoxelMap.blueprint(
+        **ray_tracing_config.model_copy(update={"viz_sweep_cells": viz_sweep_cells}).model_dump(
             exclude_unset=True
         )
+    ),
+    MLSPlannerNative.blueprint(
+        **mls_planner_config.model_copy(
+            update={"viz_publish_hz": planner_viz_hz, "viz_sweep_cells": viz_sweep_cells}
+        ).model_dump(exclude_unset=True)
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(heading_gain=1.0, lookahead_time_s=2.5, min_lookahead_m=1.2),
     MovementManager.blueprint(),
-).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=11, robot_model="unitree_go2")
 
 # LCM can lose the one-shot loaded_map publish, so this stack republishes it.
 unitree_go2_nav_3d_relocalization = autoconnect(

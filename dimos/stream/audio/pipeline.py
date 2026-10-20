@@ -35,8 +35,8 @@ if TYPE_CHECKING:
 def whisper_pipeline() -> "tuple[rx.subject.Subject[AudioEvent], Observable[str]]":
     """AudioEvents in, transcribed text out.
 
-    Loads the Whisper model (blocking); call from a module's start(), not
-    its constructor.
+    Loads the Whisper model, which blocks for seconds: callers keep it off
+    the worker's deploy path.
     """
     # Here to prevent unwanted imports in the file: whisper backends belong
     # to the optional [agents] extra and load a model at construction.

@@ -7,8 +7,10 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Auth } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
+import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts";
 import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
+import { RtcHub } from "./rtc.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
 export interface RelayOptions {
@@ -44,6 +46,13 @@ export interface RelayOptions {
    * loopback-only rule below.
    */
   auth?: Auth;
+  /**
+   * Parsed --rtc-file (cloudflare.ts): enables video.webrtc.v1 channels
+   * through the Cloudflare SFU. Does not lift the loopback-only rule below.
+   */
+  rtc?: RtcConfig;
+  /** Test seam. */
+  rtcFetch?: FetchFn;
   /**
    * Explicit acknowledgment for binding a non-loopback host without cert,
    * key, and auth. Such a relay trusts every origin that can reach it
@@ -216,48 +225,69 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   }
   const tls = cert.certHashB64 === undefined;
 
+  const hub = options.rtc === undefined
+    ? null
+    : new RtcHub(new CloudflareClient(options.rtc, options.rtcFetch));
+  const registry = new Registry(Date.now, hub);
+  // Awaited, and before either listener binds: a peer gets its ICE servers
+  // right after welcome (and again at every refresh, through the registry),
+  // and nothing answers while the relay is half started (handleHttp closes
+  // over registry and auth).
+  if (hub !== null) await hub.start(() => registry.refreshIce());
+  const auth = options.auth ?? null;
+
   // HTTP binds first so --port 0 works in both modes. With a real
   // certificate QUIC shares its port (one "443 TCP + 443 UDP" rule pair, and
   // /api/info derives the WebTransport URL from the request host); otherwise
   // QUIC binds an ephemeral port that clients discover via the ready line or
   // /api/info, so --port stays a single HTTP-facing knob. Nothing awaits
   // between this bind and the consts handleHttp closes over.
-  const httpServer = Deno.serve(
-    {
-      hostname: host,
-      port: options.port ?? 7780,
-      onListen: () => {},
-      cert: options.cert,
-      key: options.key,
-    },
-    handleHttp,
-  );
-  const httpPort = (httpServer.addr as Deno.NetAddr).port;
-  let endpoint: Deno.QuicEndpoint;
+  // Each bind fails synchronously (AddrInUse, a bad PEM) and no shutdown
+  // handle exists yet, so the catch undoes whatever was set up before the
+  // failure, the hub's TURN refresh included.
+  let httpServer: Deno.HttpServer<Deno.NetAddr> | undefined;
+  let httpPort: number;
+  let endpoint: Deno.QuicEndpoint | undefined;
+  let listener: Deno.QuicListener;
   try {
-    endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
-  } catch (e) {
-    await httpServer.shutdown();
-    throw new Error(
-      `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
-        ((e as Error)?.message ?? e),
+    httpServer = Deno.serve(
+      {
+        hostname: host,
+        port: options.port ?? 7780,
+        onListen: () => {},
+        cert: options.cert,
+        key: options.key,
+      },
+      handleHttp,
     );
+    httpPort = (httpServer.addr as Deno.NetAddr).port;
+    try {
+      endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+    } catch (e) {
+      throw new Error(
+        `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+          ((e as Error)?.message ?? e),
+      );
+    }
+    listener = endpoint.listen({
+      cert: cert.certPem,
+      key: cert.keyPem,
+      alpnProtocols: ["h3"],
+      maxIdleTimeout: 30_000,
+      keepAliveInterval: 4_000,
+    });
+  } catch (e) {
+    hub?.dispose();
+    endpoint?.close({ closeCode: 0, reason: "relay startup failed" });
+    await httpServer?.shutdown();
+    throw e;
   }
-  const listener = endpoint.listen({
-    cert: cert.certPem,
-    key: cert.keyPem,
-    alpnProtocols: ["h3"],
-    maxIdleTimeout: 30_000,
-    keepAliveInterval: 4_000,
-  });
   const quicPort = endpoint.addr.port;
   // 127.0.0.1 rather than localhost: Chrome resolves localhost to ::1 first
   // and the endpoint binds IPv4. Hash pinning replaces hostname verification.
   const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   const wtUrl = `https://${urlHost}:${quicPort}`;
 
-  const registry = new Registry();
-  const auth = options.auth ?? null;
   const sessions = new Set<WebTransport>();
   let nextViewerId = 1;
 
@@ -308,9 +338,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       // The base, like the ready line: clients append /robot or /viewer.
       // With a real certificate it is the origin the client dialed (right by
       // construction: QUIC shares the port) and there is no hash to pin.
-      const info = tls
-        ? { wtUrl: url.origin, v: PROTOCOL_VERSION }
-        : { wtUrl, certHash: cert.certHashB64, v: PROTOCOL_VERSION };
+      const info = {
+        ...(tls ? { wtUrl: url.origin } : { wtUrl, certHash: cert.certHashB64 }),
+        v: PROTOCOL_VERSION,
+        ...(hub !== null ? { rtc: true } : {}),
+      };
       return Response.json(info, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
@@ -367,6 +399,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
       clearInterval(reapTimer);
+      hub?.dispose();
       for (const wt of sessions) {
         try {
           wt.close({ closeCode: 0, reason: "relay shutdown" });

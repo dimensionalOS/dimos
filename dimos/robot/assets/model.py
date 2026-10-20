@@ -50,6 +50,7 @@ class JointDescription:
     upper: float | None = None
     velocity: float | None = None
     acceleration: float | None = None
+    effort: float | None = None
 
 
 @dataclass(frozen=True)
@@ -587,6 +588,7 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
                 upper=_optional_float(limit, "upper"),
                 velocity=_optional_float(limit, "velocity"),
                 acceleration=_optional_float(limit, "acceleration"),
+                effort=_optional_float(limit, "effort"),
             )
         )
 

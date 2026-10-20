@@ -14,8 +14,8 @@
 
 """The xArm grasping stack, on hardware by default.
 
-``dimos run xarm-grasp --xarm7-ip 192.168.1.x``   heuristic grasps
-``dimos run xarm-grasp-graspgenx --xarm7-ip ...`` learned grasps
+``dimos run xarm-grasp --config robot.json``   heuristic grasps
+``dimos run xarm-grasp-graspgenx --config robot.json`` learned grasps
 ``dimos run xarm-grasp --simulation mujoco``      the same stack in MuJoCo
 
 Only the grasp provider separates the two blueprints. The arm-versus-sim split is
@@ -36,7 +36,9 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
+    RoboPlanPointCloudSelfFilter,
+)
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -45,7 +47,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
-    XARM7_COLLISION_LINKS,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -63,10 +64,7 @@ XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 # spaced targets. This collision-free top-down pose raises the camera enough to
 # put every mesh in one frame, without changing the configured base pose.
 XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
-# One resolution for the whole mapping chain. The self filter's clear mask, the
-# mapper's cells and the planner's octree must all agree: a mismatched mask names
-# cells the map does not hold, and a mismatched octree does not line up with what
-# was mapped.
+# The mapper and planner octree use the same resolution.
 XARM_GRASP_VOXEL_SIZE = 0.025
 
 XARM_GRASP_PROMPTS = [
@@ -122,19 +120,15 @@ if SIMULATED:
     # planning model 12 cm above the arm MuJoCo simulates.
     _model = make_xarm7_sim_robot_config(
         base_pose=PoseStamped(frame_id="world"),
-        # The self filter needs a capture-time transform for every collision link
-        # and drops the whole cloud when one is missing.
-        tf_extra_links=XARM7_COLLISION_LINKS,
+        tf_extra_links=[],
     )
-    _hardware = make_xarm7_sim_hardware(XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS)
+    _hardware = make_xarm7_sim_hardware(home_joints=XARM_GRASP_SCAN_JOINTS)
 else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
         base_pose=PoseStamped(frame_id="world"),
-        # The self filter needs a capture-time transform for every collision link
-        # and drops the whole cloud when one is missing.
-        tf_extra_links=XARM7_COLLISION_LINKS,
+        tf_extra_links=["link7"],
     )
     _hardware = xarm7_hardware("arm", gripper=True)
 
@@ -200,12 +194,11 @@ def _voxel_mapping() -> tuple[Blueprint, ...]:
     """Wrist camera -> self filter -> mapper -> the planner's octree obstacle."""
     return (
         # The wrist camera sees the arm itself, so the arm's returns must be
-        # dropped before mapping and the volume it occupies erased from the map:
-        # ray tracing cannot clear what the arm permanently occludes.
-        PointCloudSelfFilter.blueprint(
-            model=_model.model,
-            voxel_size=XARM_GRASP_VOXEL_SIZE,
-            world_frame="world",
+        # dropped before mapping.
+        RoboPlanPointCloudSelfFilter.blueprint(
+            # Filter only the arm; gripper returns may remain in the map.
+            model=make_xarm7_model_config(add_gripper=False).model,
+            state_tolerance_s=0.1,
             # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
             # tolerance cannot bracket a ~92ms publish period and drops most
             # clouds. One full period admits them all, and the arm holds still

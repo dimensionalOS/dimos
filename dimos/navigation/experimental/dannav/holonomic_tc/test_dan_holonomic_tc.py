@@ -200,9 +200,9 @@ def test_hot_update_path_swaps_route_to_new_goal() -> None:
 
 
 def test_arrival_publishes_goal_reached_without_final_spin() -> None:
-    # Odom on the goal with misaligned heading; align_goal_yaw=False must report
-    # arrival on position alone, never spinning to align the final yaw.
-    with _running_module(goal_tolerance=0.2, align_goal_yaw=False) as h:
+    # Odom on the goal with misaligned heading: arrival is on position alone,
+    # never spinning to align the final yaw.
+    with _running_module(goal_tolerance=0.2) as h:
         h.feed_odom(1.0, 0.0, 1.2)
         h.feed_path(_path_from_points([(0.0, 0.0), (1.0, 0.0)]))
 

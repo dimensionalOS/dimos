@@ -319,6 +319,15 @@ class ControlTask(Protocol):
         """
         ...
 
+    def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
+        """World poses of the frames this task controls, from this tick's measured joints.
+
+        Forward kinematics on measured feedback, never the commanded target: a
+        blocked or mid-motion arm reports where it actually is. Empty for tasks
+        without a robot model.
+        """
+        ...
+
 
 class BaseControlTask(ControlTask):
     """Base class with no-op defaults for optional listener methods.
@@ -357,3 +366,7 @@ class BaseControlTask(ControlTask):
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         """No-op default."""
         return False
+
+    def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
+        """No-op default."""
+        return {}

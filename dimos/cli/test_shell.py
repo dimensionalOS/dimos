@@ -43,7 +43,7 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
 
     assert result.exit_code == 0, result.output
     connect.assert_called_once_with()
-    assert start_ipython.call_args.kwargs["argv"] == ["--no-banner", "--no-tip"]
+    assert start_ipython.call_args.kwargs["argv"] == ["--no-banner"]
     namespace = start_ipython.call_args.kwargs["user_ns"]
     assert set(namespace) == {"app", "guide", "modules", "rpcs", "describe"}
     assert namespace["app"] is app

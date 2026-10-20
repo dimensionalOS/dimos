@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { ChannelStore } from "@dimos/sdk";
-import { LayoutTree } from "./LayoutTree.tsx";
+import { gridPanelIds, LayoutTree } from "./LayoutTree.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -141,5 +141,16 @@ describe("LayoutTree", () => {
     );
     expect(container.querySelector('[data-testid="video-color_image-canvas"]')).not.toBeNull();
     vi.unstubAllGlobals();
+  });
+
+  it("gridPanelIds lists the layout's leaves in tree order, else every non-page panel", () => {
+    const three = [CAM, POSE, AUX];
+    expect(
+      gridPanelIds(manifest({ panels: three, layout: { row: ["cam", { col: ["aux", "pose"] }] } })),
+    )
+      .toEqual(["cam", "aux", "pose"]);
+    expect(gridPanelIds(manifest({ panels: three, layout: "pose" }))).toEqual(["pose"]);
+    expect(gridPanelIds(manifest({ panels: three, pages: ["aux"] }))).toEqual(["cam", "pose"]);
+    expect(gridPanelIds(manifest({}))).toEqual([]);
   });
 });

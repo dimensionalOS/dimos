@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Literal
 import typer
 
 if TYPE_CHECKING:
-    from dimos.imitation.dataprep.core import DataPrepConfig
+    from dimos.imitation.dataprep.schema import DataPrepConfig
 
 
 def _load_config(
@@ -42,7 +42,7 @@ def _load_config(
     output_format: Literal["lerobot", "hdf5"] | None,
 ) -> DataPrepConfig:
     """Build a DataPrepConfig from an optional JSON file + flag overrides."""
-    from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
+    from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
 
     if config_path is not None:
         cfg = DataPrepConfig.model_validate_json(Path(config_path).read_text())
@@ -102,7 +102,12 @@ def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | No
         raise typer.Exit(2)
 
     try:
-        info = inspect_dataset(dataset, output_format)
+        if output_format is None:
+            info = inspect_dataset(dataset)
+        else:
+            from dimos.imitation.dataprep.core import get_inspector
+
+            info = get_inspector(output_format)(dataset)
     except Exception as e:
         # CLI boundary: surface failures as a message + non-zero exit, not a traceback.
         typer.echo(f"dataprep inspect failed: {e}", err=True)

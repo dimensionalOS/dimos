@@ -111,7 +111,7 @@ misconfigured extension. Invalid trials count as errors in the summary; report t
 
 ### Raw robot topics
 
-`Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
+A suite composes the `raw-robot-bridge` module and sets `Sim(raw_bridge=True)`. The bridge republishes the
 robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
 uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
 
@@ -122,6 +122,18 @@ robot/odom/json          {"t","x","y","z","qx","qy","qz","qw"}, base_link in the
 robot/camera_info/json   {"width","height","K"}, republished periodically
 robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; clamped to 1.0 m/s and 1.5 rad/s, held for t seconds (max 2), then stop
 ```
+
+These are the topics a Go2 produces. Every stream the bridge understands is optional, so the
+same module serves an arm when its blueprint provides them: joint state (with the measured TCP
+pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camera pose, and
+`robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
+`eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
+range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
+pose from the coordinator (`publish_frame_poses`); the Go2 suites list `raw-robot-bridge` with its
+defaults.
+
+Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
+for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
 
 That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
 above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
@@ -310,6 +322,15 @@ already-running dimos instead. To
 compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
+**Files.** An environment produces artifacts, files by name such as `recording`.
+The grader gets all of them. The agent gets only the ones named in the
+environment's `agent_artifacts`: by default the `recording` for simulators and
+the `image` for `ImageFile`. A `Dataset` names none, since its `recording` is
+the whole dataset and the agent is given the `select`ed streams instead. A file
+that holds answers, like Habitat's episode metadata with its prop positions,
+stays with the grader. Pass `agent_artifacts=(...)` to the environment to
+change it.
+
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
@@ -359,7 +380,7 @@ an **error**, not a score; the run continues.
 `Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
 for DimSim, `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
 
-`DimSimEnvironment` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
+`DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
@@ -409,10 +430,11 @@ For Habitat, select a downloaded dataset and its scene handle on the environment
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.habitat import HabitatEnvironment
+from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
     blueprint=["habitat-nav", "mcp-server", "observe-skill"],
-    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
 )
@@ -464,21 +486,31 @@ waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
 `tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
-values, so a case can retune a module without a new blueprint. `scene` passes
-`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
-instead of its default `scene.xml`. The planner's base pose is
-`XARM7_SIM_BASE_POSE` in the xArm config, so a scene must keep the arm where
-`scene.xml` puts it, or that value must change to match.
+values, so a case can retune a module without a new blueprint. `scene` selects a full MJCF, robot included, for `xarm-perception-sim`: it sets `mujocosimmodule.address`, and the coordinator's simulated arm attaches to that scene. `base_height` sets the planning model's
+existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
+the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
+
+`dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
+scene using plain robot commands and observations (see Raw robot topics). Run it
+with Pi and `--set no_dimos=true --set max_steps=120`.
+
+`dimos.evals.suites.robosuite` provides six manipulation cases using
+recorded body poses. See `data/robosuite/README.md` in the downloaded data
+package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **Docker**: add `--docker` to run that eval in a fresh, detached container
+  from the eval image, one per invocation, any number side by side on one
+  host; setup, GPU rendering and an EC2 runbook are in
+  [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
-  (gate live-model tests with `skipif_no_openai`).
+  (skip live-model tests when `OPENAI_API_KEY` is unset).
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` /
   `list_eval_agents` return the summary + run dir, so a coding agent can run
   evals, grep trajectories, edit prompts/encodings, and run again.

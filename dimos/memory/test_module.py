@@ -27,8 +27,6 @@ from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
 
-# -- Shared transformer ---------------------------------------------------
-
 
 class Double(Transformer[int, int]):
     def __init__(self, factor: int = 2) -> None:
@@ -37,9 +35,6 @@ class Double(Transformer[int, int]):
     def __call__(self, upstream: Iterator[Observation[int]]) -> Iterator[Observation[int]]:
         for obs in upstream:
             yield obs.derive(data=obs.data * self.factor)
-
-
-# -- Pipeline styles -------------------------------------------------------
 
 
 class StaticStreamModule(StreamModule[int, int]):
@@ -73,8 +68,6 @@ class MethodPipelineModule(StreamModule[int, int]):
     numbers: In[int]
     doubled: Out[int]
 
-
-# -- Grid ------------------------------------------------------------------
 
 module_cases = [
     pytest.param(StaticStreamModule, id="static-stream"),

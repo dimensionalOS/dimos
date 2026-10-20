@@ -45,6 +45,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
     Lcm,
+    Json,
     Jpeg,
     #[serde(rename = "lz4+lcm")]
     Lz4Lcm,
@@ -54,6 +55,7 @@ impl Codec {
     pub(crate) fn id(self) -> &'static str {
         match self {
             Self::Lcm => "lcm",
+            Self::Json => "json",
             Self::Jpeg => "jpeg",
             Self::Lz4Lcm => "lz4+lcm",
         }
@@ -67,6 +69,10 @@ pub struct StreamConfig {
     pub name: String,
     pub payload_type: String,
     pub codec: Codec,
+    #[serde(default)]
+    pub timestamp_field: Option<String>,
+    #[serde(default)]
+    pub json_schema: Option<serde_json::Value>,
 }
 
 impl StreamConfig {
@@ -145,6 +151,13 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
+        for stream in &config.streams {
+            anyhow::ensure!(
+                stream.codec == Codec::Json
+                    || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
+                "JSON options require the json codec"
+            );
+        }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -462,6 +475,8 @@ mod tests {
                 "test.Raw".to_string()
             },
             codec,
+            timestamp_field: None,
+            json_schema: None,
         })
     }
 
@@ -471,6 +486,8 @@ mod tests {
             name: name.to_string(),
             payload_type: payload_type.to_string(),
             codec,
+            timestamp_field: None,
+            json_schema: None,
         })
     }
 
@@ -549,6 +566,8 @@ mod tests {
             name: "imu".to_string(),
             payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
             codec: Codec::Lcm,
+            timestamp_field: None,
+            json_schema: None,
         });
 
         let observations = decoding::decode(&stream, &message.encode(), 100.0).unwrap();
@@ -791,5 +810,63 @@ mod tests {
         };
 
         assert!(validator::Validate::validate(&config).is_err());
+    }
+    #[test]
+    fn json_storage_is_portable_and_keeps_both_timestamps() {
+        let text = r#"{"sent":12.5,"label":"拿起积木"}"#;
+        let message = lcm_msgs::std_msgs::String { data: text.into() };
+        let schema = serde_json::json!({"type":"object","properties":{"sent":{"type":"number"}}});
+        let stream = Arc::new(StreamConfig {
+            port: "events".into(),
+            name: "events".into(),
+            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            codec: Codec::Json,
+            timestamp_field: Some("sent".into()),
+            json_schema: Some(schema.clone()),
+        });
+        let mut encoded = process(&stream, &message.encode(), 13.0).unwrap();
+        let stored = encoded.pop().unwrap();
+        assert_eq!(stored.data, text.as_bytes());
+        let observations = [Observation {
+            stream: Arc::clone(&stream),
+            source_ts: stored.ts,
+            reception_ts: 13.0,
+            data: stored.data,
+        }];
+        for sqlite in [true, false] {
+            let file = NamedTempFile::new().unwrap();
+            let path = file.path().to_string_lossy().into_owned();
+            let config = if sqlite {
+                store::RecordingStoreConfig::Sqlite { path }
+            } else {
+                store::RecordingStoreConfig::Mcap { path }
+            };
+            let mut store = store::open(&config, &[(*stream).clone()], 1).unwrap();
+            store.write_batch(&observations).unwrap();
+            store.finish().unwrap();
+            drop(store);
+            if sqlite {
+                let db = Connection::open(file.path()).unwrap();
+                let row: (f64, f64, Vec<u8>) = db.query_row("SELECT ts,json_extract(tags,'$.reception_ts'),data FROM events JOIN events_blob USING(id)", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+                assert_eq!(row, (12.5, 13.0, text.as_bytes().to_vec()));
+            } else {
+                let bytes = std::fs::read(file.path()).unwrap();
+                let record = mcap::MessageStream::new(&bytes)
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(record.data.as_ref(), text.as_bytes());
+                assert_eq!(record.log_time, 13_000_000_000);
+                assert_eq!(record.publish_time, 12_500_000_000);
+                assert_eq!(record.channel.message_encoding, "json");
+                let actual_schema = record.channel.schema.as_ref().unwrap();
+                assert_eq!(actual_schema.encoding, "jsonschema");
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&actual_schema.data).unwrap(),
+                    schema
+                );
+            }
+        }
     }
 }

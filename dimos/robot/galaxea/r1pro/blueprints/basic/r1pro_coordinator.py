@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro ControlCoordinator and ROS connection.
+"""R1 Pro ControlCoordinator, ROS connection, and Point-LIO on the chassis Mid-360.
 
 Mirrors ``unitree_g1_coordinator.py``: the 18-DOF upper body goes through
 the generic whole-body transport adapter, the holonomic chassis through the
-twist-base transport adapter.
+twist-base transport adapter. ``base_link`` is placed by Point-LIO, not wheel odometry.
 
 Usage:
     dimos run r1pro-coordinator
@@ -34,17 +34,29 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_HOST_IP,
+    R1PRO_CHASSIS_LIDAR_IP,
+)
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.head_cameras import (
+    HeadCameraInfo,
+    HeadLeftCamera,
+    HeadRightCamera,
+)
+from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -122,8 +134,6 @@ _RERUN_VISUAL_OVERRIDE = {
 rerun_config = {
     "blueprint": _r1pro_rerun_blueprint,
     "pubsubs": [Zenoh()],
-    "rerun_open": global_config.rerun_open,
-    "rerun_web": global_config.rerun_web,
     # A live viewer needs only a small rolling buffer, and every viewer
     # (re)connect replays the whole buffer before going live.
     "memory_limit": "256MB",
@@ -158,14 +168,21 @@ def _zenoh_transport(
     )
 
 
+def _head_cameras() -> list[Blueprint]:
+    """Both head eyes and their intrinsics; see ``head_cameras``."""
+    return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
+
+
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    **connection: Any,
 ) -> Blueprint:
-    """R1ProConnection and ControlCoordinator.
+    """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
+    Other keyword args are ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
         list(tasks)
@@ -183,7 +200,8 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(),
+            R1ProConnection.blueprint(**connection),
+            *_head_cameras(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -208,6 +226,10 @@ def r1pro_control(
             [
                 (R1ProConnection, "cmd_vel", "chassis_cmd_vel"),
                 (R1ProConnection, "odom", "chassis_odom"),
+                (HeadLeftCamera, "jpeg_out", "head_left_color"),
+                (HeadRightCamera, "jpeg_out", "head_right_color"),
+                (HeadCameraInfo, "left_info", "head_left_info"),
+                (HeadCameraInfo, "right_info", "head_right_info"),
             ]
         )
         .transports(
@@ -238,8 +260,9 @@ def r1pro_control(
                 ("head_right_color", CompressedImage): _zenoh_transport(
                     "/head_right_color", CompressedImage, latest_wins=True
                 ),
+                ("head_left_info", CameraInfo): _zenoh_transport("/head_left_info", CameraInfo),
+                ("head_right_info", CameraInfo): _zenoh_transport("/head_right_info", CameraInfo),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
-                ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
                 ),
@@ -263,9 +286,32 @@ def r1pro_control(
     )
 
 
-# n_workers keeps the 100 Hz coordinator tick loop out of the interpreter
-# that runs the connection's sensor threads.
+def r1pro_lidar_odometry() -> Blueprint:
+    """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
+    lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
+    return autoconnect(
+        mid360_for_pointlio(
+            frame_id=lidar_frame,
+            lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
+            host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
+        ),
+        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
+            [(PointLio, "odometry", "pointlio_odometry")]
+        ),
+        R1ProLio.blueprint(),
+    ).remappings(
+        [
+            (R1ProLio, "odometry", "pointlio_odometry"),
+            # The name the planners already read.
+            (R1ProLio, "pose", "chassis_odom"),
+        ]
+    )
+
+
+# n_workers keeps the 100 Hz coordinator tick loop out of the interpreter running the connection's sensor threads.
 r1pro_coordinator = autoconnect(
     r1pro_visualization(),
-    r1pro_control(),
+    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+    r1pro_control(publish_odom_tf=False),
+    r1pro_lidar_odometry(),
 ).global_config(n_workers=4)

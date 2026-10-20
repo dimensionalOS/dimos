@@ -10,6 +10,7 @@ import {
   MAX_COSTMAP_DIM,
   MAX_COSTMAP_PAYLOAD_BYTES,
 } from "./costmap.ts";
+import { TRACK_ENCODING } from "@dimos/shared/manifest";
 import { createDecoderRegistry, type Decoder } from "./index.ts";
 import { MAX_JPEG_DIM, MAX_JPEG_PAYLOAD_BYTES } from "./jpeg.ts";
 import { JSON_PREVIEW_MAX_CHARS, MAX_JSON_PAYLOAD_BYTES } from "./json.ts";
@@ -373,5 +374,14 @@ describe("voxels decoder", () => {
     await expect(inflateVoxels(bomb)).rejects.toThrow(/beyond/);
     const short = decode(deflated, header({ res: 0.05, n: 3, chunks: 3 })).value as VoxelsValue;
     await expect(inflateVoxels(short)).rejects.toThrow(/expected/);
+  });
+});
+
+describe("track channels", () => {
+  it("resolve a marker decoder that rejects every frame", () => {
+    const trackSpec = spec({ ch: "cam", encoding: TRACK_ENCODING, delivery: "latest" });
+    const decoder = registry.resolve(trackSpec);
+    expect(decoder).toBeDefined();
+    expect(() => decoder!(new Uint8Array([1]), HEADER)).toThrow("never flow");
   });
 });

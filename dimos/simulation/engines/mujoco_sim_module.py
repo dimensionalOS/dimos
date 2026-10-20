@@ -409,6 +409,11 @@ class MujocoSimModule(
         return 1.0
 
     @rpc
+    def scene_path(self) -> str:
+        """The MJCF the simulated manipulator adapters attach to (their SHM key)."""
+        return str(self.config.robot_mjcf or self.config.address)
+
+    @rpc
     def start(self) -> None:
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
@@ -425,8 +430,8 @@ class MujocoSimModule(
         # Build engine with SHM hooks installed.
         engine_assets: dict[str, bytes] | None = None
         if self.config.inject_legacy_assets:
-            # Lazy import: get_assets pulls in mujoco_playground (heavy,
-            # optional) and is only needed when injecting bundled meshes.
+            # Lazy import: model.py pulls in the ONNX policy stack and is only
+            # needed when injecting bundled meshes.
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()

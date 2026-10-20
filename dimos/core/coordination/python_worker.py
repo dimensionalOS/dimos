@@ -382,6 +382,40 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
             logger.error("Error during worker provider shutdown", exc_info=True)
 
 
+def _start_warm_up(instance: ModuleBase) -> None:
+    """Pay the module's first-use imports on a daemon thread, overlapping the
+    other workers' deploys and the wiring phase instead of landing in start().
+
+    Subscribing calls ``<type>.lcm_warmup()`` (open3d, 2.5 s for PointCloud2)
+    and McpServer's first ``get_skills()`` imports langchain_core.tools. Either
+    one, if it arrives while this thread is still importing, just waits on the
+    module import lock.
+    """
+    types: set[type] = set()
+    if instance.warm_up_inputs:
+        # Collected here, not on the thread: wiring RPCs add attributes to the
+        # instance, and these properties iterate its __dict__.
+        types = {stream.type for stream in [*instance.inputs.values(), *instance.ios.values()]}
+
+    def warm_up() -> None:
+        for msg_type in types:
+            warmup = getattr(msg_type, "lcm_warmup", None)
+            if warmup is None:
+                continue
+            try:
+                warmup()
+            except Exception:
+                logger.warning("Stream type warm-up failed", type=msg_type, exc_info=True)
+        try:
+            instance.get_skills()
+        except ImportError:
+            pass  # no agent stack installed, so nothing will ask for skills
+        except Exception:
+            logger.warning("Skill warm-up failed", module=type(instance).__name__, exc_info=True)
+
+    threading.Thread(target=warm_up, name=f"warmup-{type(instance).__name__}", daemon=True).start()
+
+
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
@@ -389,7 +423,9 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             if host_config is not None:
                 global_config.update(**host_config.model_dump())
 
-            state.instances[module_id] = module_class(**kwargs)
+            instance = module_class(**kwargs)
+            state.instances[module_id] = instance
+            _start_warm_up(instance)
 
             return WorkerResponse(result=module_id)
 

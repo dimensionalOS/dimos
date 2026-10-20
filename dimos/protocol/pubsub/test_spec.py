@@ -42,28 +42,10 @@ def memory_context() -> Generator[Memory, None, None]:
         pass
 
 
-# Use Any for context manager type to accommodate both Memory and Redis
+# Use Any for context manager type to accommodate every backend
 testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
     (memory_context, "topic", ["value1", "value2", "value3"]),
 ]
-
-try:
-    from dimos.protocol.pubsub.impl.redispubsub import Redis
-
-    @contextmanager
-    def redis_context() -> Generator[Redis, None, None]:
-        redis_pubsub = Redis()
-        redis_pubsub.start()
-        yield redis_pubsub
-        redis_pubsub.stop()
-
-    testdata.append(
-        (redis_context, "redis_topic", ["redis_value1", "redis_value2", "redis_value3"])
-    )
-
-except (ConnectionError, ImportError):
-    # either redis is not installed or the server is not running
-    print("Redis not available")
 
 try:
     from geometry_msgs.msg import Vector3 as ROSVector3
@@ -124,26 +106,6 @@ testdata.append(
         lcm_context,
         Topic(topic="/test_topic", lcm_type=Vector3),
         [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
-    )
-)
-
-
-from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-
-
-@contextmanager
-def shared_memory_cpu_context() -> Generator[PickleSharedMemory, None, None]:
-    shared_mem_pubsub = PickleSharedMemory(prefer="cpu")
-    shared_mem_pubsub.start()
-    yield shared_mem_pubsub
-    shared_mem_pubsub.stop()
-
-
-testdata.append(
-    (
-        shared_memory_cpu_context,
-        "/shared_mem_topic_cpu",
-        [b"shared_mem_value1", b"shared_mem_value2", b"shared_mem_value3"],
     )
 )
 
@@ -342,7 +304,6 @@ def test_unsubscribe_from_callback(
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-@pytest.mark.skipif_macos_bug
 def test_multiple_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
 ) -> None:
@@ -401,7 +362,7 @@ async def test_async_iterator(
 
         # Wait for the consumer to finish or timeout
         try:
-            await asyncio.wait_for(consumer_task, timeout=1.0)  # Longer timeout for Redis
+            await asyncio.wait_for(consumer_task, timeout=1.0)
         except asyncio.TimeoutError:
             consumer_task.cancel()
             try:
@@ -415,7 +376,6 @@ async def test_async_iterator(
 
 
 @pytest.mark.self_hosted
-@pytest.mark.skipif_macos_bug
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_high_volume_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]

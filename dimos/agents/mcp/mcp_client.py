@@ -38,7 +38,9 @@ import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL
 from dimos.agents.mcp.session_store import AgentSession
+from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, STATE_DIR
@@ -52,6 +54,12 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _preload_agent_deps() -> None:
+    import langchain.agents
+    import langchain.chat_models  # noqa: F401
+    import langchain_openai  # noqa: F401
 
 
 def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
@@ -85,7 +93,8 @@ class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
-    mcp_server_url: str = "http://localhost:9990/mcp"
+    # None: the McpServer in this blueprint, or the default endpoint without one.
+    mcp_server_url: str | None = None
     trace_dir: Path | None = None
     persist_history: bool = True
     restore_session: str | None = None
@@ -108,6 +117,9 @@ class McpClient(Module):
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
+
+    # Injected when the blueprint has an McpServer.
+    _mcp_server: McpServerSpec | None = None
 
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
@@ -140,9 +152,22 @@ class McpClient(Module):
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
         self._session = None
+        self._mcp_url: str | None = None
+        Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
+
+    def _server_url(self) -> str:
+        """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
+        if self._mcp_url is None:
+            if self.config.mcp_server_url is not None:
+                self._mcp_url = self.config.mcp_server_url
+            elif self._mcp_server is not None:
+                self._mcp_url = str(self._mcp_server.mcp_url())
+            else:
+                self._mcp_url = DEFAULT_MCP_URL
+        return self._mcp_url
 
     def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -153,7 +178,7 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self.config.mcp_server_url, json=body, timeout=120.0)
+        resp = self._http_client.post(self._server_url(), json=body, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()
 
@@ -192,9 +217,7 @@ class McpClient(Module):
     def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
         result = self._try_fetch_tools(timeout=timeout, interval=interval)
         if result is None:
-            raise RuntimeError(
-                f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
-            )
+            raise RuntimeError(f"Failed to fetch tools from MCP server {self._server_url()}")
 
         raw_tools = result.get("tools", [])
         self._tool_registry = {t["name"]: t for t in raw_tools}

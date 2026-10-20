@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-from dimos.core.global_config import GlobalConfig
 
 if TYPE_CHECKING:
     from open3d.geometry import PointCloud  # type: ignore[import-untyped]
@@ -28,16 +27,15 @@ class GeneralPointCloudAccumulator:
     _point_cloud: PointCloud
     _voxel_size: float
 
-    def __init__(self, voxel_size: float, global_config: GlobalConfig) -> None:
+    def __init__(self, voxel_size: float, initial_pointcloud: Path | None = None) -> None:
         from open3d.geometry import PointCloud
         from open3d.io import read_point_cloud
 
         self._point_cloud = PointCloud()
         self._voxel_size = voxel_size
 
-        if global_config.mujoco_global_map_from_pointcloud:
-            path = global_config.mujoco_global_map_from_pointcloud
-            self._point_cloud = read_point_cloud(path)
+        if initial_pointcloud is not None:
+            self._point_cloud = read_point_cloud(str(initial_pointcloud))
 
     def get_point_cloud(self) -> PointCloud:
         return self._point_cloud

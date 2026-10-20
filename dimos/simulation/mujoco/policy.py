@@ -40,14 +40,14 @@ class OnnxController(ABC):
         drift_compensation: list[float] | None = None,
     ) -> None:
         self._output_names = ["continuous_actions"]
-        # CoreML partitions this small policy graph and pays a per-call copy
-        # overhead that makes it ~20x slower than plain CPU inference.
-        providers = [p for p in ort.get_available_providers() if p != "CoreMLExecutionProvider"]
-        try:
-            self._policy = ort.InferenceSession(policy_path, providers=providers)
-        except RuntimeError:
-            logger.warning("GPU providers failed, falling back to CPUExecutionProvider")
-            self._policy = ort.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
+        # The policy is a small MLP: CPU inference beats CUDA, TensorRT and CoreML
+        # for it, and the GPU providers spend seconds building a session. One
+        # thread, because the default pool spins every core between inferences.
+        options = ort.SessionOptions()  # type: ignore[attr-defined]
+        options.intra_op_num_threads = 1
+        self._policy = ort.InferenceSession(
+            policy_path, sess_options=options, providers=["CPUExecutionProvider"]
+        )
         logger.info(f"Loaded policy: {policy_path} with providers: {self._policy.get_providers()}")
 
         self._action_scale = action_scale

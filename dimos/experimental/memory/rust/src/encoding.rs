@@ -35,8 +35,12 @@ pub(crate) fn encode(
     observation: DecodedObservation,
 ) -> Result<StoredObservation> {
     let data = match stream.codec {
-        Codec::Lcm => lcm_encode(observation.payload),
-        Codec::Lz4Lcm => lz4_frame(&lcm_encode(observation.payload))?,
+        Codec::Lcm => lcm_encode(observation.payload)?,
+        Codec::Json => match observation.payload {
+            DecodedPayload::Json(data) => data,
+            _ => return Err(anyhow!("JSON storage codec requires a JSON payload")),
+        },
+        Codec::Lz4Lcm => lz4_frame(&lcm_encode(observation.payload)?)?,
         Codec::Jpeg => jpeg_encode(observation.payload)?,
     };
     Ok(StoredObservation {
@@ -45,11 +49,12 @@ pub(crate) fn encode(
     })
 }
 
-fn lcm_encode(payload: DecodedPayload) -> Vec<u8> {
-    match payload {
+fn lcm_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
+    Ok(match payload {
         DecodedPayload::Lcm(data) => data,
         DecodedPayload::Image(image) => image.encode(),
-    }
+        DecodedPayload::Json(_) => return Err(anyhow!("LCM codec cannot store JSON payload")),
+    })
 }
 
 fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {

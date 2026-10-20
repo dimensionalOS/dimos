@@ -20,13 +20,9 @@ planner skills and the wrist camera only, graded on the bodies' recorded poses.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-import math
-
-from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import ramp
-from dimos.evals.types import EvalCase, Outcome, Suite, recording
+from dimos.evals.scorers import lifted, stacked_on
+from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
 TRACKED = ("apple", "cup")
@@ -54,41 +50,6 @@ def environment() -> MujocoEnvironment:
         scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
     )
-
-
-def lifted(body: str, *, by_m: float) -> Callable[[Outcome], float]:
-    """How far the body ended above where it started, full credit at ``by_m``."""
-
-    def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
-            try:
-                start = first_body_transform(store, body).translation.z
-                end = last_body_transform(store, body).translation.z
-            except LookupError:
-                return 0.0
-        return min(max((end - start) / by_m, 0.0), 1.0)
-
-    return grade
-
-
-def stacked_on(
-    top: str, base: str, *, rise_m: tuple[float, float], band_m: float
-) -> Callable[[Outcome], float]:
-    """``top`` ended resting on ``base``: its centre ``rise_m`` above the base's, 1.0 centred and
-    0.0 at ``band_m`` off. A body held higher than the resting height scores 0.0."""
-
-    def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
-            try:
-                t = last_body_transform(store, top).translation
-                b = last_body_transform(store, base).translation
-            except LookupError:
-                return 0.0
-        if not rise_m[0] <= t.z - b.z <= rise_m[1]:
-            return 0.0
-        return ramp(math.hypot(t.x - b.x, t.y - b.y), band=band_m)
-
-    return grade
 
 
 SUITE: Suite = [

@@ -26,16 +26,12 @@ import pytest
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
-from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.simulation.dimsim.config import DIMSIM_PORT
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
-from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -141,14 +137,6 @@ def serve_channel() -> Iterator[Callable[..., str]]:
         stop_all()
 
 
-def _pose(x: float, y: float, theta: float) -> PoseStamped:
-    return PoseStamped(
-        position=make_vector3(x, y, 0),
-        orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
-        frame_id="map",
-    )
-
-
 @pytest.fixture
 def lcm_spy() -> Iterator[LcmSpy]:
     lcm_spy = LcmSpy()
@@ -157,29 +145,17 @@ def lcm_spy() -> Iterator[LcmSpy]:
     lcm_spy.stop()
 
 
-@pytest.fixture
-def follow_points(lcm_spy: LcmSpy):
-    def fun(*, points: list[tuple[float, float, float]], fail_message: str) -> None:
-        topic = "/goal_reached#std_msgs.Bool"
-        lcm_spy.save_topic(topic)
-
-        for x, y, theta in points:
-            lcm_spy.publish("/goal_request#geometry_msgs.PoseStamped", _pose(x, y, theta))
-            lcm_spy.wait_for_message_result(
-                topic,
-                Bool,
-                predicate=lambda v: bool(v),
-                fail_message=fail_message,
-                timeout=60.0,
-            )
-
-    yield fun
+@pytest.fixture(scope="session")
+def dimsim_port() -> int:
+    """One port for the launched DimSim and the test's DimSimClient."""
+    return DIMSIM_PORT
 
 
 @pytest.fixture
-def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
+def start_blueprint(mcp_port: int, dimsim_port: int) -> Iterator[Callable[..., DimosCliCall]]:
     dimos_robot_call = DimosCliCall()
     dimos_robot_call.mcp_port = mcp_port
+    dimos_robot_call.dimsim_port = dimsim_port
 
     def set_name_and_start(
         *demo_args: str,
@@ -224,34 +200,7 @@ def human_input():
 
 
 @pytest.fixture
-def start_person_track() -> Generator[StartPersonTrack, None, None]:
-    publisher: PersonTrackPublisher | None = None
-    stop_event = threading.Event()
-    thread: threading.Thread | None = None
-
-    def start(track: list[tuple[float, float]]) -> None:
-        nonlocal publisher, thread
-        publisher = PersonTrackPublisher(track)
-
-        def run_person_track() -> None:
-            while not stop_event.is_set():
-                publisher.tick()
-                time.sleep(1 / 60)
-
-        thread = threading.Thread(target=run_person_track, daemon=True)
-        thread.start()
-
-    yield start
-
-    stop_event.set()
-    if thread is not None:
-        thread.join(timeout=1.0)
-    if publisher is not None:
-        publisher.stop()
-
-
-@pytest.fixture
-def direct_cmd_vel_explorer() -> Generator[PersonTrackPublisher, None, None]:
+def direct_cmd_vel_explorer() -> Generator[DirectCmdVelExplorer, None, None]:
     explorer = DirectCmdVelExplorer()
     explorer.start()
     yield explorer
@@ -259,35 +208,8 @@ def direct_cmd_vel_explorer() -> Generator[PersonTrackPublisher, None, None]:
 
 
 @pytest.fixture
-def explore_office(
-    direct_cmd_vel_explorer: DirectCmdVelExplorer,
-) -> Callable[[], None]:
-    points = [
-        (0, -7.07),
-        (-4.16, -7.07),
-        (-4.45, 1.10),
-        (-6.72, 2.87),
-        (-1.78, 3.01),
-        (-1.54, 5.74),
-        (3.88, 6.16),
-        (2.16, 9.36),
-        (4.70, 3.87),
-        (4.67, -7.15),
-        (4.57, -4.19),
-        (-0.84, -2.78),
-        (-4.71, 1.17),
-        (4.30, 0.87),
-    ]
-
-    def explore() -> None:
-        direct_cmd_vel_explorer.follow_points(points)
-
-    return explore
-
-
-@pytest.fixture
-def dim_sim():
-    client = DimSimClient()
+def dim_sim(dimsim_port: int):
+    client = DimSimClient(dimsim_port)
     client.start()
     yield client
     client.stop()

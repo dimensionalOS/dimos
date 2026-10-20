@@ -59,7 +59,7 @@ from dimos.utils.logging_config import setup_logger
 # redundant aliases mark them as such for mypy) so protocol consumers keep a
 # single import surface, mirroring protocol.ts.
 from dimos.web.relay_bridge.manifest import (
-    MAX_MANIFEST_ID_LEN,
+    MAX_MANIFEST_ID_LEN as MAX_MANIFEST_ID_LEN,
     RESERVED_CHANNEL_PREFIX as RESERVED_CHANNEL_PREFIX,
     ChannelSpec as ChannelSpec,
     Delivery as Delivery,
@@ -70,6 +70,9 @@ from dimos.web.relay_bridge.manifest import (
 
 logger = setup_logger()
 
+# v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
+# video.webrtc.v1 track channels. An older peer would drop the unknown
+# messages and show a video panel that never draws, hence the bump.
 # v6 (amended, T12d): hello gains an optional `token` (a robot key or viewer
 # token for a relay started with --auth-file) and the relay answers
 # auth_failed; no bump: an older peer omits the field and an auth-on relay
@@ -92,7 +95,7 @@ logger = setup_logger()
 # misread in both directions). v2: a reliable channel packs all its frames
 # onto one persistent stream. Bump on any change an old peer would silently
 # misparse.
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 
 # The reserved data-frame channel carrying robot-leg control messages (v5+:
 # the robot's hello; the relay never forwards @-prefixed frames to viewers).
@@ -116,6 +119,14 @@ MAX_REQUEST_ID_LEN = 64
 
 # Bound for hello.token (a robot key or viewer token, see web/relay/auth.ts).
 MAX_TOKEN_LEN = 256
+
+# An SDP rides a control frame or an @control payload, so it stays well under
+# MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
+# MAX_RTC_TRACKS of them). SDP is ASCII, so this character count and the TS
+# mirror's string length agree.
+MAX_SDP_LEN = 48 * 1024
+MAX_MID_LEN = 16
+MAX_RTC_TRACKS = 8
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536
@@ -374,6 +385,53 @@ class PubNack(_WireModel):
     message: str
 
 
+# WebRTC video signaling (v7; the legs are documented in protocol.ts).
+_WireOptStr = Annotated[str | None, BeforeValidator(_optional_reject_wire_null)]
+
+
+class IceServer(_WireModel):
+    urls: list[str] = Field(min_length=1)
+    username: _WireOptStr = None
+    credential: _WireOptStr = None
+
+
+class RtcIce(_WireModel):
+    t: Literal["rtc_ice"] = "rtc_ice"
+    iceServers: list[IceServer]
+
+
+class RtcTrack(_WireModel):
+    ch: str = Field(min_length=1, max_length=MAX_MANIFEST_ID_LEN)
+    mid: str = Field(min_length=1, max_length=MAX_MID_LEN)
+
+
+_WireSdp = Annotated[str, Field(min_length=1, max_length=MAX_SDP_LEN)]
+_WireOptTracks = Annotated[
+    Annotated[list[RtcTrack], Field(max_length=MAX_RTC_TRACKS)] | None,
+    BeforeValidator(_optional_reject_wire_null),
+]
+
+
+class RtcOffer(_WireModel):
+    t: Literal["rtc_offer"] = "rtc_offer"
+    sdp: _WireSdp
+    tracks: _WireOptTracks = None
+    # Relay-sent pulls only: the robot whose tracks these are.
+    robotId: _WireOptStr = None
+
+
+class RtcAnswer(_WireModel):
+    t: Literal["rtc_answer"] = "rtc_answer"
+    sdp: _WireSdp
+
+
+# Robot to relay: track `ch` carried no media for the SFU's track lifetime
+# (30 s) and does again; the relay closes its pulls and pulls it afresh.
+class RtcStalled(_WireModel):
+    t: Literal["rtc_stalled"] = "rtc_stalled"
+    ch: str = Field(min_length=1, max_length=MAX_MANIFEST_ID_LEN)
+
+
 Msg = (
     Hello
     | Welcome
@@ -394,6 +452,10 @@ Msg = (
     | Pub
     | PubAck
     | PubNack
+    | RtcIce
+    | RtcOffer
+    | RtcAnswer
+    | RtcStalled
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8

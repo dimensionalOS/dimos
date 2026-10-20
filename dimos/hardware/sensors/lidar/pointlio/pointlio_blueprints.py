@@ -19,6 +19,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
 
@@ -57,6 +58,21 @@ mid360_pointlio_voxels = autoconnect(
         },
     ),
 ).global_config(n_workers=4, robot_model="mid360_pointlio_voxels")
+
+mid360_pointlio_ray_trace = autoconnect(
+    mid360_for_pointlio(),
+    PointLio.blueprint(),
+    RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
+    vis_module(
+        "rerun",
+        rerun_config={
+            "visual_override": {
+                "world/lidar": None,
+                "world/lidar_raw": None,
+            },
+        },
+    ),
+).global_config(n_workers=4, robot_model="mid360_pointlio_ray_trace")
 
 # Replays the capture named by DIMOS_MID360_PCAP (required) at capture speed.
 mid360_pointlio_replay = autoconnect(

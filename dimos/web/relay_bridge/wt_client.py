@@ -20,17 +20,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import itertools
 import json
+import socket
 import ssl
 import time
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urljoin, urlparse
 import urllib.request
 
-from aioquic.asyncio.client import connect as aioquic_connect
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.connection import QuicConnection
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
@@ -84,6 +86,9 @@ class RelayInfo:
     """SHA-256 of the relay's ephemeral certificate; None once a relay serves
     a real certificate."""
     v: int
+    rtc: bool = False
+    """True when the relay brokers video.webrtc.v1 track channels through
+    its Cloudflare Realtime SFU (protocol v7)."""
 
 
 def resolve_info_url(base_url: str) -> str:
@@ -119,16 +124,42 @@ async def fetch_relay_info(
     if not isinstance(data, dict):
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
+    rtc = data.get("rtc", False)
     if (
         not isinstance(wt_url, str)
         or not (cert_hash is None or isinstance(cert_hash, str))
         or not isinstance(v, int)
         or isinstance(v, bool)
+        or not isinstance(rtc, bool)
     ):
         raise ProtocolError(f"{url} returned an unexpected shape")
     if v != PROTOCOL_VERSION:
         raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
-    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v)
+    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc)
+
+
+@contextlib.asynccontextmanager
+async def _quic_connect(
+    host: str, port: int, *, configuration: QuicConfiguration
+) -> AsyncIterator[SessionProtocol]:
+    """aioquic.asyncio.client.connect() with a socket of the server's address family.
+
+    aioquic's dual-stack [::]:0 socket can get a port an IPv4 UDP socket holds
+    on macOS, and that socket then receives the IPv4 server's replies."""
+    loop = asyncio.get_running_loop()
+    family, _, _, _, addr = (await loop.getaddrinfo(host, port, type=socket.SOCK_DGRAM))[0]
+    connection = QuicConnection(configuration=replace(configuration, server_name=host))
+    transport, protocol = await loop.create_datagram_endpoint(
+        lambda: SessionProtocol(connection), family=family
+    )
+    try:
+        protocol.connect(addr)
+        await protocol.wait_connected()
+        yield protocol
+    finally:
+        protocol.close()
+        await protocol.wait_closed()
+        transport.close()
 
 
 class RelayClient:
@@ -142,7 +173,7 @@ class RelayClient:
         self.url = url
         self.role = role
         self._session = session
-        self._ctx = ctx  # aioquic.asyncio.connect() context manager
+        self._ctx = ctx  # _quic_connect() context manager
         self._ping_n = itertools.count(1)
         self._seq: dict[str, itertools.count[int]] = {}
         self._writers: list[LatestChannelWriter] = []
@@ -193,17 +224,12 @@ class RelayClient:
                 f"relay URL path must be {expected_path!r} for role={role}, got {parsed.path!r}"
             )
 
-        ctx = aioquic_connect(
-            host,
-            port,
-            configuration=make_quic_configuration(insecure, cafile),
-            create_protocol=SessionProtocol,
-        )
+        ctx = _quic_connect(host, port, configuration=make_quic_configuration(insecure, cafile))
         # Bounded: aioquic gives up on an endpoint nobody listens on only at
         # its 60 s idle timeout (UDP surfaces no ICMP), and a stale wtUrl
         # after a relay restart must fail fast so the caller rediscovers.
-        # aioquic's own finally closes the socket on cancellation.
-        session = cast("SessionProtocol", await asyncio.wait_for(ctx.__aenter__(), timeout))
+        # _quic_connect's finally closes the socket on cancellation.
+        session = await asyncio.wait_for(ctx.__aenter__(), timeout)
         # The robot leg's only incoming uni stream is the relay-opened control
         # carrier: corruption, reset, or an end of it must fail the whole
         # session (the bridge reconnects) instead of leaving it alive without

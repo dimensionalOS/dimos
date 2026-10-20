@@ -4,10 +4,11 @@
 import { parseArgs } from "@std/cli";
 import { PROTOCOL_VERSION } from "@dimos/shared";
 import { loadAuthFile } from "./auth.ts";
+import { loadRtcFile } from "./cloudflare.ts";
 import { CERT_KEY_PAIR_ERROR, startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["host", "cockpit-dir", "sdk-dir", "serve-dir", "cert", "key", "auth-file"],
+  string: ["host", "cockpit-dir", "sdk-dir", "serve-dir", "cert", "key", "auth-file", "rtc-file"],
   // Non-loopback binds without --cert, --key and --auth-file need this
   // explicit acknowledgment (see RelayOptions.unsafeNonLoopback).
   boolean: ["unsafe-non-loopback"],
@@ -40,6 +41,7 @@ const relay = await startRelay({
   cert: args.cert === undefined ? undefined : await Deno.readTextFile(args.cert),
   key: args.key === undefined ? undefined : await Deno.readTextFile(args.key),
   auth: args["auth-file"] === undefined ? undefined : await loadAuthFile(args["auth-file"]),
+  rtc: args["rtc-file"] === undefined ? undefined : await loadRtcFile(args["rtc-file"]),
 });
 
 console.log(JSON.stringify({
@@ -60,6 +62,9 @@ if (args["serve-dir"] !== undefined) {
 }
 if (args["sdk-dir"] !== undefined) {
   console.log(`[relay] sdk: ${pageBase}sdk.js`);
+}
+if (args["rtc-file"] !== undefined) {
+  console.log("[relay] WebRTC video through the Cloudflare Realtime SFU: on");
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {

@@ -113,6 +113,8 @@ def upload(
                 )
             note = "already uploaded" if r["skipped"] else r["state"]
             typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
+            if r.get("preview"):
+                typer.echo(f"  console preview: {r['preview']}")
             if r["quota"].get("state") not in (None, "ok"):
                 typer.echo(r["quota"]["message"], err=True)
         except (RuntimeError, OSError) as e:

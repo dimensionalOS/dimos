@@ -41,7 +41,7 @@ dimos restart          # stop + re-run with same original args
 |-----------|-------|----------|-------|------------|-------|
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
-| `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
+| `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-webxr-xarm7` | xArm7 | real | — | — | WebXR teleop |
@@ -70,7 +70,7 @@ dimos mcp modules     # module → skills mapping
 dimos agent-send "walk forward 2 meters then wave"
 ```
 
-The MCP server runs at `http://localhost:9990/mcp` (`GlobalConfig.mcp_port`).
+The MCP server runs at `http://localhost:9990/mcp` (`McpServerConfig.port`).
 
 ### Adding McpServer to a blueprint
 
@@ -100,7 +100,7 @@ dimos/
 │   ├── module.py            # Module base class, In/Out streams
 │   ├── core.py              # @rpc decorator
 │   ├── stream.py            # In[T], Out[T], Transport[T]
-│   ├── transport.py         # LCM/SHM/ROS/DDS/Jpeg transports
+│   ├── transport.py         # Zenoh/LCM/ROS/DDS/Jpeg transports
 │   ├── coordination/
 │   │   ├── blueprints.py           # Blueprint, autoconnect()
 │   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
@@ -194,15 +194,16 @@ For in-repo DimOS blueprints, expose a module-level variable for `dimos run` to 
 
 ### GlobalConfig
 
-Singleton config. Values cascade: defaults → `.env` → env vars → blueprint → CLI flags. Env vars prefixed `DIMOS_`. Key fields: `robot_ip`, `simulation`, `replay`, `viewer`, `n_workers`, `mcp_port`.
+Shared runtime config. Values cascade: defaults → blueprint → JSON config → `.env` → env vars → CLI flags. Env vars use uppercase field names (transport also accepts `DIMOS_TRANSPORT`). Key fields: `robot_ip`, `simulation`, `replay`, `viewer`, `n_workers`. Module-specific settings belong on module configs; use `--module.field` after the blueprint name or `MODULE__FIELD` in the environment.
 
 ### Transports
 
-- **LCMTransport**: Default. Multicast UDP.
-- **SHMTransport/pSHMTransport**: Shared memory — use for images and point clouds.
+- **ZenohTransport**: Default. Typed messages with LCM encoding over Zenoh.
+- **pZenohTransport**: Pickled Zenoh — use for complex Python objects.
+- **LCMTransport**: Opt-in legacy backend. Multicast UDP.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
-- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
+- **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 
 ---
 
@@ -210,7 +211,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 
@@ -347,7 +348,7 @@ uv run pytest dimos/core/coordination/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `self_hosted` and `mujoco` markers, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
+`uv run pytest` excludes the `self_hosted` marker, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 
@@ -361,7 +362,7 @@ Code style rules:
 - Imports at top of file. No inline imports unless circular dependency.
 - Use `requests` for HTTP (not `urllib`). Use `Any` (not `object`) for JSON values.
 - Prefix manual test scripts with `demo_` to exclude from pytest collection.
-- Don't hardcode ports/URLs — use `GlobalConfig` constants.
+- Don't hardcode ports/URLs — use the owning module's configuration and shared constants.
 - Type annotations required. Mypy strict mode.
 
 ---

@@ -11,12 +11,11 @@ room scene with `--simulation`:
 | `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
-dimos run xarm-grasp-graspgenx --xarm7-ip 192.168.1.x     # hardware
-dimos run xarm-grasp-graspgenx --simulation mujoco        # the room scene
+dimos run xarm-grasp-graspgenx --controlcoordinator.addresses '{"arm": "192.168.1.x"}'  # hardware
+dimos run xarm-grasp-graspgenx --simulation mujoco                                       # the room scene
 ```
 
-Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
-`--simulation` set and everything reverts to MuJoCo regardless of the IP.
+On hardware the arm needs its address, from the flag above or a saved config file (see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration)). With `--simulation` a saved address is ignored and everything runs in MuJoCo.
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
@@ -58,17 +57,15 @@ the registered objects:
 
 ```
 camera pointcloud
-  -> PointCloudSelfFilter        drops the arm's own returns, emits a clear mask
-  -> RayTracingVoxelMap          accumulates occupied cells in the world frame
+  -> RoboPlanPointCloudSelfFilter   drops robot surface returns using RoboPlan
+  -> RayTracingVoxelMap             accumulates occupied cells in the world frame
   -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
 ```
 
-`XARM_GRASP_VOXEL_SIZE` is the single resolution all three stages share; they
-must agree or the clear mask names cells the map does not hold and the octree
-does not line up with what was mapped. The blueprint also enables the camera's
-`pointcloud` output, which is off by default on both the RealSense and the
-MuJoCo camera, and publishes TF for every one of the arm's collision links. The
-self filter drops a whole cloud if any link transform is missing at capture time.
+`XARM_GRASP_VOXEL_SIZE` is shared by the mapper and planner octree so their
+cells line up. The blueprint enables the camera's `pointcloud` output, which is
+off by default on both the RealSense and MuJoCo camera. The self filter drops a
+whole cloud if its full joint state or sensor/base TF is missing at capture time.
 
 Because the target object is itself mapped geometry, a collision-checked plan
 into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
@@ -175,3 +172,17 @@ its category silhouette in the wrist camera's top-down view.
 A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset()`
 does not respawn them. Restart the blueprint between pick attempts that need a
 pristine scene.
+
+The generic `PointCloudSelfFilter` handles streams and point fields; subclasses
+supply a capture-time keep mask. The xArm blueprint selects
+`RoboPlanPointCloudSelfFilter`, which delegates geometry loading, kinematics,
+mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
+joint state and TF to the capture timestamp, preserves point fields, and drops
+unaligned captures. The xArm blueprint filters only the arm using a model without
+the gripper. Gripper points may enter the map; separate gripper control and grasp
+evaluation do not remove them. Planning and control retain their existing models.
+
+Filtering removes robot surface returns before voxel fusion. There is no solid
+volume sampling or historical robot clear mask; clearing is the mapper's ordinary
+ray tracing. This does not promise to erase every previously accumulated robot
+voxel, especially where later rays do not reach.

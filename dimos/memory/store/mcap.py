@@ -38,6 +38,7 @@ from typing import Any, Protocol, runtime_checkable
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.json import JsonCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
@@ -245,6 +246,13 @@ class McapStore(Store):
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
+                if ch.topic not in self._codecs and ch.message_encoding == "json":
+                    kind = JsonCodec.payload_type
+                    if (
+                        ch.metadata.get("dimos.payload_type")
+                        == f"{kind.__module__}.{kind.__qualname__}"
+                    ):
+                        self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
                 self._observation_uses_publish_time[name] = (

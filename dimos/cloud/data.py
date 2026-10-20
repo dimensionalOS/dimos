@@ -16,7 +16,7 @@
 
 `CloudData` is a thin facade over `MultipartBackend` (today)
 speaks the /v1/data blob API; a sync backend plugs in beside it without touching
-callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
+callers. Transfer settings live on CloudConfig."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import sys
@@ -37,10 +36,12 @@ import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
-from dimos.cloud import codecs
+from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
+from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
-from dimos.core.global_config import global_config
+from dimos.core.run_registry import blueprint_from_run_id
+from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -72,6 +73,12 @@ class DataApi:
 
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
+
+    def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+        return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
+
+    def confirm_video(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
 
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
@@ -146,7 +153,15 @@ class MultipartBackend:
             )
             create = self.api.create(**spec)
             if create["state"] == "complete":
-                return {**create, "skipped": True}
+                # already uploaded: (re)send the preview, so a failed send is repaired
+                # by simply running the upload again
+                return {
+                    **create,
+                    "skipped": True,
+                    "preview": self._preview(create["upload_id"], path, Path(tmp))
+                    if manifest
+                    else None,
+                }
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
@@ -181,7 +196,40 @@ class MultipartBackend:
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
-            return {**done, "upload_id": uid, "skipped": False}
+            return {
+                **done,
+                "upload_id": uid,
+                "skipped": False,
+                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+            }
+
+    def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
+        """The console's spatial preview, built here while the recording is at hand.
+        Built from a copy: the store opens read-write (WAL), and the user's recording
+        must stay byte-identical to what was uploaded. Best effort: the upload stands
+        without it."""
+        try:
+            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
+            shutil.copyfile(path, copy)
+            note = ""
+            with open_store(copy) as store:
+                doc = preview.build(store)
+                try:  # the preview stands without its clip
+                    video = preview.timelapse(store, clip) if doc is not None else None
+                except Exception as e:
+                    video, note = None, f" (no timelapse: {e})"
+            if doc is None:
+                return "none (no lidar, camera or odometry)"
+            if video:
+                doc["video"] = video
+            sent = self.api.put_preview(upload_id, doc)
+            if not (video and sent.get("video_url")):
+                return "sent" + note
+            self.api.put_part(sent["video_url"], clip.read_bytes())
+            self.api.confirm_video(upload_id)  # the console links the clip only after this
+            return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
+        except Exception as e:
+            return f"failed: {e}"
 
     def pull(
         self,
@@ -232,19 +280,20 @@ class MultipartBackend:
 class CloudData:
     """Facade: resolves auth + config once, delegates to the configured backend."""
 
-    def __init__(self, backend: MultipartBackend | None = None) -> None:
+    def __init__(
+        self, backend: MultipartBackend | None = None, *, config: CloudConfig | None = None
+    ) -> None:
+        self.config = config if config is not None else CloudConfig()
         if backend is None:
-            key = global_config.dimos_api_key or api_key()
+            key = api_key(self.config)
             if not key:
                 raise RuntimeError("not logged in — run `dimos login`")
-            request = HttpCloudRequest(
-                global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
-            )
+            request = HttpCloudRequest(self.config.url, key, self.config.http_timeout)
             backend = MultipartBackend(
                 DataApi(request),
-                global_config.dimos_upload_codec,
-                global_config.dimos_staging_dir,
-                global_config.dimos_upload_retries,
+                self.config.upload_codec,
+                self.config.staging_dir,
+                self.config.upload_retries,
             )
         self.backend = backend
 
@@ -262,9 +311,9 @@ class CloudData:
             raise FileNotFoundError(path)
         if _is_sidecar(path):
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
-        if skip_recent and time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
+        if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
-        chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
+        chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
@@ -339,13 +388,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    """Uploads and pulls stage copies beside the file (or in DIMOS_CLOUD_STAGING_DIR); fail
     before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
             f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
-            "set dimos_staging_dir to a larger partition"
+            "set DIMOS_CLOUD_STAGING_DIR to a larger partition"
         )
 
 
@@ -405,9 +454,8 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
-    return m.group(1) if m else None
+    """Run dirs are named after their run ID (generate_run_id)."""
+    return blueprint_from_run_id(path.parent.name)
 
 
 def _sha256(path: Path) -> str:

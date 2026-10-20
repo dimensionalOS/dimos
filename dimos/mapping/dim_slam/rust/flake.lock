@@ -62,11 +62,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1787890856,
-        "narHash": "sha256-3dsQXz4xx54uKzAZfuxnZwo9R+l+VKFdjHVN1W7twGE=",
+        "lastModified": 1788061359,
+        "narHash": "sha256-nO9tQNKxCvvoeRhy5/BwB6sl9E4dUK+tXCif5uofTxQ=",
         "owner": "jeff-hykin",
         "repo": "cu_vslam_rs",
-        "rev": "54b8c88762ae28e3d6165962b54503b28e328e7c",
+        "rev": "6b0a6bd05be61eed33e3d2ee351398a7dcd3b654",
         "type": "github"
       },
       "original": {
@@ -95,18 +95,6 @@
         "repo": "devshell",
         "type": "github"
       }
-    },
-    "dimos-repo": {
-      "flake": false,
-      "locked": {
-        "path": "../../../..",
-        "type": "path"
-      },
-      "original": {
-        "path": "../../../..",
-        "type": "path"
-      },
-      "parent": []
     },
     "flake-compat": {
       "locked": {
@@ -234,6 +222,21 @@
         "type": "github"
       }
     },
+    "nix-filter": {
+      "locked": {
+        "lastModified": 1757882181,
+        "narHash": "sha256-+cCxYIh2UNalTz364p+QYmWHs0P+6wDhiWR4jDIKQIU=",
+        "owner": "numtide",
+        "repo": "nix-filter",
+        "rev": "59c44d1909c72441144b93cf0f054be7fe764de5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "nix-filter",
+        "type": "github"
+      }
+    },
     "nix-test-runner": {
       "flake": false,
       "locked": {
@@ -268,11 +271,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1787498568,
-        "narHash": "sha256-9i/VTdusq/+NM/tz+J1Re+ojkMB8MBf0QshnYfzHz30=",
+        "lastModified": 1789546076,
+        "narHash": "sha256-zVxLZiSnmaaPLwnhj7pwmqe3axBg/C6nG5JZsJMh2g4=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "56c02bc00adcf003215cc4bd996d6efaf4cff188",
+        "rev": "b1b875982b17dabde9b4a37f3e229e74913e6db3",
         "type": "github"
       },
       "original": {
@@ -312,8 +315,8 @@
       "inputs": {
         "crate2nix": "crate2nix",
         "cu-vslam-rs": "cu-vslam-rs",
-        "dimos-repo": "dimos-repo",
         "flake-utils": "flake-utils",
+        "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs_2"
       }
     },

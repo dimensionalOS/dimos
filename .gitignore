@@ -92,7 +92,6 @@ recording*.db
 # Downloaded model weights
 FastSAM-x.pt
 yolo11n*.pt
-*mobileclip*
 
 # openspec
 /openspec/changes/archive/
@@ -104,3 +103,6 @@ site/
 
 # Optuna study store, written by the relocalization eval (see lidar/eval.md)
 optuna.db
+
+# policy blobs are loaded from outside the repository
+*.bin

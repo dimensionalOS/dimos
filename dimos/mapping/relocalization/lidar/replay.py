@@ -29,7 +29,7 @@ import typer
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
-from dimos.mapping.relocalization.lidar.module import LidarConfig
+from dimos.mapping.relocalization.lidar.module import LocalMapConfig
 from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
@@ -48,7 +48,7 @@ FITNESS_SERIES = "metrics/reloc/fitness"
 MAP_FRAME = "map"
 RECORDED_MAP_COLOR = (255, 120, 120)
 
-_FIELDS = LidarConfig.model_fields
+_FIELDS = LocalMapConfig.model_fields
 _VOXEL_SIZE = RayTracingVoxelMapConfig.model_fields["voxel_size"].default
 
 

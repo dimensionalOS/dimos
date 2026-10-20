@@ -66,12 +66,13 @@ deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
 | `--serve-dir` | none | Your own directory at `/` instead of the cockpit. Loopback only. |
 | `--cert`, `--key` | none | PEM certificate and key, given together. |
 | `--auth-file` | none | Robot keys and viewer tokens (below). |
+| `--rtc-file` | none | Cloudflare Realtime configuration for WebRTC video (the [hosting guide](/docs/web/relay_hosting.md#video-through-cloudflare)). |
 | `--unsafe-non-loopback` | off | Bind a non-loopback host without TLS and auth, behind your own TLS and access control. |
 
 The first line on stdout is the ready line:
 
 ```json
-{"event":"ready","httpPort":7780,"wtUrl":"https://127.0.0.1:49940","certHash":"...","v":6}
+{"event":"ready","httpPort":7780,"wtUrl":"https://127.0.0.1:49940","certHash":"...","v":7}
 ```
 
 `wtUrl` is the WebTransport endpoint. Its QUIC port is ephemeral and changes on every start, so clients discover it through `/api/info` and you never type it. Attach a robot with the relay's HTTP address:
@@ -85,9 +86,9 @@ Then open `http://localhost:7780/` for the cockpit. Things to know:
 - Restart the relay whenever you like. The bridge and the page reconnect on their own.
 - A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
 - `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
-- A second robot on the same relay needs its own `--robot-id`. A synthetic one for testing: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- A second robot on the same relay needs its own `--relaybridgemodule.robot-id`. A synthetic one for testing: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
 - With several robots on the relay the cockpit lists them. Pick one to watch it, and `switch robot` in the header reopens the list.
-- Another machine needs TLS and the auth file (below), and `--relay-ca` on the robot for a private CA.
+- Another machine needs TLS and the auth file (below), and `--relaybridgemodule.relay-ca` on the robot for a private CA.
 
 ## HTTP routes
 
@@ -95,7 +96,7 @@ Then open `http://localhost:7780/` for the cockpit. Things to know:
 |---|---|---|
 | `/` | the cockpit build, or `--serve-dir` | same origin |
 | `/sdk.js` | the SDK bundle, never cached | wildcard CORS |
-| `/api/info` | `{"wtUrl": ..., "certHash": ..., "v": 6}`: the WebTransport address, the certificate hash (absent with a real certificate), the protocol version | wildcard CORS, never authenticated |
+| `/api/info` | `{"wtUrl": ..., "certHash": ..., "v": 7, "rtc": true}`: the WebTransport address, the certificate hash (absent with a real certificate), the protocol version, and `rtc: true` on a relay with `--rtc-file` (absent otherwise) | wildcard CORS, never authenticated |
 | `/api/stats` | live counters per robot, channel and viewer (see [Traffic](#traffic)) | wildcard CORS without an auth file. With one, `Authorization: Bearer <viewer token>` and no CORS header |
 
 Served JavaScript modules (`.js`, `.mjs`) get wildcard CORS as well, so a page on another origin can import them. The viewer token, not CORS, is the access boundary.
@@ -104,7 +105,7 @@ Served JavaScript modules (`.js`, `.mjs`) get wildcard CORS as well, so a page o
 
 `--cert fullchain.pem --key privkey.pem` turns on real TLS. HTTPS (TCP) and QUIC (UDP) share `--port`, clients verify the certificate normally, `/api/info` carries no hash, and the WebTransport address is derived from the host the client dialed. There is no reverse proxy option: an HTTP proxy cannot carry QUIC. The files are read at startup, so a renewal means a restart.
 
-A robot that must trust a private CA (mkcert on a LAN) passes it with `--relay-ca`. Browsers are pickier: Firefox needs a preference flipped to run QUIC through a private root, and Chromium refuses it by default (its `--webtransport-developer-mode` switch turns the check off). The [hosting guide](/docs/web/relay_hosting.md) has both.
+A robot that must trust a private CA (mkcert on a LAN) passes it with `--relaybridgemodule.relay-ca`. Browsers are pickier: Firefox needs a preference flipped to run QUIC through a private root, and Chromium refuses it by default (its `--webtransport-developer-mode` switch turns the check off). The [hosting guide](/docs/web/relay_hosting.md) has both.
 
 ## Auth file
 
@@ -117,7 +118,7 @@ A robot that must trust a private CA (mkcert on a LAN) passes it with `--relay-c
 }
 ```
 
-A robot sends its key when it connects (`RELAY_KEY` in its environment or `.env`, bound to its `--robot-id`). A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
+A robot sends its key when it connects (`RELAYBRIDGEMODULE__RELAY_KEY` in its environment or `.env`, bound to its `--relaybridgemodule.robot-id`). A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
 
 A wrong or missing secret fails with `auth_failed`, and that is terminal: neither client retries. The relay compares secrets in constant time, never logs one, and reports a malformed file by entry name. Edits to the file need a restart. With auth on, `/api/stats` wants the viewer token as a bearer and the log names viewers (`viewer 1 authenticated as paul`).
 
@@ -134,7 +135,8 @@ What the relay does between the two sides, for reading the stats and the logs:
 - Forwarding. A `latest` channel sends every frame on its own stream. A stream older than 500 ms is reset, so a slow viewer gets only the newest frames. A `reliable` channel uses one ordered stream per viewer and channel, with a queue of 64 frames or 16 MiB per viewer and channel (a lone frame over the byte cap still queues, up to the 64 MiB frame limit). A viewer that lets the queue overflow is disconnected with `reliable channel overflow`.
 - Teleop. One viewer per robot holds the lease. Its commands are forwarded with a generation number, a second viewer's arm request gets `teleop_held`, and commands from anyone but the holder are dropped. When the holder disconnects or switches robots, the relay releases the lease and sends the bridge `teleop_stop`.
 - Publishing. A `pub` is checked in order: a watched robot, no duplicate request id, size (32 KiB), a declared `publish="shared"` reliable tx channel, pending limits (16 requests or 256 KiB per viewer, 64 or 1 MiB per robot), then two token buckets at the channel's `max_hz`, one per viewer and one per robot (`rate_limited`). Accepted values are sent on the reliable robot carrier, and the bridge's ack or nack is routed back to the one viewer that asked. A request without an answer after 10 s settles as `publish_timeout`.
-- Stats. `/api/stats` reports the robots, the viewer count, `pub` counters (accepted, acked, timed out, late acks, pending, rejected by code), per robot the subscribed channels, the teleop holder, the carrier queue and per-channel input rates, and per viewer the watched robot and per-channel output counters. On a viewer's channel, `sent` is frames accepted by the transport, `dropped` is frames shed before the wire (latest channels only), `aborted` is latest streams reset while the viewer was not keeping up (the stalled-viewer signal, 0 when healthy), and `expired` is routine end-of-life resets (about equal to `sent` on a healthy latest channel).
+- WebRTC video. With `--rtc-file`, a bridge advertises its `jpeg.v1` channels as `video.webrtc.v1` tracks and the relay brokers one Cloudflare SFU session per peer. It declares each of the robot's tracks when a viewer first needs it and pulls it onto the viewers subscribed to its channel, so no video frame passes through the relay. Closes are retried until the SFU confirms them (five tries), a track the SFU collected (30 s without media, which the bridge reports when its video resumes) is declared again before the next pull, and TURN credentials are minted before the relay serves its first peer and re-sent to every peer at each hourly refresh. The [Wire protocol](/docs/web/protocol.md#webrtc-video) page has the messages.
+- Stats. `/api/stats` reports the robots, the viewer count, `pub` counters (accepted, acked, timed out, late acks, pending, rejected by code), per robot the subscribed channels, the teleop holder, the carrier queue and per-channel input rates, and per viewer the watched robot and per-channel output counters. On a viewer's channel, `sent` is frames accepted by the transport, `dropped` is frames shed before the wire (latest channels only), `aborted` is latest streams reset while the viewer was not keeping up (the stalled-viewer signal, 0 when healthy), and `expired` is routine end-of-life resets (about equal to `sent` on a healthy latest channel). With `--rtc-file`, `rtc` counts the SFU sessions per side, the pulls, the completed pulls, the Cloudflare API errors and the frames dropped on track channels.
 
 ## Hosting
 

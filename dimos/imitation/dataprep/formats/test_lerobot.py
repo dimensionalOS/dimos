@@ -31,9 +31,12 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from dimos.imitation.dataprep.core import OutputConfig, Sample
 from dimos.imitation.dataprep.formats.lerobot.reader import inspect
 from dimos.imitation.dataprep.formats.lerobot.writer import write
+from dimos.imitation.dataprep.schema import (
+    OutputConfig,
+    Sample,
+)
 
 
 def _state_samples(n: int = 4) -> Iterator[Sample]:
@@ -218,3 +221,19 @@ def test_lerobot_v3_with_images_writes_concatenated_mp4(tmp_path: Path) -> None:
     # image column is excluded from parquet; state/action remain
     assert "observation.state" in info["features"]
     assert info["total_frames"] == 4
+
+
+def test_fill_flags_are_written_as_boolean_feature(tmp_path: Path) -> None:
+    samples = (
+        sample.model_copy(
+            update={"complementary_info": {"is_filled": np.asarray([index % 2 == 1])}}
+        )
+        for index, sample in enumerate(_state_samples())
+    )
+
+    root = write(samples, OutputConfig(format="lerobot", path=tmp_path / "dataset"))
+
+    rows = pq.read_table(root / "data/chunk-000/file-000.parquet").to_pydict()
+    assert rows["complementary_info.is_filled"] == [[False], [True], [False], [True]]
+    info = json.loads((root / "meta/info.json").read_text())
+    assert info["features"]["complementary_info.is_filled"]["dtype"] == "bool"

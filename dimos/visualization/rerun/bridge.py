@@ -19,6 +19,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import field
 import functools
+from operator import attrgetter
+import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -40,9 +43,12 @@ from typing import (
 from urllib.parse import urlparse
 
 import numpy as np
+from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
+from dimos.constants import RECORDINGS_DIR
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -61,9 +67,11 @@ from dimos.visualization.rerun.constants import (
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
     RERUN_WEB_VIEWER_PORT,
+    RERUN_WEBSOCKET_URL,
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -140,7 +148,7 @@ RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
 def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per key, taken unconflated."""
+    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
     renderer.keyed_by_seq = True  # type: ignore[attr-defined]
     return renderer
 
@@ -285,9 +293,13 @@ class Config(ModuleConfig):
     tf_axes: float = 0.0
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    # None: the RerunWebSocketServer in this blueprint, or the default without one.
+    websocket_url: str | None = None
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    rerun_save: bool = False
     web_port: int = RERUN_WEB_VIEWER_PORT
     blueprint: BlueprintFactory | None = _default_blueprint
 
@@ -311,6 +323,10 @@ class RerunBridgeModule(Module):
     config: Config
     dedicated_worker = True
     _last_log: dict[str, float]
+    _websocket_url: str
+
+    # Injected when the blueprint has a RerunWebSocketServer.
+    _websocket_server: RerunWebSocketServerSpec | None = None
 
     # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
     GRAPH_VIZ_SCALE = 100.0
@@ -319,6 +335,10 @@ class RerunBridgeModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # import here, on this module's own worker during the deploy
+        # phase, rather than inside start() on the blueprint's critical path.
+        import rerun  # noqa: F401
+
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
         self._frame_attached: dict[str, str] = {}
@@ -338,7 +358,19 @@ class RerunBridgeModule(Module):
 
     @property
     def host(self) -> str:
-        return self.config.g.rerun_host or self.config.g.listen_host
+        return self.config.host
+
+    @rpc
+    def opens_web_viewer(self) -> bool:
+        """Whether this session requests a browser viewer."""
+        return self.config.rerun_open in ("web", "both")
+
+    def _resolve_websocket_url(self) -> str:
+        if self.config.websocket_url is not None:
+            return self.config.websocket_url
+        if self._websocket_server is not None:
+            return str(self._websocket_server.websocket_url())
+        return RERUN_WEBSOCKET_URL
 
     def _visual_override_for_entity_path(
         self, entity_path: str
@@ -387,7 +419,7 @@ class RerunBridgeModule(Module):
         return composed
 
     def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every message must arrive."""
+        """Channels whose renderer keys entities by seq, so every seq must arrive."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
@@ -513,17 +545,21 @@ class RerunBridgeModule(Module):
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
 
+        if self.config.rerun_save:
+            self._save_client = _start_save_client(server_uri)
+
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
                 f"rerun_open was {self.config.rerun_open} which is not one of "
                 f"{get_args(RerunOpenOption)}"
             )
 
+        self._websocket_url = self._resolve_websocket_url()
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            spawned = spawn_viewer(server_uri, self.config.memory_limit)
+            spawned = spawn_viewer(server_uri, self.config.memory_limit, self._websocket_url)
 
-        open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
+        open_web = self.opens_web_viewer()
         if open_web or self.config.rerun_web:
             rr.serve_web_viewer(
                 connect_to=server_uri,
@@ -568,7 +604,8 @@ class RerunBridgeModule(Module):
         """
         if not self.config.topics:
             if isinstance(pubsub, Zenoh):
-                return pubsub.subscribe_all(self._on_message, unconflated=self._keyed_topics())
+                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
+                return pubsub.subscribe_all(self._on_message, keyed=keyed)
             return pubsub.subscribe_all(self._on_message)
 
         if not isinstance(pubsub, Zenoh):
@@ -595,7 +632,7 @@ class RerunBridgeModule(Module):
         """Log CLI commands for connecting a viewer to this bridge."""
         local_ips = get_local_ips()
         local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
-        local_ws = f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"
+        local_ws = self._websocket_url
         hostname = socket.gethostname()
 
         columns = 60
@@ -609,7 +646,12 @@ class RerunBridgeModule(Module):
         ]
         for ip, iface in local_ips:
             remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
-            remote_ws = f"ws://{ip}:{self.config.g.rerun_websocket_server_port}/ws"
+            remote_ws = self._websocket_url
+            ws = urlparse(remote_ws)
+            if ws.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::", "::1"):
+                host = f"[{ip}]" if ":" in ip else ip
+                netloc = f"{host}:{ws.port}" if ws.port is not None else host
+                remote_ws = ws._replace(netloc=netloc).geturl()
             lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
         lines.append("")
         lines.append(f"  hostname: {hostname}")
@@ -720,22 +762,68 @@ class RerunBridgeModule(Module):
         self._override_cache.clear()
         self._frame_attached.clear()
         self._tf_tree = None
-        super().stop()
+        try:
+            super().stop()
+        finally:
+            self._stop_save_client()
+
+    _save_client: subprocess.Popen[bytes] | None = None
+
+    def _stop_save_client(self) -> None:
+        """Hand the save client everything logged so far, then let it close the file."""
+        client, self._save_client = self._save_client, None
+        if client is None:
+            return
+        if client.poll() is not None:
+            logger.warning(
+                f"rerun --save exited early (code {client.returncode}); the .rrd may be empty"
+            )
+            return
+        import rerun as rr
+
+        try:
+            rr.get_global_data_recording().flush()  # type: ignore[union-attr]
+        except Exception:
+            logger.warning("Rerun flush before closing the .rrd failed", exc_info=True)
+        client.send_signal(signal.SIGINT)
+        try:
+            client.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            logger.warning("rerun --save did not exit; killing it, the .rrd may be truncated")
+            client.kill()
+            client.wait()
 
 
-def run_bridge(
-    memory_limit: str = "25%",
-    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT,
-    rerun_web: bool = RERUN_ENABLE_WEB,
-) -> None:
-    """Start a RerunBridgeModule with default LCM config and block until interrupted."""
+def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
+    """A headless ``rerun --save`` client of our gRPC server.
+
+    It streams every incoming log event to ``recordings/<run-id>/rerun.rrd``, the
+    folder ``--record`` writes ``memory.db`` to, so a run's sensor recording and
+    its visualization sit together. Running it as a client keeps the server, and
+    any live viewer on it, exactly as they are.
+    """
+    cli = shutil.which("rerun")
+    if cli is None:
+        logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
+        return None
+    run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
+    path = RECORDINGS_DIR / run_id / "rerun.rrd"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Saving the Rerun stream", path=str(path))
+    # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
+    return subprocess.Popen(
+        [cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def run_bridge(**config: Any) -> None:
+    """Start a RerunBridgeModule in this process and block until interrupted."""
     autoconf(check_only=True)
 
-    bridge = RerunBridgeModule(
-        memory_limit=memory_limit,
-        rerun_open=rerun_open,
-        rerun_web=rerun_web,
-    )
+    bridge = RerunBridgeModule(**config)
     bridge.start()
 
     def _shutdown(*_: object) -> None:

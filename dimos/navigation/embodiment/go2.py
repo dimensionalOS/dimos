@@ -19,9 +19,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
-
-from .base import Embodiment
 
 GO2 = Embodiment(
     # Moving-body union over a command sweep: the swinging legs set the width.
@@ -42,8 +41,8 @@ GO2 = Embodiment(
     strafe=1.3,  # planner cost of a metre sideways, forward = 1
     reverse=1.8,  # ...and backwards
     yaw_w=0.15,  # planner cost per rad of rotation
-    steppable=0.20,  # legs negotiate obstacles below this (m); not priced yet
-    height=0.45,  # above this the body passes underneath; not an obstacle (m)
+    steppable=0.20,  # legs negotiate obstacles below this (m)
+    height=0.60,  # top of the robot with the Mid-360 at walking height, 0.56 measured, plus margin (m)
     base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)
     # Fitted-sim envelope sweep over the governed slow band; the sweep lives with the sim.
     envelope=(
