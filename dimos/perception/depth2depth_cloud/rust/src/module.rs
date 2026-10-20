@@ -100,10 +100,10 @@ fn decode_tf(bytes: &[u8]) -> std::io::Result<Vec<dimos_module::tf::Transform>> 
                     "unnormalized TF stamp",
                 ));
             }
-            Ok(dimos_module::tf::Transform::new(
+            Ok(dimos_module::tf::Transform::from_nanoseconds(
                 edge.header.frame_id,
                 edge.child_frame_id,
-                seconds(&edge.header.stamp),
+                edge.header.stamp.sec as i64 * 1_000_000_000 + edge.header.stamp.nanosec as i64,
                 Isometry3::from_parts(Translation3::new(p.x, p.y, p.z), rotation),
             ))
         })
@@ -121,14 +121,12 @@ fn encode_tf(transforms: &[dimos_module::tf::Transform]) -> std::io::Result<Vec<
     let transforms = transforms
         .iter()
         .map(|value| {
-            let ns = (value.ts * 1e9).round();
-            if !ns.is_finite() || ns < i64::MIN as f64 || ns > i64::MAX as f64 {
-                return Err(std::io::Error::new(
+            let ns = value.stamp_nanoseconds().ok_or_else(|| {
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "TF timestamp is outside range",
-                ));
-            }
-            let ns = ns as i64;
+                )
+            })?;
             let sec = i32::try_from(ns.div_euclid(1_000_000_000)).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -986,6 +984,35 @@ mod tests {
         assert_eq!(decoded[0].ts, -0.25);
         assert_eq!(decoded[0].translation(), nalgebra::Vector3::new(1., 2., 3.));
         assert!(decode_tf(&[0, 3, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn tf_cdr_source_stamps_survive_epoch_nanoseconds_and_negative_times() {
+        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+        for ns in [0, -1, 1_700_000_000_123_456_789] {
+            let value = dimos_module::tf::Transform::from_nanoseconds(
+                "world",
+                "camera",
+                ns,
+                Isometry3::translation(1., 2., 3.),
+            );
+            let message: TFMessage = cdr::decode(&encode_tf(&[value]).unwrap()).unwrap();
+            assert_eq!(
+                message.transforms[0].header.stamp.sec as i64,
+                ns.div_euclid(1_000_000_000)
+            );
+            assert_eq!(
+                message.transforms[0].header.stamp.nanosec as i64,
+                ns.rem_euclid(1_000_000_000)
+            );
+            for little in [false, true] {
+                let bytes = cdr::encode_endian(&message, little).unwrap();
+                let decoded = decode_tf(&bytes).unwrap();
+                assert_eq!(decoded[0].stamp_nanoseconds(), Some(ns));
+                let output: TFMessage = cdr::decode(&encode_tf(&decoded).unwrap()).unwrap();
+                assert_eq!(output, message);
+            }
+        }
     }
 
     #[test]

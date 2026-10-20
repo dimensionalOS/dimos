@@ -34,8 +34,8 @@
         name = "dimos-depth2depth-cloud";
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/b547716883d0f2619e53d241351357347400a40a";
-          sha256 = "1ec7f63d9ff57a3e5f151009a2b71472b2c90a3c4f17c29f98a6215cbef18c6b";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/b971b729786cc12dcf4769cfbc233b0e36f1feee";
+          sha256 = "20abf8673b36a6fdea3c30b6949fe7e618c2836917c34f39425ef466609a5171";
         };
         sharedSource = pkgs.runCommand "dimos-depth-cloud-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -52,6 +52,8 @@
           mkdir -p $out/sdk
           cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
             --replace-fail '../../../../build/message-source/rust' 'messages'
