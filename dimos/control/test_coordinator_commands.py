@@ -41,8 +41,13 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 ARM_JOINTS = frozenset({"arm/joint1", "arm/joint2"})
 
@@ -146,6 +151,20 @@ def coordinator(mocker) -> Iterator[ControlCoordinator]:
 
 
 class TestTaskInvoke:
+    def test_trajectory_status_is_non_destructive(self, coordinator):
+        assert coordinator.get_trajectory_status() is None
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(joint_names=["arm/joint1", "arm/joint2"])
+        )
+        coordinator.add_task(task, task_type="trajectory")
+        assert coordinator.get_trajectory_status().state is TrajectoryState.IDLE
+        accepted = task.execute(_trajectory(), {"arm/joint1": 0.0, "arm/joint2": 0.0})
+        assert accepted.status.name == "ACCEPTED"
+        assert coordinator.get_trajectory_status().state is TrajectoryState.EXECUTING
+        assert coordinator.get_trajectory_status().state is TrajectoryState.EXECUTING
+        coordinator.cancel_trajectory()
+        assert coordinator.get_trajectory_status().state is TrajectoryState.ABORTED
+
     def test_execute_cancel_get_state_round_trip(self, coordinator):
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
