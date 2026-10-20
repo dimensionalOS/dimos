@@ -22,7 +22,6 @@ import sys
 from types import SimpleNamespace
 
 from dimos_cdrgen.generate import generate
-from dimos_cdrgen.native_build import prepare_cpp
 import pytest
 
 from dimos.message_codegen import native_build
@@ -111,8 +110,29 @@ assert decode(encode(value), Tick).value == 17
     )
 
 
+@pytest.fixture(scope="session")
+def native_build_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    # Native generator prerequisites are build tools, isolated from DimOS runtime deps.
+    # In particular, cdrgen0.1.0's PyYAML pin must not downgrade the runtime lock.
+    environment = tmp_path_factory.mktemp("cdr-native-toolchain") / "venv"
+    run("uv", "venv", "--python", sys.executable, str(environment), cwd=environment.parent)
+    python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    offline_args = ("--offline",) if os.environ.get("DIMOS_OFFLINE") == "1" else ()
+    run(
+        "uv",
+        "pip",
+        "install",
+        *offline_args,
+        "--python",
+        str(python),
+        "dimos-cdrgen[native]==0.1.0",
+        cwd=environment.parent,
+    )
+    return python
+
+
 @pytest.mark.native_e2e
-def test_cpp_consumer_uses_dimos_header(tmp_path: Path) -> None:
+def test_cpp_consumer_uses_dimos_header(tmp_path: Path, native_build_python: Path) -> None:
     source = tmp_path / "interfaces/consumer_msgs/msg/Tick.msg"
     source.parent.mkdir(parents=True)
     source.write_text("int32 value\n")
@@ -120,18 +140,28 @@ def test_cpp_consumer_uses_dimos_header(tmp_path: Path) -> None:
     generate(
         [source.parents[2]], generated, ["consumer_msgs/msg/Tick"], "dimos_consumer", shared=True
     )
-    sources = {
-        name: Path(path)
-        for name, path in json.loads(os.environ.get("DIMOS_NATIVE_SOURCE_DIRS", "{}")).items()
-    }
-    prefix = prepare_cpp(
-        generated,
-        cache=Path(os.environ["DIMOS_NATIVE_TEST_CACHE"])
-        if "DIMOS_NATIVE_TEST_CACHE" in os.environ
-        else tmp_path / "native-cache",
-        offline=os.environ.get("DIMOS_OFFLINE") == "1",
-        source_dirs=sources or None,
+    prefix_file = tmp_path / "native-prefix.txt"
+    run(
+        str(native_build_python),
+        "-c",
+        """import json
+import os
+from pathlib import Path
+import sys
+from dimos_cdrgen.native_build import prepare_cpp
+sources = {name: Path(path) for name, path in json.loads(os.environ.get("DIMOS_NATIVE_SOURCE_DIRS", "{}")).items()}
+prefix = prepare_cpp(
+    Path(sys.argv[1]), cache=Path(sys.argv[2]),
+    offline=os.environ.get("DIMOS_OFFLINE") == "1", source_dirs=sources or None,
+)
+Path(sys.argv[3]).write_text(str(prefix))
+""",
+        str(generated),
+        os.environ.get("DIMOS_NATIVE_TEST_CACHE", str(tmp_path / "native-cache")),
+        str(prefix_file),
+        cwd=tmp_path,
     )
+    prefix = Path(prefix_file.read_text())
     toolchain = native_build.write_cmake_toolchain(prefix, tmp_path / "toolchain.cmake")
     include = Path(__file__).resolve().parents[2] / "native/cpp/include"
     (tmp_path / "CMakeLists.txt").write_text(f'''cmake_minimum_required(VERSION 3.20)

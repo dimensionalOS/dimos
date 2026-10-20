@@ -37,5 +37,5 @@ jobs:
           .venv/bin/python -m pytest --noconftest -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' --strict-markers -m 'not native_e2e' -q dimos/message_codegen/test_integration.py
       - name: Verify compiled C++ consumer
         run: |
-          uv pip install --python .venv/bin/python 'dimos-cdrgen[native]==0.1.0'
           .venv/bin/python -m pytest --noconftest -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' --strict-markers -m native_e2e -q dimos/message_codegen/test_integration.py
+          .venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("catkin_pkg") is None'
