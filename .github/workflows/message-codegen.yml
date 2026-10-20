@@ -65,6 +65,8 @@ on:
       - native/rust/dimos-module-macros/**
       - native/message-source.nix
       - dimos/navigation/go2/loop_closure/**
+      - dimos/robot/unitree/type/lidar.py
+      - dimos/robot/unitree/type/test_lidar.py
       - dimos/mapping/cli/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
@@ -391,3 +393,11 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.cli import map,view,replay,replay_marker; from dimos.visualization.rerun import cdr; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (map,view,replay,replay_marker,cdr)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/mapping/cli/test_cli.py::test_view_pc2"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/cli/{map,view,replay,replay_marker}.py dimos/visualization/rerun/cdr.py
+      - name: Verify actual CDR PGO Module ports and nanosecond stale-stamp repair
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.loop_closure import module; from dimos.robot.unitree.type import lidar; import gtsam; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,gtsam)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/loop_closure/test_generated_module.py" "$PWD/dimos/robot/unitree/type/test_lidar.py" -k 'not test_init'
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/go2/loop_closure/module.py dimos/robot/unitree/type/lidar.py
