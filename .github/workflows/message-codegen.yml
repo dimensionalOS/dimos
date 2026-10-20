@@ -64,6 +64,8 @@ on:
       - native/rust/dimos-module/**
       - native/rust/dimos-module-macros/**
       - native/message-source.nix
+      - dimos/mapping/cli/pose_fill.py
+      - dimos/mapping/cli/test_pose_fill.py
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
       - docs/development/messages-external-project.md
@@ -366,3 +368,8 @@ jobs:
           export DIMOS_NATIVE_MLS_BINARY="$PWD/dimos/navigation/global_planner/mls_planner/rust/target/debug/mls_planner"
           .native-review/bin/python -I -c 'from dimos.navigation.global_planner.mls_planner import mls_planner_native,transformer,viz; import dimos_mls_planner; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (mls_planner_native,transformer,viz,dimos_mls_planner)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/global_planner/mls_planner/test_generated_native.py" "$PWD/dimos/navigation/global_planner/mls_planner/test_transformer.py" "$PWD/dimos/navigation/global_planner/mls_planner/test_viz.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/global_planner/mls_planner/{mls_planner_native,transformer,viz}.py dimos/navigation/spec.py
+      - name: Verify canonical observation pose payloads and lossless pose-fill
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.memory.type import observation; from dimos.mapping.cli import pose_fill; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (observation,pose_fill)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/type/test_observation.py" "$PWD/dimos/mapping/cli/test_pose_fill.py" "$PWD/dimos/memory/test_stream.py::TestWithPose" "$PWD/dimos/memory/store/test_cdr_recording.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/memory/type/observation.py dimos/mapping/cli/pose_fill.py
