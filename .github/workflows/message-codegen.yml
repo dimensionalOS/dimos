@@ -185,6 +185,10 @@ jobs:
         run: |
           uv pip install --python .native-review/bin/python 'fastapi==0.129.0' 'uvicorn==0.40.0' 'sse-starlette==3.2.0' 'python-multipart==0.0.27' 'httpx==0.28.1' 'ffmpeg-python==0.2.0' 'soundfile==0.13.1' 'pin==4.1.0' 'pin-pink==4.3.0' 'qpsolvers==4.12.0' 'GitPython==3.1.52'
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.teleop.webxr import module, extensions, blueprints; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,extensions,blueprints)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/teleop/webxr/test_module.py" "$PWD/dimos/teleop/webxr/test_body_tracking.py" "$PWD/dimos/teleop/webxr/test_blueprints.py"
+      - name: Verify generated manipulator commands preserve built-in IK task behavior
+        if: runner.os == 'Linux'
+        run: |
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.control.tasks import pose_target_ik; from dimos.control.tasks.cartesian_ik_task import cartesian_ik_task; from dimos.control.tasks.teleop_ik_task import teleop_ik_task; from dimos.control.tasks.eef_twist_task import eef_twist_task; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (pose_target_ik,cartesian_ik_task,teleop_ik_task,eef_twist_task)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/control/tasks/cartesian_ik_task/test_cartesian_ik_task.py" "$PWD/dimos/control/tasks/teleop_ik_task/test_teleop_ik_task.py" "$PWD/dimos/control/tasks/eef_twist_task/test_eef_twist_task.py" "$PWD/dimos/control/tasks/gripper_task/test_gripper_task.py"
       - name: Verify generated Rerun geometry and exact offline viewer example
         if: runner.os == 'Linux'
         run: |

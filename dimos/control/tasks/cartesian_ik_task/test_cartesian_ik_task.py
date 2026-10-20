@@ -26,6 +26,9 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
 )
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped as CdrPoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -51,15 +54,24 @@ def test_cartesian_config_requires_exactly_one_target_frame(
         _config(target_frames)
 
 
+@pytest.mark.parametrize("wire", [False, True])
 def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
     mocker: MockerFixture,
+    wire,
 ) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
     task = CartesianIKTask("cartesian", _config(), solver=solver)
     target = PoseStamped(position=Vector3(0.4, 0.2, 0.1), frame_id="world")
 
-    task.on_cartesian_command(target, t_now=2.0)
+    message = (
+        CdrPoseStamped(
+            Header(Time(0, 0), "world"), Pose(Point(0.4, 0.2, 0.1), Quaternion(0.0, 0.0, 0.0, 1.0))
+        )
+        if wire
+        else target
+    )
+    task.on_cartesian_command(message, t_now=2.0)
     output = task.compute(
         CoordinatorState(
             joints=JointStateSnapshot(joint_positions={"arm/joint": 0.0}),

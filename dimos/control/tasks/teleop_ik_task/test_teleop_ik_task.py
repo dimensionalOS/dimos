@@ -14,7 +14,10 @@
 
 """Behavior tests for unified single- and two-hand WebXR teleoperation."""
 
+from contextlib import ExitStack
 from pathlib import Path
+import threading
+import time
 from typing import cast
 
 import pytest
@@ -30,13 +33,25 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
     TeleopIKTaskConfig,
     create_task,
 )
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.core.cdr_transport import CdrTransport
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose as CdrPose,
+    PoseStamped as CdrPoseStamped,
+    Quaternion as CdrQuaternion,
+)
+from dimos.messages.std_msgs.msg import Header, UInt32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.assets.model import RobotModel
-from dimos.teleop.webxr.controller_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons, Hand
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
 def _robot_model() -> RobotModelConfig:
@@ -416,3 +431,89 @@ def test_factory_constructs_fresh_custom_solver_for_each_task() -> None:
     assert second._solver is _CustomPoseTargetSolver.instances[1]
     assert first._solver is not second._solver
     assert _CustomPoseTargetSolver.instances[0].received_config == first._config
+
+
+class MemqRPC(LCMRPC):
+    def __init__(self, **kwargs):
+        super().__init__(url="memq://", **kwargs)
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(backend, mocker):
+    solver = _solver(mocker)
+    task = TeleopIKTask("teleop", _config((_binding("right", "right_tool"),)), solver=solver)
+    config = (
+        {"url": "memq://"}
+        if backend == "lcm"
+        else {
+            "scouting": False,
+            "multicast": False,
+            "gossip": False,
+            "connect": [],
+            "listen": ["tcp/127.0.0.1:0"],
+        }
+    )
+    with ExitStack() as resources:
+        module = ArmTeleopModule()
+        coordinator = TeleopControlCoordinator(rpc_transport=MemqRPC)
+        ready = threading.Event()
+        for stream, output, message_type in [
+            ("right_cartesian_command", "right_controller_output", CdrPoseStamped),
+            ("teleop_buttons", "teleop_buttons", UInt32),
+        ]:
+            assert module.outputs[output].type is coordinator.inputs[stream].type is message_type
+            transport = CdrTransport(stream, message_type, backend=backend, **config)
+            resources.callback(transport.stop)
+            module.set_transport(output, transport)
+            coordinator.set_transport(stream, transport)
+            dispatch = coordinator._make_stream_cb(stream)
+
+            def receive(message, dispatch=dispatch):
+                dispatch(message)
+                ready.set()
+
+            resources.callback(transport.subscribe(receive))
+        resources.callback(coordinator.stop)
+        resources.callback(module.stop)
+        assert coordinator.add_task(task, task_type="teleop_ik")
+        module._publish_buttons(_buttons(right=True))
+        assert ready.wait(5), "button command did not arrive"
+        ready.clear()
+        module._publish_msg(Hand.RIGHT, _pose(0.5))
+        assert ready.wait(5), "pose command did not arrive"
+        assert task.compute(_state(time.monotonic())) is not None
+        ready.clear()
+        module._publish_msg(Hand.RIGHT, _pose(0.7))
+        assert ready.wait(5), "second pose command did not arrive"
+        assert task.compute(_state(time.monotonic())) is not None
+        target = solver.step.call_args.args[0]["right_tool"]
+        assert target.position.x == pytest.approx(-0.8)
+        ready.clear()
+        module._publish_buttons(Buttons())
+        assert ready.wait(5), "deadman release did not arrive"
+        assert task.compute(_state(time.monotonic())) is None
+        assert not task.is_active()
+
+
+def test_generated_pose_target_is_copied_before_ik_mutation(mocker):
+    solver = _solver(mocker)
+    task = TeleopIKTask("teleop", _config((_binding("right", "right_tool"),)), solver=solver)
+    task.on_teleop_buttons(UInt32(_buttons(right=True).data), 1.0)
+    pose = CdrPoseStamped(
+        Header(Time(0, 1), "world"),
+        CdrPose(Point(0.5, 0.0, 0.0), CdrQuaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+    assert task.on_right_cartesian_command(pose, 1.0)
+    pose.pose.position.x = 100.0
+    assert task.compute(_state()) is not None
+    task.on_right_cartesian_command(
+        CdrPoseStamped(
+            Header(Time(0, 2), "world"),
+            CdrPose(Point(0.7, 0.0, 0.0), CdrQuaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        1.1,
+    )
+    assert task.compute(_state(1.1)) is not None
+    target = solver.step.call_args.args[0]["right_tool"]
+    assert target.position.x == pytest.approx(-0.8)
+    assert pose.header.stamp == Time(0, 1)
