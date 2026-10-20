@@ -66,6 +66,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.get_state.return_value = SimpleNamespace(
         groups={
             "arm/tool": SimpleNamespace(
+                joints=None,
                 gripper_position=0.5,
                 end_effector_pose=PoseStamped(
                     frame_id="world", orientation=Quaternion.from_euler(Vector3(0, 0, 0.7))

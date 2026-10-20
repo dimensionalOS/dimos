@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import time
 from typing import Any, Literal
 
 import numpy as np
@@ -27,6 +29,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.manipulation import look_around
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -44,11 +47,16 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 # The one box a pick leaves out of the planner's map.
 TARGET_BOX = "pick-and-place/target"
+# How often (seconds) a look waiting for a new camera frame asks again.
+_FRESH_FRAME_POLL = 0.1
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -88,6 +96,24 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
     # Spacing (metres) of the depths tried.
     grasp_depth_step: float = Field(default=0.005, gt=0.0)
+    # Before the first grasp, look at the target from up to this many more
+    # viewpoints around it. The scene registration adds each view's points to
+    # the target's, so grasps are planned on more of its surface. Needs
+    # camera_from_tip. 0 grasps from the scan's single view.
+    scan_views: int = Field(default=0, ge=0)
+    # Viewpoints sit on a ring around the target: the camera this far (metres)
+    # from its centre, looking at it from this many degrees above the
+    # horizontal, at this many evenly spaced bearings. Each next view is the
+    # reachable one farthest around the ring from the views already taken.
+    scan_view_distance: float = Field(default=0.35, gt=0.0)
+    scan_view_elevation: float = Field(default=50.0, gt=0.0, lt=90.0)
+    scan_view_bearings: int = Field(default=8, ge=2)
+    # The wrist camera's optical frame (Z along its view) in the tool tip's
+    # frame, as a 4x4 row-major transform, metres. None: no camera on the arm.
+    camera_from_tip: tuple[tuple[float, float, float, float], ...] | None = None
+    # How long (seconds) a look from a new viewpoint waits for a camera frame
+    # taken after the arm stopped. A scan can take a second or more.
+    fresh_frame_timeout: float = Field(default=8.0, gt=0.0)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -142,6 +168,8 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         # What the grasp contact check did over the current pick (see drop_touching).
         self._contact: dict[str, Any] = {}
+        # Joint positions of each planning group when the latest scan_objects ran.
+        self._scan_joints: dict[PlanningGroupID, JointState] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -156,6 +184,11 @@ class PickAndPlaceModule(Module):
         if not self._holding_object:
             self._clear_selection()
         self._objects = {}
+        self._scan_joints = {
+            group_id: state.joints
+            for group_id, state in self._manipulation.get_state().groups.items()
+            if state.joints is not None
+        }
         detections = self._scene.scan_scene(text=prompts)
         objects = [
             {
@@ -202,14 +235,18 @@ class PickAndPlaceModule(Module):
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
+        group = self._gripper_group(planning_group)
+        facts: dict[str, Any] = {}
+        if self.config.scan_views > 0:
+            facts["scan_views"] = self._look_around(object_id, group)
         pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
             return SkillResult(
-                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
+                f"Object {object_id} has no point cloud in the latest scan. "
+                "Use scan_objects again.",
+                metadata=facts,
             )
-        group = self._gripper_group(planning_group)
         candidates = self._grasp_generator.propose_grasps(pointcloud)
-        facts: dict[str, Any] = {}
         # With grasp_contact_check, grasps whose gripper would touch the object
         # off its pads or hit the scene are dropped.
         candidates = self._drop_touching(object_id, pointcloud, candidates, group)
@@ -281,6 +318,121 @@ class PickAndPlaceModule(Module):
         )
         add_facts(self._contact, facts)
         return kept
+
+    def _look_around(self, object_id: str, group: PlanningGroupID) -> dict[str, Any]:
+        """Look at the target from more viewpoints around it, before grasping.
+
+        See ``look_around.look``; every move is planned against the scene. The
+        ring is centred on the middle of the target's points. At each view the
+        target is detected again, and the scene registration, which keeps the
+        target meanwhile, adds the view's points to it. The arm then returns to
+        the scan pose and looks once more, so the scene the grasp checks use is
+        seen from there.
+
+        Returns ``look``'s facts and ``points`` (the target's cloud size before
+        and after), or ``{"skipped": why}``.
+        """
+        state = self._manipulation.get_state().groups.get(group)
+        if self.config.camera_from_tip is None or state is None or not state.end_effector_pose:
+            return {"skipped": "no camera_from_tip in the config, or no tool tip pose"}
+        if not self._scene.keep_object(object_id):
+            return {"skipped": f"the scene registration has no object {object_id}"}
+        before = self._scene.get_object_pointcloud_by_object_id(object_id)
+        box = None if before is None else _target_box(before)
+        if box is None:
+            return {"skipped": f"object {object_id} has no points to look at"}
+        name = str(self._objects[object_id]["name"])
+        camera_from_tip = np.asarray(self.config.camera_from_tip, dtype=np.float64)
+
+        def move(tip: Any) -> str | None:
+            pose = matrix_to_pose(tip)
+            stamped = PoseStamped(
+                frame_id=self.config.planning_frame,
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            blocked = self._move(stamped, group)
+            if isinstance(blocked, PlanResult):
+                return look_around.UNREACHABLE
+            return None if blocked is None else _status(blocked)
+
+        def tip_now() -> Any:
+            pose = self._manipulation.get_state().groups[group].end_effector_pose
+            if pose is None:
+                raise RuntimeError(f"No tool tip pose for {group} while looking around")
+            return pose_to_matrix(pose)
+
+        facts = look_around.look(
+            (box.center.x, box.center.y, box.center.z),
+            tip_now(),
+            camera_from_tip,
+            self.config.scan_views,
+            (
+                self.config.scan_view_distance,
+                math.radians(self.config.scan_view_elevation),
+                self.config.scan_view_bearings,
+            ),
+            move,
+            lambda: self._detect_after(name, time.time()),
+        )
+        if facts["views"]:
+            returned = self._return_to_scan_pose(group)
+            if isinstance(returned, PlanResult):
+                # A view can put points close enough to the arm that the planner
+                # will not start from where it stands: back straight away from
+                # the target along the camera's view, the way it came, then retry.
+                back = look_around.back_away(
+                    tip_now(), camera_from_tip, self.config.scan_view_distance / 3.0
+                )
+                dx, dy, dz = (float(v) for v in back)
+                self._manipulation.move_linear(dx, dy, dz, group, check_collision=False)
+                returned = self._return_to_scan_pose(group)
+            if returned is not None:
+                facts["stopped"] = _status(returned)
+            else:
+                self._detect_after(name, time.time())
+        after = self._scene.get_object_pointcloud_by_object_id(object_id)
+        facts["points"] = [0 if c is None else len(c.points_f32()) for c in (before, after)]
+        return facts
+
+    def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
+        """Move the arm back to its joint positions from the latest scan_objects call.
+
+        The move is collision checked.
+
+        Args:
+            group: Planning group to move.
+
+        Returns the planner or execution result that stopped the move, or None
+        when the arm arrived or no scan pose was recorded for the group.
+        """
+        joints = self._scan_joints.get(group)
+        if joints is None:
+            return None
+        plan = self._manipulation.plan_to_joints({group: joints})
+        if not plan.succeeded:
+            return plan
+        execution = self._manipulation.execute(blocking=True)
+        return None if execution.succeeded else execution
+
+    def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
+        """Detect a label in a camera frame taken after a given time.
+
+        Args:
+            label: Object label to detect.
+            since: Wall-clock time (seconds, as ``time.time()``) the frame must be
+                newer than, e.g. when the arm stopped.
+
+        Returns None when no such frame arrives within ``fresh_frame_timeout``.
+        """
+        deadline = time.monotonic() + self.config.fresh_frame_timeout
+        while True:
+            detections = self._scene.scan_scene(text=[label])
+            if detections.ts >= since:
+                return detections
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(_FRESH_FRAME_POLL)
 
     def _pick_from(
         self,
