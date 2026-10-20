@@ -353,6 +353,9 @@ struct Args {
     /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
     /// points, for lidar streams not already expressed in the odom body frame.
     lidar_tf: Option<[f64; 7]>,
+    /// Write the keyframes (`<path>`, as the module's dump_path) and every
+    /// keyframe pose change as the module publishes it (`<path>.closures`).
+    event_dump: Option<PathBuf>,
 }
 
 fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
@@ -374,6 +377,7 @@ fn parse_args() -> Result<Args, String> {
     let mut scan_stride = 1usize;
     let mut odom_stride = 1usize;
     let mut lidar_tf = None;
+    let mut event_dump = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -387,6 +391,7 @@ fn parse_args() -> Result<Args, String> {
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
+            "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -400,6 +405,7 @@ fn parse_args() -> Result<Args, String> {
         scan_stride: scan_stride.max(1),
         odom_stride: odom_stride.max(1),
         lidar_tf,
+        event_dump,
     })
 }
 
@@ -507,6 +513,15 @@ fn run() -> Result<(), String> {
     let mut closures = 0usize;
     let mut scans_processed = 0usize;
 
+    // Each keyframe's pose as the module last published it, and the event file.
+    let mut published: Vec<(mat3::Mat3, mat3::Vec3)> = Vec::new();
+    let mut events = match &args.event_dump {
+        Some(path) => Some(
+            std::fs::File::create(format!("{}.closures", path.display()))
+                .map_err(|e| format!("create event dump: {e}"))?,
+        ),
+        None => None,
+    };
     let started = Instant::now();
     for scan in &scans {
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
@@ -543,13 +558,29 @@ fn run() -> Result<(), String> {
         if !pgo.add_key_pose(&cloud_with_pose) {
             continue;
         }
+        published.extend(
+            pgo.key_poses()[published.len()..]
+                .iter()
+                .map(|kp| (kp.rotation_global, kp.translation_global)),
+        );
         pgo.search_for_loop_pairs();
-        if pgo.has_loop() {
+        let had_loop = pgo.has_loop();
+        if had_loop {
             closures += 1;
         }
         pgo.smooth_and_update();
+        if let Some(events) = &mut events {
+            write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
+        }
     }
     pgo.finalize_gnc();
+    if let Some(events) = &mut events {
+        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        write_pose_changes(events, &pgo, &mut published, false, ts)?;
+    }
+    if let Some(path) = &args.event_dump {
+        write_keyframes(path, &pgo)?;
+    }
     let runtime_s = started.elapsed().as_secs_f64();
 
     let graph: Vec<[f64; 8]> = pgo
@@ -631,6 +662,87 @@ fn run() -> Result<(), String> {
         args.output,
     );
     Ok(())
+}
+
+/// A keyframe pose change smaller than this waits to add up, as in the module.
+const POSE_CHANGE_M: f64 = 1e-3;
+const POSE_CHANGE_RAD: f64 = 1e-4;
+
+/// Append, as the module's loop_closure_records would, every keyframe's pose
+/// change since `published` when a loop closed or any keyframe moved:
+/// f64 ts, u32 count, then per keyframe pre xyz, id, ts, pre q (xyzw), dt, dq (f32).
+fn write_pose_changes(
+    out: &mut std::fs::File,
+    pgo: &GscPgo,
+    published: &mut Vec<(mat3::Mat3, mat3::Vec3)>,
+    loop_closed: bool,
+    ts: f64,
+) -> Result<(), String> {
+    use std::io::Write;
+    let poses = pgo.key_poses();
+    let moved = poses
+        .iter()
+        .zip(published.iter())
+        .any(|(kp, (rotation, translation))| {
+            let shift = mat3::sub(&kp.translation_global, translation);
+            let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
+            let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+            mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
+        });
+    if !loop_closed && !moved {
+        return Ok(());
+    }
+    let count = poses.len().min(published.len());
+    let mut data: Vec<u8> = Vec::with_capacity(12 + count * 68);
+    data.extend_from_slice(&ts.to_le_bytes());
+    data.extend_from_slice(&(count as u32).to_le_bytes());
+    let f32s = |data: &mut Vec<u8>, values: &[f64]| {
+        for v in values {
+            data.extend_from_slice(&(*v as f32).to_le_bytes());
+        }
+    };
+    for (i, ((pre_rotation, pre_translation), post)) in published.iter().zip(poses).enumerate() {
+        let delta = mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
+        let dt = mat3::sub(
+            &post.translation_global,
+            &mat3::mat_vec(&delta, pre_translation),
+        );
+        let q = mat3::quat_from_mat(pre_rotation);
+        let dq = mat3::quat_from_mat(&delta);
+        f32s(&mut data, pre_translation);
+        data.extend_from_slice(&(i as u32).to_le_bytes());
+        data.extend_from_slice(&post.time.to_le_bytes());
+        f32s(&mut data, &[q[1], q[2], q[3], q[0]]);
+        f32s(&mut data, &dt);
+        f32s(&mut data, &[dq[1], dq[2], dq[3], dq[0]]);
+    }
+    out.write_all(&data)
+        .map_err(|e| format!("write event dump: {e}"))?;
+    *published = poses
+        .iter()
+        .map(|kp| (kp.rotation_global, kp.translation_global))
+        .collect();
+    Ok(())
+}
+
+/// Each keyframe as little-endian f64s: ts, raw xyz qx qy qz qw, corrected xyz qx qy qz qw.
+fn write_keyframes(path: &std::path::Path, pgo: &GscPgo) -> Result<(), String> {
+    let mut bytes = Vec::new();
+    for kp in pgo.key_poses() {
+        let mut values = vec![kp.time];
+        for (rotation, translation) in [
+            (&kp.rotation_local, &kp.translation_local),
+            (&kp.rotation_global, &kp.translation_global),
+        ] {
+            let q = mat3::quat_from_mat(rotation);
+            values.extend_from_slice(translation);
+            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+        }
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    std::fs::write(path, bytes).map_err(|e| format!("write keyframes: {e}"))
 }
 
 fn main() {
