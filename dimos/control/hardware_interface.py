@@ -69,7 +69,6 @@ class ConnectedHardware:
         self._initialized = False
         self._warned_unknown_joints: set[str] = set()
         self._current_mode: ControlMode | None = None
-        self._dispatched_positions: tuple[float, ...] | None = None
 
     @property
     def adapter(self) -> ManipulatorAdapter:
@@ -87,12 +86,13 @@ class ConnectedHardware:
         return self._joint_names
 
     @property
-    def dispatched_positions(self) -> tuple[float, ...] | None:
-        """Adapter-accepted positions in joint order, or None on a failed/non-position write.
+    def position_targets(self) -> tuple[float, ...] | None:
+        """Existing hold targets in joint order, once initialized.
 
-        Describes the latest write_command call, not motor acknowledgment.
+        The caller must check that the latest command used a position mode.
+        Targets can exist even when the adapter rejected their write.
         """
-        return self._dispatched_positions
+        return tuple(self._build_ordered_command()) if self._initialized else None
 
     @property
     def component(self) -> HardwareComponent:
@@ -158,7 +158,6 @@ class ConnectedHardware:
         Returns:
             True if command was sent successfully
         """
-        self._dispatched_positions = None
         if mode != ControlMode.VELOCITY and not self._initialized:
             self._initialize_last_commanded()
 
@@ -189,11 +188,7 @@ class ConnectedHardware:
 
         match mode:
             case ControlMode.POSITION | ControlMode.SERVO_POSITION:
-                payload = tuple(ordered)
-                accepted = self._adapter.write_joint_positions(ordered)
-                if accepted:
-                    self._dispatched_positions = payload
-                return accepted
+                return self._adapter.write_joint_positions(ordered)
             case ControlMode.VELOCITY:
                 return self._adapter.write_joint_velocities(ordered)
             case ControlMode.TORQUE:
@@ -253,7 +248,6 @@ class ConnectedTwistBase(ConnectedHardware):
         self._initialized = True
         self._warned_unknown_joints: set[str] = set()
         self._current_mode: ControlMode | None = None
-        self._dispatched_positions: tuple[float, ...] | None = None
 
     @property
     def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
@@ -299,7 +293,6 @@ class ConnectedTwistBase(ConnectedHardware):
         Returns:
             True if command was sent successfully
         """
-        self._dispatched_positions = None
         # Update last commanded for joints we received
         for joint_name, value in commands.items():
             if joint_name in self._last_commanded:
@@ -374,7 +367,6 @@ class ConnectedWholeBody(ConnectedHardware):
         self._initialized = False
         self._warned_unknown_joints: set[str] = set()
         self._current_mode: ControlMode | None = None
-        self._dispatched_positions: tuple[float, ...] | None = None
 
     @property
     def adapter(self) -> WholeBodyAdapter:  # type: ignore[override]
@@ -420,7 +412,6 @@ class ConnectedWholeBody(ConnectedHardware):
         """
         from dimos.hardware.whole_body.spec import MotorCommand
 
-        self._dispatched_positions = None
         if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
             logger.warning(
                 f"WholeBody {self.hardware_id} only supports POSITION/SERVO_POSITION; "
@@ -451,11 +442,7 @@ class ConnectedWholeBody(ConnectedHardware):
             )
             for name in self._joint_names
         ]
-        payload = tuple(command.q for command in motor_cmds)
-        accepted = self._wb_adapter.write_motor_commands(motor_cmds)
-        if accepted:
-            self._dispatched_positions = payload
-        return accepted
+        return self._wb_adapter.write_motor_commands(motor_cmds)
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Direct pass-through to adapter for full MotorCommand control."""

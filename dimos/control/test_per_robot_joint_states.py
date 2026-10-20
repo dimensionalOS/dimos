@@ -170,7 +170,7 @@ class TestFlagOff:
 
         assert sorted(coordinator.list_hardware()) == ["left_arm", "right_arm"]
         assert sorted(coordinator.outputs) == [
-            "applied_joint_position_command",
+            "coordinator_joint_position_command",
             "coordinator_joint_state",
         ]
 

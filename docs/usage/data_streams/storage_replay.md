@@ -228,3 +228,57 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 | `first()`                                        | Get first frame                       |
 | `first_timestamp()`                              | Get first timestamp                   |
 | `load(name)`                                     | Load specific frame by name/index     |
+
+## Record coordinator position targets
+
+`ControlCoordinator.coordinator_joint_position_command` publishes the complete
+intended position target as `JointState`. It uses the existing wrapper hold
+values after IK, task constraints, and arbitration. Partial updates retain those
+values; measured feedback initializes a wrapper's hold values only once.
+Hardware registration order and `HardwareComponent.joints` determine array order.
+Grippers and other joints retain their native adapter units.
+
+A complete snapshot requires initialized position targets on every registered
+non-base hardware component. Until then, or after a component handles a velocity
+or torque command, no position snapshot is published. Twist bases are excluded.
+Both POSITION and SERVO_POSITION use `position`; `velocity` and `effort` are empty.
+Use a position-control graph with a known mode for policy collection.
+
+Failed writes do not remove existing intended targets. A readiness-gated write
+keeps the previous hold values; the skipped update does not become a new target.
+Idle ticks can publish existing targets without issuing any additional writes.
+This stream does not acknowledge adapter success or physical execution, and does
+not describe transformations inside a driver. Whole-body entries contain only
+`MotorCommand.q`, without gains or feed-forward torque.
+
+`ts` is Unix time taken once at the end of the batch write, after assembling the
+complete target vector. It differs from the earlier measured-state timestamp and
+is not a per-motor execution time. Publication runs outside the hardware lock;
+subscriber failures are logged without interrupting measured-state or TF output.
+
+Add this recorder to your application's importable Blueprint module. Here,
+`robot_blueprint` is the existing graph containing one coordinator:
+
+```python skip
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In
+from dimos.memory.module import Recorder
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+class ActionRecorder(Recorder):
+    coordinator_joint_position_command: In[JointState]
+
+
+recording_blueprint = autoconnect(
+    robot_blueprint,
+    ActionRecorder.blueprint(
+        db_path="actions.db",
+        record_tf=False,
+        poseless_streams=["coordinator_joint_position_command"],
+    ),
+)
+```
+
+Autoconnect matches the port by name and type. Normal Blueprint shutdown flushes
+`coordinator_joint_position_command` to the SQLite recording.
