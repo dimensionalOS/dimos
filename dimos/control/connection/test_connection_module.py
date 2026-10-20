@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for ``ConnectionModule``, driven through ``MockConnectionModule``.
+"""Tests for ``ConnectionModule``, driven through ``FakeArm``.
 
 Real modules with real threads, no coordinator. Every port is given an
 in-process transport, so nothing touches the network.
@@ -29,13 +29,12 @@ from typing import Any
 
 import pytest
 
+from dimos.control._control_test_helpers import FakeArm, FakeArmConfig
 from dimos.control.connection.connection_module import ConnectionStatus
-from dimos.control.connection.mock_connection import MockConnectionConfig, MockConnectionModule
 from dimos.control.contract.description import Limits
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.ports import JointPort, MotorPort, TwistPort
 from dimos.control.contract.validate import DescriptionError
-from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -85,7 +84,7 @@ class LocalTransport:
 class Rig:
     """One module, with an in-process transport on every port."""
 
-    def __init__(self, module: MockConnectionModule) -> None:
+    def __init__(self, module: FakeArm) -> None:
         self.module = module
         self.ports = {name: LocalTransport() for name in {**module.inputs, **module.outputs}}
         for name, transport in self.ports.items():
@@ -108,7 +107,7 @@ def rig() -> Iterator[Callable[..., Rig]]:
     """Build modules, start them, and stop every one at the end of the test."""
     made: list[Rig] = []
 
-    def build(cls: type[MockConnectionModule] = MockConnectionModule, **config: Any) -> Rig:
+    def build(cls: type[FakeArm] = FakeArm, **config: Any) -> Rig:
         config.setdefault("deadman_timeout_s", DEADMAN_S)
         made.append(Rig(cls(**config)))
         made[-1].module.start()
@@ -132,7 +131,7 @@ def writes(r: Rig) -> list[dict[str, float]]:
     return list(r.module.writes)
 
 
-class BodyAndBaseConfig(MockConnectionConfig):
+class BodyAndBaseConfig(FakeArmConfig):
     """A two-joint body held by stiffness and damping, on a base, with an IMU."""
 
     source: str = "g1"
@@ -143,7 +142,7 @@ class BodyAndBaseConfig(MockConnectionConfig):
     )
 
 
-class BodyAndBase(MockConnectionModule):
+class BodyAndBase(FakeArm):
     config: BodyAndBaseConfig
 
     motor_command: In[MotorCommandArray]
@@ -160,18 +159,18 @@ class PushedBodyAndBase(BodyAndBase):
         return {}
 
 
-class PositionAndVelocityConfig(MockConnectionConfig):
+class PositionAndVelocityConfig(FakeArmConfig):
     position_command: JointPort = JointPort(joints=["joint1"])
     velocity_command: JointPort = JointPort(interface=Interface.VELOCITY, joints=["joint1"])
 
 
-class PositionAndVelocity(MockConnectionModule):
+class PositionAndVelocity(FakeArm):
     config: PositionAndVelocityConfig
 
     velocity_command: In[JointState]
 
 
-class SlowWrite(MockConnectionModule):
+class SlowWrite(FakeArm):
     """Its first write waits until the test lets it go."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -185,12 +184,12 @@ class SlowWrite(MockConnectionModule):
         super().write(values)
 
 
-class FailingWrite(MockConnectionModule):
+class FailingWrite(FakeArm):
     def write(self, values: dict[str, float]) -> None:
         raise RuntimeError("motor said no")
 
 
-class Watched(MockConnectionModule):
+class Watched(FakeArm):
     """Remembers whether ``connect`` was called."""
 
     connected = False
@@ -251,10 +250,10 @@ def test_start_fails_before_connecting_on_a_bad_config_or_ports(
 
 
 def test_the_description_comes_from_the_config_and_the_ports() -> None:
-    module = MockConnectionModule()
+    module = FakeArm()
     try:
         described = module.description
-        assert "description" not in MockConnectionModule.rpcs
+        assert "description" not in FakeArm.rpcs
         assert described.source == "mock"
         assert described.joint_names() == tuple(f"mock/joint{i}" for i in range(1, 8))
         joint = described.resource("joint1")
@@ -270,10 +269,6 @@ def test_the_description_comes_from_the_config_and_the_ports() -> None:
         assert module.description is described
     finally:
         module.stop()
-
-
-def test_the_mock_blueprint_needs_no_arguments() -> None:
-    assert isinstance(MockConnectionModule.blueprint(), Blueprint)
 
 
 def test_readings_go_out_as_joint_states_at_about_the_state_rate(
@@ -445,7 +440,7 @@ def test_an_arm_command_past_its_limit_is_refused_and_shown(rig: Callable[..., R
 def test_a_malformed_message_is_refused_and_shown(
     rig: Callable[..., Rig], port: str, msg: Any, reason: str
 ) -> None:
-    r = rig(BodyAndBase if port == "motor_command" else MockConnectionModule)
+    r = rig(BodyAndBase if port == "motor_command" else FakeArm)
     r.send(port, msg)
     assert wait_until(lambda: reason in str(r.module.status().last_rejection))
     assert writes(r) == []
@@ -544,8 +539,8 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
 
 
 def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
-    assert "status" in MockConnectionModule.rpcs
-    assert "describe_control" not in MockConnectionModule.rpcs
+    assert "status" in FakeArm.rpcs
+    assert "describe_control" not in FakeArm.rpcs
     r = rig()
     assert wait_until(lambda: r.module.status().last_state_time is not None)
     status = r.module.status()
