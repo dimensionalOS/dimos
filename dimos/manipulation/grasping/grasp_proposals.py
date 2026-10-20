@@ -177,8 +177,9 @@ class GraspProposals(Module):
                 caveat = "collisions not checked: no scene cloud around the object"
             else:
                 gripper = grasp_filters.box_surface_points()
+                # The support is under the object: below the lowest of its surfaces seen.
                 support = grasp_filters.support_height(
-                    points, below=float(np.quantile(cloud.points_f32()[:, 2], 0.5))
+                    points, below=float(np.quantile(cloud.points_f32()[:, 2], 0.05)) + 0.01
                 )
                 if support is not None:
                     low = grasp_filters.below_support(poses, support, gripper)

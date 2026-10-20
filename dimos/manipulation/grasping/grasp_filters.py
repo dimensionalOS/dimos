@@ -14,10 +14,12 @@
 
 """Proposer-independent checks of grasp poses against what the camera saw around the object.
 
-Poses are TCP poses (approach along +z, jaws closing along +y). The gripper is a few boxes
-sampled on their surfaces, the xArm gripper open: two fingers ending at the TCP and the body
-behind them. The checks are as GraspGenX's own collision filter (gripper samples near a scene
-point collide) but in NumPy, so they cover any proposer, in the stack or served.
+Poses are TCP poses (approach along +z, jaws closing along +y). The gripper is the xArm
+gripper open, as boxes sampled on their surfaces: each box bounds one link of the gripper in
+the sim's model (MJCF), in the TCP frame, so the fingertips end 9.9 mm short of the TCP and the
+fingers, knuckles and body are as wide as the model's. The checks are as GraspGenX's own
+collision filter (gripper samples near a scene point collide) but in NumPy, so they cover any
+proposer, in the stack or served.
 """
 
 from __future__ import annotations
@@ -25,11 +27,17 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-# (centre, size) per box in the TCP frame, metres: the open fingers, then the body.
+# (centre, size) per box in the TCP frame, metres: each link's bounds in the xArm gripper's
+# MJCF at the open end of its travel (test_grasp_filters pins them to the model). The fingers'
+# inner faces are 89 mm apart; their tips end 9.9 mm short of the TCP.
 XARM_GRIPPER_BOXES = (
-    ((0.0, 0.0495, -0.0325), (0.024, 0.010, 0.065)),
-    ((0.0, -0.0495, -0.0325), (0.024, 0.010, 0.065)),
-    ((0.0, 0.0, -0.1175), (0.060, 0.110, 0.105)),
+    ((0.0, 0.06045, -0.04335), (0.0320, 0.0319, 0.0669)),  # left finger
+    ((0.0, -0.06045, -0.04335), (0.0320, 0.0319, 0.0669)),  # right finger
+    ((0.0, 0.0478, -0.09275), (0.0118, 0.0774, 0.0557)),  # left outer knuckle
+    ((0.0, -0.0478, -0.09275), (0.0118, 0.0774, 0.0557)),  # right outer knuckle
+    ((0.0, 0.0377, -0.0769), (0.0282, 0.0474, 0.0540)),  # left inner knuckle
+    ((0.0, -0.0377, -0.0769), (0.0282, 0.0474, 0.0540)),  # right inner knuckle
+    ((0.0, 0.0, -0.12495), (0.0750, 0.1022, 0.1121)),  # gripper base
 )
 # A gripper sample this close to a scene point collides; the scene is thinned to 5 mm cells.
 COLLISION_M = 0.008
@@ -86,14 +94,16 @@ def gripper_in_world(
 
 
 def support_height(scene: NDArray[np.floating], below: float) -> float | None:
-    """The height of the densest 5 mm layer of scene points under ``below``: the table or shelf
-    the object stands on. None when fewer than 50 points are under it."""
+    """The height of the surface the object stands on: of the 5 mm layers of scene points under
+    ``below``, the lowest holding at least a third as many points as the densest one, so a table
+    wins over a lower patch of noise and over a shelf or another object's top above it. None
+    when fewer than 50 points are under ``below``."""
     z = scene[:, 2][scene[:, 2] < below]
     if len(z) < 50:
         return None
     edges = np.arange(z.min(), z.max() + 0.01, 0.005)
     counts, edges = np.histogram(z, bins=edges)
-    k = int(np.argmax(counts))
+    k = int(np.flatnonzero(counts >= counts.max() / 3)[0])
     layer = z[(z >= edges[k]) & (z <= edges[k + 1])]
     return float(np.median(layer))
 
