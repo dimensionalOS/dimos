@@ -25,9 +25,12 @@ effects are observed on the tasks.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack
+from functools import partial
 import threading
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -45,12 +48,20 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTaskConfig,
 )
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
+import dimos.core.cdr_transport as cdr_module
+from dimos.core.global_config import GlobalConfig
 from dimos.core.stream import In
+from dimos.core.transport_factory import make_transport
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.teleop.webxr.controller_types import Buttons
 
 ARM_JOINTS = ["arm/joint1", "arm/joint2"]
@@ -1047,3 +1058,86 @@ class TestStreamBind:
         taps["custom_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
         assert len(first.probe_commands) == 1
         assert len(second.probe_commands) == 1
+
+
+class MemqRPC(LCMRPC):
+    def __init__(self, **kwargs):
+        super().__init__(url="memq://", **kwargs)
+
+
+def test_cdr_joint_wire_reaches_existing_trajectory_task_and_publishes_cdr_state(monkeypatch):
+    monkeypatch.setattr(cdr_module, "LCMConfig", partial(LCMConfig, url="memq://"))
+    config = GlobalConfig(transport="lcm")
+    incoming = CdrJointState(
+        Header(Time(0, 1), "arm"),
+        ARM_JOINTS,
+        np.array([0.3, 0.4]),
+        np.array([], dtype=np.float64),
+        np.array([], dtype=np.float64),
+    )
+    command_done = threading.Event()
+    state_done = threading.Event()
+    states = []
+    with ExitStack() as cleanup:
+        coordinator = ControlCoordinator(rpc_transport=MemqRPC, g=config)
+        cleanup.callback(coordinator.stop)
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=ARM_JOINTS))
+        coordinator.add_task(task, task_type="trajectory")
+        command = make_transport(
+            "joint_command", coordinator.inputs["joint_command"].type, g=config
+        )
+        output = make_transport(
+            "coordinator_joint_state", coordinator.outputs["coordinator_joint_state"].type, g=config
+        )
+        cleanup.callback(command.stop)
+        cleanup.callback(output.stop)
+        coordinator.set_transport("joint_command", command)
+        coordinator.set_transport("coordinator_joint_state", output)
+        dispatch = coordinator._make_stream_cb("joint_command")
+
+        def receive(message):
+            dispatch(message)
+            command_done.set()
+
+        def receive_state(message):
+            states.append(message)
+            state_done.set()
+
+        cleanup.callback(coordinator.joint_command.subscribe(receive))
+        cleanup.callback(output.subscribe(receive_state))
+        command.publish(incoming)
+        assert command_done.wait(5)
+        assert task._trajectory is not None
+        assert task._trajectory.points[-1].positions == [0.3, 0.4]
+        coordinator._publish_joint_state_message(
+            JointState(
+                ts=0.0,
+                frame_id="arm",
+                name=ARM_JOINTS,
+                position=[0.3, 0.4],
+                velocity=[0.0, 0.0],
+                effort=[1.0, 2.0],
+            )
+        )
+        assert state_done.wait(5)
+        assert type(states[0]) is CdrJointState
+        assert states[0].header == Header(Time(0, 0), "arm")
+        assert states[0].position.tolist() == [0.3, 0.4]
+        assert states[0].effort.tolist() == [1.0, 2.0]
+        assert incoming.header.stamp == Time(0, 1)
+
+
+def test_custom_card_handler_keeps_raw_generated_value(make_coordinator, probe_card_type):
+    coordinator, taps = make_coordinator()
+    coordinator.start()
+    probe = ProbeTask("probe", frozenset(ARM_JOINTS))
+    coordinator.add_task(probe, task_type=probe_card_type)
+    message = CdrJointState(
+        Header(Time(0, 1), "arm"),
+        ARM_JOINTS,
+        np.array([0.3, 0.4]),
+        np.array([], dtype=np.float64),
+        np.array([], dtype=np.float64),
+    )
+    taps["joint_command"].emit(message)
+    assert probe.probe_commands[0][0] is message

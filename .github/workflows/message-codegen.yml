@@ -153,6 +153,10 @@ jobs:
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
           .native-review/bin/python -I -c 'from dimos.memory import module; from dimos.memory.store import mcap; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,mcap)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/test_module.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/store/test_mcap.py"
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
+      - name: Verify coordinator CDR boundaries preserve task and tick behavior
+        if: runner.os == 'Linux'
+        run: |
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.control import coordinator; from dimos.control.tasks.trajectory_task import trajectory_task; from dimos.robot.manipulators.common import coordinators; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (coordinator,trajectory_task,coordinators)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/control/test_coordinator_routing.py" "$PWD/dimos/control/test_per_robot_joint_states.py" "$PWD/dimos/control/test_frame_pose_tf.py"
       - name: Verify Go2 CDR boundaries with stubbed drivers and installed code
         if: runner.os == 'Linux'
         run: |

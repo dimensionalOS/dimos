@@ -31,7 +31,16 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.testing.waiting import wait_until as wait_for_condition
+
+
+@pytest.fixture
+def wait_until():
+    # These tests also run with --noconftest against an installed wheel.
+    return wait_for_condition
+
 
 LEFT_JOINTS = make_joints("left_arm", 2)
 RIGHT_JOINTS = make_joints("right_arm", 3)
@@ -40,16 +49,16 @@ RIGHT_POSITIONS = [0.21, 0.22, 0.23]
 
 
 class DualArmCoordinator(ControlCoordinator):
-    left_arm_joints: Out[JointState]
-    right_arm_joints: Out[JointState]
+    left_arm_joints: Out[CdrJointState]
+    right_arm_joints: Out[CdrJointState]
 
 
 class LeftOnlyCoordinator(ControlCoordinator):
-    left_arm_joints: Out[JointState]
+    left_arm_joints: Out[CdrJointState]
 
 
 class TeleopStyleCoordinator(DualArmCoordinator):
-    left_arm_command: In[JointState]
+    left_arm_command: In[CdrJointState]
 
 
 def _component(hardware_id: str, joints: list[str], positions: list[float]) -> HardwareComponent:
@@ -188,12 +197,12 @@ class TestPerRobotPublishing:
 
         left_msg = left.latest()
         assert list(left_msg.name) == LEFT_JOINTS
-        assert left_msg.frame_id == "left_arm"
+        assert left_msg.header.frame_id == "left_arm"
         assert list(left_msg.position) == LEFT_POSITIONS
 
         right_msg = right.latest()
         assert list(right_msg.name) == RIGHT_JOINTS
-        assert right_msg.frame_id == "right_arm"
+        assert right_msg.header.frame_id == "right_arm"
         assert list(right_msg.position) == RIGHT_POSITIONS
 
         assert set(merged.latest().name) == {*LEFT_JOINTS, *RIGHT_JOINTS}

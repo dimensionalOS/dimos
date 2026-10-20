@@ -25,9 +25,9 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In, Out
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class ArmPoseCoordinator(ControlCoordinator):

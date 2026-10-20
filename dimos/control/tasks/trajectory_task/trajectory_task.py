@@ -38,6 +38,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -229,9 +230,9 @@ class JointTrajectoryTask(BaseControlTask):
             mode=ControlMode.SERVO_POSITION,
         )
 
-    def on_joint_command(self, msg: JointState, t_now: float) -> bool:
+    def on_joint_command(self, msg: JointState | CdrJointState, t_now: float) -> bool:
         """Convert streamed joint positions into a velocity-bounded trajectory target."""
-        if not msg.position or len(msg.name) != len(msg.position):
+        if len(msg.position) == 0 or len(msg.name) != len(msg.position):
             return False
         selected = [
             (name, position)
