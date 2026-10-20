@@ -235,28 +235,73 @@ def test_heuristic_grasp_rejects_invalid_pointclouds(
         module.propose_grasps(_cloud(points, frame_id=frame_id, timestamp=timestamp))
 
 
+# Held-out shapes: none of these was used to set the heuristic's constants.
+
+
+def _container(
+    outline: str, size: tuple[float, float], depth: float, *, walls_seen: bool = True
+) -> np.ndarray:
+    """An open container on a table at z 0.80, centred at (0.5, 0.0), as a camera above sees
+    it: its floor, and (``walls_seen``) its inner walls and rim. ``outline`` is "rect" or
+    "round" (``size`` then gives the diameter twice)."""
+    rng = np.random.default_rng(7)
+    a, b = size[0] / 2, size[1] / 2
+    if outline == "round":
+        r = np.sqrt(rng.uniform(0, 1, 800)) * a
+        t = rng.uniform(0, 2 * np.pi, 800)
+        floor = np.column_stack([r * np.cos(t), r * np.sin(t), np.zeros(800)])
+        t = rng.uniform(0, 2 * np.pi, 600)
+        wall = np.column_stack([a * np.cos(t), a * np.sin(t), rng.uniform(0, depth, 600)])
+    else:
+        floor = np.column_stack([rng.uniform(-a, a, 800), rng.uniform(-b, b, 800), np.zeros(800)])
+        side = rng.integers(0, 4, 600)
+        u = rng.uniform(-1, 1, 600)
+        wx = np.where(side < 2, np.where(side == 0, a, -a), u * a)
+        wy = np.where(side < 2, u * b, np.where(side == 2, b, -b))
+        wall = np.column_stack([wx, wy, rng.uniform(0, depth, 600)])
+    wall[: len(wall) // 4, 2] = depth  # the rim's top
+    points = np.vstack([floor, wall]) if walls_seen else floor
+    return points + np.asarray([0.5, 0.0, 0.80])
+
+
+def _on_rim(c, outline: str, size: tuple[float, float]) -> bool:
+    x, y = c.pose.position.x - 0.5, c.pose.position.y
+    if outline == "round":
+        return abs(math.hypot(x, y) - size[0] / 2) < 0.008
+    return min(abs(abs(x) - size[0] / 2), abs(abs(y) - size[1] / 2)) < 0.008
+
+
 @pytest.mark.parametrize(
-    "height, tip_z",
+    "outline, size, depth",
     [
-        (0.052, 0.126 - 0.0167),  # the closed pads at mid-height
-        (0.020, 0.10 + 0.005 + 0.0031),  # raised: fingertips 5 mm above the low end
-        (0.100, 0.20 + 0.005 - 0.0499),  # raised: palm 5 mm above the top
+        ("round", (0.12, 0.12), 0.05),
+        ("round", (0.07, 0.07), 0.08),
+        ("rect", (0.16, 0.10), 0.07),
     ],
+    ids=["bowl", "cup", "box"],
 )
-def test_heuristic_grasp_aims_the_finger_pads(height: float, tip_z: float) -> None:
-    module = HeuristicGraspModule(
-        pad_behind_tcp=0.0167, fingertip_reach=0.0031, palm_behind_tcp=0.0499
-    )
-    points = np.asarray(
-        [
-            [-0.1, -0.02, 0.1],
-            [-0.1, 0.02, 0.1],
-            [0.1, -0.02, 0.1 + height],
-            [0.1, 0.02, 0.1 + height],
-        ]
-    )
+def test_held_out_open_containers_are_held_on_their_rim_below_its_top(
+    module: HeuristicGraspModule, outline: str, size: tuple[float, float], depth: float
+) -> None:
+    proposals = module.propose_grasps(_cloud(_container(outline, size, depth)))
 
-    proposals = module.propose_grasps(_cloud(points))
+    assert proposals.candidates
+    for c in proposals.candidates:
+        assert _on_rim(c, outline, size), (c.pose.position, c.note)
+        assert 0.80 + 0.01 <= c.pose.position.z <= 0.80 + depth - 0.004
+        assert "points seen" in c.note
 
-    assert proposals.candidates[0].pose.position.z == pytest.approx(tip_z)
-    module.stop()
+
+def test_a_tray_shallower_than_the_open_test_gets_no_grasp(module: HeuristicGraspModule) -> None:
+    # A known limit: an open container is one whose floor is seen at least _OPEN_DROP (3 cm)
+    # below its top, so a 2.5 cm tray reads as a solid too wide for the jaws.
+    for walls_seen in (True, False):
+        cloud = _container("rect", (0.20, 0.15), 0.025, walls_seen=walls_seen)
+        assert module.propose_grasps(_cloud(cloud)).candidates == []
+
+
+def test_held_out_small_solids_are_grasped_at_their_centre(module: HeuristicGraspModule) -> None:
+    for size in ((0.05, 0.03), (0.06, 0.06), (0.08, 0.02)):
+        c = module.propose_grasps(_cloud(_block(0.4, size=size))).candidates[0]
+        assert (c.pose.position.x, c.pose.position.y) == pytest.approx((0.5, 0.1), abs=3e-3)
+        assert c.note.startswith("footprint centre")
