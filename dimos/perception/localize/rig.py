@@ -23,6 +23,18 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.tf import StreamTF
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.geometry import inverse_transform, pose_from_transform
+from dimos.msgs.image import image_view
+from dimos.msgs.pointcloud import (
+    pointcloud_from_rgbd,
+    pointcloud_from_xyz,
+    pointcloud_xyz,
+    transform_cloud,
+)
+from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,
@@ -33,13 +45,7 @@ from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
-
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.localize.support_plane import SupportPlane
     from dimos.protocol.tf.tf import TFLookup
@@ -64,7 +70,7 @@ def _tf_root(store: Any, camera: str) -> str:
     t0, t1 = stream.get_time_range()
     middle = (t0 + t1) / 2
     parent = {
-        t.child_frame_id: t.frame_id
+        t.child_frame_id: t.header.frame_id
         for obs in stream.after(middle - TF_ROOT_WINDOW).before(middle + TF_ROOT_WINDOW)
         for t in obs.data.transforms
     }
@@ -112,37 +118,38 @@ class Rig:
         """Every calibrated optical frame that records colour, with aligned depth or
         beside the store's one point cloud stream, is a camera, posed in the root of
         its tf chain."""
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
-        from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
-
         names = store.list_streams()
         types = {name: store.stream(name).data_type for name in names}
 
         infos: dict[str, CameraInfo] = {}
-        for name in sorted(n for n in names if types[n] is CameraInfoMsg):
+        for name in sorted(n for n in names if types[n] is CameraInfo):
             if store.stream(name).count():
                 info = store.stream(name).first().data
-                infos.setdefault(info.frame_id, info)  # sorted: a colour info beats its depth twin
+                infos.setdefault(
+                    info.header.frame_id, info
+                )  # sorted: a colour info beats its depth twin
 
         images: dict[str, dict[str, str]] = {"color": {}, "depth": {}}
         for name in names:
-            if types[name] is not ImageMsg or not store.stream(name).count():
+            if types[name] is not Image or not store.stream(name).count():
                 continue
             image = store.stream(name).first().data
-            if image.data.dtype == np.uint16 or image.data.dtype.kind == "f":
+            pixels = image_view(image)
+            if (
+                pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2
+            ) or pixels.dtype.kind == "f":
                 kind = "depth"
-            elif image.data.ndim == 3:
+            elif pixels.ndim == 3:
                 kind = "color"
             else:
                 continue
             # a derived copy, such as an embedding index, holds at most its feed's frames
-            held = images[kind].get(image.frame_id)
+            held = images[kind].get(image.header.frame_id)
             if held is None or store.stream(name).count() > store.stream(held).count():
-                images[kind][image.frame_id] = name
+                images[kind][image.header.frame_id] = name
 
         color, depth = images["color"], images["depth"]
-        clouds = [n for n in names if types[n] is PointCloudMsg and store.stream(n).count()]
+        clouds = [n for n in names if types[n] is PointCloud2 and store.stream(n).count()]
         if len(clouds) > 1 and any(f in color and f not in depth for f in infos):
             raise ValueError(f"several point cloud streams for a camera without depth: {clouds}")
         lidar = clouds[0] if clouds else None
@@ -178,13 +185,13 @@ class Rig:
         ranges = [camera.color.get_time_range() for camera in self.cameras.values()]
         return min(lo for lo, _ in ranges), max(hi for _, hi in ranges)
 
-    def world_to_optical(self, ts: float, frame: str) -> Transform | None:
+    def world_to_optical(self, ts: float, frame: str) -> TransformStamped | None:
         return self.tf.get(frame, self.world_frame, ts, TF_TOLERANCE)
 
     def camera_pose(self, ts: float, frame: str) -> PoseStamped | None:
         """World pose of a camera's optical frame at ts."""
         transform = self.world_to_optical(ts, frame)
-        return (-transform).to_pose() if transform is not None else None
+        return pose_from_transform(inverse_transform(transform)) if transform is not None else None
 
     def frame_at(self, obs: Observation[Any]) -> Image:
         """The colour frame an index observation refers to.
@@ -193,7 +200,6 @@ class Rig:
         frame selection needs, so its pixels come back from its camera's colour
         stream.
         """
-        from dimos.msgs.sensor_msgs.Image import Image
 
         if isinstance(obs.data, Image):
             return obs.data
@@ -217,38 +223,41 @@ class Rig:
         Bound ``lidar`` to the window first; whatever moved during it is in the
         map wherever it was.
         """
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         if self._lidar_map is not None and self._lidar_map[0] == id(self.lidar):
             return self._lidar_map[1]
         parts: list[np.ndarray] = []
-        newest = 0.0
+        newest_ns: int | None = None
         for obs in self.lidar:
             cloud: PointCloud2 = obs.data
-            if cloud.frame_id != self.world_frame:
-                transform = self.tf.get(self.world_frame, cloud.frame_id, obs.ts, TF_TOLERANCE)
+            if cloud.header.frame_id != self.world_frame:
+                transform = self.tf.get(
+                    self.world_frame, cloud.header.frame_id, obs.ts, TF_TOLERANCE
+                )
                 if transform is None:
                     continue
-                cloud = cloud.transform(transform)
-            parts.append(cloud.points_f32())
-            newest = max(newest, obs.ts)
+                cloud = transform_cloud(cloud, transform)
+            parts.append(pointcloud_xyz(cloud))
+            source_ns = to_nanoseconds(cloud.header.stamp)
+            newest_ns = source_ns if newest_ns is None else max(newest_ns, source_ns)
         merged = None
         if parts:
+            assert newest_ns is not None
             points = np.vstack(parts)
             cells = np.floor(points / LIDAR_CELL).astype(np.int64) + (1 << 20)
             keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
             _, first = np.unique(keys, return_index=True)
-            merged = PointCloud2.from_numpy(
-                points[first], frame_id=self.world_frame, timestamp=newest
+            merged = pointcloud_from_xyz(
+                points[first],
+                header=Header(frame_id=self.world_frame, stamp=time_from_nanoseconds(newest_ns)),
             )
         self._lidar_map = (id(self.lidar), merged)
         return merged
 
     def lift(
-        self, detections: ImageDetections2D[Any], transform: Transform
+        self, detections: ImageDetections2D[Any], transform: TransformStamped
     ) -> ImageDetections3DPC | None:
         """A frame's detections as world clouds, through its camera's depth or the lidar."""
-        frame = detections.image.frame_id
+        frame = detections.image.header.frame_id
         camera = self.cameras[frame]
         if camera.depth is not None:
             depth = self.depth_at(detections.ts, frame)
@@ -263,8 +272,6 @@ class Rig:
     def backdrop(self, ts: float, frame: str, depth_trunc: float = 1.5) -> PointCloud2 | None:
         """A camera's own RGBD frame at ts as a world-frame cloud, for plane fits and rendering;
         the lidar map for a camera without depth."""
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         if self.cameras[frame].depth is None:
             return self.lidar_map()
         depth = self.depth_at(ts, frame)
@@ -277,6 +284,9 @@ class Rig:
         transform = self.world_to_optical(ts, frame)
         if transform is None:
             return None
-        return PointCloud2.from_rgbd(
-            color, depth, self.cameras[frame].info, depth_scale=0.001, depth_trunc=depth_trunc
-        ).transform(-transform)
+        return transform_cloud(
+            pointcloud_from_rgbd(
+                color, depth, self.cameras[frame].info, depth_scale=0.001, depth_trunc=depth_trunc
+            ),
+            inverse_transform(transform),
+        )

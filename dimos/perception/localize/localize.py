@@ -32,6 +32,11 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
+from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry import inverse_transform, vector_array
+from dimos.msgs.image import image_brightness, image_sharpness
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (
@@ -121,15 +126,15 @@ def _lift(
     detections: ImageDetections2D[Any], rig: Rig, policy: LocalizePolicy, plane: SupportPlane | None
 ) -> list[Detection3DPC]:
     """Lift a frame's detections through its camera's geometry and gate them."""
-    transform = rig.world_to_optical(detections.ts, detections.image.frame_id)
+    transform = rig.world_to_optical(detections.ts, detections.image.header.frame_id)
     lifted = rig.lift(detections, transform) if transform is not None else None
     if transform is None or lifted is None:
         return []
-    camera = (-transform).translation.to_numpy()
+    camera = vector_array(inverse_transform(transform).transform.translation)
 
     valid: list[Detection3DPC] = []
     for det3d in lifted:
-        points = np.asarray(det3d.pointcloud.pointcloud.points)
+        points = pointcloud_xyz(det3d.pointcloud)
         if len(points) < policy.min_points:
             continue
         if float((points.max(axis=0) - points.min(axis=0)).max()) > policy.max_object_extent_m:
@@ -150,16 +155,19 @@ def _lift(
 
 def index_frames(rig: Rig, feed: Stream[Any, Any]) -> Stream[Any, Any]:
     """One camera's frames worth embedding: lit, sharpest per slot, world-posed, camera-tagged."""
-    return (
-        feed.filter(lambda obs: obs.data.brightness > 0.1)
-        .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / EMBED_HZ))
-        .map(
-            lambda obs: obs.derive(
-                data=obs.data,
-                pose=rig.camera_pose(obs.ts, obs.data.frame_id),
-                tags={**obs.tags, "camera": obs.data.frame_id},
-            )
+
+    def with_camera_pose(obs: Observation[Any]) -> Observation[Any]:
+        pose = rig.camera_pose(obs.ts, obs.data.header.frame_id)
+        return obs.derive(
+            data=obs.data,
+            pose=pose.pose if pose is not None else None,
+            tags={**obs.tags, "camera": obs.data.header.frame_id},
         )
+
+    return (
+        feed.filter(lambda obs: image_brightness(obs.data) > 0.1)
+        .transform(QualityWindow(image_sharpness, window=1.0 / EMBED_HZ))
+        .map(with_camera_pose)
         .filter(lambda obs: obs.pose is not None)
     )
 
@@ -183,7 +191,7 @@ def embed_index(rig: Rig, embedder: EmbeddingModel, t0: float, t1: float) -> Str
         feed.transform(EmbedImages(embedder))
         .map(
             lambda obs: obs.derive(
-                data=IndexFrame(obs.ts, obs.data.frame_id, float(obs.data.sharpness))
+                data=IndexFrame(obs.ts, obs.data.header.frame_id, image_sharpness(obs.data))
             )
         )
         .materialize()
@@ -319,7 +327,7 @@ def localize(
                         class_id=j,
                         confidence=float(score),
                         name=queries[j],
-                        ts=img.ts,
+                        ts=to_seconds(img.header.stamp),
                         image=img,
                     )
                     if det.is_valid():

@@ -22,14 +22,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dimos_cdrgen.registry import decode
 import numpy as np
 import pytest
 
-from dimos.memory.codecs.base import Codec, codec_for, codec_id
-from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.base import Codec, codec_for, codec_from_id, codec_id
+from dimos.memory.codecs.jpeg import JpegCdrCodec, JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image as GeneratedImage, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.image import image_from_array, image_to_rgb
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 if TYPE_CHECKING:
@@ -238,3 +244,31 @@ class TestCodecFor:
         assert decoded.format == fmt
         assert decoded.frame_id == "depth_optical"
         np.testing.assert_array_equal(decoded.data, depth.data)
+
+
+@pytest.mark.parametrize("encoding", ["rgb8", "bgr8", "mono8"])
+def test_color_cache_reopens_jpeg_cdr_with_exact_source_header(tmp_path, encoding):
+    shape = (8, 8) if encoding == "mono8" else (8, 8, 3)
+    pixels = np.full(shape, 100, dtype=np.uint8)
+    if encoding != "mono8":
+        pixels[:, :, 0] = 20
+        pixels[:, :, 2] = 180
+    header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
+    image = image_from_array(pixels, encoding=encoding, header=header)
+    codec = JpegCdrCodec()
+    # Stored bytes are a real generated CompressedImage, rather than an LCM envelope.
+    compressed = decode(codec.encode(image), CompressedImage)
+    assert compressed.header == header
+    assert "jpeg" in compressed.format
+    database = tmp_path / "color.db"
+    with SqliteStore(path=str(database)) as store:
+        store.stream("color", GeneratedImage, codec="jpegcdr").append(image, ts=2)
+    with SqliteStore(path=str(database), must_exist=True) as store:
+        restored = store.stream("color").first().data
+        assert type(restored) is GeneratedImage
+        assert restored.header == header
+        np.testing.assert_allclose(
+            image_to_rgb(restored).astype(float), image_to_rgb(image), atol=5
+        )
+    with pytest.raises(TypeError, match="generated Image"):
+        codec_from_id("jpegcdr", f"{PointCloud2.__module__}.{PointCloud2.__qualname__}")

@@ -38,8 +38,7 @@ import threading
 import time
 from typing import Any, Literal
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -49,15 +48,19 @@ from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, Rig, RigCamera
@@ -69,8 +72,8 @@ logger = setup_logger()
 
 INDEX_STREAM = "color_image_embedded"
 GEOMETRY_STREAM = "geometry_memory"
-COLOR_CODEC = "jpeg"
-GEOMETRY_CODEC = "lz4+lcm"
+COLOR_CODEC = "jpegcdr"
+GEOMETRY_CODEC = "lz4+cdr"
 LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
 
 
@@ -153,11 +156,13 @@ class PerceptionLocalize(Module):
                 self._camera_seen.set()
 
         def on_geometry(msg: Image | PointCloud2) -> None:
-            self._geometry_feed.append(msg, ts=msg.ts)
+            self._geometry_feed.append(msg, ts=to_seconds(msg.header.stamp))
 
         geometry = self.depth_image if self.config.geometry == "depth" else self.lidar
         self._unsubs = [
-            self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
+            self.color_image.subscribe(
+                lambda img: self._color_feed.append(img, ts=to_seconds(img.header.stamp))
+            ),
             geometry.subscribe(on_geometry),
             self.camera_info.subscribe(on_camera_info),
         ]
@@ -202,7 +207,7 @@ class PerceptionLocalize(Module):
         assert camera is not None
         depth = self._geometry_memory if self.config.geometry == "depth" else None
         self.rig = Rig(
-            cameras={camera.frame_id: RigCamera(info=camera, color=self.index, depth=depth)},
+            cameras={camera.header.frame_id: RigCamera(info=camera, color=self.index, depth=depth)},
             tf=self._tf_buffer,
             world_frame=self.config.world_frame,
             lidar=None if depth is not None else self._geometry_memory,
@@ -285,30 +290,43 @@ def as_detection_array(
     latest = 0.0
     for query, hits in zip(queries, results, strict=True):
         for hit in hits:
-            points = hit.point_cloud.as_numpy()[0]
+            points = pointcloud_xyz(hit.point_cloud)
             low, high = points.min(axis=0), points.max(axis=0)
             middle, extent = (low + high) / 2, high - low
-            center = Vector3(*(float(v) for v in middle))
-            size = Vector3(*(max(float(v), 1e-3) for v in extent))
+            center = Point(x=float(middle[0]), y=float(middle[1]), z=float(middle[2]))
+            size = Vector3(
+                x=max(float(extent[0]), 1e-3),
+                y=max(float(extent[1]), 1e-3),
+                z=max(float(extent[2]), 1e-3),
+            )
             latest = max(latest, hit.last_seen_timestamp)
             boxes.append(
                 Detection3D(
-                    header=Header(hit.last_seen_timestamp, frame_id),
+                    header=Header(
+                        stamp=time_from_seconds(hit.last_seen_timestamp), frame_id=frame_id
+                    ),
                     id=hit.instance_id,
                     results=[
                         ObjectHypothesisWithPose(
-                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score)
+                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score),
+                            pose=PoseWithCovariance(
+                                pose=Pose(
+                                    position=center,
+                                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                                ),
+                                covariance=np.zeros(36, dtype=np.float64),
+                            ),
                         )
                     ],
-                    results_length=1,
                     bbox=BoundingBox3D(
-                        center=Pose(position=center, orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+                        center=Pose(
+                            position=center, orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+                        ),
                         size=size,
                     ),
                 )
             )
     return Detection3DArray(
-        detections_length=len(boxes),
-        header=Header(latest, frame_id),
+        header=Header(stamp=time_from_seconds(latest), frame_id=frame_id),
         detections=boxes,
     )

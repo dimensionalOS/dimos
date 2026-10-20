@@ -14,6 +14,10 @@
 
 from __future__ import annotations
 
+from dimos_cdrgen.registry import decode, encode
+
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image as GeneratedImage
+from dimos.msgs.image import compressed_image_from_image, image_from_compressed
 from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -37,3 +41,24 @@ class JpegCodec:
 
     def decode(self, data: bytes) -> Image:
         return Image.lcm_jpeg_decode(data)
+
+
+class JpegCdrCodec:
+    """Generated Image cache: JPEG pixels inside a generated CompressedImage CDR value.
+
+    Separate from the legacy JPEG/LCM codec while consumer migration is staged.
+    Storage decoding normalizes color to BGR8; Header fields remain exact.
+    """
+
+    def __init__(self, quality: int = 50) -> None:
+        self._quality = quality
+
+    @property
+    def payload_type(self) -> type[GeneratedImage]:
+        return GeneratedImage
+
+    def encode(self, value: GeneratedImage) -> bytes:
+        return encode(compressed_image_from_image(value, quality=self._quality))
+
+    def decode(self, data: bytes) -> GeneratedImage:
+        return image_from_compressed(decode(data, CompressedImage))

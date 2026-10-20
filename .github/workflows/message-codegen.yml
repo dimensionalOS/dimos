@@ -24,6 +24,8 @@ on:
       - dimos/hardware/sensors/camera/**
       - dimos/perception/detection/**
       - dimos/perception/fiducial/**
+      - dimos/perception/localize/**
+      - dimos/perception/detection/project.py
       - dimos/models/embedding/**
       - dimos/perception/experimental/moduleDB.py
       - dimos/models/vl/base.py
@@ -183,3 +185,8 @@ jobs:
           .native-review/bin/python -m pip install 'reportlab==4.5.0'
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/fiducial/test_helpers.py" "$PWD"/dimos/perception/fiducial/test_*.py "$PWD"/dimos/perception/fiducial/blueprints/test_*.py
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/fiducial/marker_pose.py dimos/perception/fiducial/marker_detect.py dimos/perception/fiducial/marker_transformer.py dimos/perception/fiducial/marker_detection_stream_module.py dimos/perception/fiducial/marker_tf_module.py dimos/perception/fiducial/blueprints/desk_marker_tf.py
+      - name: Verify generated query-time localization geometry
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/localize/test_rig.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/codecs/test_codecs.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/localize/association.py dimos/perception/localize/dandetect.py dimos/perception/localize/module.py dimos/perception/localize/rig.py dimos/perception/localize/support_plane.py dimos/perception/localize/types.py dimos/perception/localize/localize.py dimos/perception/localize/tools/tool_localize.py dimos/perception/localize/demo_blueprints/xarm_feed.py dimos/perception/detection/project.py dimos/memory/codecs/jpeg.py dimos/memory/codecs/base.py

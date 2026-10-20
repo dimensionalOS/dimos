@@ -120,6 +120,44 @@ nanoseconds when the local Observation API represents their times as the same
 floating-point second. Select explicit CDR transports until the default runtime
 cutover is complete; the desk blueprint retains its LCM backend with CDR encoding.
 
+## Query-time localization geometry
+
+Localization discovers generated calibration, color, depth and lidar streams by
+message identity and source frame. Depth classification inspects decoded pixels,
+including both byte orders; wire image data is a flat byte array. Existing model
+selection and localization thresholds remain unchanged.
+
+This standalone geometry example composes two mounts without loading models:
+
+```python
+from dimos.perception.localize.rig import Rig
+from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
+from dimos.protocol.tf.tf import MultiTBuffer
+
+tf = MultiTBuffer()
+tf.receive_transform(*frames_to_edge_transforms([
+    ("base_link", "world", (2, 0, 0), (0, 0, 0)),
+    ("front", "base_link", (0.5, 0, 0), (0, 0, 0)),
+]))
+rig = Rig(cameras={}, tf=tf)
+pose = rig.camera_pose(0, "front")
+assert pose is not None
+assert pose.header.frame_id == "world"
+assert pose.pose.position.x == 2.5
+```
+
+The local color cache keeps JPEG compression in a generated CompressedImage
+CDR envelope (`jpegcdr` storage codec); geometry uses lossless `lz4+cdr`.
+JPEG decoding normalizes color to BGR8 while retaining the exact source Header.
+These are local storage codecs, not new transport or MCAP encodings.
+
+Merged lidar maps and grouped object clouds retain the newest contributing
+source stamp in integer nanoseconds. Query results still expose seconds through
+the existing `Localization.last_seen_timestamp` API; `as_detection_array()`
+converts that value to a generated Detection3DArray. Live module/blueprint
+execution requires the remaining default transport cutover. Historical recordings
+still require explicit conversion; this slice does not add a legacy decoder.
+
 ## Experimental WorldBelief
 
 The experimental xArm6 WorldBelief stack records RGB-D observations and processes

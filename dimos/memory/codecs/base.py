@@ -119,6 +119,13 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory.codecs.jpeg import JpegCodec
 
         return JpegCodec()
+    if name == "jpegcdr":
+        from dimos.memory.codecs.jpeg import JpegCdrCodec
+
+        codec = JpegCdrCodec()
+        if resolve_payload_type(payload_module) is not codec.payload_type:
+            raise TypeError("JPEG/CDR codec requires a generated Image")
+        return codec
     if name == "cdr":
         return CdrCodec(resolve_payload_type(payload_module))
     if name == "lcm":
