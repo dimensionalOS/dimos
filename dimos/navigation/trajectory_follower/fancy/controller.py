@@ -30,9 +30,9 @@ from typing import Any, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.nav_msgs.msg import Path
+from dimos.msgs.geometry import yaw
 from dimos.protocol.service.spec import BaseConfig
 
 
@@ -87,6 +87,7 @@ def path_xy_yaw(path: Path) -> NDArray[np.float64]:
     """The plan as a contiguous (N, 3) float64 array, the rust marshalling."""
     return np.ascontiguousarray(
         np.array(
-            [[p.position.x, p.position.y, p.yaw] for p in path.poses], dtype=np.float64
+            [[p.pose.position.x, p.pose.position.y, yaw(p.pose.orientation)] for p in path.poses],
+            dtype=np.float64,
         ).reshape(-1, 3)
     )

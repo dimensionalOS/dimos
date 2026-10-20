@@ -23,6 +23,10 @@ on:
       - dimos/mapping/voxels/**
       - dimos/navigation/base.py
       - dimos/navigation/tf_pose.py
+      - dimos/navigation/spec.py
+      - dimos/navigation/local_planner/profile.py
+      - dimos/navigation/local_planner/test_profile.py
+      - dimos/navigation/trajectory_follower/**
       - dimos/navigation/test_tf_pose.py
       - dimos/navigation/movement_manager/**
       - dimos/navigation/go2/replanning_a_star/**
@@ -292,3 +296,14 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.navigation import tf_pose; from dimos.navigation.movement_manager import movement_manager; from dimos.protocol.tf import tf; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (tf_pose,movement_manager,tf)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/test_tf_pose.py" "$PWD/dimos/navigation/movement_manager/test_movement_manager.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/tf_pose.py dimos/navigation/movement_manager/movement_manager.py
+      - name: Verify generated trajectory followers and actual Rust controller parity
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-controller-target
+        run: |
+          .native-review/bin/python -m pip install 'maturin==1.13.3'
+          .native-review/bin/maturin build --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features python --release --locked --jobs 2 --out build/controller-wheels --interpreter .native-review/bin/python
+          .native-review/bin/python -m pip install --no-deps build/controller-wheels/*.whl
+          .native-review/bin/python -I -c 'from dimos.navigation.trajectory_follower.basic import module as basic; from dimos.navigation.trajectory_follower.fancy import module, controller; from dimos.navigation.trajectory_follower.fancy.laws import seed,hinted; from dimos.navigation.local_planner import profile; import dimos_trajectory_follower; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (basic,module,controller,seed,hinted,profile,dimos_trajectory_follower)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/trajectory_follower/basic/test_module.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_module.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_controller.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_rust_parity.py" "$PWD/dimos/navigation/local_planner/test_profile.py" "$PWD/dimos/navigation/trajectory_follower/test_generated_ports.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/spec.py dimos/navigation/local_planner/profile.py dimos/navigation/trajectory_follower/basic/module.py dimos/navigation/trajectory_follower/fancy/{controller,module,laws/hinted,laws/seed}.py
