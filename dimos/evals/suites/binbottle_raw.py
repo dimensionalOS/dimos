@@ -35,7 +35,7 @@ def raw(case: EvalCase) -> EvalCase:
     dimos = case.environment.config
     assert isinstance(dimos, MujocoEnvironmentConfig)
     task = case.inputs.replace(GUIDANCE, "").strip()
-    scene = next(s for s in ("bin", "bottle", "blocks") if s in case.tags)
+    scene = next(s for s in ("bin", "bottle", "blocks", "pour") if s in case.tags)
     return replace(
         case,
         id=case.id.replace("_py_", "_raw_", 1),  # binbottle_py_bin_lift -> binbottle_raw_bin_lift

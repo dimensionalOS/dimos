@@ -15,7 +15,7 @@
 """BinBottle: household objects on the robosuite table, an empty shelf bin and a capped water
 bottle.
 
-The scenes (``data/robosuite_2``, shared with ``dimosblocks``) reuse the robosuite lift table, xArm7, wrist camera and start
+The scenes (``data/robosuite_2``, shared with ``dimosblocks`` and ``pour``) reuse the robosuite lift table, xArm7, wrist camera and start
 pose, with robosuite's contact solver settings in the XML. Each also has an ``overview`` camera
 that is recorded for viewing runs afterwards; no agent tool or bridge reads it.
 """

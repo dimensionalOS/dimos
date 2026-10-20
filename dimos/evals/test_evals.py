@@ -52,6 +52,7 @@ from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
+    BALLS,
     _answered_at,
     choice,
     exact,
@@ -59,6 +60,7 @@ from dimos.evals.scorers import (
     first_number,
     floor,
     mean,
+    pour_partial,
     ramp,
     within,
     yes_no,
@@ -81,8 +83,10 @@ from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -738,6 +742,63 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     every = written(tmp_path / "every.db", rooms)
     assert score(every, str(N_ROOMS)) == 1.0
     assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
+
+
+def test_pour_grader_counts_balls_in_the_bowl_not_the_cup(tmp_path: Path) -> None:
+    """0.1 touched + 0.2 lifted the cup + 0.7 x the share of balls in the bowl at the end. Spilled
+    balls score nothing, nor do balls left in the cup, even with the cup set down in the bowl."""
+    cup_at, bowl_at = np.array([0.56, -0.10, 0.8]), np.array([0.57, 0.13, 0.8])
+    rng = np.random.default_rng(0)
+
+    def heap(centre: np.ndarray, radius: float, z: tuple[float, float], n: int) -> list[np.ndarray]:
+        r, a = radius * np.sqrt(rng.uniform(0, 1, n)), rng.uniform(0, 2 * np.pi, n)
+        zs = rng.uniform(*z, n)
+        offsets = np.column_stack([r * np.cos(a), r * np.sin(a), zs])
+        return list(centre + offsets)
+
+    in_cup = heap(cup_at, 0.025, (0.012, 0.055), 100)
+
+    def score(name: str, cup_end: np.ndarray, balls_end: list[np.ndarray]) -> float:
+        lifted = cup_at + np.array([0.0, 0.0, 0.1])
+        frames = [(cup_at, in_cup)] * 3 + [(lifted, in_cup), (cup_end, balls_end)]
+        db = tmp_path / name
+        with SqliteStore(path=str(db)) as store:
+            stream = store.stream("body_poses", TFMessage)
+            for i, (cup, balls) in enumerate(frames):
+                bodies = {
+                    "cup_main": cup,
+                    "bowl_main": bowl_at,
+                    **dict(zip(BALLS, balls, strict=True)),
+                }
+                stream.append(
+                    TFMessage(
+                        *(
+                            Transform(
+                                translation=Vector3(*p),
+                                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                                frame_id="world",
+                                child_frame_id=body,
+                                ts=1000.0 + i,
+                            )
+                            for body, p in bodies.items()
+                        )
+                    ),
+                    ts=1000.0 + i,
+                )
+        return pour_partial(
+            Outcome(trajectory=_trajectory("done", tmp_path), artifacts={"recording": db})
+        )
+
+    all_in = heap(bowl_at, 0.04, (0.012, 0.03), 100)
+    assert score("all.db", cup_at, all_in) == pytest.approx(1.0)
+    spilled = all_in[:60] + heap(bowl_at + np.array([0.0, 0.2, 0.0]), 0.05, (0.006, 0.007), 40)
+    assert score("spilled.db", cup_at, spilled) == pytest.approx(0.3 + 0.7 * 0.6)
+    # The full cup set down inside the bowl: its balls are inside the bowl's walls, but not poured.
+    cup_in_bowl = bowl_at + np.array([0.0, 0.0, 0.006])
+    assert score("cheat.db", cup_in_bowl, heap(cup_in_bowl, 0.025, (0.012, 0.055), 100)) == 0.3
+    assert score("still.db", cup_at, in_cup) == pytest.approx(0.3), (
+        "lifted, put back, nothing poured"
+    )
 
 
 def test_suites_and_agents_importable() -> None:

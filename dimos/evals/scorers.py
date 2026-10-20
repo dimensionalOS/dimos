@@ -580,3 +580,64 @@ def word_partial(outcome: Outcome) -> float:
         return 0.7 * pairs / (len(WORD) - 1) + 0.3 * float(upright.mean())
 
     return float(max(read(u) for u in (*ups[~free], *(-ups[flips]))))
+
+
+# Pour (data/robosuite_2/pour): a cup of balls that stand in for water, poured into a bowl with
+# slanted walls. Inside sizes, in each body's frame (origin at the centre of its base).
+BALLS = tuple(f"ball{i}" for i in range(100))
+_CUP_R, _CUP_H = 0.033, 0.10
+_BOWL_R_BOTTOM, _BOWL_R_TOP, _BOWL_H = 0.05, 0.078, 0.055
+
+
+def _final_positions(outcome: Outcome, bodies: Sequence[str]) -> dict[str, np.ndarray]:
+    """World positions of ``bodies`` in the newest pose message at or before the answer.
+
+    Reads backwards and stops at the first match, so tracking many bodies (the balls) costs one
+    message, not the whole history ``_tracks`` reads.
+    """
+    until = _answered_at(outcome)
+    wanted = set(bodies)
+    with recording(outcome) as store:
+        try:
+            stream = body_pose_stream(store)
+        except LookupError:
+            return {}
+        for record in stream.order_by("ts", desc=True):
+            if until is not None and record.ts > until:
+                continue
+            found = {
+                t.child_frame_id: t.translation.to_numpy()
+                for t in record.data.transforms
+                if t.child_frame_id in wanted and t.frame_id == "world"
+            }
+            if found:
+                return found
+    return {}
+
+
+def _poured(balls: np.ndarray, bowl: _Track, cup: _Track) -> int:
+    """Balls inside the bowl's walls at its final pose; any still inside the cup do not count."""
+
+    def local(track: _Track) -> np.ndarray:
+        return np.asarray((balls - track.final) @ track.rot[-1])  # row-wise R^T (p - origin)
+
+    b = local(bowl)
+    wall = _BOWL_R_BOTTOM + (_BOWL_R_TOP - _BOWL_R_BOTTOM) * np.clip(b[:, 2] / _BOWL_H, 0.0, 1.0)
+    in_bowl = (b[:, 2] > 0.0) & (b[:, 2] < _BOWL_H + 0.01) & (np.hypot(b[:, 0], b[:, 1]) < wall)
+    c = local(cup)
+    in_cup = (c[:, 2] > 0.0) & (c[:, 2] < _CUP_H) & (np.hypot(c[:, 0], c[:, 1]) < _CUP_R)
+    return int((in_bowl & ~in_cup).sum())
+
+
+def pour_partial(outcome: Outcome) -> float:
+    """0.1 touched the cup, 0.2 lifted it 3 cm, 0.7 x the share of the balls in the bowl at the
+    end. Balls still in the cup do not count, even with the cup set down inside the bowl."""
+    tracks = _tracks(outcome, ("cup_main", "bowl_main", *GRIPPER_BODIES))
+    cup, bowl = tracks.get("cup_main"), tracks.get("bowl_main")
+    if cup is None or bowl is None:
+        return 0.0
+    touched = cup.moved() > 0.005 or _came_within(tracks, "cup_main", 0.08)
+    lifted = cup.rise() >= 0.03
+    balls = _final_positions(outcome, BALLS)
+    poured = _poured(np.array(list(balls.values())), bowl, cup) if balls else 0
+    return round(float(0.1 * touched + 0.2 * lifted + 0.7 * poured / len(BALLS)), 6)
