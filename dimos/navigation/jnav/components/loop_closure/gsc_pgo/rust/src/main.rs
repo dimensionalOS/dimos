@@ -28,7 +28,7 @@
 //!   loop_closure_event (GraphDelta3D of pre->post iSAM2 deltas when a loop
 //!   fired), tf_deformation_nodes (per-keyframe DeformationNode, re-published
 //!   only when the optimizer moves a node past an epsilon), and the optional
-//!   throttled _global_map debug cloud.
+//!   throttled debug_global_map cloud.
 //!
 //! GscPgo wraps gtsam, which is thread-unsafe (`!Send`), so the worker is
 //! a dedicated OS thread that OWNS the GscPgo; publishes hop back onto the
@@ -262,6 +262,10 @@ struct GscPgoModule {
     #[output(encode = TFMessage::encode)]
     correction: Output<TFMessage>,
 
+    // The correction again, on the shared tf topic.
+    #[output(encode = TFMessage::encode)]
+    tf: Output<TFMessage>,
+
     #[output(encode = Graph3D::encode)]
     pose_graph: Output<Graph3D>,
 
@@ -278,10 +282,9 @@ struct GscPgoModule {
     #[output(encode = DeformationNode::encode)]
     tf_deformation_nodes: Output<DeformationNode>,
 
-    // Debug-only; leading underscore keeps autoconnect from wiring it.
-    // Publishing is gated on global_map_publish_rate > 0.
+    // Debug-only, nothing reads it. Publishing is gated on global_map_publish_rate > 0.
     #[output(encode = PointCloud2::encode)]
-    _global_map: Output<PointCloud2>,
+    debug_global_map: Output<PointCloud2>,
 
     #[config]
     config: Config,
@@ -311,7 +314,8 @@ impl GscPgoModule {
             pose_graph_records: self.pose_graph_records.clone(),
             loop_closure_records: self.loop_closure_records.clone(),
             tf_deformation_nodes: self.tf_deformation_nodes.clone(),
-            global_map: self._global_map.clone(),
+            global_map: self.debug_global_map.clone(),
+            tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
             wake: Arc::clone(&self.wake),
@@ -447,6 +451,7 @@ struct Worker {
     config: Config,
     corrected_odometry: Output<Odometry>,
     correction: Output<TFMessage>,
+    tf: Output<TFMessage>,
     pose_graph: Output<Graph3D>,
     loop_closure_event: Output<GraphDelta3D>,
     pose_graph_records: Output<PointCloud2>,
@@ -470,6 +475,18 @@ impl Worker {
         let frame_id = self.config.map_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
         let body_frame = self.config.body_frame.clone();
+        // Identity until the first correction, so map -> child resolves from the start.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        let identity = build_tf_message(
+            &mat3::identity(),
+            &[0.0; 3],
+            now,
+            &frame_id,
+            &child_frame_id,
+        );
+        self.publish(&self.tf, &identity, "tf");
 
         let publish_global_map = self.config.global_map_publish_rate > 0.0;
         let global_map_interval = if publish_global_map {
@@ -721,7 +738,7 @@ impl Worker {
                 let filtered =
                     pointcloud::voxel_downsample(&global_cloud, self.config.global_map_voxel_size);
                 let msg = build_pointcloud2(&filtered, &frame_id, cur_time);
-                self.publish(&self.global_map, &msg, "_global_map");
+                self.publish(&self.global_map, &msg, "debug_global_map");
             }
         }
     }
@@ -790,6 +807,7 @@ impl Worker {
             child_frame_id,
         );
         self.publish(&self.correction, &tf_msg, "correction");
+        self.publish(&self.tf, &tf_msg, "tf");
     }
 
     /// Publish per-keyframe deformation nodes: each keyframe keeps a stable

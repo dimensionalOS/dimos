@@ -19,12 +19,9 @@ All rust except for gtsam (ffi)
 
 from __future__ import annotations
 
-from reactivex.disposable import Disposable
-
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -192,29 +189,10 @@ class GscPGO(NativeModule):
         TFMessage
     ]  # i know, kinda redundant, but makes visuals much easier to make and is low-cost
     tf_deformation_nodes: Out[DeformationNode]  # important for future fast-tf-graph lookup
+    # The correction again, identity until the first one.
     tf: Out[TFMessage]
-    # debug only
-    _global_map: Out[PointCloud2]
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.tf.publish(
-            TFMessage(
-                Transform(
-                    frame_id=self.config.map_frame,
-                    child_frame_id=self.config.child_frame_id,
-                )
-            )
-        )
-        self.register_disposable(
-            Disposable(
-                self.correction.transport.subscribe(self._on_correction_for_tf, self.correction)
-            )
-        )
-
-    def _on_correction_for_tf(self, correction: TFMessage) -> None:
-        self.tf.publish(TFMessage(*correction.transforms))
+    # debug only, gated on global_map_publish_rate > 0
+    debug_global_map: Out[PointCloud2]
 
     @rpc
     def stop(self) -> None:
