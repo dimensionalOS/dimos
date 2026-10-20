@@ -202,3 +202,8 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/experimental/temporal_memory/test_temporal_memory_module.py" "$PWD/dimos/perception/experimental/test_perceive_loop_skill.py" "$PWD/dimos/visualization/rerun/test_cdr.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/experimental/perceive_loop_skill.py dimos/perception/experimental/temporal_memory/clip_filter.py dimos/perception/experimental/temporal_memory/entity_graph_db.py dimos/perception/experimental/temporal_memory/frame_window_accumulator.py dimos/perception/experimental/temporal_memory/temporal_memory.py dimos/perception/experimental/temporal_memory/temporal_utils/helpers.py dimos/perception/experimental/temporal_memory/window_analyzer.py dimos/visualization/rerun/cdr.py
+      - name: Verify generated ZED frames without the proprietary SDK
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/zed/test_messages.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/zed/camera.py dimos/hardware/sensors/camera/zed/compat.py dimos/hardware/sensors/camera/zed/messages.py
