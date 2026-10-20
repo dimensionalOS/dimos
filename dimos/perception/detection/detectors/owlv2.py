@@ -23,8 +23,10 @@ import numpy as np
 from PIL import Image as PILImage
 import torch
 
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.time import to_nanoseconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -56,7 +58,7 @@ class Owlv2Detector(HuggingFaceModel):
         # (frame id, ts) to text-independent tower outputs; any query set scores
         # against a cached frame without rerunning the tower
         self._features: OrderedDict[
-            tuple[str, float], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            tuple[str, int], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
         ] = OrderedDict()
         self._text_embeds: dict[str, torch.Tensor] = {}
 
@@ -111,7 +113,7 @@ class Owlv2Detector(HuggingFaceModel):
         results are per-image, in input order.
         """
         self.forwards += len(images)
-        pils = [PILImage.fromarray(image.to_rgb().data) for image in images]
+        pils = [PILImage.fromarray(image_to_rgb(image)) for image in images]
         with torch.inference_mode(), self._autocast():
             inputs = self._processor(
                 text=[queries] * len(pils), images=pils, return_tensors="pt"
@@ -138,7 +140,7 @@ class Owlv2Detector(HuggingFaceModel):
                     class_id=int(label),
                     confidence=float(score),
                     name=queries[int(label)],
-                    ts=image.ts,
+                    ts=to_seconds(image.header.stamp),
                     image=image,
                 )
                 if det.is_valid():
@@ -172,7 +174,7 @@ class Owlv2Detector(HuggingFaceModel):
         logit shift and scale, and clipped pixel ``(x1, y1, x2, y2)`` boxes.
         A miss runs the image tower once; a hit runs nothing.
         """
-        key = (image.frame_id, image.ts)
+        key = (image.header.frame_id, to_nanoseconds(image.header.stamp))
         if key in self._features:
             self._features.move_to_end(key)
             return self._features[key]
@@ -180,7 +182,7 @@ class Owlv2Detector(HuggingFaceModel):
         from transformers.image_transforms import center_to_corners_format
 
         self.forwards += 1
-        pil = PILImage.fromarray(image.to_rgb().data)
+        pil = PILImage.fromarray(image_to_rgb(image))
         model = self._model
         head = model.class_head
         with torch.inference_mode(), self._autocast():
