@@ -19,10 +19,10 @@ Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit fo
 hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
 """
 
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
@@ -44,8 +44,12 @@ teleop_webxr_rerun = autoconnect(
     vis_module("rerun"),
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
-        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
+        ("left_controller_output", PoseStamped): CdrTransport.spec(
+            "/teleop/left_delta", PoseStamped
+        ),
+        ("right_controller_output", PoseStamped): CdrTransport.spec(
+            "/teleop/right_delta", PoseStamped
+        ),
     }
 )
 
@@ -88,7 +92,7 @@ teleop_webxr_xarm7_video = (
     )
     .transports(
         {
-            ("color_image", Image): LCMTransport("/teleop/color_image", Image),
+            ("color_image", Image): CdrTransport.spec("/teleop/color_image", Image),
         }
     )
 )

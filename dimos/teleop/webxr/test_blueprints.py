@@ -16,14 +16,22 @@
 
 from typing import cast
 
+import pytest
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.robot.manipulators.common.blueprints import TeleopBinding
 from dimos.teleop.webxr.blueprints import (
     demo_pico_body_tracking,
     teleop_webxr_dual,
     teleop_webxr_hand_xarm7,
+    teleop_webxr_rerun,
     teleop_webxr_xarm7,
+    teleop_webxr_xarm7_video,
 )
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.extensions import ArmTeleopModule, HandTeleopModule
@@ -120,3 +128,19 @@ def test_pico_body_tracking_demo_uses_single_required_webxr_module() -> None:
     assert modules == {WebXRTeleopModule}
     assert webxr.kwargs["body_tracking_mode"] == "required"
     assert ("body_tracking", BodyTrackingSnapshot) not in demo_pico_body_tracking.transport_map
+
+
+@pytest.mark.parametrize("backend,prefix", [("lcm", ""), ("zenoh", "dimos/")])
+def test_explicit_webxr_topics_build_canonical_cdr_with_selected_backend(
+    backend, prefix, monkeypatch
+):
+    monkeypatch.setattr(global_config, "transport", backend)
+    cases = [
+        (teleop_webxr_rerun, "left_controller_output", PoseStamped, "teleop/left_delta"),
+        (teleop_webxr_rerun, "right_controller_output", PoseStamped, "teleop/right_delta"),
+        (teleop_webxr_xarm7_video, "color_image", Image, "teleop/color_image"),
+    ]
+    for blueprint, stream, message_type, topic in cases:
+        transport = blueprint.transport_map[(stream, message_type)].build()
+        assert isinstance(transport, CdrTransport)
+        assert transport.channel == prefix + topic + "/cdr/" + message_type.__msgtype__

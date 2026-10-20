@@ -22,6 +22,7 @@ deltas, and publishes PoseStamped commands.
 """
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
@@ -43,12 +44,17 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
+from dimos.messages.geometry_msgs.msg import (
+    Point as CdrPoint,
+    Pose as CdrPose,
+    PoseStamped as CdrPoseStamped,
+    Quaternion as CdrQuaternion,
+)
 from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
+from dimos.messages.std_msgs.msg import Header, String, UInt32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.time import to_seconds
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -117,11 +123,11 @@ class WebXRTeleopModule(Module):
     config: WebXRTeleopConfig
 
     # Outputs: delta poses for each controller
-    left_controller_output: Out[PoseStamped]
-    right_controller_output: Out[PoseStamped]
-    teleop_buttons: Out[Buttons]
-    button_pressed: Out[Buttons]
-    button_released: Out[Buttons]
+    left_controller_output: Out[CdrPoseStamped]
+    right_controller_output: Out[CdrPoseStamped]
+    teleop_buttons: Out[UInt32]
+    button_pressed: Out[UInt32]
+    button_released: Out[UInt32]
     status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
@@ -132,6 +138,7 @@ class WebXRTeleopModule(Module):
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._pose_headers: dict[Hand, Header] = {}
         self._controllers: dict[Hand, WebXRControllerState | None] = {
             Hand.LEFT: None,
             Hand.RIGHT: None,
@@ -392,6 +399,7 @@ class WebXRTeleopModule(Module):
                 self._is_engaged[hand] = False
                 self._initial_poses[hand] = None
                 self._current_poses[hand] = None
+                self._pose_headers.pop(hand, None)
                 self._controllers[hand] = None
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
@@ -417,6 +425,7 @@ class WebXRTeleopModule(Module):
             )
             if pose_stale:
                 self._current_poses[hand] = None
+                self._pose_headers.pop(hand, None)
                 self._last_pose_update[hand] = None
             if controller_stale:
                 self._controllers[hand] = None
@@ -484,6 +493,7 @@ class WebXRTeleopModule(Module):
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._pose_headers[hand] = deepcopy(wire.header)
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
@@ -650,15 +660,26 @@ class WebXRTeleopModule(Module):
         with self._lock:
             self._translation_scale = translation_scale
 
+    def _output_header(self, hand: Hand, output_msg: PoseStamped) -> Header:
+        source = self._pose_headers.get(hand)
+        if source is not None and to_seconds(source.stamp) == output_msg.ts:
+            return Header(deepcopy(source.stamp), output_msg.frame_id)
+        return Header(time_from_seconds(output_msg.ts), output_msg.frame_id)
+
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.
 
         Override to customize output (e.g., convert to Twist, scale values).
         """
+        p, q = output_msg.position, output_msg.orientation
+        message = CdrPoseStamped(
+            self._output_header(hand, output_msg),
+            CdrPose(CdrPoint(*p), CdrQuaternion(*q)),
+        )
         if hand == Hand.LEFT:
-            self.left_controller_output.publish(output_msg)
+            self.left_controller_output.publish(message)
         else:
-            self.right_controller_output.publish(output_msg)
+            self.right_controller_output.publish(message)
 
     def _publish_button_state(
         self,
@@ -675,7 +696,7 @@ class WebXRTeleopModule(Module):
 
     def _publish_buttons(self, buttons: Buttons) -> None:
         """Publish raw state and stable digital button edges."""
-        self.teleop_buttons.publish(buttons)
+        self.teleop_buttons.publish(UInt32(buttons.data))
         now = time.monotonic()
         observed = buttons.data & Buttons.DIGITAL_MASK
         pressed = 0
@@ -701,9 +722,9 @@ class WebXRTeleopModule(Module):
                 self._debounced_buttons &= ~mask
                 released |= mask
         if pressed:
-            self.button_pressed.publish(Buttons(pressed))
+            self.button_pressed.publish(UInt32(pressed))
         if released:
-            self.button_released.publish(Buttons(released))
+            self.button_released.publish(UInt32(released))
 
     def _release_all_buttons(self) -> None:
         """Emit release edges without debounce when input ownership disappears."""
@@ -711,4 +732,4 @@ class WebXRTeleopModule(Module):
         self._debounced_buttons = 0
         self._button_candidates.clear()
         if released:
-            self.button_released.publish(Buttons(released))
+            self.button_released.publish(UInt32(released))

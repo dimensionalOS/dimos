@@ -14,22 +14,30 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
+from contextlib import ExitStack
+from functools import partial
+from io import BytesIO
 import json
 import logging
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 from typing import Any, cast
 
 from dimos_cdrgen.registry import decode, encode
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import numpy as np
+from PIL import Image as PillowImage
 import pytest
 import pytest_mock
 
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import make_transport
 from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose as CdrPose,
@@ -37,8 +45,9 @@ from dimos.messages.geometry_msgs.msg import (
     Quaternion,
 )
 from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
-from dimos.messages.std_msgs.msg import Header
+from dimos.messages.std_msgs.msg import Header, UInt32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.image import image_from_array
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.time import time_from_seconds
@@ -49,7 +58,12 @@ from dimos.teleop.webxr.controller_types import (
     ThumbstickState,
     WebXRControllerState,
 )
-from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
+from dimos.teleop.webxr.extensions import (
+    ArmTeleopModule,
+    Go2TeleopModule,
+    HandTeleopModule,
+    VideoArmTeleopModule,
+)
 from dimos.teleop.webxr.module import STATIC_DIR, WebXRTeleopModule, _ws_send_text
 from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 
@@ -456,9 +470,9 @@ def test_button_edges_are_debounced_and_not_repeated_while_held(
     module._publish_buttons(Buttons())
 
     pressed.assert_called_once()
-    assert pressed.call_args.args[0].right_primary
+    assert Buttons(pressed.call_args.args[0].data).right_primary
     released.assert_called_once()
-    assert released.call_args.args[0].right_primary
+    assert Buttons(released.call_args.args[0].data).right_primary
 
 
 def test_button_edges_can_contain_simultaneous_digital_buttons(
@@ -477,7 +491,7 @@ def test_button_edges_can_contain_simultaneous_digital_buttons(
     module._publish_buttons(buttons)
 
     publish.assert_called_once()
-    edge = publish.call_args.args[0]
+    edge = Buttons(publish.call_args.args[0].data)
     assert edge.left_secondary
     assert edge.right_primary
 
@@ -506,7 +520,7 @@ def test_disconnect_releases_debounced_buttons_immediately(
     module._release_all_buttons()
 
     publish.assert_called_once()
-    assert publish.call_args.args[0].right_primary
+    assert Buttons(publish.call_args.args[0].data).right_primary
     assert module._debounced_buttons == 0
 
 
@@ -864,8 +878,8 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_grip
-        assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
+        assert Buttons(publish.call_args.args[0].data).right_grip
+        assert Buttons(publish.call_args.args[0].data).right_trigger_analog == pytest.approx(1.0)
 
         module._handle_engage()
 
@@ -874,13 +888,13 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=False)
         module._handle_engage()
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_grip
+        assert Buttons(publish.call_args.args[0].data).right_grip
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=True)
         module._handle_engage()
 
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert not publish.call_args.args[0].right_grip
+        assert not Buttons(publish.call_args.args[0].data).right_grip
     finally:
         module.stop()
 
@@ -1028,3 +1042,90 @@ def test_browser_command_encoder_interoperates_with_python(module, mocker, tmp_p
     assert module._dispatch_binary_message(joy_frame)
     assert module._current_poses[Hand.LEFT] is not None
     assert module._controllers[Hand.LEFT].trigger == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_control_loop_outputs_canonical_pose_and_buttons_with_exact_source_header(
+    module, backend, monkeypatch
+):
+    for name, value in {
+        "transport": backend,
+        "robot_ip": None,
+        "robot_ips": "",
+        "zenoh_connect": "",
+        "zenoh_mode": "peer",
+        "zenoh_multicast": False,
+        "zenoh_gossip": False,
+        "zenoh_scouting": False,
+    }.items():
+        monkeypatch.setattr(global_config, name, value)
+    received = {}
+    condition = threading.Condition()
+
+    def receive(name, value):
+        with condition:
+            received[name] = value
+            condition.notify_all()
+
+    with ExitStack() as cleanup:
+        for name in ("left_controller_output", "teleop_buttons"):
+            transport = make_transport(name, module.outputs[name].type)
+            module.set_transport(name, transport)
+            cleanup.callback(transport.subscribe(partial(receive, name)))
+        cleanup.callback(module._stop_control_loop)
+        header = Header(Time(1789654321, 1), "left")
+        pose = CdrPoseStamped(header, CdrPose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)))
+        joy = CdrJoy(
+            header,
+            np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            np.array([0, 0, 0, 0, 1, 0], dtype=np.int32),
+        )
+        module._on_pose_bytes(encode(pose))
+        assert module._on_joy_bytes(encode(joy))
+        module._start_control_loop()
+        with condition:
+            assert condition.wait_for(lambda: len(received) == 2, timeout=5)
+        value = received["left_controller_output"]
+        assert type(value) is CdrPoseStamped
+        assert value.header == header
+        assert value.header.stamp.nanosec == 1
+        np.testing.assert_allclose(
+            [value.pose.position.x, value.pose.position.y, value.pose.position.z],
+            [0, 0, 0],
+            atol=1e-12,
+        )
+        assert type(received["teleop_buttons"]) is UInt32
+        assert Buttons(received["teleop_buttons"].data).left_primary
+        value.header.stamp.nanosec = 99
+        assert module._pose_headers[Hand.LEFT].stamp.nanosec == 1
+
+
+def test_video_extension_delivers_jpeg_from_generated_camera_message(mocker):
+    module = VideoArmTeleopModule()
+    received = []
+    ready = threading.Event()
+
+    async def receive(data):
+        received.append(data)
+        ready.set()
+
+    socket = mocker.Mock()
+    mocker.patch.object(socket, "send_bytes", new=mocker.AsyncMock(side_effect=receive))
+    try:
+        module._ws_loop = module._loop
+        assert module._client_connected(socket)
+        pixels = np.zeros((16, 16, 3), dtype=np.uint8)
+        pixels[..., 0] = 255
+        message = image_from_array(pixels, encoding="rgb8", header=Header(Time(0, 0), "camera"))
+        asyncio.run_coroutine_threadsafe(module.handle_color_image(message), module._loop).result(
+            timeout=5
+        )
+        assert ready.wait(5)
+        with PillowImage.open(BytesIO(received[0])) as decoded:
+            values = np.asarray(decoded)
+            assert values.shape == (16, 16, 3)
+            assert values[..., 0].mean() > 240
+            assert values[..., 1:].max() < 5
+        np.testing.assert_array_equal(message.data[:3], [255, 0, 0])
+    finally:
+        module.stop()

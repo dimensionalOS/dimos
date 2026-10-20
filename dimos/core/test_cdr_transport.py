@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit transport encoding and lifecycle, without changing default factories."""
+"""Generated CDR transport encoding, lifecycle, and deferred backend selection."""
 
 from contextlib import ExitStack
 import pickle
@@ -23,8 +23,10 @@ import pytest
 
 import dimos.core.cdr_transport as transport_module
 from dimos.core.cdr_transport import CdrTransport
+from dimos.core.global_config import global_config
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Float32, Int32
-from dimos.protocol.pubsub.impl.zenohpubsub import ZenohQoS
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, ZenohQoS
 
 
 @pytest.fixture(params=["lcm", "zenoh"])
@@ -130,3 +132,25 @@ def test_actual_raw_transport_delivers_cdr_without_external_network(backend):
         assert ready.wait(5), "local subscriber did not receive the CDR payload"
         assert received == [Int32(29)]
         assert type(received[0]) is Int32
+
+
+def test_deferred_cdr_spec_resolves_backend_namespace_and_qos_at_build(monkeypatch):
+    monkeypatch.setattr(global_config, "transport", "lcm")
+    spec = CdrTransport.spec("camera", Image)
+    fixed = CdrTransport.spec("literal", Int32, backend="lcm")
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    zenoh = spec.build()
+    assert zenoh.channel == "dimos/camera/cdr/sensor_msgs/msg/Image"
+    assert zenoh.publish_qos == QOS_LATEST_WINS.to_wire()
+    assert fixed.build().channel == "literal/cdr/std_msgs/msg/Int32"
+    monkeypatch.setattr(global_config, "transport", "lcm")
+    lcm = spec.build()
+    assert lcm.channel == "camera/cdr/sensor_msgs/msg/Image"
+    assert lcm.publish_qos is None
+
+
+@pytest.mark.parametrize("topic", ["", "/", "camera/*", "camera?", "camera#"])
+def test_default_backend_rejects_invalid_logical_topic(topic, monkeypatch):
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    with pytest.raises(ValueError, match="concrete, nonempty"):
+        CdrTransport(topic, Int32)

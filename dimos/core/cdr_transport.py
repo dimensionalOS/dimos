@@ -23,6 +23,7 @@ from typing import Any, Literal, TypeVar
 
 from dimos_cdrgen.registry import decode, encode, message_types
 
+from dimos.core.global_config import global_config
 from dimos.core.stream import Stream
 from dimos.core.transport import PubSubTransport
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
@@ -39,6 +40,8 @@ class CdrTransport(PubSubTransport[T]):
     """Plain XCDR1 values over raw LCM or Zenoh.
 
     The default transport factory selects this class for generated message types.
+    Omit backend in a blueprint spec to resolve it when the spec is built.
+    An explicit backend retains its own topic and session choices.
 
     The explicit /cdr/<package>/msg/<Type> suffix separates these channels
     from existing LCM-encoded streams. Both peers must select the same schema;
@@ -50,17 +53,25 @@ class CdrTransport(PubSubTransport[T]):
         topic: str,
         msg_type: type[T],
         *,
-        backend: Literal["lcm", "zenoh"],
+        backend: Literal["lcm", "zenoh"] | None = None,
         qos: ZenohQoS | None = None,
         **kwargs: Any,
     ) -> None:
+        if not topic.strip("/") or any(character in topic for character in "*?#"):
+            raise ValueError("CDR transports require a concrete, nonempty topic")
+        if backend is None:
+            # The factory imports this class; defer this import to avoid the cycle.
+            from dimos.core.transport_factory import default_zenoh_qos, transport_topic
+
+            backend = global_config.transport
+            if qos is None and backend == "zenoh":
+                qos = default_zenoh_qos(topic, msg_type)
+            topic = transport_topic(topic, global_config)
         name = next((name for name, cls in message_types().items() if cls is msg_type), None)
         if name is None:
             raise TypeError("CDR transport requires a generated, registry-owned message class")
         if backend not in {"lcm", "zenoh"}:
             raise ValueError("CDR transport backend must be lcm or zenoh")
-        if not topic.strip("/") or any(character in topic for character in "*?#"):
-            raise ValueError("CDR transports require a concrete, nonempty topic")
         if qos is not None and backend != "zenoh":
             raise ValueError("Publisher QoS applies only to Zenoh")
         self._base_topic = topic
