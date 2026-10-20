@@ -142,14 +142,14 @@ jobs:
           cmake -S build/sdk-deps/zenoh-cpp -B build/sdk-deps/zenoh-cpp-build -DCMAKE_PREFIX_PATH="$PWD/build/sdk-deps/zenoh-c" -DCMAKE_INSTALL_PREFIX="$PWD/build/sdk-deps/zenoh-cpp-install" -DZENOHCXX_ENABLE_TESTS=OFF -DZENOHCXX_ENABLE_EXAMPLES=OFF
           cmake --install build/sdk-deps/zenoh-cpp-build
           .native-review/bin/python -m pip install pytest pytest-mock pytest-env
-      - name: Verify explicit CDR transports and actual SDK coordinator example
+      - name: Verify default CDR transports and actual SDK coordinator example
         if: runner.os == 'Linux'
         env:
           DIMOS_EXTERNAL_NATIVE_PYTHON: ${{ github.workspace }}/.native-review/bin/python
           DIMOS_MESSAGE_NATIVE_CACHE: ${{ github.workspace }}/build/native-project-cache
           DIMOS_CDR_NATIVE_SDK_PREFIX: ${{ github.workspace }}/build/sdk-deps/zenoh-c;${{ github.workspace }}/build/sdk-deps/zenoh-cpp-install
         run: |
-          .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py"
+          LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py" "$PWD/dimos/core/test_transport_factory.py"
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
       - name: Verify generated browser schemas, relay encoding and web consumers

@@ -14,8 +14,14 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+import pickle
+
+from dimos_cdrgen.registry import encode
 import pytest
 
+import dimos.core.cdr_transport as cdr_module
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import (
     LCMTransport,
@@ -31,6 +37,8 @@ from dimos.core.transport_factory import (
     session_config,
     transport_topic,
 )
+from dimos.messages.sensor_msgs.msg import Image as CdrImage
+from dimos.messages.std_msgs.msg import Int32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
@@ -155,3 +163,35 @@ def test_apply_transport_arg_bad_value_exits(argv: list[str]) -> None:
         apply_transport_arg(argv, g=g)
     assert exc.value.code == 2
     assert g.transport == "lcm"  # config left untouched
+
+
+@pytest.mark.parametrize("config", [LCM, ZENOH])
+def test_generated_factory_publishes_cdr_instead_of_pickle(config, mocker):
+    boundary = "LCMPubSubBase" if config.transport == "lcm" else "ZenohPubSubBase"
+    factory = mocker.patch.object(cdr_module, boundary, autospec=True)
+    transport = make_transport("reading", Int32, g=config)
+    with ExitStack() as resources:
+        resources.callback(transport.stop)
+        transport.publish(Int32(42))
+        factory.return_value.publish.assert_called_once_with(transport.topic, encode(Int32(42)))
+        prefix = "dimos/" if config.transport == "zenoh" else ""
+        assert transport.channel == prefix + "reading/cdr/std_msgs/msg/Int32"
+        restored = pickle.loads(pickle.dumps(transport))
+        assert type(restored) is CdrTransport
+        assert restored.channel == transport.channel
+
+
+def test_generated_sensor_qos_survives_factory_and_pickle():
+    sensor = make_transport("camera", CdrImage, g=ZENOH)
+    seed = make_transport("loaded_map", CdrImage, g=ZENOH)
+    assert sensor.publish_qos == QOS_LATEST_WINS.to_wire()
+    assert pickle.loads(pickle.dumps(seed)).publish_qos == QOS_NEVER_DROP.to_wire()
+    assert make_transport("camera", CdrImage, g=LCM).publish_qos is None
+
+
+def test_unregistered_generated_claim_is_rejected_instead_of_pickled():
+    class Unregistered:
+        __msgtype__ = "std_msgs/msg/Int32"
+
+    with pytest.raises(TypeError, match="registry-owned"):
+        make_transport("reading", Unregistered, g=ZENOH)

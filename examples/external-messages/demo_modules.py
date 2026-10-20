@@ -30,7 +30,6 @@ from acme_telemetry.telemetry_msgs.msg import DeviceReading
 from reactivex.disposable import Disposable
 import zenoh
 
-from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -112,40 +111,22 @@ def run(cpp: Path, rust: Path) -> None:
             gossip=False,
             connect_timeout=10,
         )
-        blueprint = (
-            autoconnect(
-                Probe.blueprint(),
-                CppRelay.blueprint(
-                    executable=str(cpp.resolve()), stdin_config=True, session=session
-                ),
-                RustRelay.blueprint(
-                    executable=str(rust.resolve()), stdin_config=True, session=session
-                ),
-            )
-            .transports(
-                {
-                    (name, DeviceReading): CdrTransport.spec(
-                        "example/" + name,
-                        DeviceReading,
-                        backend="zenoh",
-                        **session.model_dump(),
-                    )
-                    for name in ("raw", "cpp", "done")
-                }
-            )
-            .global_config(
-                viewer="none",
-                n_workers=3,
-                transport="zenoh",
-                robot_ip=None,
-                robot_ips="",
-                zenoh_connect=endpoint,
-                zenoh_mode="client",
-                zenoh_multicast=False,
-                zenoh_gossip=False,
-                zenoh_scouting=False,
-                zenoh_connect_timeout=10,
-            )
+        blueprint = autoconnect(
+            Probe.blueprint(),
+            CppRelay.blueprint(executable=str(cpp.resolve()), stdin_config=True, session=session),
+            RustRelay.blueprint(executable=str(rust.resolve()), stdin_config=True, session=session),
+        ).global_config(
+            viewer="none",
+            n_workers=3,
+            transport="zenoh",
+            robot_ip=None,
+            robot_ips="",
+            zenoh_connect=endpoint,
+            zenoh_mode="client",
+            zenoh_multicast=False,
+            zenoh_gossip=False,
+            zenoh_scouting=False,
+            zenoh_connect_timeout=10,
         )
         coordinator = ModuleCoordinator.build(blueprint)
         resources.callback(coordinator.stop)

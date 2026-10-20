@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit CDR encoding over existing raw transports; no default cutover."""
+"""CDR encoding for generated messages over existing raw transports."""
 
 from __future__ import annotations
 
@@ -36,7 +36,9 @@ T = TypeVar("T")
 
 
 class CdrTransport(PubSubTransport[T]):
-    """Opt-in plain XCDR1 values over raw LCM or Zenoh.
+    """Plain XCDR1 values over raw LCM or Zenoh.
+
+    The default transport factory selects this class for generated message types.
 
     The explicit /cdr/<package>/msg/<Type> suffix separates these channels
     from existing LCM-encoded streams. Both peers must select the same schema;
