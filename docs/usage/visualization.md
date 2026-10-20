@@ -18,28 +18,28 @@ dimos run unitree-go2
 dimos --viewer none run unitree-go2
 ```
 
-Control how the Rerun viewer opens with `--rerun-open` and `--rerun-web`:
+Control how the Rerun viewer opens with `--rerunbridgemodule.rerun-open` and `--rerunbridgemodule.rerun-web`:
 
 ```bash
 # Open native desktop viewer (default)
-dimos --rerun-open native run unitree-go2
+dimos run unitree-go2 --rerunbridgemodule.rerun-open native
 
 # Open web viewer in browser
-dimos --rerun-open web run unitree-go2
+dimos run unitree-go2 --rerunbridgemodule.rerun-open web
 
 # Open both native and web
-dimos --rerun-open both run unitree-go2
+dimos run unitree-go2 --rerunbridgemodule.rerun-open both
 
 # No viewer (headless): data still accessible via gRPC
-dimos --rerun-open none run unitree-go2
+dimos run unitree-go2 --rerunbridgemodule.rerun-open none
 
 # Serve the web viewer without auto-opening a browser
-dimos --rerun-web --rerun-open native run unitree-go2
+dimos run unitree-go2 --rerunbridgemodule.rerun-web true --rerunbridgemodule.rerun-open native
 ```
 
 ## Viewer Modes Explained
 
-### Rerun Native (`rerun`, `--rerun-open native`), the default
+### Rerun Native (`rerun`, `--rerunbridgemodule.rerun-open native`), the default
 
 **What you get:**
 - [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
@@ -49,13 +49,13 @@ dimos --rerun-web --rerun-open native run unitree-go2
 
 ---
 
-### Rerun Web (`rerun`, `--rerun-open web`)
+### Rerun Web (`rerun`, `--rerunbridgemodule.rerun-open web`)
 
 **What you get:**
-- Browser-based dashboard at http://localhost:7779
-- Rerun 3D viewer + command center sidebar in one page
-- Teleop controls and goal setting via the web UI
+- The Rerun web viewer in your browser at http://localhost:9878
 - Works headless (no display required)
+
+The integrated dashboard at http://localhost:7779 (the Rerun viewer plus the command center sidebar with teleop and goal setting) is the `WebsocketVisModule`, which a blueprint adds with `vis_module(..., websocket_vis=True)`. It opens automatically and embeds Rerun when the bridge's `rerun_open` is `web` or `both`. Override these choices independently with `--websocketvismodule.open-browser false` or `--websocketvismodule.show-rerun-dashboard false`. Without a Rerun bridge, both default to off.
 
 ---
 
@@ -145,3 +145,5 @@ When a `RerunBridgeModule` is already part of your blueprint, you typically don'
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
+
+To use a custom websocket port, set `--rerunwebsocketserver.port`; the bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. Set `host` on each module to override its bind address; both default to the shared `listen_host`.

@@ -40,6 +40,8 @@ class DimosCliCall:
     process: subprocess.Popen[bytes] | None
     demo_args: list[str] | None = None
     mcp_port: int | None = None
+    # The port DimSim serves scene commands on, for a DimSimClient on this side.
+    dimsim_port: int | None = None
     # None: no --simulation flag (e.g. replay runs via --robot-ip fake).
     simulator: str | None = "mujoco"
 
@@ -57,22 +59,16 @@ class DimosCliCall:
         if len(args) == 1:
             args = ["run", *args]
 
-        # If a port was supplied, override `global_config.mcp_port` (used by
-        # `McpServer.start` to bind) and `McpClient.mcp_server_url` (which
-        # defaults to a hard-coded `http://localhost:9990/mcp`) so server
-        # and client agree on the same port.
-        #
-        # The McpClient URL goes through an env var rather than a dynamic
-        # blueprint flag: BlueprintConfigParser skips environment overrides
-        # whose module is absent from the blueprint, but rejects unknown CLI
-        # configuration flags. Blueprints without an mcpclient (e.g.
-        # `coordinator-mock`) would otherwise fail configuration validation.
+        # Pin the MCP port for this test; an McpClient in the blueprint
+        # discovers the server's endpoint from the McpServer module. Blueprints
+        # without an McpServer ignore the override.
         global_overrides: list[str] = list(self.global_args)
         env = os.environ.copy()
         env.update(self.extra_env)
         if self.mcp_port is not None:
-            global_overrides += ["--mcp-port", str(self.mcp_port)]
-            env["MCPCLIENT__MCP_SERVER_URL"] = f"http://localhost:{self.mcp_port}/mcp"
+            env["MCPSERVER__PORT"] = str(self.mcp_port)
+        if self.dimsim_port is not None:
+            env["GO2CONNECTION__DIMSIM__PORT"] = str(self.dimsim_port)
         if self.simulator is not None:
             global_overrides += ["--simulation", self.simulator]
 

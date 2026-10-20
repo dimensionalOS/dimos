@@ -15,14 +15,15 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from dimos_lcm.std_msgs import Bool
+from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -35,13 +36,18 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class PatrollingConfig(ModuleConfig):
+    robot_width: float = Field(default_factory=lambda m: m["g"].robot_width)
+    robot_rotation_diameter: float = Field(default_factory=lambda m: m["g"].robot_rotation_diameter)
+
+
 class PatrollingModule(Module):
+    config: PatrollingConfig
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     goal_request: Out[PoseStamped]
 
-    _global_config: GlobalConfig
     _router: PatrolRouter
     _planner_spec: ReplanningAStarPlannerSpec
     _latest_pose: PoseStamped | None = None
@@ -49,10 +55,9 @@ class PatrollingModule(Module):
 
     _clearance_multiplier = 0.5
 
-    def __init__(self, g: GlobalConfig = global_config) -> None:
-        super().__init__()
-        self._global_config = g
-        clearance_radius_m = self._global_config.robot_width * self._clearance_multiplier
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        clearance_radius_m = self.config.robot_width * self._clearance_multiplier
         self._router = create_patrol_router("coverage", clearance_radius_m)
         self._goal_reached_event = asyncio.Event()
 
@@ -82,7 +87,7 @@ class PatrollingModule(Module):
         self._router.reset()
         self._planner_spec.set_replanning_enabled(False)
         self._planner_spec.set_safe_goal_clearance(
-            self._global_config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
+            self.config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
         )
         self._patrol_task = asyncio.create_task(self._patrol_loop())
         return "Patrol started. Use `stop_patrol` to stop."

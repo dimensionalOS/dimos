@@ -48,7 +48,6 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -222,13 +221,18 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    launched = mocker.patch(
+        "dimos.evals.environments.dataset.launched_mcp_url",
+        return_value="http://127.0.0.1:9993/mcp",
+    )
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     env = Dataset(dataset)
 
     try:
         running = env.start(("mcp-server", "mcp-client"))
-        assert running.mcp_url == default_mcp_url()
+        # The endpoint is the one the launched process registered, not a guess.
+        assert running.mcp_url == "http://127.0.0.1:9993/mcp"
     finally:
         env.stop()
 
@@ -236,11 +240,13 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     assert proc.simulator is None
     proc.start.assert_called_once_with()
     proc.stop.assert_called_once_with()
-    adapter.assert_called_once_with(default_mcp_url())
+    assert launched.call_args.args[0] is proc.process
+    adapter.assert_called_once_with("http://127.0.0.1:9993/mcp")
 
 
 def test_dataset_cleans_up_when_mcp_is_not_ready(dataset: str, mocker: MockerFixture) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = False
     env = Dataset(dataset)
@@ -256,6 +262,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     store = mocker.patch("dimos.evals.environments.dataset.open_dataset").return_value
     store.stop.side_effect = RuntimeError("cleanup failed")
@@ -278,6 +285,9 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc.global_args = []
+    proc.extra_env = {}
+    mocker.patch("dimos.evals.environments.sim.launched_mcp_url", return_value="http://x/mcp")
     adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
@@ -304,7 +314,8 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "--disable",
             "patrolling-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == ["--record"]
+        assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0

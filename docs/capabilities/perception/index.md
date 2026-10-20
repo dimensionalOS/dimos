@@ -13,7 +13,7 @@ embedding, and 3D object primitives remain in their standard packages.
 Run the hardware blueprint:
 
 ```bash
-dimos --xarm6-ip <ROBOT_IP> run xarm6-worldbelief
+dimos run xarm6-worldbelief --controlcoordinator.addresses '{"arm": "<ROBOT_IP>"}'
 ```
 
 Then request a scan or recall from another terminal:
@@ -24,3 +24,5 @@ dimos mcp call recall -a text="mug"
 ```
 
 This stack is experimental and may change without compatibility guarantees.
+
+The arm's address is configured per hardware id, here `arm`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

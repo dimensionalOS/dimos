@@ -46,30 +46,6 @@ _PRIM: dict[str, tuple[str, int, str]] = {
 }
 
 
-def _align_of(t: Any) -> int:
-    """CDR alignment (bytes) of a field type."""
-    if isinstance(t, str):
-        if t == "string":
-            return 4  # u32 length prefix
-        return _PRIM[t][1]
-    if isinstance(t, tuple):
-        if t[0] == "array":
-            return _align_of(t[1])
-        if t[0] == "seq":
-            return 4  # u32 length prefix
-    if isinstance(t, type):
-        return _struct_align(t)
-    raise TypeError(f"unknown field type {t!r}")
-
-
-def _struct_align(cls: Any) -> int:
-    a = getattr(cls, "__cdr_align__", None)
-    if a is None:
-        a = max((_align_of(t) for _, t in cls.__cdr_fields__), default=1)
-        cls.__cdr_align__ = a
-    return a
-
-
 class Cursor:
     """Body-relative cursor; offset 0 is just after the 4-byte encapsulation header."""
 
@@ -115,7 +91,9 @@ def _read(cur: Cursor, t: Any) -> Any:
             return cur.prim_array(elem, n)
         return [_read(cur, elem) for _ in range(n)]
     if isinstance(t, type):
-        cur.align(_struct_align(t))
+        # XCDR1 has no struct-level alignment: each primitive aligns itself.
+        # Padding a nested struct to its widest member shifted every Go2
+        # MotorState/MotorCmd (u8 first, f32 after) by 3 bytes.
         return _read_struct(cur, t)
     raise TypeError(f"unknown field type {t!r}")
 
@@ -131,5 +109,4 @@ def decode(buf: bytes, cls: Any) -> tuple[Any, int]:
     cheapest correctness check against a real recording.
     """
     cur = Cursor(buf)
-    cur.align(_struct_align(cls))
     return _read_struct(cur, cls), cur.p
