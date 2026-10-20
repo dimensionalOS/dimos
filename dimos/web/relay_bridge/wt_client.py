@@ -97,10 +97,6 @@ class RelayInfo:
     rtc: bool = False
     """True when the relay brokers video.webrtc.v1 track channels through
     its Cloudflare Realtime SFU (protocol v7)."""
-    instance: str | None = None
-    """Random id of the relay process, new on every start: a relay behind a
-    fixed port and certificate can be seen to have restarted by comparing
-    it. None from a relay that predates the field."""
 
 
 def resolve_info_url(base_url: str) -> str:
@@ -137,19 +133,17 @@ async def fetch_relay_info(
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
     rtc = data.get("rtc", False)
-    instance = data.get("instance")
     if (
         not isinstance(wt_url, str)
         or not (cert_hash is None or isinstance(cert_hash, str))
         or not isinstance(v, int)
         or isinstance(v, bool)
         or not isinstance(rtc, bool)
-        or not (instance is None or isinstance(instance, str))
     ):
         raise ProtocolError(f"{url} returned an unexpected shape")
     if v != PROTOCOL_VERSION:
         raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
-    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc, instance=instance)
+    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc)
 
 
 @contextlib.asynccontextmanager
@@ -552,6 +546,7 @@ class LatestChannelWriter:
         self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None, float | None]] = (
             asyncio.Queue(maxsize=1)
         )
+        self._offered = asyncio.Event()
         self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
@@ -582,6 +577,7 @@ class LatestChannelWriter:
             self._mailbox.get_nowait()
             self.dropped += 1
         self._mailbox.put_nowait((payload, meta, ts))
+        self._offered.set()
 
     def stop(self) -> None:
         self._task.cancel()
@@ -605,18 +601,39 @@ class LatestChannelWriter:
                     self.ch, payload, delivery="latest", meta=meta, ts=ts
                 )
                 self.sent += 1
-                started = time.monotonic()
-                while session.stream_in_flight(stream_id):
-                    if session.closed.is_set():
-                        break
-                    await asyncio.sleep(0.002)
-                    if time.monotonic() - started > self.stale_after and not self._mailbox.empty():
+                if not session.stream_in_flight(stream_id):
+                    continue
+                deadline = time.monotonic() + self.stale_after
+                self._offered.clear()
+                delivered = asyncio.create_task(session.wait_delivered(stream_id, timeout=None))
+                offered = asyncio.create_task(self._offered.wait())
+                try:
+                    if self._mailbox.empty():
+                        # With no replacement, keep this frame even beyond
+                        # its stale deadline. An offer wakes this wait.
+                        await asyncio.wait(
+                            {delivered, offered, closed}, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    if not delivered.done() and not session.closed.is_set():
+                        # A newer frame is waiting. ACKs or the original
+                        # deadline release it; more offers only replace it.
+                        await asyncio.wait(
+                            {delivered, closed},
+                            timeout=max(0.0, deadline - time.monotonic()),
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    if delivered.done():
+                        delivered.result()  # surface an unexpected delivery failure
+                    elif not session.closed.is_set() and session.stream_in_flight(stream_id):
                         # Stalled with a newer frame waiting: abandon this one.
                         # reset_if_in_flight rechecks membership in this same
                         # event-loop turn (required, see docs/web/protocol.md).
                         if session.reset_if_in_flight(stream_id):
                             self.resets += 1
-                        break
+                finally:
+                    delivered.cancel()
+                    offered.cancel()
+                    await asyncio.gather(delivered, offered, return_exceptions=True)
         finally:
             closed.cancel()
         logger.info(f"latest-wins writer for {self.ch}: session closed, stopping")

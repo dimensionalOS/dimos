@@ -16,9 +16,6 @@ export interface RelayInfo {
   v: number;
   /** True when the relay brokers video.webrtc.v1 track channels (v7). */
   rtc?: boolean;
-  /** Random id of the relay process (new on every start); absent from
-   * older relays. */
-  instance?: string;
 }
 
 export type TransportPhase =

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
 import type { CostmapValue, VoxelsValue } from "@dimos/sdk";
@@ -1349,6 +1349,56 @@ describe("Map3DPanel", () => {
     act(() => root.render(<div />));
     expect(scene.dispose).toHaveBeenCalledTimes(1);
     expect(connectedAtDispose).toBe(true);
+  });
+
+  it("replaces the canvas whenever the scene is recreated", async () => {
+    const deps = sinkDeps();
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const first = container.querySelector("canvas")!;
+    const changed = { ...SPEC, channels: [VOX_CH, "other_pose"] };
+    act(() => root.render(<Map3DPanel spec={changed} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const second = container.querySelector("canvas")!;
+    expect(first.isConnected).toBe(false);
+    expect(second).not.toBe(first);
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      root.render(<Map3DPanel spec={changed} store={new ChannelStore()} sinkDeps={deps} />)
+    );
+    await act(flush);
+    expect(second.isConnected).toBe(false);
+    expect(container.querySelector("canvas")).not.toBe(second);
+    expect(scene.dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives replayed effects separate canvases while the scene is loading", async () => {
+    const canvases: HTMLCanvasElement[] = [];
+    const scenes: ReturnType<typeof fakeScene>[] = [];
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        canvases.push(canvas);
+        const created = fakeScene();
+        scenes.push(created);
+        return Promise.resolve(created);
+      },
+    };
+    act(() => {
+      root.render(
+        <StrictMode>
+          <Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />
+        </StrictMode>,
+      );
+    });
+    await act(flush);
+    expect(canvases).toHaveLength(2);
+    expect(canvases[0]).not.toBe(canvases[1]);
+    expect(canvases[0].isConnected).toBe(false);
+    expect(container.querySelector("canvas")).toBe(canvases[1]);
+    expect(scenes[0].dispose).toHaveBeenCalledTimes(1);
+    expect(scenes[1].dispose).not.toHaveBeenCalled();
   });
 
   it("shows why the renderer could not start", async () => {

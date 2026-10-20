@@ -92,11 +92,6 @@ export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
 export const MAX_IDLE_TIMEOUT_MS = 15_000;
 export const KEEP_ALIVE_INTERVAL_MS = 3_000;
 
-// Identifies this relay process to clients: a bridge or operator tool
-// polling /api/info of a relay on a fixed port and certificate (where the
-// WebTransport URL never changes) sees a restart as a new value.
-const INSTANCE_ID = crypto.randomUUID();
-
 /** What the listeners serve: the ephemeral certificate or the operator's. */
 interface ServedCert {
   certPem: string;
@@ -366,7 +361,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       const info = {
         ...(tls ? { wtUrl: url.origin } : { wtUrl, certHash: cert.certHashB64 }),
         v: PROTOCOL_VERSION,
-        instance: INSTANCE_ID,
         ...(hub !== null ? { rtc: true } : {}),
       };
       return Response.json(info, { headers: LOCAL_CORS });

@@ -151,7 +151,9 @@ export function startVoxelSink(
       draw();
     },
     (err: unknown) => {
-      deps.onError?.(`3D view unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      if (!stopped) {
+        deps.onError?.(`3D view unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
   );
 
@@ -213,7 +215,7 @@ function VoxelCanvas({ spec, store, cloudCh, poseCh, sinkDeps }: {
   poseCh: string | undefined;
   sinkDeps: VoxelSinkDeps | undefined;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const sinkRef = useRef<VoxelSink | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
   const { slot } = useStoreChannel(store, cloudCh);
@@ -228,16 +230,26 @@ function VoxelCanvas({ spec, store, cloudCh, poseCh, sinkDeps }: {
   // every page switch. Layout cleanups run while the canvas is still in the
   // document.
   useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (canvas === null) return;
+    const host = canvasHostRef.current;
+    if (host === null) return;
+    // Disposal loses the WebGL context. Each effect setup owns a fresh
+    // canvas, even when React retains this panel or replays its effects.
+    const canvas = document.createElement("canvas");
+    canvas.className = styles.canvas;
+    canvas.dataset.testid = `map3d-${cloudCh}-canvas`;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", spec.id);
+    host.appendChild(canvas);
+    setError(null);
     const deps = { ...sinkDeps, onError: setError };
     const sink = startVoxelSink(store, { cloud: cloudCh, pose: poseCh }, canvas, health, deps);
     sinkRef.current = sink;
     return () => {
       sinkRef.current = null;
       sink.stop();
+      canvas.remove();
     };
-  }, [store, cloudCh, poseCh, health, sinkDeps]);
+  }, [store, cloudCh, poseCh, health, sinkDeps, spec.id]);
 
   return (
     <PanelFrame
@@ -253,13 +265,7 @@ function VoxelCanvas({ spec, store, cloudCh, poseCh, sinkDeps }: {
         />
       }
     >
-      <canvas
-        ref={canvasRef}
-        className={styles.canvas}
-        data-testid={`map3d-${cloudCh}-canvas`}
-        role="img"
-        aria-label={spec.id}
-      />
+      <div ref={canvasHostRef} className={styles.canvas} />
       {slot === null && <span className={styles.waiting}>waiting for data...</span>}
       {error !== null && (
         <span className={styles.error} role="alert">

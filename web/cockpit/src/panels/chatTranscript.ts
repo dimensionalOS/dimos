@@ -10,7 +10,7 @@ import type { Manifest } from "@dimos/shared/manifest";
 
 /** One chat.json.v1 line: ts is seconds since the epoch at encode time,
  * tool the tool name on the condensed call/result/progress lines. `id` is
- * stable for the line's life in the transcript (frame seq and index), so
+ * stable for the line's life in the transcript (store version and index), so
  * trimming the front re-keys nothing, and `time` is the clock text the
  * panel shows, formatted once here rather than per row per render. */
 export interface ChatLine {
@@ -29,10 +29,10 @@ function timeText(ts: number): string {
 }
 
 /** A frame's lines, with anything off-contract rendered as a visible line. */
-function linesOf(value: unknown, frameSeq: number, frameTs: number): ChatLine[] {
+function linesOf(value: unknown, version: number, frameTs: number): ChatLine[] {
   const items = Array.isArray(value) ? value : [null];
   return items.map((item, i): ChatLine => {
-    const id = `${frameSeq}:${i}`;
+    const id = `${version}:${i}`;
     const line = item as { role?: unknown; text?: unknown; ts?: unknown; tool?: unknown } | null;
     if (
       line === null || typeof line.role !== "string" || typeof line.text !== "string" ||
@@ -75,7 +75,9 @@ export class ChatTranscript {
       this.#lines = [];
     } else if (slot.version > this.#seen) {
       this.#seen = slot.version;
-      this.#lines = [...this.#lines, ...linesOf(slot.value, slot.seq, slot.ts)].slice(-MAX_LINES);
+      this.#lines = [...this.#lines, ...linesOf(slot.value, slot.version, slot.ts)].slice(
+        -MAX_LINES,
+      );
     } else {
       return;
     }

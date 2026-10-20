@@ -19,15 +19,20 @@ failure path directly.
 """
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any
 
+from aioquic.quic.connection import QuicConnection
+from aioquic.quic.packet_builder import QuicDeliveryState
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.web.relay_bridge import wt_client
+from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -54,6 +59,7 @@ from dimos.web.relay_bridge.protocol import (
     encode_datagram,
 )
 from dimos.web.relay_bridge.wt_client import (
+    LatestChannelWriter,
     RelayClient,
     RelayInfo,
     RelayRejectedError,
@@ -167,51 +173,118 @@ async def test_offer_survives_delivery_and_keeps_sending() -> None:
         writer.stop()
 
 
-async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
-    # A wedged transport must never queue stale frames: the 1-slot mailbox
-    # sheds everything but the newest, which is what goes out on unwedge.
-    session = StubSession()
-    payloads: list[bytes] = []
-    polls = 0
+@pytest.fixture
+async def delivery_session(mocker: MockerFixture) -> SessionProtocol:
+    session = SessionProtocol(QuicConnection(configuration=make_quic_configuration(insecure=True)))
+    # Keep real stream buffers and delivery notifications; only omit UDP I/O.
+    mocker.patch.object(session, "transmit")
+    session.open_session("relay.test", "/robot")
+    return session
 
-    real_send = session.send_frame
+
+@pytest.fixture
+async def delivery_writer(
+    delivery_session: SessionProtocol, mocker: MockerFixture
+) -> AsyncIterator[
+    tuple[LatestChannelWriter, asyncio.Queue[tuple[int, bytes]], asyncio.Queue[None]]
+]:
+    sent: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
+    waiting: asyncio.Queue[None] = asyncio.Queue()
+    real_send = delivery_session.send_frame
+    real_wait = delivery_session.wait_delivery_progress
 
     def send_frame(header: FrameHeader, payload: bytes) -> int:
-        payloads.append(payload)
-        return real_send(header, payload)
+        stream_id = real_send(header, payload)
+        sent.put_nowait((stream_id, payload))
+        return stream_id
 
-    def stream_in_flight(stream_id: int) -> bool:
-        nonlocal polls
-        polls += 1
-        return polls < 20  # first send stays in flight for ~20 pump polls
+    async def wait_progress(timeout: float | None) -> None:
+        waiting.put_nowait(None)
+        await real_wait(timeout)
 
-    session.send_frame = send_frame  # type: ignore[method-assign]
-    session.stream_in_flight = stream_in_flight  # type: ignore[method-assign]
-
-    # stale_after high enough that the wedge never triggers the reset path:
-    # this test pins the mailbox semantics alone.
-    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    mocker.patch.object(delivery_session, "send_frame", side_effect=send_frame)
+    mocker.patch.object(delivery_session, "wait_delivery_progress", side_effect=wait_progress)
+    client = RelayClient("https://relay.test", "robot", delivery_session, ctx=None)
+    writer = client.latest_writer("cam", stale_after=10.0)
     try:
-        writer.offer(b"f0")
-        # Wait until the pump provably took f0 (send_frame ran): it is wedged
-        # in its in-flight poll, so the offers below only touch the mailbox.
-        for _ in range(500):
-            if payloads:
-                break
-            await asyncio.sleep(0.005)
-        assert payloads, "pump did not send f0 within 2.5 s"
-        for i in range(1, 6):
-            writer.offer(b"f%d" % i)
-        assert writer.dropped == 4  # f1..f4 displaced by their successors
-
-        for _ in range(500):
-            if writer.sent == 2:
-                break
-            await asyncio.sleep(0.005)
-        assert payloads == [b"f0", b"f5"]  # only the newest frame followed the wedge
-        assert writer.sent == 2
+        yield writer, sent, waiting
     finally:
         writer.stop()
+        await asyncio.gather(writer._task, return_exceptions=True)
+
+
+async def test_mailbox_sends_only_newest_frame_on_delivery_notification(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.offer(b"f0")
+    stream_id, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"f0"
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    for i in range(1, 6):
+        writer.offer(b"f%d" % i)
+
+    sender = delivery_session._quic._streams[stream_id].sender
+    sender.on_data_delivery(QuicDeliveryState.ACKED, 0, sender._buffer_stop, fin=True)
+    delivery_session._wake_delivery_waiters()
+    _, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"f5"
+    assert writer.sent == 2
+    assert writer.dropped == 4
+    assert writer.resets == 0
+
+
+@pytest.mark.parametrize("stale_after", [0.0, 0.02])
+async def test_replacement_wakes_stalled_sender_and_preserves_deadline(
+    delivery_writer, stale_after: float
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.stale_after = stale_after
+    started = time.monotonic()
+    writer.offer(b"old")
+    await asyncio.wait_for(sent.get(), timeout=1)
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    # Even an expired frame stays in flight until there is a replacement.
+    assert writer.resets == 0
+    writer.offer(b"new")
+    _, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"new"
+    assert writer.resets == 1
+    assert time.monotonic() - started >= stale_after
+
+
+async def test_session_failure_wakes_delivery_waiters_and_stops_sender(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.offer(b"old")
+    stream_id, _ = await asyncio.wait_for(sent.get(), timeout=1)
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    waiter = asyncio.create_task(delivery_session.wait_delivered(stream_id, timeout=None))
+    try:
+        await asyncio.wait_for(waiting.get(), timeout=1)
+        writer.offer(b"new")
+        delivery_session.fail_session("test close")
+        assert await asyncio.wait_for(waiter, timeout=1) is False
+        await asyncio.wait_for(writer._task, timeout=1)
+        assert writer.sent == 1
+        assert writer.resets == 0
+        assert delivery_session._delivery_waiters == []
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+
+
+async def test_stopping_sender_cancels_delivery_waiter(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, _, waiting = delivery_writer
+    writer.offer(b"pending")
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    writer.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(writer._task, timeout=1)
+    assert delivery_session._delivery_waiters == []
 
 
 async def test_keepalive_fails_the_session_after_unanswered_pings(
@@ -675,17 +748,6 @@ async def test_fetch_relay_info_cert_hash_is_optional(info_server: str) -> None:
     # A relay with a real certificate (T12c) advertises no hash.
     _serve({"wtUrl": "https://relay.example:443", "v": PROTOCOL_VERSION})
     assert (await fetch_relay_info(info_server)).cert_hash is None
-
-
-async def test_fetch_relay_info_instance_id(info_server: str) -> None:
-    # Absent from older relays; any non-string is a shape error.
-    _serve(GOOD_INFO)
-    assert (await fetch_relay_info(info_server)).instance is None
-    _serve({**GOOD_INFO, "instance": "7f3a"})
-    assert (await fetch_relay_info(info_server)).instance == "7f3a"
-    _serve({**GOOD_INFO, "instance": 7})
-    with pytest.raises(ProtocolError, match="unexpected shape"):
-        await fetch_relay_info(info_server)
 
 
 async def test_fetch_relay_info_rtc_flag(info_server: str) -> None:

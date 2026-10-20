@@ -111,9 +111,7 @@ def test_info_matches_ready_line(relay: RelayReadyInfo) -> None:
         "wtUrl": relay.wt_url,
         "certHash": relay.cert_hash,
         "v": relay.v,
-        "instance": info["instance"],
     }
-    assert isinstance(info["instance"], str) and len(info["instance"]) >= 16
     assert relay.wt_url.startswith("https://127.0.0.1:")
 
 

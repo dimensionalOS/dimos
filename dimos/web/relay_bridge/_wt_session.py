@@ -164,7 +164,7 @@ class SessionProtocol(QuicConnectionProtocol):
         self.welcomed = asyncio.Event()
         # Set when the QUIC connection terminates. Public mirror of the
         # base class's private _closed (see wait_closed()); producers and the
-        # delivery poll consult it so they stop the moment the relay dies.
+        # delivery waiters consult it so they stop the moment the relay dies.
         self.closed = asyncio.Event()
         self.relay_error: Error | None = None
         self.frames = _FrameQueue(_FRAME_QUEUE_MAX, _FRAME_QUEUE_MAX_BYTES)
@@ -432,6 +432,7 @@ class SessionProtocol(QuicConnectionProtocol):
         logger.error(f"failing relay session: {reason}")
         self._quic.close(error_code=ErrorCode.H3_GENERAL_PROTOCOL_ERROR, reason_phrase=reason)
         self.closed.set()
+        self._wake_delivery_waiters()
 
     def send_msg(self, msg: Msg) -> None:
         assert self.session_id is not None
@@ -483,7 +484,7 @@ class SessionProtocol(QuicConnectionProtocol):
             if not waiter.done():
                 waiter.set_result(None)
 
-    async def wait_delivery_progress(self, timeout: float) -> None:
+    async def wait_delivery_progress(self, timeout: float | None) -> None:
         """Return once another datagram has been processed (so stream
         delivery may have advanced), the session closed, or `timeout` passed.
         Event-driven replacement for polling stream_in_flight()."""
@@ -499,10 +500,11 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter in self._delivery_waiters:
                 self._delivery_waiters.remove(waiter)
 
-    async def wait_delivered(self, stream_id: int, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
+    async def wait_delivered(self, stream_id: int, timeout: float | None) -> bool:
+        deadline = None if timeout is None else time.monotonic() + timeout
         while self.stream_in_flight(stream_id):
-            if self.closed.is_set() or time.monotonic() >= deadline:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if self.closed.is_set() or (remaining is not None and remaining <= 0):
                 return False
-            await self.wait_delivery_progress(deadline - time.monotonic())
+            await self.wait_delivery_progress(remaining)
         return True
