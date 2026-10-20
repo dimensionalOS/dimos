@@ -31,6 +31,7 @@ holding the cameras; while it is, these modules log and retry.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import threading
 import time
 from typing import Any
@@ -40,7 +41,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
+from dimos.messages.sensor_msgs.msg import CameraInfo as CdrCameraInfo
+from dimos.msgs.driver import camera_info_message
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -144,8 +148,8 @@ class HeadCameraInfo(Module):
 
     config: HeadCameraInfoConfig
 
-    left_info: Out[CameraInfo]
-    right_info: Out[CameraInfo]
+    left_info: Out[CdrCameraInfo]
+    right_info: Out[CdrCameraInfo]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -179,7 +183,9 @@ class HeadCameraInfo(Module):
                 if self._stop.wait(_CALIBRATION_RETRY_S):
                     return
         while not self._stop.is_set():
+            stamp = time_from_nanoseconds(time.time_ns())
             for out, info in ((self.left_info, left), (self.right_info, right)):
-                info.ts = time.time()
-                out.publish(info)
+                message = camera_info_message(info)
+                message.header.stamp = deepcopy(stamp)
+                out.publish(message)
             self._stop.wait(1.0 / self.config.publish_hz)

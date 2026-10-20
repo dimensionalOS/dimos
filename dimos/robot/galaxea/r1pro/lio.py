@@ -16,17 +16,29 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import cache
 
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose as CdrPoseValue,
+    PoseStamped as CdrPose,
+    Quaternion as CdrQuaternion,
+    TransformStamped,
+)
+from dimos.messages.nav_msgs.msg import Odometry as CdrOdometry
+from dimos.msgs.driver import transform_message
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.time import to_seconds
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
@@ -88,11 +100,11 @@ class R1ProLio(StaticTfPublisher):
 
     config: R1ProLioConfig
 
-    odometry: In[Odometry]
-    pose: Out[PoseStamped]
+    odometry: In[CdrOdometry]
+    pose: Out[CdrPose]
 
-    def transforms(self) -> list[Transform]:
-        return mount_transforms(self.config)
+    def transforms(self) -> list[TransformStamped]:
+        return [transform_message(value) for value in mount_transforms(self.config)]
 
     @rpc
     def start(self) -> None:
@@ -100,5 +112,19 @@ class R1ProLio(StaticTfPublisher):
         self._lidar_to_base = mount_transforms(self.config)[0]
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
 
-    def _on_odometry(self, msg: Odometry) -> None:
-        self.pose.publish(base_pose(msg, self._lidar_to_base))
+    def _on_odometry(self, msg: CdrOdometry) -> None:
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        # Keep the existing mount composition math behind an explicit value adapter.
+        internal = Odometry(
+            ts=to_seconds(msg.header.stamp),
+            frame_id=msg.header.frame_id,
+            pose=Pose(position=[p.x, p.y, p.z], orientation=[q.x, q.y, q.z, q.w]),
+        )
+        result = base_pose(internal, self._lidar_to_base)
+        p, q = result.position, result.orientation
+        self.pose.publish(
+            CdrPose(
+                deepcopy(msg.header),
+                CdrPoseValue(Point(p.x, p.y, p.z), CdrQuaternion(q.x, q.y, q.z, q.w)),
+            )
+        )

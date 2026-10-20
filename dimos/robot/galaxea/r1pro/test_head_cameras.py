@@ -14,9 +14,12 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.core.cdr_transport import CdrTransport
+from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage
+from dimos.robot.galaxea.r1pro import head_cameras
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
@@ -26,6 +29,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadRightCameraConfig,
     head_camera_infos,
 )
+from dimos.utils.testing.waiting import wait_until
 
 # The ISX031's only real mode: width, height (px), pixel format.
 _SENSOR_MODE = (1920, 1536, "UYVY")
@@ -98,3 +102,29 @@ def test_r1pro_control_publishes_both_eyes_intrinsics() -> None:
     blueprint = r1pro_control()
 
     assert {"head_left_info", "head_right_info"} <= set(blueprint.remapping_map.values())
+
+
+def test_head_calibration_publishes_both_canonical_eyes_at_one_exact_clock(tmp_path, monkeypatch):
+    calibration = tmp_path / "stereo.yaml"
+    calibration.write_text(_CALIBRATION)
+    monkeypatch.setattr(head_cameras.time, "time_ns", lambda: 1_700_000_000_000_000_001)
+    with ExitStack() as cleanup:
+        module = head_cameras.HeadCameraInfo(calibration_path=str(calibration))
+        cleanup.callback(module.stop)
+        eyes = []
+        for name in ("left_info", "right_info"):
+            wire = CdrTransport("/" + name, CameraInfo, backend="lcm", url="memq://")
+            cleanup.callback(wire.stop)
+            module.set_transport(name, wire)
+            cleanup.callback(wire.subscribe(eyes.append))
+        # Stop at the first complete publication pair; no thread or fixed wait needed.
+        monkeypatch.setattr(module._stop, "wait", lambda _: module._stop.set())
+        module._run()
+        wait_until(lambda: len(eyes) == 2, timeout=5)
+        values = {v.header.frame_id: v for v in eyes}
+        left, right = values[head_cameras.HEAD_LEFT_FRAME], values[head_cameras.HEAD_RIGHT_FRAME]
+        for eye in (left, right):
+            assert (eye.header.stamp.sec, eye.header.stamp.nanosec) == (1_700_000_000, 1)
+            assert (eye.width, eye.height, len(eye.d)) == (1920, 1536, 8)
+        assert (left.k[0], right.k[2]) == (1012.5, 958.7)
+        assert left.p[3] == right.p[3] == 0.0

@@ -47,21 +47,31 @@ from reactivex.disposable import Disposable
 if TYPE_CHECKING:
     from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
 
+from copy import deepcopy
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
+from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image, Imu, JointState
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
@@ -625,28 +635,39 @@ class R1ProConnection(Module):
         self._odom_y += (sy * vx + cy * vy) * dt
         self._odom_yaw += wz * dt
 
-        from dimos.msgs.geometry_msgs.Pose import Pose
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         half = self._odom_yaw * 0.5
-        position = Vector3(self._odom_x, self._odom_y, 0.0)
+        position = Point(self._odom_x, self._odom_y, 0.0)
         orientation = Quaternion(0.0, 0.0, math.sin(half), math.cos(half))
         frame_id = self.config.odom_frame_id
         base = self.config.frame_id
-        pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
+        header = Header(Time(msg.header.stamp.sec, msg.header.stamp.nanosec), frame_id)
+        pose = PoseStamped(deepcopy(header), Pose(position, orientation))
         self.odometry.publish(
             Odometry(
-                ts=now,
-                frame_id=frame_id,
+                header=deepcopy(header),
                 child_frame_id=base,
-                pose=Pose(position, orientation),
-                twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
+                pose=PoseWithCovariance(deepcopy(pose.pose), np.zeros(36, dtype=np.float64)),
+                twist=TwistWithCovariance(
+                    Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
+                    np.zeros(36, dtype=np.float64),
+                ),
             )
         )
         if self.config.publish_odom_tf:
             self.odom.publish(pose)
-            self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
+            self.tf.publish(
+                TFMessage(
+                    [
+                        TransformStamped(
+                            deepcopy(header),
+                            base,
+                            Transform(
+                                Vector3(position.x, position.y, position.z), deepcopy(orientation)
+                            ),
+                        )
+                    ]
+                )
+            )
 
     # Aggregated motor_states publish loop
 
@@ -728,14 +749,12 @@ class R1ProConnection(Module):
                 continue
             last_pub = t0
             try:
-                stamp = msg.header.stamp
-                ts = stamp.sec + stamp.nanosec * 1e-9
+                stamp = time_from_nanoseconds(_stamp_nanoseconds(msg))
                 out.publish(
                     CompressedImage(
-                        data=bytes(msg.data),
+                        header=Header(stamp, msg.header.frame_id or stream),
+                        data=np.frombuffer(bytes(msg.data), dtype=np.uint8).copy(),
                         format="jpeg",
-                        frame_id=msg.header.frame_id or stream,
-                        ts=ts if ts > 0 else time.time(),
                     )
                 )
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)

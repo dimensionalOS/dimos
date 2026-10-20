@@ -19,6 +19,7 @@ These tests do not claim a real ROS node installation or discovery acceptance.
 
 from contextlib import ExitStack
 import pickle
+import queue
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -27,6 +28,7 @@ import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.transport import ROSTransport
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
@@ -34,6 +36,8 @@ from dimos.messages.sensor_msgs.msg import Image, Imu
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.Vector3 import Vector3 as LegacyVector
 from dimos.protocol.pubsub.impl import rospubsub, rospubsub_conversion as conversion
+from dimos.robot.galaxea.r1pro.connection import R1ProConnection
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -201,3 +205,48 @@ def test_missing_ros_serialization_reports_runtime_dependency(ros_boundary, monk
     monkeypatch.delitem(sys.modules, "rclpy.serialization")
     with pytest.raises(ImportError, match="rclpy and installed ROS message packages"):
         conversion.dimos_to_ros(_sample(Image), ros_boundary.oracle.types[Image.__msgtype__])
+
+
+def test_depth_and_imu_workers_reuse_ros_cdr_preserving_layout_and_ns(ros_boundary):
+    image = Image(
+        Header(Time(1_700_000_000, 1), "depth"), 2, 2, "16UC1", 1, 6, np.arange(12, dtype=np.uint8)
+    )
+    imu = Imu(
+        Header(Time(1_700_000_000, 1), "imu"),
+        Quaternion(0.0, 0.0, 0.0, 1.0),
+        np.arange(9, dtype=np.float64),
+        Vector3(1.0, 2.0, 3.0),
+        np.arange(9, dtype=np.float64) + 10,
+        Vector3(4.0, 5.0, 6.0),
+        np.arange(9, dtype=np.float64) + 20,
+    )
+    with ExitStack() as cleanup:
+        module = R1ProConnection()
+        cleanup.callback(module.stop)
+        depth = CdrTransport("/head_depth", Image, backend="lcm", url="memq://")
+        cleanup.callback(depth.stop)
+        module.set_transport("head_depth", depth)
+        images = []
+        cleanup.callback(depth.subscribe(images.append))
+        for kind, source in [(Image, image), (Imu, imu)]:
+            pending = queue.Queue()
+            pending.put(
+                conversion.dimos_to_ros(source, ros_boundary.oracle.types[kind.__msgtype__])
+            )
+            pending.put(None)
+            if kind is Image:
+                module._convert_loop("head_depth", pending, Image)
+            else:
+                module._imu_loop("imu_chassis", pending)
+        wait_until(lambda: bool(images), timeout=5)
+        value = images[0]
+        assert (value.step, value.is_bigendian, value.encoding) == (6, 1, "16UC1")
+        np.testing.assert_array_equal(value.data, image.data)
+        assert value.header.stamp.nanosec == 1
+        stored = module._latest_imu_chassis
+        assert stored.header.stamp.nanosec == 1
+        assert stored.angular_velocity.y == 2.0
+        np.testing.assert_array_equal(
+            stored.linear_acceleration_covariance, imu.linear_acceleration_covariance
+        )
+        assert module.sensor_stats()["head_depth"]["decoded"] == 1
