@@ -69,6 +69,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -458,6 +459,14 @@ class ControlCoordinator(Module):
                     "Control coordinator has no trajectory task",
                 )
             return self._trajectory_task.execute(trajectory, current_positions)
+
+    @rpc
+    def get_trajectory_status(self) -> TrajectoryStatus | None:
+        """Read the sole trajectory task without starting or resetting it."""
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return None
+            return self._trajectory_task.get_status(time.perf_counter())
 
     @rpc
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
