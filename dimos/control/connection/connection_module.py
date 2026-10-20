@@ -502,10 +502,11 @@ class ConnectionModule(Module, ABC):
 
     def _deadman_expired(self) -> None:
         self._deadman = None
-        with self._lock:
-            self._deadman_fired = True
         logger.warning(f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting")
         self._halt()
+        # Set only once halted, so a status that says it fired means the robot was told to stop.
+        with self._lock:
+            self._deadman_fired = True
 
     def _halt(self) -> None:
         with self._hardware_lock:
