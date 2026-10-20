@@ -50,9 +50,13 @@ wheelhouse with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=/path/to/wheels`.
 
 The versioned configuration above assumes matching released dimOS artifacts. For
 reviewing this proposal without publishing, first install its Git commit and
-build tools into your active environment. From this PR checkout:
+build tools into a fresh Python 3.12 environment. Pip can retain an already
+installed package when proposal commits share a version number, even with
+`--upgrade`. From this PR checkout:
 
 ```sh
+python3.12 -m venv build/message-review-venv
+source build/message-review-venv/bin/activate
 commit="$(git rev-parse HEAD)"
 pip install "dimos[message-build] @ git+https://github.com/dimensionalOS/dimos.git@$commit" 'setuptools>=77' wheel
 cd examples/external-messages
