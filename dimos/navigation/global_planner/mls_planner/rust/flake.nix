@@ -15,7 +15,30 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-mls-planner";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sharedArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/d5f801d7dd0208731bab566d079bae7abe6278f1";
+          sha256 = "596db1c5658ac5e2f4b51b6d1ce8bcc4be9b590f718e3d2281faf61b4744c646";
+        };
+        sharedSource = pkgs.runCommand "dimos-mls-cdr-source-input" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sharedArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${sharedSource}/native/message-source.nix" { inherit pkgs; }).source;
+        src = pkgs.runCommand "mls-cdr-source" { } ''
+          cp -r ${moduleSource} $out
+          chmod -R u+w $out
+          mkdir -p $out/sdk
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/Cargo.toml \
+            --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../../build/message-source/rust' 'messages' \
+            --replace-fail '[workspace]' '[workspace]
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+        '';
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 

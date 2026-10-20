@@ -17,15 +17,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
+use crate::mls_planner::{
+    ms_since, Config, Planner, RegionBounds as SurfaceBounds, DEBUG_LOG_PERIOD,
+};
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
-use dimos_module::time::now;
+use crate::wire::{decode_tf, encode, encode_tf};
+use dimos_generated_messages::{
+    builtin_interfaces::msg::time::Time,
+    dimos_msgs::msg::{
+        line_segment3_d::LineSegment3D, line_segments3_d::LineSegments3D,
+        line_segments3_d_region::LineSegments3DRegion, point_cloud_region::PointCloudRegion,
+        region_bounds::RegionBounds,
+    },
+    geometry_msgs::msg::{
+        point::Point, point_stamped::PointStamped, pose::Pose, pose_stamped::PoseStamped,
+        quaternion::Quaternion,
+    },
+    nav_msgs::msg::path::Path,
+    sensor_msgs::msg::{point_cloud2::PointCloud2, point_field::PointField},
+    std_msgs::msg::header::Header,
+};
+use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
@@ -43,7 +58,7 @@ type Shared<T> = Arc<Mutex<Option<T>>>;
 enum MapUpdate {
     Region {
         points: Vec<Xyz>,
-        bounds: PoseStamped,
+        bounds: RegionBounds,
         received: Instant,
     },
     Global {
@@ -53,15 +68,15 @@ enum MapUpdate {
 
 /// One region of a seeded map, as the ray tracer hands them on.
 struct SeedRegion {
-    cloud: PointCloud2,
-    bounds: PoseStamped,
+    cloud: PointCloudRegion,
+    bounds: RegionBounds,
 }
 
 /// A seed region with its points extracted, queued for the worker. They
 /// queue, since every one must land.
 struct QueuedSeed {
     points: Vec<Xyz>,
-    bounds: PoseStamped,
+    bounds: RegionBounds,
 }
 
 /// One viz tick's content, read by the worker and published off it.
@@ -175,31 +190,31 @@ impl SeedProgress {
 }
 
 /// Seed clouds and bounds waiting for their counterpart, keyed by the region
-/// number in their header seq, since every region of a seed shares one stamp.
+/// number in their explicit region_id, since every region of a seed shares one stamp.
 #[derive(Default)]
 struct SeedPairs {
-    clouds: HashMap<i32, (PointCloud2, Instant)>,
-    bounds: HashMap<i32, (PoseStamped, Instant)>,
+    clouds: HashMap<i32, (PointCloudRegion, Instant)>,
+    bounds: HashMap<i32, (RegionBounds, Instant)>,
 }
 
 impl SeedPairs {
-    fn pair_cloud(&mut self, msg: PointCloud2) -> Option<SeedRegion> {
+    fn pair_cloud(&mut self, msg: PointCloudRegion) -> Option<SeedRegion> {
         self.expire_before(Instant::now());
-        match self.bounds.remove(&msg.header.seq) {
+        match self.bounds.remove(&msg.region_id) {
             Some((bounds, _)) => Some(SeedRegion { cloud: msg, bounds }),
             None => {
-                self.clouds.insert(msg.header.seq, (msg, Instant::now()));
+                self.clouds.insert(msg.region_id, (msg, Instant::now()));
                 None
             }
         }
     }
 
-    fn pair_bounds(&mut self, msg: PoseStamped) -> Option<SeedRegion> {
+    fn pair_bounds(&mut self, msg: RegionBounds) -> Option<SeedRegion> {
         self.expire_before(Instant::now());
-        match self.clouds.remove(&msg.header.seq) {
+        match self.clouds.remove(&msg.region_id) {
             Some((cloud, _)) => Some(SeedRegion { cloud, bounds: msg }),
             None => {
-                self.bounds.insert(msg.header.seq, (msg, Instant::now()));
+                self.bounds.insert(msg.region_id, (msg, Instant::now()));
                 None
             }
         }
@@ -225,40 +240,40 @@ impl SeedPairs {
 #[derive(Module)]
 #[module(name = "mls_planner", setup = spawn_worker, teardown = stop_worker)]
 pub struct MlsPlanner {
-    #[input(decode = PointCloud2::decode, handler = on_global_map)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
 
-    #[input(decode = PointCloud2::decode, handler = on_local_map)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
-    #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
-    region_bounds: Input<PoseStamped>,
+    #[input(decode = dimos_module::cdr::decode, handler = on_region_bounds)]
+    region_bounds: Input<RegionBounds>,
 
     // A seeded map's regions as the ray tracer lands them, applied through
     // the region pipeline between live updates. Live updates keep priority.
-    #[input(decode = PointCloud2::decode, handler = on_seed_map)]
-    seed_map: Input<PointCloud2>,
+    #[input(decode = dimos_module::cdr::decode, handler = on_seed_map)]
+    seed_map: Input<PointCloudRegion>,
 
-    #[input(decode = PoseStamped::decode, handler = on_seed_bounds)]
-    seed_bounds: Input<PoseStamped>,
+    #[input(decode = dimos_module::cdr::decode, handler = on_seed_bounds)]
+    seed_bounds: Input<RegionBounds>,
 
-    #[input(decode = PointStamped::decode, handler = on_goal)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
-    #[tf]
+    #[tf(decode = decode_tf, encode = encode_tf)]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
-    surface_map: Output<PointCloud2>,
+    #[output(encode = encode)]
+    surface_map: Output<PointCloudRegion>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = encode)]
     nodes: Output<PointCloud2>,
 
-    // The wire payload is a Path. dimos names the channel LineSegments3D.
-    #[output(encode = Path::encode, msg = "LineSegments3D")]
-    node_edges: Output<Path>,
+    // Canonical weighted segments with an explicit viewer-region key.
+    #[output(encode = encode)]
+    node_edges: Output<LineSegments3DRegion>,
 
-    #[output(encode = Path::encode)]
+    #[output(encode = encode)]
     path: Output<Path>,
 
     #[config]
@@ -266,7 +281,7 @@ pub struct MlsPlanner {
 
     // Held on the handle loop until stamps match, then handed off paired.
     pending_local: Option<PointCloud2>,
-    pending_bounds: Option<PoseStamped>,
+    pending_bounds: Option<RegionBounds>,
     pending_seeds: SeedPairs,
 
     // Written by the handle loop, read by the worker, so the loop never blocks
@@ -327,18 +342,18 @@ impl MlsPlanner {
         self.try_pair();
     }
 
-    async fn on_region_bounds(&mut self, msg: PoseStamped) {
+    async fn on_region_bounds(&mut self, msg: RegionBounds) {
         self.pending_bounds = Some(msg);
         self.try_pair();
     }
 
-    async fn on_seed_map(&mut self, msg: PointCloud2) {
+    async fn on_seed_map(&mut self, msg: PointCloudRegion) {
         if let Some(region) = self.pending_seeds.pair_cloud(msg) {
             self.queue_seed(region);
         }
     }
 
-    async fn on_seed_bounds(&mut self, msg: PoseStamped) {
+    async fn on_seed_bounds(&mut self, msg: RegionBounds) {
         if let Some(region) = self.pending_seeds.pair_bounds(msg) {
             self.queue_seed(region);
         }
@@ -362,7 +377,7 @@ impl MlsPlanner {
     }
 
     fn queue_seed(&self, region: SeedRegion) {
-        let Some(points) = cloud_points(&region.cloud, "seed_map") else {
+        let Some(points) = cloud_points(&region.cloud.cloud, "seed_map") else {
             return;
         };
         self.seed_regions
@@ -399,7 +414,7 @@ impl MlsPlanner {
 }
 
 /// True when bounds and a local cloud are both present with matching stamps.
-fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> bool {
+fn stamps_paired(bounds: Option<&RegionBounds>, cloud: Option<&PointCloud2>) -> bool {
     match (bounds, cloud) {
         (Some(b), Some(c)) => same_stamp(&b.header.stamp, &c.header.stamp),
         _ => false,
@@ -434,9 +449,9 @@ struct VizPublisher {
     batches: mpsc::Receiver<VizBatch>,
     voxel_size: f32,
     frame: String,
-    surface_map: Output<PointCloud2>,
+    surface_map: Output<PointCloudRegion>,
     nodes: Output<PointCloud2>,
-    node_edges: Output<Path>,
+    node_edges: Output<LineSegments3DRegion>,
 }
 
 impl VizPublisher {
@@ -713,26 +728,25 @@ fn replan_due(goal_changed: bool, live_update_applied: bool) -> bool {
     goal_changed || live_update_applied
 }
 
-/// The region a bounds message describes: position is the center, orientation
-/// carries radius, z_min and z_max.
-fn region_bounds(msg: &PoseStamped) -> RegionBounds {
-    RegionBounds {
-        origin_x: msg.pose.position.x as f32,
-        origin_y: msg.pose.position.y as f32,
-        radius: msg.pose.orientation.x as f32,
-        z_min: msg.pose.orientation.y as f32,
-        z_max: msg.pose.orientation.z as f32,
+/// The explicit cylinder a bounds message describes.
+fn region_bounds(msg: &RegionBounds) -> SurfaceBounds {
+    SurfaceBounds {
+        origin_x: msg.center.x as f32,
+        origin_y: msg.center.y as f32,
+        radius: msg.radius as f32,
+        z_min: msg.z_min as f32,
+        z_max: msg.z_max as f32,
     }
 }
 
-/// One cell's surface as a message, the cell in its header seq.
+/// One cell's surface as a message, the cell in its explicit region_id.
 fn surface_message(
     cell: Cell,
     surface: Vec<(VoxelKey, f32)>,
     voxel_size: f32,
     frame: &str,
     stamp: Time,
-) -> PointCloud2 {
+) -> PointCloudRegion {
     let points: Vec<Xyzi> = surface
         .into_iter()
         .map(|((ix, iy, iz), clearance)| {
@@ -740,22 +754,28 @@ fn surface_message(
             (x, y, z, clearance)
         })
         .collect();
-    let mut msg = build_pc2_xyzi(&points, frame, stamp);
-    msg.header.seq = pack_cell(cell);
-    msg
+    let cloud = build_pc2_xyzi(&points, frame, stamp);
+    PointCloudRegion {
+        header: cloud.header.clone(),
+        region_id: pack_cell(cell),
+        cloud,
+    }
 }
 
-/// One cell's edge corridors as a message, the cell in its header seq.
+/// One cell's edge corridors as a message, the cell in its explicit region_id.
 fn edges_message(
     cell: Cell,
     segments: Vec<Segment>,
     voxel_size: f32,
     frame: &str,
     stamp: Time,
-) -> Path {
-    let mut msg = build_segments_path(segments, voxel_size, frame, stamp);
-    msg.header.seq = pack_cell(cell);
-    msg
+) -> LineSegments3DRegion {
+    let lines = build_segments(segments, voxel_size, frame, stamp);
+    LineSegments3DRegion {
+        header: lines.header.clone(),
+        region_id: pack_cell(cell),
+        lines,
+    }
 }
 
 /// True if within tolerance of the goal on the ground plane.
@@ -764,10 +784,10 @@ fn is_at_goal(start: Xyz, goal: Xyz, tol: f32) -> bool {
 }
 
 fn same_stamp(a: &Time, b: &Time) -> bool {
-    a.sec == b.sec && a.nsec == b.nsec
+    a.sec == b.sec && a.nanosec == b.nanosec
 }
 
-async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
+async fn publish_cloud<T>(out: &Output<T>, cloud: &T) {
     if let Err(e) = out.publish(cloud).await {
         error_throttled!(
             Duration::from_secs(1),
@@ -778,7 +798,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
     }
 }
 
-async fn publish_path(out: &Output<Path>, msg: &Path) {
+async fn publish_path<T>(out: &Output<T>, msg: &T) {
     if let Err(e) = out.publish(msg).await {
         error_throttled!(
             Duration::from_secs(1),
@@ -791,7 +811,6 @@ async fn publish_path(out: &Output<Path>, msg: &Path) {
 
 fn header(frame_id: &str, stamp: Time) -> Header {
     Header {
-        seq: 0,
         stamp,
         frame_id: frame_id.into(),
     }
@@ -838,30 +857,37 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
     }
 }
 
-/// Emit edges as alternating PoseStamped pairs with orientation.w carrying
-/// the per-edge cost.
-fn build_segments_path(
+/// Emit actual weighted line segments rather than a Path-shaped legacy encoding.
+fn build_segments(
     segments: Vec<(VoxelKey, VoxelKey, f32)>,
     voxel_size: f32,
     frame_id: &str,
     stamp: Time,
-) -> Path {
-    let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
-    for (a, b, cost) in segments {
-        let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
-        let pb = surface_point_xyz(b.0, b.1, b.2, voxel_size);
-        poses.push(pose_stamped(pa, cost as f64, frame_id, stamp.clone()));
-        poses.push(pose_stamped(pb, cost as f64, frame_id, stamp.clone()));
-    }
-    Path {
+) -> LineSegments3D {
+    let point = |key: VoxelKey| {
+        let p = surface_point_xyz(key.0, key.1, key.2, voxel_size);
+        Point {
+            x: p.0 as f64,
+            y: p.1 as f64,
+            z: p.2 as f64,
+        }
+    };
+    LineSegments3D {
         header: header(frame_id, stamp),
-        poses,
+        segments: segments
+            .into_iter()
+            .map(|(a, b, weight)| LineSegment3D {
+                start: point(a),
+                end: point(b),
+                weight: weight as f64,
+            })
+            .collect(),
     }
 }
 
 /// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's wall clearance.
 fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     let mut data = Vec::with_capacity(points.len() * 16);
     for &(x, y, z, i) in points {
         data.extend_from_slice(&x.to_le_bytes());
@@ -869,10 +895,10 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
         data.extend_from_slice(&z.to_le_bytes());
         data.extend_from_slice(&i.to_le_bytes());
     }
-    let make_field = |name: &str, off: i32| PointField {
+    let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -894,17 +920,17 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
 }
 
 fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     let mut data = Vec::with_capacity(points.len() * 12);
     for &(x, y, z) in points {
         data.extend_from_slice(&x.to_le_bytes());
         data.extend_from_slice(&y.to_le_bytes());
         data.extend_from_slice(&z.to_le_bytes());
     }
-    let make_field = |name: &str, off: i32| PointField {
+    let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -917,13 +943,6 @@ fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Poi
         row_step: 12 * n,
         data,
         is_dense: true,
-    }
-}
-
-struct ExtractError(&'static str);
-impl std::fmt::Display for ExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
     }
 }
 
@@ -943,63 +962,34 @@ fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<Xyz>> {
     }
 }
 
-fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
-    let mut x_off: Option<usize> = None;
-    let mut y_off: Option<usize> = None;
-    let mut z_off: Option<usize> = None;
-    for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
-            continue;
-        }
-        match f.name.as_str() {
-            "x" => x_off = Some(f.offset as usize),
-            "y" => y_off = Some(f.offset as usize),
-            "z" => z_off = Some(f.offset as usize),
-            _ => {}
-        }
-    }
-    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
-    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
-    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
-
-    let n = (msg.width as usize) * (msg.height as usize);
-    let step = msg.point_step as usize;
-    if step == 0 {
-        return Err(ExtractError("point_step is 0"));
-    }
-    if msg.data.len() < n * step {
-        return Err(ExtractError(
-            "data buffer shorter than width*height*point_step",
-        ));
-    }
-    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
-        return Err(ExtractError(
-            "xyz field offsets do not fit within point_step",
-        ));
-    }
-    if msg.is_bigendian {
-        return Err(ExtractError("big-endian point data not supported"));
-    }
-
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let base = i * step;
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push((x, y, z));
-        }
-    }
-    Ok(out)
+fn extract_xyz(msg: &PointCloud2) -> Result<Vec<Xyz>, ExtractError> {
+    let offset = |name: &str| {
+        msg.fields
+            .iter()
+            .find(|f| f.name == name && f.datatype == PointField::FLOAT32 && f.count == 1)
+            .map(|f| f.offset as usize)
+            .ok_or(ExtractError("missing scalar float32 XYZ field"))
+    };
+    Ok(extract_xyz_rows(
+        &msg.data,
+        [msg.width as usize, msg.height as usize],
+        [msg.point_step as usize, msg.row_step as usize],
+        [offset("x")?, offset("y")?, offset("z")?],
+        msg.is_bigendian,
+    )?
+    .into_iter()
+    .map(|[x, y, z]| (x, y, z))
+    .collect())
 }
 
-#[inline]
-fn read_f32_le(buf: &[u8], off: usize) -> f32 {
-    let bytes: [u8; 4] = buf[off..off + 4]
-        .try_into()
-        .expect("bounds checked by caller");
-    f32::from_le_bytes(bytes)
+fn now() -> Time {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    Time {
+        sec: duration.as_secs().min(i32::MAX as u64) as i32,
+        nanosec: duration.subsec_nanos(),
+    }
 }
 
 #[cfg(test)]
@@ -1015,32 +1005,43 @@ mod tests {
     fn stamped(stamp: Time) -> Header {
         Header {
             stamp,
-            ..Default::default()
+            frame_id: String::new(),
         }
     }
-
-    fn bounds_at(stamp: Time) -> PoseStamped {
-        PoseStamped {
+    fn bounds_at(stamp: Time) -> RegionBounds {
+        RegionBounds {
             header: stamped(stamp),
-            ..Default::default()
+            region_id: 0,
+            center: Point {
+                x: 0.,
+                y: 0.,
+                z: 0.,
+            },
+            radius: 0.,
+            z_min: 0.,
+            z_max: 0.,
         }
     }
-
     fn cloud_at(stamp: Time) -> PointCloud2 {
-        PointCloud2 {
-            header: stamped(stamp),
-            ..Default::default()
+        build_pc2_xyz(&[], "", stamp)
+    }
+    fn region_at(stamp: Time) -> PointCloudRegion {
+        let cloud = cloud_at(stamp);
+        PointCloudRegion {
+            header: cloud.header.clone(),
+            region_id: 0,
+            cloud,
         }
     }
 
     #[test]
     fn stamps_paired_only_when_both_present_and_stamps_match() {
-        let s = Time { sec: 2, nsec: 3 };
+        let s = Time { sec: 2, nanosec: 3 };
         let b = bounds_at(s.clone());
         let c = cloud_at(s);
         assert!(stamps_paired(Some(&b), Some(&c)));
 
-        let other = cloud_at(Time { sec: 2, nsec: 4 });
+        let other = cloud_at(Time { sec: 2, nanosec: 4 });
         assert!(!stamps_paired(Some(&b), Some(&other)));
 
         assert!(!stamps_paired(Some(&b), None));
@@ -1049,100 +1050,156 @@ mod tests {
     }
 
     #[test]
-    fn seed_pairs_match_on_seq_whichever_side_lands_first() {
-        let stamp = Time { sec: 2, nsec: 3 };
+    fn seed_pairs_match_on_region_id_whichever_side_lands_first() {
+        let stamp = Time { sec: 2, nanosec: 3 };
         let mut pairs = SeedPairs::default();
         let mut b1 = bounds_at(stamp.clone());
-        b1.header.seq = 1;
+        b1.region_id = 1;
         let mut b2 = bounds_at(stamp.clone());
-        b2.header.seq = 2;
-        let mut c1 = cloud_at(stamp.clone());
-        c1.header.seq = 1;
-        let mut c2 = cloud_at(stamp);
-        c2.header.seq = 2;
+        b2.region_id = 2;
+        let mut c1 = region_at(stamp.clone());
+        c1.region_id = 1;
+        let mut c2 = region_at(stamp);
+        c2.region_id = 2;
 
         assert!(pairs.pair_bounds(b1).is_none());
         assert!(pairs.pair_bounds(b2).is_none());
         let first = pairs
             .pair_cloud(c1)
             .expect("region 1 pairs with its own bounds");
-        assert_eq!(first.bounds.header.seq, 1);
+        assert_eq!(first.bounds.region_id, 1);
         let second = pairs
             .pair_cloud(c2)
             .expect("region 2 pairs with its own bounds");
-        assert_eq!(second.bounds.header.seq, 2);
+        assert_eq!(second.bounds.region_id, 2);
         assert!(pairs.clouds.is_empty() && pairs.bounds.is_empty());
     }
 
     #[test]
     fn seed_pairs_match_cloud_first_and_interleaved() {
-        let stamp = Time { sec: 2, nsec: 3 };
+        let stamp = Time { sec: 2, nanosec: 3 };
         let mut pairs = SeedPairs::default();
-        let mut c1 = cloud_at(stamp.clone());
-        c1.header.seq = 1;
+        let mut c1 = region_at(stamp.clone());
+        c1.region_id = 1;
         let mut b1 = bounds_at(stamp.clone());
-        b1.header.seq = 1;
+        b1.region_id = 1;
         assert!(pairs.pair_cloud(c1).is_none());
         assert_eq!(
             pairs
                 .pair_bounds(b1)
                 .expect("cloud first pairs")
                 .cloud
-                .header
-                .seq,
+                .region_id,
             1
         );
 
         // Interleaved: cloud 2, bounds 3, bounds 2, cloud 3.
-        let mut c2 = cloud_at(stamp.clone());
-        c2.header.seq = 2;
+        let mut c2 = region_at(stamp.clone());
+        c2.region_id = 2;
         let mut b3 = bounds_at(stamp.clone());
-        b3.header.seq = 3;
+        b3.region_id = 3;
         let mut b2 = bounds_at(stamp.clone());
-        b2.header.seq = 2;
-        let mut c3 = cloud_at(stamp);
-        c3.header.seq = 3;
+        b2.region_id = 2;
+        let mut c3 = region_at(stamp);
+        c3.region_id = 3;
         assert!(pairs.pair_cloud(c2).is_none());
         assert!(pairs.pair_bounds(b3).is_none());
-        assert_eq!(pairs.pair_bounds(b2).expect("region 2").cloud.header.seq, 2);
-        assert_eq!(pairs.pair_cloud(c3).expect("region 3").bounds.header.seq, 3);
+        assert_eq!(pairs.pair_bounds(b2).expect("region 2").cloud.region_id, 2);
+        assert_eq!(pairs.pair_cloud(c3).expect("region 3").bounds.region_id, 3);
         assert!(pairs.clouds.is_empty() && pairs.bounds.is_empty());
     }
 
     #[test]
-    fn region_messages_carry_the_cell_in_their_headers_even_when_empty() {
+    fn region_messages_carry_the_cell_explicitly_even_when_empty() {
         let cell = (1, -2);
-        let surface = surface_message(cell, vec![((1, 2, 0), 0.5)], 0.1, "odom", Time::default());
+        let surface = surface_message(
+            cell,
+            vec![((1, 2, 0), 0.5)],
+            0.1,
+            "odom",
+            Time { sec: 0, nanosec: 0 },
+        );
         let segments = vec![((1, 2, 0), (2, 2, 0), 1.5)];
-        let edges = edges_message(cell, segments, 0.1, "odom", Time::default());
-        assert_eq!(surface.header.seq, pack_cell(cell));
-        assert_eq!(edges.header.seq, pack_cell(cell));
-        assert_eq!((surface.width, edges.poses.len()), (1, 2));
+        let edges = edges_message(cell, segments, 0.1, "odom", Time { sec: 0, nanosec: 0 });
+        assert_eq!(surface.region_id, pack_cell(cell));
+        assert_eq!(edges.region_id, pack_cell(cell));
+        assert_eq!((surface.cloud.width, edges.lines.segments.len()), (1, 1));
 
-        let surface = surface_message(cell, Vec::new(), 0.1, "odom", Time::default());
-        let edges = edges_message(cell, Vec::new(), 0.1, "odom", Time::default());
-        assert_eq!(surface.header.seq, pack_cell(cell));
-        assert_eq!(edges.header.seq, pack_cell(cell));
-        assert_eq!((surface.width, edges.poses.len()), (0, 0));
+        let surface = surface_message(cell, Vec::new(), 0.1, "odom", Time { sec: 0, nanosec: 0 });
+        let edges = edges_message(cell, Vec::new(), 0.1, "odom", Time { sec: 0, nanosec: 0 });
+        assert_eq!(surface.region_id, pack_cell(cell));
+        assert_eq!(edges.region_id, pack_cell(cell));
+        assert_eq!((surface.cloud.width, edges.lines.segments.len()), (0, 0));
     }
 
     #[test]
     fn an_unpaired_seed_half_expires_after_the_timeout() {
-        let stamp = Time { sec: 2, nsec: 3 };
+        let stamp = Time { sec: 2, nanosec: 3 };
         let mut pairs = SeedPairs::default();
         let mut b1 = bounds_at(stamp.clone());
-        b1.header.seq = 1;
+        b1.region_id = 1;
         assert!(pairs.pair_bounds(b1).is_none());
         pairs.expire_before(Instant::now() + SEED_PAIR_TIMEOUT / 2);
         assert_eq!(pairs.bounds.len(), 1);
         pairs.expire_before(Instant::now() + SEED_PAIR_TIMEOUT * 2);
         assert!(pairs.bounds.is_empty());
-        let mut c1 = cloud_at(stamp);
-        c1.header.seq = 1;
+        let mut c1 = region_at(stamp);
+        c1.region_id = 1;
         assert!(
             pairs.pair_cloud(c1).is_none(),
             "the expired bounds no longer pair"
         );
+    }
+
+    #[test]
+    fn canonical_edges_keep_geometry_weight_and_region_id_in_cdr() {
+        let stamp = Time {
+            sec: 1_700_000_000,
+            nanosec: 123_456_789,
+        };
+        let message = edges_message(
+            (-1, 2),
+            vec![((1, 2, 0), (2, 2, 0), 1.5)],
+            0.1,
+            "odom",
+            stamp.clone(),
+        );
+        for little in [false, true] {
+            let bytes = dimos_module::cdr::encode_endian(&message, little).unwrap();
+            let received: LineSegments3DRegion = dimos_module::cdr::decode(&bytes).unwrap();
+            assert_eq!(received.region_id, pack_cell((-1, 2)));
+            assert_eq!(received.header.stamp, stamp);
+            assert_eq!(received.lines.header, received.header);
+            let edge = &received.lines.segments[0];
+            assert!((edge.start.x - 0.15).abs() < 1e-6 && (edge.end.x - 0.25).abs() < 1e-6);
+            assert_eq!(edge.weight, 1.5);
+        }
+    }
+
+    #[test]
+    fn organized_big_endian_clouds_use_declared_row_stride() {
+        let mut cloud = build_pc2_xyz(
+            &[(1., 2., 3.), (4., 5., 6.)],
+            "map",
+            Time { sec: 0, nanosec: 0 },
+        );
+        cloud.width = 1;
+        cloud.height = 2;
+        cloud.row_step = 16;
+        cloud.is_bigendian = true;
+        cloud.data.clear();
+        for point in [[1_f32, 2., 3.], [4., 5., 6.]] {
+            for value in point {
+                cloud.data.extend(value.to_be_bytes());
+            }
+            cloud.data.extend([0; 4]);
+        }
+        assert_eq!(
+            extract_xyz(&cloud).unwrap(),
+            vec![(1., 2., 3.), (4., 5., 6.)]
+        );
+        cloud.data.pop();
+        assert!(extract_xyz(&cloud).is_err());
     }
 
     #[test]
