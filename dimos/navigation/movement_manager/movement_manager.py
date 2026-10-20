@@ -22,18 +22,17 @@ from __future__ import annotations
 
 import math
 import threading
-import time
+from time import monotonic, time_ns
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos.messages.std_msgs.msg import Bool, Header
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -82,18 +81,22 @@ class MovementManager(Module):
         super().stop()
 
     def _on_click(self, msg: PointStamped) -> None:
-        if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
-            logger.warning("Ignored invalid click", x=msg.x, y=msg.y, z=msg.z)
+        if not all(math.isfinite(v) for v in (msg.point.x, msg.point.y, msg.point.z)):
+            logger.warning("Ignored invalid click", x=msg.point.x, y=msg.point.y, z=msg.point.z)
             return
         if (
-            abs(msg.x) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.y) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.z) > MAX_CLICK_VERTICAL_M
+            abs(msg.point.x) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.point.y) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.point.z) > MAX_CLICK_VERTICAL_M
         ):
-            logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
+            logger.warning(
+                "Ignored out-of-range click", x=msg.point.x, y=msg.point.y, z=msg.point.z
+            )
             return
 
-        logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        logger.debug(
+            "Goal", x=round(msg.point.x, 1), y=round(msg.point.y, 1), z=round(msg.point.z, 1)
+        )
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
@@ -103,7 +106,8 @@ class MovementManager(Module):
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners
         cancel = PointStamped(
-            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
+            header=Header(frame_id="map", stamp=time_from_nanoseconds(time_ns())),
+            point=Point(x=float("nan"), y=float("nan"), z=float("nan")),
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
@@ -113,7 +117,7 @@ class MovementManager(Module):
         with self._lock:
             if self._teleop_active:
                 # check if cooldown has expired
-                elapsed = time.monotonic() - self._last_teleop_time
+                elapsed = monotonic() - self._last_teleop_time
                 if elapsed < self.config.tele_cooldown_sec:
                     return
                 self._teleop_active = False
@@ -122,7 +126,7 @@ class MovementManager(Module):
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
             self._teleop_active = True
-            self._last_teleop_time = time.monotonic()
+            self._last_teleop_time = monotonic()
 
         self._cancel_goal()
 
