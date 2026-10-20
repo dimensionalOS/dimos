@@ -17,10 +17,15 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::geometry_msgs::msg::{
+    point::Point, pose::Pose, pose_stamped::PoseStamped, quaternion::Quaternion, twist::Twist,
+    vector3::Vector3,
+};
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_module::cdr;
 use dimos_module::{error_throttled, Output};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion, Vector3};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::std_msgs::{Header, Time};
 
 /// A plan waypoint as the laws and the planner see it: `(x, y, yaw)`.
 pub type State = [f64; 3];
@@ -45,19 +50,25 @@ pub fn quat_of_yaw(yaw: f64) -> Quaternion {
 
 /// Seconds since the unix epoch as one float, the python `PoseStamped.ts`.
 pub fn secs_of(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    t.sec as f64 + t.nanosec as f64 * 1e-9
 }
 
-/// A float second count as a `Time`, matching `Header.__init__`'s truncation
-/// (`sec = int(ts)`, `nsec = int((ts - sec) * 1e9)`).
+pub fn nanoseconds(time: &Time) -> i64 {
+    time.sec as i64 * 1_000_000_000 + time.nanosec as i64
+}
+
+/// Normalize a floating second count into the canonical ROS Time fields.
 pub fn time_of_secs(ts: f64) -> Time {
     if !ts.is_finite() {
-        return Time { sec: 0, nsec: 0 };
+        return Time { sec: 0, nanosec: 0 };
     }
-    let sec = ts.trunc();
+    let ns = (ts * 1_000_000_000.).round() as i64;
+    let sec = ns
+        .div_euclid(1_000_000_000)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
     Time {
-        sec: sec.clamp(i32::MIN as f64, i32::MAX as f64) as i32,
-        nsec: ((ts - sec) * 1e9) as i32,
+        sec,
+        nanosec: ns.rem_euclid(1_000_000_000) as u32,
     }
 }
 
@@ -71,7 +82,6 @@ pub fn now_secs() -> f64 {
 
 pub fn header(frame_id: &str, ts: f64) -> Header {
     Header {
-        seq: 0,
         stamp: time_of_secs(ts),
         frame_id: frame_id.into(),
     }
@@ -135,9 +145,21 @@ pub fn path_stamps(path: &Path) -> Vec<f64> {
         .collect()
 }
 
+/// Relative seconds for laws that consume only profile deltas.
+pub fn relative_path_stamps(path: &Path) -> Vec<f64> {
+    let Some(first) = path.poses.first() else {
+        return Vec::new();
+    };
+    let base = nanoseconds(&first.header.stamp);
+    path.poses
+        .iter()
+        .map(|pose| (nanoseconds(&pose.header.stamp) - base) as f64 / 1_000_000_000.)
+        .collect()
+}
+
 /// A body-frame twist, the only shape either module publishes.
-pub fn twist(vx: f64, vy: f64, wz: f64) -> lcm_msgs::geometry_msgs::Twist {
-    lcm_msgs::geometry_msgs::Twist {
+pub fn twist(vx: f64, vy: f64, wz: f64) -> Twist {
+    Twist {
         linear: Vector3 {
             x: vx,
             y: vy,
@@ -164,7 +186,127 @@ pub async fn publish<T>(out: &Output<T>, msg: &T) {
 }
 
 // Reading a cloud off the wire is dimos-module's; the path stays `msg::extract_xyz`.
-pub use dimos_module::pointcloud::{extract_xyz, ExtractError};
+pub use dimos_module::pointcloud::ExtractError;
+
+pub fn extract_xyz(
+    cloud: &dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2,
+) -> Result<Vec<[f32; 3]>, ExtractError> {
+    use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+    let offset = |name: &str| {
+        cloud
+            .fields
+            .iter()
+            .find(|f| f.name == name && f.datatype == PointField::FLOAT32 && f.count == 1)
+            .map(|f| f.offset as usize)
+            .ok_or(ExtractError("missing scalar float32 xyz field"))
+    };
+    dimos_module::pointcloud::extract_xyz_rows(
+        &cloud.data,
+        [cloud.width as usize, cloud.height as usize],
+        [cloud.point_step as usize, cloud.row_step as usize],
+        [offset("x")?, offset("y")?, offset("z")?],
+        cloud.is_bigendian,
+    )
+}
+
+pub fn encode<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    dimos_module::cdr::encode(value).expect("serialize a valid generated navigation value")
+}
+
+pub fn decode_tf(bytes: &[u8]) -> std::io::Result<Vec<dimos_module::tf::Transform>> {
+    use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+    use dimos_module::nalgebra::{Quaternion, Translation3, UnitQuaternion};
+    let message: TFMessage = cdr::decode(bytes)?;
+    message
+        .transforms
+        .into_iter()
+        .map(|edge| {
+            let p = edge.transform.translation;
+            let q = edge.transform.rotation;
+            if ![p.x, p.y, p.z, q.x, q.y, q.z, q.w]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "nonfinite TF components",
+                ));
+            }
+            let rotation = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "zero TF quaternion")
+                })?;
+            if edge.header.stamp.nanosec >= 1_000_000_000 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unnormalized TF stamp",
+                ));
+            }
+            Ok(dimos_module::tf::Transform::from_nanoseconds(
+                edge.header.frame_id,
+                edge.child_frame_id,
+                nanoseconds(&edge.header.stamp),
+                dimos_module::nalgebra::Isometry3::from_parts(
+                    Translation3::new(p.x, p.y, p.z),
+                    rotation,
+                ),
+            ))
+        })
+        .collect()
+}
+
+pub fn encode_tf(transforms: &[dimos_module::tf::Transform]) -> std::io::Result<Vec<u8>> {
+    use dimos_generated_messages::{
+        geometry_msgs::msg::{
+            quaternion::Quaternion, transform::Transform, transform_stamped::TransformStamped,
+            vector3::Vector3,
+        },
+        tf2_msgs::msg::tf_message::TFMessage,
+    };
+    let transforms = transforms
+        .iter()
+        .map(|value| {
+            let ns = value.stamp_nanoseconds().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "TF timestamp is outside range",
+                )
+            })?;
+            let sec = i32::try_from(ns.div_euclid(1_000_000_000)).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "TF seconds exceed ROS int32",
+                )
+            })?;
+            let p = value.translation();
+            let q = value.rotation();
+            Ok(TransformStamped {
+                header: Header {
+                    stamp: Time {
+                        sec,
+                        nanosec: ns.rem_euclid(1_000_000_000) as u32,
+                    },
+                    frame_id: value.parent.clone(),
+                },
+                child_frame_id: value.child.clone(),
+                transform: Transform {
+                    translation: Vector3 {
+                        x: p.x,
+                        y: p.y,
+                        z: p.z,
+                    },
+                    rotation: Quaternion {
+                        x: q.i,
+                        y: q.j,
+                        z: q.k,
+                        w: q.w,
+                    },
+                },
+            })
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    cdr::encode(&TFMessage { transforms })
+}
 
 #[cfg(test)]
 mod tests {
@@ -191,8 +333,8 @@ mod tests {
     #[test]
     fn a_non_finite_stamp_does_not_wrap_around() {
         // a saturating `as i32` would give i32::MAX seconds; zero is the honest "no time"
-        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nsec: 0 });
-        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nsec: 0 });
+        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nanosec: 0 });
+        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nanosec: 0 });
     }
 
     #[test]
@@ -216,5 +358,126 @@ mod tests {
         let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let path = build_path(&states, &[], 5.0, "odom", 0.0);
         assert_eq!(path_stamps(&path), vec![5.0, 5.0]);
+    }
+    #[test]
+    fn generated_tf_cdr_round_trip_retains_exact_wire_time() {
+        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+        use dimos_module::nalgebra::Isometry3;
+        for ns in [0, -1, 1_700_000_000_123_456_789] {
+            let source = dimos_module::Transform::from_nanoseconds(
+                "world",
+                "base",
+                ns,
+                Isometry3::translation(1., 2., 3.),
+            );
+            let payload = encode_tf(&[source]).unwrap();
+            let value: TFMessage = cdr::decode(&payload).unwrap();
+            assert_eq!(nanoseconds(&value.transforms[0].header.stamp), ns);
+            assert_eq!(value.transforms[0].header.frame_id, "world");
+            for little in [false, true] {
+                let received = decode_tf(&cdr::encode_endian(&value, little).unwrap()).unwrap();
+                assert_eq!(received[0].stamp_nanoseconds(), Some(ns));
+                assert_eq!(received[0].translation().x, 1.);
+            }
+        }
+    }
+
+    #[test]
+    fn tf_codec_rejects_invalid_packets_and_ros_time() {
+        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+        use dimos_module::nalgebra::Isometry3;
+        let payload = encode_tf(&[dimos_module::Transform::from_nanoseconds(
+            "a",
+            "b",
+            0,
+            Isometry3::identity(),
+        )])
+        .unwrap();
+        let mut message: TFMessage = cdr::decode(&payload).unwrap();
+        message.transforms[0].header.stamp.nanosec = 1_000_000_000;
+        assert!(decode_tf(&encode(&message)).is_err());
+        assert!(decode_tf(&[0, 3, 0, 0]).is_err());
+        let mut trailing = payload;
+        trailing.push(0);
+        assert!(decode_tf(&trailing).is_err());
+    }
+
+    #[test]
+    fn generated_path_codec_and_relative_profile_keep_nanosecond_differences() {
+        let mut path = build_path(
+            &[[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]],
+            &[],
+            0.,
+            "map",
+            0.,
+        );
+        let base = 1_700_000_000_123_456_789i64;
+        for (pose, delta) in path.poses.iter_mut().zip([0, 1, 3]) {
+            let ns = base + delta;
+            pose.header.stamp = Time {
+                sec: ns.div_euclid(1_000_000_000) as i32,
+                nanosec: ns.rem_euclid(1_000_000_000) as u32,
+            };
+        }
+        for little in [false, true] {
+            let payload = cdr::encode_endian(&path, little).unwrap();
+            let decoded: Path = cdr::decode(&payload).unwrap();
+            assert_eq!(relative_path_stamps(&decoded), vec![0., 1e-9, 3e-9]);
+            assert_eq!(decoded.header.frame_id, "map");
+        }
+        assert_eq!(
+            time_of_secs(-0.25),
+            Time {
+                sec: -1,
+                nanosec: 750_000_000
+            }
+        );
+    }
+
+    #[test]
+    fn generated_cloud_layout_handles_padding_endian_and_cdr() {
+        use dimos_generated_messages::sensor_msgs::msg::{
+            point_cloud2::PointCloud2, point_field::PointField,
+        };
+        let values = [[1f32, 2., 3.], [4., 5., 6.], [7., 8., 9.], [10., 11., 12.]];
+        for big in [false, true] {
+            let mut data = vec![0u8; 80];
+            for (index, point) in values.iter().enumerate() {
+                for (axis, value) in point.iter().enumerate() {
+                    let offset = (index / 2) * 40 + (index % 2) * 16 + axis * 4;
+                    let bytes = if big {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    };
+                    data[offset..offset + 4].copy_from_slice(&bytes);
+                }
+            }
+            let fields = ["x", "y", "z"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| PointField {
+                    name: (*name).into(),
+                    offset: (i * 4) as u32,
+                    datatype: PointField::FLOAT32,
+                    count: 1,
+                })
+                .collect();
+            let cloud = PointCloud2 {
+                header: header("map", 0.),
+                height: 2,
+                width: 2,
+                fields,
+                is_bigendian: big,
+                point_step: 16,
+                row_step: 40,
+                data,
+                is_dense: true,
+            };
+            let mut decoded: PointCloud2 = cdr::decode(&encode(&cloud)).unwrap();
+            assert_eq!(extract_xyz(&decoded).unwrap(), values);
+            decoded.row_step = 7;
+            assert!(extract_xyz(&decoded).is_err());
+        }
     }
 }

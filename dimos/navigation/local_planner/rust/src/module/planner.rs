@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 
 use crate::planner::{plan_explored, Emb, COMMIT_MARGIN};
 use crate::{clearance, stamps};
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::sensor_msgs::PointCloud2;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
@@ -94,19 +94,19 @@ struct Shared {
 #[derive(Module)]
 #[module(name = "local_planner", setup = spawn_worker, teardown = stop_worker)]
 pub struct LocalPlanner {
-    #[input(decode = PointCloud2::decode, handler = on_local_map)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
-    #[input(decode = Path::decode, handler = on_planner_path)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_planner_path)]
     planner_path: Input<Path>,
 
-    #[output(encode = Path::encode)]
+    #[output(encode = msg::encode)]
     path: Output<Path>,
 
     #[config]
     config: Config,
 
-    #[tf]
+    #[tf(decode = msg::decode_tf,encode = msg::encode_tf)]
     tf: Tf,
 
     shared: Arc<Mutex<Shared>>,

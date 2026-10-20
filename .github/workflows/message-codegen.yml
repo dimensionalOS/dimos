@@ -24,8 +24,7 @@ on:
       - dimos/navigation/base.py
       - dimos/navigation/tf_pose.py
       - dimos/navigation/spec.py
-      - dimos/navigation/local_planner/profile.py
-      - dimos/navigation/local_planner/test_profile.py
+      - dimos/navigation/local_planner/**
       - dimos/navigation/trajectory_follower/**
       - dimos/navigation/test_tf_pose.py
       - dimos/navigation/movement_manager/**
@@ -312,3 +311,12 @@ jobs:
         run: |
           cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml --features cdr --lib --jobs 2 tf::tests
           cargo clippy --locked --manifest-path native/rust/dimos-module/Cargo.toml --features cdr --all-targets --jobs 2 -- -D warnings
+      - name: Verify native local planner CDR and actual Python interoperability
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module,test-bodies --jobs 2
+          cargo clippy --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module,test-bodies --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module --bin local_planner --jobs 2
+          export DIMOS_NATIVE_LOCAL_PLANNER_BINARY="$PWD/dimos/navigation/local_planner/rust/target/debug/local_planner"
+          .native-review/bin/python -I -c 'from dimos.navigation.local_planner import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/local_planner/test_generated_native.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/local_planner/native.py
