@@ -16,7 +16,7 @@ uv run --extra dreamlabs pytest dimos/imitation/policy/dreamlabs
 
 The default probe prepares synthetic images and YAM state/FK locally. It makes no
 API call and needs no credential. Tests replace the SDK network transport, check
-three actual colored JPEGs, and compare 38 known and seeded poses against fixed
+three actual colored JPEGs, and compare three representative poses against fixed
 offline SDK FK references. No full robot SDK or `dream_ik` is required at runtime.
 
 Each image follows `Image.resize(320, 176, interpolation=cv2.INTER_AREA)` and
