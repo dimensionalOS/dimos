@@ -202,27 +202,33 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self._started = False
 
 
-class ROSTransport(PubSubTransport[DimosMsg]):
+class ROSTransport(PubSubTransport[T]):
     _ros: DimosROS | None = None
 
-    def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
+    def __init__(self, topic: str, msg_type: type[T], **kwargs: Any) -> None:
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
+        if hasattr(msg_type, "__msgtype__"):
+            name = getattr(msg_type, "__msgtype__", None)
+            if not isinstance(name, str) or message_types().get(name) is not msg_type:
+                raise TypeError("ROS transport requires a registry-owned generated message class")
         super().__init__(ROSTopic(topic, msg_type))
         self._kwargs = kwargs
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (ROSTransport, (self.topic.topic, self.topic.msg_type))
+        return (partial(ROSTransport, **self._kwargs), (self.topic.topic, self.topic.msg_type))
 
-    def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
+    def broadcast(self, _: Stream[T] | None, msg: T) -> None:
+        if hasattr(self.topic.msg_type, "__msgtype__") and not isinstance(msg, self.topic.msg_type):
+            raise TypeError("Message does not match the ROS transport's declared type")
         if self._ros is None:
             self.start()
             assert self._ros is not None  # for type narrowing
         self._ros.publish(self.topic, msg)
 
     def subscribe(
-        self, callback: Callable[[DimosMsg], Any], selfstream: Stream[DimosMsg] | None = None
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
     ) -> Callable[[], None]:
         if self._ros is None:
             self.start()

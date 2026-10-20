@@ -14,25 +14,47 @@
 
 """Conversion functions between dimos messages and ROS messages.
 
-This module provides conversion functions between dimos message types and ROS messages.
-It handles three categories of types:
-
-1. Complex types (different internal representation) - use LCM roundtrip
-2. Simple types (field structures match) - use direct field copy
-3. No dimos.msgs equivalent - return dimos_lcm type
+Registry-owned generated types use ROS 2's CDR serialization APIs. Both peers
+need the same ROS schema and installed ROS message package. Explicit legacy
+classes retain their existing field-copy / LCM conversion until retirement;
+the generated path never falls back to those codecs.
 """
 
 from __future__ import annotations
 
 import importlib
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from dimos_cdrgen.registry import encode as encode_cdr, message_types
 
 from dimos.msgs.helpers import lcm_msg_type
+from dimos.msgs.protocol import decode_cdr
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
     from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
+
+
+_Message = TypeVar("_Message")
+
+
+def _generated_name(message_type: type[Any]) -> str | None:
+    name = getattr(message_type, "__msgtype__", None)
+    if name is None:
+        return None
+    if not isinstance(name, str) or message_types().get(name) is not message_type:
+        raise TypeError("Expected a registry-owned generated message class")
+    return name
+
+
+def _serialization() -> Any:
+    try:
+        return importlib.import_module("rclpy.serialization")
+    except ImportError as error:
+        raise ImportError(
+            "Generated ROS conversion requires rclpy and installed ROS message packages"
+        ) from error
 
 
 # Complex types that need LCM roundtrip (explicit list)
@@ -108,7 +130,7 @@ def derive_lcm_type(dimos_type: type[DimosMsg]) -> type[Any]:
     return lcm_type
 
 
-def derive_ros_type(dimos_type: type[DimosMsg]) -> type[ROSMessage]:
+def derive_ros_type(dimos_type: type[Any]) -> type[ROSMessage]:
     """Derive the ROS message type from a dimos message type.
 
     Args:
@@ -120,7 +142,8 @@ def derive_ros_type(dimos_type: type[DimosMsg]) -> type[ROSMessage]:
     Example:
         msg_name = "geometry_msgs.Vector3" -> geometry_msgs.msg.Vector3
     """
-    msg_name = dimos_type.msg_name  # e.g., "geometry_msgs.Vector3"
+    name = _generated_name(dimos_type)
+    msg_name = name.replace("/msg/", ".") if name is not None else dimos_type.msg_name
     parts = msg_name.split(".")
     if len(parts) != 2:
         raise ValueError(f"Invalid msg_name format: {msg_name}, expected 'package.MessageName'")
@@ -304,7 +327,7 @@ def _create_ros_instance_for_lcm_msg(lcm_msg: Any, ros_type_hint: str) -> Any:
     raise ValueError(f"Cannot determine ROS type for LCM message: {lcm_type}")
 
 
-def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
+def dimos_to_ros(msg: Any, ros_type: type[ROSMessage]) -> ROSMessage:
     """Convert a dimos message to a ROS message.
 
     For complex types (PointCloud2, Image, CameraInfo), uses LCM roundtrip
@@ -318,6 +341,10 @@ def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
     Returns:
         ROS message instance
     """
+    if _generated_name(type(msg)) is not None:
+        if derive_ros_type(type(msg)) is not ros_type:
+            raise TypeError("Target ROS class does not match the generated message type")
+        return cast("ROSMessage", _serialization().deserialize_message(encode_cdr(msg), ros_type))
     msg_name = type(msg).msg_name
 
     if msg_name in COMPLEX_TYPES:
@@ -335,7 +362,7 @@ def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
     return ros_msg
 
 
-def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
+def ros_to_dimos(msg: Any, dimos_type: type[_Message]) -> _Message:
     """Convert a ROS message to a dimos message.
 
     For complex types (PointCloud2, Image, CameraInfo), uses LCM roundtrip
@@ -349,16 +376,21 @@ def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
     Returns:
         Dimos message instance
     """
-    msg_name = dimos_type.msg_name
+    if _generated_name(dimos_type) is not None:
+        if not isinstance(msg, derive_ros_type(dimos_type)):
+            raise TypeError("Source ROS class does not match the generated message type")
+        return decode_cdr(bytes(_serialization().serialize_message(msg)), dimos_type)
+    legacy_type = cast("type[DimosMsg]", dimos_type)
+    msg_name = legacy_type.msg_name
 
     if msg_name in COMPLEX_TYPES:
         # Complex: ROS → LCM → encode → decode → dimos
-        lcm_type = derive_lcm_type(dimos_type)
+        lcm_type = derive_lcm_type(legacy_type)
         lcm_msg = lcm_type()
         _copy_ros_to_lcm_recursive(msg, lcm_msg)
-        return dimos_type.lcm_decode(lcm_msg.lcm_encode())
+        return cast("_Message", legacy_type.lcm_decode(lcm_msg.lcm_encode()))
 
     # Simple type: recursive field copy (handles nested messages)
-    dimos_msg = dimos_type()
+    dimos_msg = legacy_type()
     _copy_ros_to_lcm_recursive(msg, dimos_msg)
-    return dimos_msg
+    return cast("_Message", dimos_msg)

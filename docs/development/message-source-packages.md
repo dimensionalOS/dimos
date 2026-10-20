@@ -48,3 +48,29 @@ library repository.
 
 For ordinary pip, CMake and Cargo authoring, see the self-contained
 [external message project walkthrough](/docs/development/messages-external-project.md).
+
+
+### Optional ROS 2 transport
+
+Using generated values with the existing `ROSTransport` requires a sourced ROS 2
+Python environment containing `rclpy` and the matching compiled ROS message
+packages. The bridge resolves `package/msg/Type` to `package.msg.Type` and uses
+`rclpy.serialization` to convert through CDR. Native DimOS LCM/Zenoh consumers
+and MCAP schema readers can use the message artifacts without installing ROS.
+
+```python
+from dimos.core.transport import ROSTransport
+from dimos.messages.geometry_msgs.msg import PoseStamped
+
+pose_transport = ROSTransport("/goal_pose", PoseStamped)
+# Use the usual .transports({("goal", PoseStamped): pose_transport}) blueprint map.
+```
+
+External `.msg` packages need their corresponding ROS package built in that
+ROS workspace for a ROS node to consume them. DimOS code generation produces
+the DimOS language artifacts and complete schemas; it does not run `colcon`,
+install ROS packages or build a ROS node implicitly. Missing ROS packages or
+`rclpy` fail explicitly. The offline bridge tests mock the ROS runtime using
+a separate schema-derived CDR typestore, covering payloads, exact timestamps,
+class ownership and the existing transport lifecycle. Actual ROS discovery and
+node integration require acceptance in a ROS environment.

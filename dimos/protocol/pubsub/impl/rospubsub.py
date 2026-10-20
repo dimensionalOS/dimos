@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 import threading
 from typing import Any, Protocol, runtime_checkable
 
@@ -38,13 +39,14 @@ except ImportError:
 import uuid
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.rospubsub_conversion import (
     derive_ros_type,
     dimos_to_ros,
     ros_to_dimos,
 )
 from dimos.protocol.pubsub.spec import PubSub
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -68,7 +70,7 @@ class ROSTopic:
     """Topic descriptor for DimosROS pubsub (uses dimos message types)."""
 
     topic: str
-    msg_type: type[DimosMsg]
+    msg_type: type[Any]
     qos: "QoSProfile | None" = None
 
 
@@ -176,6 +178,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
             try:
                 executor.spin_once(timeout_sec=0.01)
             except Exception:
+                logger.debug("ROS executor stopped after spin failure", exc_info=True)
                 break
 
     def _get_or_create_publisher(self, topic: RawROSTopic) -> Any:
@@ -247,7 +250,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
             return unsubscribe
 
 
-class DimosROS(PubSub[ROSTopic, DimosMsg]):
+class DimosROS(PubSub[ROSTopic, Any]):
     """ROS PubSub with automatic dimos.msgs ↔ ROS message conversion.
 
     Uses ROSTopic (with dimos msg_type) instead of RawROSTopic (with ros_type).
@@ -277,7 +280,7 @@ class DimosROS(PubSub[ROSTopic, DimosMsg]):
         ros_type = derive_ros_type(topic.msg_type)
         return RawROSTopic(topic=topic.topic, ros_type=ros_type, qos=topic.qos)
 
-    def publish(self, topic: ROSTopic, message: DimosMsg) -> None:
+    def publish(self, topic: ROSTopic, message: Any) -> None:
         """Publish a dimos message to a ROS topic.
 
         Args:
@@ -289,7 +292,7 @@ class DimosROS(PubSub[ROSTopic, DimosMsg]):
         self._raw.publish(raw_topic, ros_message)
 
     def subscribe(
-        self, topic: ROSTopic, callback: Callable[[DimosMsg, ROSTopic], None]
+        self, topic: ROSTopic, callback: Callable[[Any, ROSTopic], None]
     ) -> Callable[[], None]:
         """Subscribe to a ROS topic with automatic dimos message conversion.
 
