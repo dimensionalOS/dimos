@@ -14,20 +14,26 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import get_args
 
 import numpy as np
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.msgs.sim_msgs.Contacts import Contact, Kind
+from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,
+    Outcome,
     PathSample,
     Poses,
     Recording,
+    contact_name,
+    definitions,
     score,
 )
 from dimos.navigation.bench.suite import Rules
+from dimos.simulation.scenes.procedural import room
 
 RULES = Rules()
 START = np.array([1.0, 1.0, 0.3])
@@ -65,11 +71,16 @@ def _walk(
 
 def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     s = score(_walk(10.0), RULES, GOAL, route_length=4.0)
-    assert s.outcome == "success" and s.signature is None
+    assert s.feature_m is None
+    beside = score(_walk(10.0), RULES, GOAL, feature=((START[0] + GOAL[0]) / 2, START[1] + 0.3))
+    assert beside.feature_m == pytest.approx(0.3, abs=0.02)
+    assert s.outcome == "success" and s.signature is None and s.signatures == []
     assert s.window == (T0, T0 + 9.9) and s.arrived_s == pytest.approx(9.9)
     assert s.traveled_m == pytest.approx(4.0, abs=0.05) and s.spl == pytest.approx(1.0, abs=0.02)
     assert s.final_error_xy < 0.05 and s.final_xy == pytest.approx((5.0, 1.0), abs=0.05)
     assert (s.collisions, s.reroutes, s.yaw_reversals, s.fell, s.missing) == (0, 0, 0, False, [])
+    assert (s.reached, s.claimed) == (True, True)
+    assert (s.contacts, s.first_contact, s.first_contact_s) == ({}, None, None)
     assert s.empty_path_s == pytest.approx(0.5)
 
 
@@ -84,12 +95,54 @@ def _trunk_on_floor(seconds: float) -> Recording:
     )
 
 
+def test_every_outcome_is_defined_with_the_limits_of_the_rules() -> None:
+    meanings = definitions(replace(RULES, stuck_s=7.0, stuck_moving_fraction=0.6))
+    assert list(meanings) == list(get_args(Outcome))
+    assert "at least 60% of the last 7 s" in meanings["stuck"]
+    assert "{" not in "".join(meanings.values())
+
+
 def test_a_brief_trunk_touch_is_not_a_fall() -> None:
     touched = score(_trunk_on_floor(0.06), RULES, GOAL)
     assert (touched.outcome, touched.fell) == ("success", False)
     assert touched.trunk_floor_s == pytest.approx(0.06)
     lying = score(_trunk_on_floor(RULES.fall_trunk_floor_s + 0.1), RULES, GOAL)
     assert (lying.outcome, lying.signature) == ("fall", "body_fell")
+
+
+def test_standing_on_the_goal_without_reporting_arrival_is_unclaimed() -> None:
+    for command_last in (True, False):
+        silent = _walk(30.0, arrive=False, hold_last=15.0, command_last=command_last)
+        s = score(silent, RULES, GOAL, route_length=4.0)
+        assert (s.outcome, s.signature) == ("unclaimed", "arrival_mismatch")
+        assert (s.reached, s.claimed, s.spl) == (True, False, 0.0)
+    lying = replace(silent, contacts=_trunk_on_floor(1.0).contacts)
+    assert (score(lying, RULES, GOAL).outcome, score(lying, RULES, GOAL).reached) == ("fall", False)
+
+
+def test_a_recording_that_shows_no_outcome_takes_the_drivers_verdict() -> None:
+    walking = _walk(5.0, arrive=False)
+    alone = score(walking, RULES, GOAL, route_length=4.0)
+    assert (alone.outcome, alone.mismatch) == ("timeout", False)
+    told = score(walking, RULES, GOAL, route_length=4.0, verdict="stuck")
+    assert (told.outcome, told.signature, told.mismatch) == ("stuck", "commanded_no_progress", True)
+    with pytest.raises(ValueError, match="arrived is not in the recording"):
+        score(walking, RULES, GOAL, route_length=4.0, verdict="arrived")
+
+
+def test_a_verdict_the_recording_contradicts_is_a_mismatch() -> None:
+    def mismatch(recording: Recording, verdict: str) -> tuple[str, bool]:
+        s = score(recording, RULES, GOAL, verdict=verdict)
+        return s.outcome, s.mismatch
+
+    assert mismatch(_walk(10.0), "arrived") == ("success", False)
+    assert mismatch(_walk(10.0), "stuck") == ("success", True)
+    assert mismatch(_trunk_on_floor(1.0), "arrived") == ("fall", True)
+    silent = _walk(30.0, arrive=False, hold_last=15.0)
+    assert mismatch(silent, "stuck") == ("unclaimed", False)
+    stalled = _walk(30.0, arrive=False, hold_last=25.0, command_last=False)
+    assert mismatch(stalled, "stalled") == ("stalled", False)
+    assert mismatch(stalled, "stuck") == ("stalled", True)
 
 
 def test_every_failure_has_an_outcome_and_a_signature() -> None:
@@ -108,26 +161,184 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
         1.5,
         0.0,
     )
-    assert score(_walk(10.0), RULES, (7.0, 1.0, 0.0)).outcome == "wrong_place"
+    assert (s.contacts, s.first_contact) == (
+        {"leg collided with object": 1},
+        "leg collided with object",
+    )
+    assert s.first_contact_s == pytest.approx(3.0)
+    assert s.first_contact_speed == pytest.approx(SPEED, abs=0.01)
+    far_off = score(_walk(10.0), RULES, (7.0, 1.0, 0.0))
+    assert (far_off.outcome, far_off.reached, far_off.claimed) == ("wrong_place", False, True)
     assert score(_walk(10.0), RULES, (5.0, 1.0, 1.0)).outcome == "wrong_floor"
     tipped = _walk(10.0)
     rpy = tipped.pose.rpy.copy()
     rpy[-10:, 1] = 1.4
     tipped = replace(tipped, pose=replace(tipped.pose, rpy=rpy))
     assert score(tipped, RULES, GOAL).signature == "body_fell"
-    stuck = _walk(30.0, arrive=False, hold_last=15.0)
+    stuck = _walk(30.0, arrive=False, hold_last=25.0)
     assert score(stuck, RULES, GOAL).signature == "commanded_no_progress"
-    stalled = _walk(30.0, arrive=False, hold_last=15.0, command_last=False)
+    stalled = _walk(30.0, arrive=False, hold_last=25.0, command_last=False)
     assert score(stalled, RULES, GOAL).outcome == "stalled"
     refused = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START]))])
     assert score(refused, RULES, GOAL).signature == "local_refused"
+    assert score(refused, RULES, GOAL).signatures == ["local_refused"]
     followed = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START, [*GOAL]]))])
     assert score(followed, RULES, GOAL).signature == "follower_zeroed"
     empty = replace(
-        _walk(30.0, arrive=False), planner_paths=[PathSample(T0 + 0.5, np.zeros((0, 3)))]
+        _walk(30.0, arrive=False, hold_last=25.0),
+        planner_paths=[PathSample(T0 + 0.5, np.zeros((0, 3)))],
     )
     assert score(empty, RULES, GOAL).signature == "planner_empty"
     far = (40.0, 1.0, 0.0)
     late = replace(_walk(60.0, arrive=False, goal=far), arrivals=[T0 + 55.0])
     s = score(late, RULES, far, route_length=4.0)
     assert s.signature == "out_of_time" and s.window == (T0, T0 + RULES.timeout_s(4.0))
+
+
+def test_margin_is_the_gap_to_the_nearest_obstacle_at_body_height() -> None:
+    assert score(_walk(10.0), RULES, GOAL).margin_m is None
+    scene = room(1, width=8.0, length=6.0)
+    z0 = scene.start[2]
+    open_floor = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert open_floor.margin_m == pytest.approx(1.0 - GO2.radius)
+    assert open_floor.margin_s == 0.0
+    assert open_floor.final_margin_m == pytest.approx(1.0 - GO2.radius, abs=0.02)
+    pose = _walk(10.0).pose
+    by_wall = replace(_walk(10.0), pose=replace(pose, xyz=pose.xyz - [0.0, 0.8, 0.0]))
+    assert score(by_wall, RULES, GOAL, scene=scene).margin_m == pytest.approx(0.2 - GO2.radius)
+    scene.add((3.0, 1.3, z0), (3.3, 1.6, z0 + 0.1), "clutter")
+    scene.add((2.0, 0.5, z0 + 0.7), (2.5, 1.5, z0 + 0.8), "clutter")
+    past_a_block = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert past_a_block.margin_m == pytest.approx(0.3 - GO2.radius)
+    assert past_a_block.margin_s == pytest.approx(5.0, abs=0.05)
+    scene.add((2.0, 0.5, START[2] + 0.21), (2.5, 1.5, START[2] + 0.25), "clutter")
+    assert score(_walk(10.0), RULES, GOAL, scene=scene).margin_m == pytest.approx(0.3 - GO2.radius)
+    nose_up = replace(_walk(10.0), pose=replace(pose, rpy=pose.rpy - [0.0, 0.1, 0.0]))
+    assert score(nose_up, RULES, GOAL, scene=scene).margin_m == pytest.approx(-GO2.radius)
+    scene.add((4.0, 0.5, START[2] + 0.2), (4.5, 1.5, START[2] + 0.25), "clutter")
+    under_a_slab = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert under_a_slab.margin_m == pytest.approx(-GO2.radius)
+    assert under_a_slab.margin_s == pytest.approx(7.0, abs=0.05)
+    assert under_a_slab.final_margin_m == pytest.approx(0.5 - GO2.radius, abs=0.02)
+
+
+def test_a_contact_is_named_by_the_part_and_what_it_collided_with() -> None:
+    assert [contact_name("lidar", kind) for kind in get_args(Kind)] == [
+        "lidar collided with floor",
+        "lidar collided with wall",
+        "lidar collided with object",
+    ]
+
+
+def _ending(x_m: float, pace_m: float = 0.0) -> Recording:
+    """A stopped walk that through the final stuck window creeps x_m and paces by pace_m at 0.5 Hz."""
+    stopped = _walk(30.0, arrive=False, hold_last=25.0)
+    assert stopped.pose is not None
+    into = np.clip(stopped.pose.t - (stopped.end - RULES.stuck_s), 0.0, None)
+    x = x_m * into / RULES.stuck_s + pace_m * np.sin(np.pi * into)
+    xyz = stopped.pose.xyz + np.outer(x, [1.0, 0.0, 0.0])
+    return replace(stopped, pose=replace(stopped.pose, xyz=xyz))
+
+
+def test_going_nowhere_is_stuck_when_still_and_dithering_when_pacing() -> None:
+    def shown(recording: Recording, verdict: str | None = None) -> tuple[str, list[str], bool]:
+        s = score(recording, RULES, GOAL, verdict=verdict)
+        return s.outcome, s.signatures, s.mismatch
+
+    assert shown(_ending(0.0)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.2)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.03)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.04)) == ("dithering", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.1)) == ("dithering", ["commanded_no_progress"], False)
+    assert shown(_ending(0.5)) == ("timeout", ["out_of_time"], False)
+    assert shown(_ending(0.5, pace_m=0.1)) == ("timeout", ["out_of_time"], False)
+    assert shown(_ending(0.0, pace_m=0.1), "dithering") == (
+        "dithering",
+        ["commanded_no_progress"],
+        False,
+    )
+    assert shown(_ending(0.0, pace_m=0.1), "stuck") == (
+        "dithering",
+        ["commanded_no_progress"],
+        True,
+    )
+    silent = _walk(30.0, arrive=False, hold_last=15.0)
+    assert shown(silent, "dithering") == ("unclaimed", ["arrival_mismatch"], False)
+
+
+def _stuck_touching(seconds: float) -> Recording:
+    """A stuck walk with a leg on clutter for the given part of the final stuck window."""
+    start = T0 + 30.0 - RULES.stuck_s
+    return replace(
+        _walk(30.0, arrive=False, hold_last=25.0),
+        contacts=[
+            ContactSample(T0 - 5.0, [Contact("foot", "floor")]),
+            ContactSample(start - 3.0, [Contact("leg", "clutter"), Contact("foot", "floor")]),
+            ContactSample(start + 1.0, [Contact("leg", "clutter"), Contact("trunk", "wall")]),
+            ContactSample(start + 2.0, [Contact("leg", "clutter")]),
+            ContactSample(start + seconds, [Contact("foot", "floor")]),
+        ],
+    )
+
+
+def test_a_stuck_body_held_against_an_object_is_pushing() -> None:
+    held = RULES.stuck_s * 0.5
+    s = score(_stuck_touching(held + 0.1), RULES, GOAL)
+    assert s.signatures == ["commanded_no_progress", "pushing"]
+    assert s.signature == "commanded_no_progress"
+    assert s.pushing_s == pytest.approx(held + 0.1) and s.pushing_on == "leg collided with object"
+    brief = score(_stuck_touching(held - 0.1), RULES, GOAL)
+    assert brief.signatures == ["commanded_no_progress"]
+    assert (
+        brief.pushing_s == pytest.approx(held - 0.1)
+        and brief.pushing_on == "leg collided with object"
+    )
+    free = score(_walk(30.0, arrive=False, hold_last=25.0), RULES, GOAL)
+    assert (free.signatures, free.pushing_s, free.pushing_on) == (
+        ["commanded_no_progress"],
+        0.0,
+        None,
+    )
+    stalled = replace(
+        _walk(30.0, arrive=False, hold_last=25.0, command_last=False),
+        contacts=_stuck_touching(held + 0.1).contacts,
+    )
+    assert score(stalled, RULES, GOAL).signatures == []
+    unrecorded = score(replace(_stuck_touching(held + 0.1), contacts=None), RULES, GOAL)
+    assert (unrecorded.signatures, unrecorded.pushing_s, unrecorded.pushing_on) == (
+        ["commanded_no_progress"],
+        None,
+        None,
+    )
+
+
+def test_walking_well_past_the_route_length_is_wandering() -> None:
+    walk = _walk(5.0, arrive=False)
+    s = score(walk, RULES, GOAL, route_length=1.5)
+    assert s.traveled_m == pytest.approx(2.0, abs=0.02)
+    assert s.detour == pytest.approx(1.33, abs=0.02)
+    assert s.signatures == ["out_of_time", "wandering"]
+    direct = score(walk, RULES, GOAL, route_length=1.6)
+    assert direct.detour == pytest.approx(1.25, abs=0.02) and direct.signatures == ["out_of_time"]
+    unmeasured = score(walk, RULES, GOAL)
+    assert (unmeasured.detour, unmeasured.signatures) == (None, ["out_of_time"])
+
+
+def test_a_fall_in_the_first_seconds_is_an_early_fall() -> None:
+    def tipped(after: float) -> Recording:
+        walk = _walk(10.0)
+        rpy = walk.pose.rpy.copy()
+        rpy[walk.pose.t >= T0 + after, 0] = 1.4
+        return replace(walk, pose=replace(walk.pose, rpy=rpy))
+
+    early = score(tipped(2.0), RULES, GOAL)
+    assert early.fell_s == pytest.approx(2.0, abs=0.02)
+    assert early.signatures == ["body_fell", "early_fall"]
+    late = score(tipped(3.5), RULES, GOAL)
+    assert late.fell_s == pytest.approx(3.5, abs=0.02) and late.signatures == ["body_fell"]
+    feet, trunk = [Contact("foot", "floor")], [Contact("foot", "floor"), Contact("trunk", "floor")]
+    touches = ((0.5, trunk), (0.56, feet), (2.0, trunk), (3.0, feet))
+    lying = replace(tipped(3.5), contacts=[ContactSample(T0 + t, c) for t, c in touches])
+    assert score(lying, RULES, GOAL).fell_s == pytest.approx(2.0)
+    assert score(lying, RULES, GOAL).signatures == ["body_fell", "early_fall"]
+    assert score(_trunk_on_floor(0.06), RULES, GOAL).fell_s is None

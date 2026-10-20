@@ -83,9 +83,11 @@ def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, WALL_CLEARANCE_M)
 
 
-def go2_nav_overrides() -> dict[str, VisualOverride]:
+def go2_nav_overrides(static_regions: bool = True) -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
-        **nav_visual_override(planner_viz_hz, voxel_size, WALL_CLEARANCE_M),
+        **nav_visual_override(
+            planner_viz_hz, voxel_size, WALL_CLEARANCE_M, static_regions=static_regions
+        ),
         **motion_visual_override(body_dilate_m=BODY_DILATE_M),
     }

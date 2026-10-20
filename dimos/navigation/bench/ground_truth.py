@@ -379,10 +379,4 @@ def detour(route: Route) -> float:
 def boxes_near(route: Route, boxes: list[Box], within: float) -> list[Box]:
     """The boxes whose footprint comes within the distance of the route."""
     xy = route.points[:, :2]
-    near = []
-    for box in boxes:
-        center, half = np.array(box.center[:2]), np.array(box.half[:2])
-        outside = np.maximum(np.abs(xy - center) - half, 0.0)
-        if np.any(np.hypot(outside[:, 0], outside[:, 1]) <= within):
-            near.append(box)
-    return near
+    return [box for box in boxes if np.any(box.gap(xy) <= within)]

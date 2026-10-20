@@ -79,8 +79,9 @@ def render_surface_region(
     wall_clearance_m: float,
     clearance_clamp_m: float,
     z_band: tuple[float, float] | None = None,
+    static: bool = True,
 ) -> RerunMulti:
-    """One cell of the surface on its own static entity, empty when the cell emptied.
+    """One cell of the surface on its own entity, empty when the cell emptied.
 
     Clearance rides the intensity channel, flat blue without it. Points outside z_band
     (world frame) are dropped, to show one storey of a multi-storey map.
@@ -97,7 +98,7 @@ def render_surface_region(
             keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
             pts, clearance = pts[keep], clearance[keep]
         cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
-    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=True)]
+    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=static)]
 
 
 def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
@@ -128,10 +129,10 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
 
 
 @keyed_by_seq
-def render_edge_region(msg: LineSegments3D) -> RerunMulti:
-    """One cell of the edge corridors on its own static entity."""
+def render_edge_region(msg: LineSegments3D, static: bool = True) -> RerunMulti:
+    """One cell of the edge corridors on its own entity."""
     return [
-        RerunEntry(region_entity(NODE_EDGES_ENTITY, msg.seq), render_node_edges(msg), static=True)
+        RerunEntry(region_entity(NODE_EDGES_ENTITY, msg.seq), render_node_edges(msg), static=static)
     ]
 
 
@@ -140,10 +141,12 @@ def planner_visual_override(
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float = 1.0,
+    static_regions: bool = True,
 ) -> dict[str, VisualOverride]:
     """Bridge overrides for the planner's debug entities, keyed off its own publish rate.
 
     Pass the same values given to ``MLSPlannerNative.blueprint(...)``.
+    static_regions False logs the surface and edge cells on the timeline, so a replay can scrub them.
     """
     on = viz_publish_hz > 0.0
     surface = partial(
@@ -151,9 +154,11 @@ def planner_visual_override(
         voxel_size=voxel_size,
         wall_clearance_m=wall_clearance_m,
         clearance_clamp_m=clearance_clamp_m,
+        static=static_regions,
     )
+    edges = partial(render_edge_region, static=static_regions)
     return {
         SURFACE_MAP_ENTITY: surface if on else None,
         NODES_ENTITY: render_nodes if on else None,
-        NODE_EDGES_ENTITY: render_edge_region if on else None,
+        NODE_EDGES_ENTITY: edges if on else None,
     }

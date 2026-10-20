@@ -28,15 +28,19 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import socket
 import subprocess
+import sys
 import threading
 import time
+from typing import Literal, cast
 
 import numpy as np
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
 from dimos.navigation.bench.scorer import Outcome, Recording, score
+from dimos.navigation.bench.snapshot import sample, snapshot_path
 from dimos.navigation.bench.suite import Case, Manifest, Split
 
 RUNS_DIR = STATE_DIR / "nav-bench"
@@ -63,8 +67,12 @@ WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 POLL_S = 0.5
 VERDICT_SLACK_S = 0.1
+GL_BACKENDS = ("egl", "osmesa")
+SNAPSHOT_CAP_S = 60.0
 RECORDING_GAP_S = 1.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
+
+Keep = Literal["all", "failures"]
 
 _live: set[subprocess.Popen[bytes]] = set()
 _live_lock = threading.Lock()
@@ -81,6 +89,8 @@ class RunConfig:
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
     viewer: bool = False
+    keep: Keep = "all"
+    min_free_gb: float = 15.0
     command: tuple[str, ...] = ("dimos",)
 
 
@@ -116,6 +126,10 @@ class Progress:
 Report = Callable[[Progress], None]
 
 
+class LowDiskError(RuntimeError):
+    """Free disk fell below the run's floor, so no further episode starts."""
+
+
 def selects(prefix: str, case_id: str) -> bool:
     """Whether a case id is the prefix or continues it at a dash, so s1 does not take s10."""
     return case_id == prefix or case_id.startswith(prefix + "-")
@@ -147,8 +161,10 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
+    _snapshot(run_dir, cases)
     started = time.time()
-    _write_run(run_dir, config, len(episodes), started, ended=None)
+    provenance = _provenance(DIMOS_PROJECT_ROOT)
+    _write_run(run_dir, config, len(episodes), started, provenance, ended=None)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -175,6 +191,9 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             running.remove(episode.dir.name)
 
     def one(episode: Episode) -> Result | None:
+        free_gb = shutil.disk_usage(run_dir).free / 1e9
+        if free_gb < config.min_free_gb:
+            raise LowDiskError(f"{free_gb:.1f} GB free, under the {config.min_free_gb:g} GB floor")
         with lock:
             running.append(episode.dir.name)
             progress()
@@ -197,6 +216,9 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             verdict = str(result.outcome or result.error)
             outcomes[verdict] += 1
             progress((episode.dir.name, verdict))
+        agreed = result.outcome == "success" and not result.metrics.get("mismatch")
+        if config.keep == "failures" and agreed:
+            _prune(episode.dir)
         return result
 
     pool = ThreadPoolExecutor(max_workers=config.procs)
@@ -216,10 +238,12 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             stop_all()
             time.sleep(POLL_S)
         pool.shutdown()
-        _write_run(run_dir, config, len(episodes), started, ended=time.time())
+        _write_run(run_dir, config, len(episodes), started, provenance, ended=time.time())
         raise
     pool.shutdown()
-    _write_run(run_dir, config, len(episodes), started, ended=time.time(), finished=True)
+    _write_run(
+        run_dir, config, len(episodes), started, provenance, ended=time.time(), finished=True
+    )
     return run_dir
 
 
@@ -264,11 +288,55 @@ def rescore(run_dir: Path) -> Path:
     return results
 
 
+def _snapshot(run_dir: Path, cases: list[Case]) -> None:
+    """Save the picture of the run's sample case, or none when no GL backend can render it."""
+    case = sample(cases)
+    if case is None:
+        return
+    command = [
+        sys.executable,
+        "-m",
+        "dimos.navigation.bench.snapshot",
+        str(run_dir / SUITE_FILE),
+        case.id,
+        str(snapshot_path(run_dir, case)),
+    ]
+    for backend in GL_BACKENDS:
+        try:
+            done = subprocess.run(
+                command,
+                env={**os.environ, "MUJOCO_GL": backend},
+                capture_output=True,
+                timeout=SNAPSHOT_CAP_S,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if done.returncode == 0:
+            return
+
+
+def _provenance(root: Path) -> dict[str, str | bool | None]:
+    """The commit the checkout at root is on and whether it has uncommitted changes."""
+    if not (root / ".git").exists():
+        return {"commit": None, "dirty": None}
+    try:
+        commit, status = (
+            subprocess.run(
+                ["git", "-C", str(root), *args], capture_output=True, text=True, check=True
+            ).stdout.strip()
+            for args in (("rev-parse", "HEAD"), ("status", "--porcelain"))
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
+    return {"commit": commit, "dirty": bool(status)}
+
+
 def _write_run(
     run_dir: Path,
     config: RunConfig,
     episodes: int,
     started: float,
+    provenance: dict[str, str | bool | None],
     ended: float | None,
     finished: bool = False,
 ) -> None:
@@ -279,10 +347,13 @@ def _write_run(
         "cases": list(config.cases),
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else None,
+        "procs": config.procs,
+        "machine": socket.gethostname(),
         "episodes": episodes,
         "finished": finished,
         "started": started,
         "time": ended,
+        **provenance,
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
 
@@ -393,11 +464,18 @@ def _collect_recording(log: Path, episode: Episode) -> None:
         source.parent.rmdir()
 
 
+def _prune(episode_dir: Path) -> None:
+    """Delete the episode's recording and rerun file, leaving its score."""
+    for file in episode_dir.iterdir():
+        if file.name.startswith(RECORDING_FILE) or file.name == REPLAY_FILE:
+            file.unlink()
+
+
 def _terminal(episode_dir: Path) -> dict[str, object] | None:
-    path = episode_dir / TERMINAL_FILE
-    if not path.exists():
+    try:
+        record: dict[str, object] = json.loads((episode_dir / TERMINAL_FILE).read_text())
+    except (OSError, ValueError):
         return None
-    record: dict[str, object] = json.loads(path.read_text())
     return record
 
 
@@ -412,14 +490,19 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         outcome=None,
     )
     recording = episode.dir / RECORDING_FILE
+    kept = episode.dir / SCORE_FILE
     if terminal is None:
         result.error = "no terminal record"
         return result
     if result.terminal in HARNESS_REASONS:
         result.error = result.terminal
         return result
-    if not recording.exists():
+    if not recording.exists() and not kept.exists():
         result.error = "no recording"
+        return result
+    if not recording.exists():
+        result.metrics = json.loads(kept.read_text())
+        result.outcome = cast("Outcome", result.metrics["outcome"])
         return result
     try:
         recorded = Recording.from_store(recording)
@@ -429,13 +512,16 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
             manifest.rules,
             case.goal,
             case.route_length,
+            case.feature,
+            result.terminal,
+            scene=case.scene(),
         )
     except ValueError as error:
         result.error = str(error)
         return result
     result.outcome = scored.outcome
     result.metrics = asdict(scored)
-    (episode.dir / SCORE_FILE).write_text(json.dumps(result.metrics, indent=2) + "\n")
+    kept.write_text(json.dumps(result.metrics, indent=2) + "\n")
     return result
 
 
