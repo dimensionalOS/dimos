@@ -47,8 +47,9 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.messages.std_msgs.msg import Float32
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -235,7 +236,9 @@ class KeyboardTeleopModule(Module):
         linear: TwistVector = (0.0, 0.0, 0.0),
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
+        self.ee_twist_command.publish(
+            TwistStamped(header_now(), Twist(Vector3(*linear), Vector3(*angular)))
+        )
 
     def _publish_gripper_command(self, *, opening: float) -> None:
         """Publish a changed normalized gripper opening."""

@@ -15,10 +15,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import ExitStack
+import threading
 
 import pytest
 
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.core.cdr_transport import CdrTransport
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import TwistStamped
+from dimos.messages.std_msgs.msg import Float32
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     KeyboardTeleopModule,
@@ -52,9 +57,9 @@ def test_publish_twist_emits_unaddressed_twist_stamped(
 
     msg = publish.call_args.args[0]
     assert isinstance(msg, TwistStamped)
-    assert msg.frame_id == ""  # no task-name address in the payload
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.1, 0.2, 0.3]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
+    assert msg.header.frame_id == ""  # no task-name address in the payload
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.1, 0.2, 0.3]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.4, 0.5, 0.6]
 
 
 def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mocker) -> None:
@@ -63,8 +68,8 @@ def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mock
     module._publish_twist()
 
     msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.0, 0.0, 0.0]
 
 
 def test_twist_from_keys_maps_translation_keys_to_eef_linear_twist() -> None:
@@ -99,8 +104,8 @@ def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule,
     assert held == set()
     assert publish.call_count == 1
     msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.0, 0.0, 0.0]
 
 
 def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
@@ -113,7 +118,7 @@ def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mock
     assert held == {keyboard_mod.pygame.K_a}
     assert publish.call_count == 1
     msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.05, 0.0]
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.05, 0.0]
 
 
 def test_keyup_publishes_directly_without_timeout_wait(
@@ -151,3 +156,54 @@ def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
     module._handle_pygame_event(close_event, held)
     publish.assert_called_once()
     assert publish.call_args.args[0].data == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_keyboard_output_delivers_cdr_and_key_release_stops_velocity(module, mocker, backend):
+    mocker.patch("dimos.msgs.time.time.time_ns", return_value=1_789_654_321_000_000_001)
+    config = (
+        {"url": "memq://"}
+        if backend == "lcm"
+        else {
+            "scouting": False,
+            "multicast": False,
+            "gossip": False,
+            "connect": [],
+            "listen": ["tcp/127.0.0.1:0"],
+        }
+    )
+    received = []
+    ready = threading.Event()
+
+    def receive(message):
+        received.append(message)
+        ready.set()
+
+    assert module.outputs["ee_twist_command"].type is TwistStamped
+    assert module.outputs["gripper_command"].type is Float32
+    twist = CdrTransport("ee_twist_command", TwistStamped, backend=backend, **config)
+    gripper = CdrTransport("gripper_command", Float32, backend=backend, **config)
+    module.set_transport("ee_twist_command", twist)
+    module.set_transport("gripper_command", gripper)
+    # The module fixture owns bound transports and closes them after its safe zero.
+    with ExitStack() as resources:
+        resources.callback(twist.subscribe(receive))
+        resources.callback(gripper.subscribe(receive))
+        module._publish_twist(linear=(0.05, 0.0, 0.0))
+        assert ready.wait(5), "velocity command did not arrive"
+        assert type(received[-1]) is TwistStamped
+        assert received[-1].twist.linear.x == 0.05
+        assert received[-1].header.stamp == Time(1_789_654_321, 1)
+        ready.clear()
+        held = {keyboard_mod.pygame.K_w}
+        event = keyboard_mod.pygame.event.Event(
+            keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w
+        )
+        module._handle_pygame_event(event, held)
+        assert ready.wait(5), "key-release zero did not arrive"
+        assert received[-1].twist.linear.x == 0.0
+        assert held == set()
+        ready.clear()
+        module._publish_gripper_command(opening=1.0)
+        assert ready.wait(5), "gripper command did not arrive"
+        assert received[-1] == Float32(1.0)
