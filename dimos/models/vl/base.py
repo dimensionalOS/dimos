@@ -269,7 +269,7 @@ class VlModel(Captioner, Resource, Configurable):
                 raise ValueError("Could not read model warmup image")
             image = image_from_array(pixels, encoding="bgr8", header=header_now())
             self.query(image, "What is this?")
-        except Exception:  # noqa: BLE001 - optional warmup must not prevent startup.
+        except Exception:
             logger.debug("Vision model warmup was unavailable")
 
     # requery once if JSON parsing fails
@@ -306,7 +306,7 @@ class VlModel(Captioner, Resource, Configurable):
 
         try:
             detection_tuples = self.query_json(scaled_image, full_query)
-        except Exception:  # noqa: BLE001 - retain empty-result fallback for model backends.
+        except Exception:
             return image_detections
 
         for track_id, detection_tuple in enumerate(detection_tuples):
@@ -364,7 +364,7 @@ class VlModel(Captioner, Resource, Configurable):
 
         try:
             point_tuples = self.query_json(scaled_image, full_query)
-        except Exception:  # noqa: BLE001 - retain empty-result fallback for model backends.
+        except Exception:
             return image_detections
 
         for track_id, point_tuple in enumerate(point_tuples):
