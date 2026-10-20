@@ -97,9 +97,7 @@ def test_select_rotates_cells_across_frames() -> None:
 
 def test_select_respects_per_frame_k() -> None:
     cell = ("ego_fore_aft", "nearest")
-    candidates = [
-        (f"frame-000100-{i}-ego_fore_aft", cell, (i, 0, 0), "box") for i in range(6)
-    ] + [
+    candidates = [(f"frame-000100-{i}-ego_fore_aft", cell, (i, 0, 0), "box") for i in range(6)] + [
         (f"frame-000200-{i}-ego_fore_aft", cell, (i, 1, 0), "flag") for i in range(6)
     ]
     kept = select_localize_coverage_ids(candidates, k=2)
@@ -142,16 +140,12 @@ def test_select_rotates_categories_inside_cell_despite_global_saturation() -> No
     candidates = []
     for index, frame in enumerate(("000100", "000200", "000300", "000400")):
         # nearest always offers flag (would saturate global flag count).
-        candidates.append(
-            (f"frame-{frame}-n-ego_fore_aft", nearest, (index, 0, 0), "flag")
-        )
+        candidates.append((f"frame-{frame}-n-ego_fore_aft", nearest, (index, 0, 0), "flag"))
         # next_to offers both an exclusive cat and flag; must still rotate.
         candidates.append(
             (f"frame-{frame}-nt-coatrack-ego_fore_aft", next_to, (index, 0, 0), "coatrack")
         )
-        candidates.append(
-            (f"frame-{frame}-nt-flag-ego_fore_aft", next_to, (index, 0, 0), "flag")
-        )
+        candidates.append((f"frame-{frame}-nt-flag-ego_fore_aft", next_to, (index, 0, 0), "flag"))
     kept = select_localize_coverage_ids(candidates, k=2)
     next_to_cats = []
     for case_id in sorted(kept):

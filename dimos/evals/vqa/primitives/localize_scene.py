@@ -182,9 +182,7 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
     """Resolve a unique / nearest / next-to referent to one instance."""
     parsed = parse_referent(referent)
     if parsed.selector in ("left", "right"):
-        raise InsufficientEvidenceError(
-            "left/right category referents are not supported"
-        )
+        raise InsufficientEvidenceError("left/right category referents are not supported")
     if parsed.selector == "next_to":
         assert parsed.landmark is not None
         return _resolve_next_to(scene, parsed.category, parsed.landmark, referent=referent)
@@ -357,9 +355,7 @@ def any_ahead(scene: LocalizeSceneEvidence, category: str) -> bool:
     hits = instances_named(scene, category)
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
-    return any(
-        _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz)) for inst in hits
-    )
+    return any(_in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz)) for inst in hits)
 
 
 def higher_object(scene: LocalizeSceneEvidence, object_a: str, object_b: str) -> str:
