@@ -45,6 +45,7 @@ pub struct Transform {
     pub parent: String,
     pub child: String,
     pub ts: f64,
+    stamp_ns: Option<i64>,
     iso: Isometry3<f64>,
 }
 
@@ -59,8 +60,38 @@ impl Transform {
             parent: parent.into(),
             child: child.into(),
             ts,
+            stamp_ns: None,
             iso,
         }
+    }
+
+    /// Retain a wire timestamp without passing its nanoseconds through a float.
+    /// The existing `ts` field remains available for seconds-based math.
+    pub fn from_nanoseconds(
+        parent: impl Into<String>,
+        child: impl Into<String>,
+        stamp_ns: i64,
+        iso: Isometry3<f64>,
+    ) -> Self {
+        Self {
+            parent: parent.into(),
+            child: child.into(),
+            ts: stamp_ns as f64 / 1_000_000_000.,
+            stamp_ns: Some(stamp_ns),
+            iso,
+        }
+    }
+
+    /// Exact source time, or rounded seconds for values made with `new`.
+    /// A caller updating the public `ts` field invalidates saved wire metadata.
+    pub fn stamp_nanoseconds(&self) -> Option<i64> {
+        if let Some(ns) = self.stamp_ns {
+            if self.ts == ns as f64 / 1_000_000_000. {
+                return Some(ns);
+            }
+        }
+        let ns = (self.ts * 1_000_000_000.).round();
+        (ns.is_finite() && ns >= i64::MIN as f64 && ns < i64::MAX as f64).then_some(ns as i64)
     }
 
     pub fn translation(&self) -> Vector3<f64> {
@@ -76,6 +107,7 @@ impl Transform {
             parent: self.child.clone(),
             child: self.parent.clone(),
             ts: self.ts,
+            stamp_ns: self.stamp_ns,
             iso: self.iso.inverse(),
         }
     }
@@ -85,6 +117,7 @@ impl Transform {
             parent: self.parent.clone(),
             child: other.child.clone(),
             ts: self.ts,
+            stamp_ns: self.stamp_ns,
             iso: self.iso * other.iso,
         }
     }
@@ -92,6 +125,7 @@ impl Transform {
 
 struct Sample {
     ts: f64,
+    stamp_ns: Option<i64>,
     iso: Isometry3<f64>,
 }
 
@@ -110,6 +144,10 @@ impl TBuffer {
     }
 
     fn add(&mut self, ts: f64, iso: Isometry3<f64>) {
+        self.add_stamped(ts, iso, None);
+    }
+
+    fn add_stamped(&mut self, ts: f64, iso: Isometry3<f64>, stamp_ns: Option<i64>) {
         // A stamp a whole window behind the newest is a clock reset, not jitter.
         if self
             .samples
@@ -118,8 +156,15 @@ impl TBuffer {
         {
             self.samples.clear();
         }
-        let pos = self.samples.partition_point(|s| s.ts <= ts);
-        self.samples.insert(pos, Sample { ts, iso });
+        let pos = self.samples.partition_point(|s| {
+            s.ts < ts
+                || (s.ts == ts
+                    && match (s.stamp_ns, stamp_ns) {
+                        (Some(a), Some(b)) => a <= b,
+                        _ => true,
+                    })
+        });
+        self.samples.insert(pos, Sample { ts, stamp_ns, iso });
         // Anchored to the newest sample so a late message cannot widen the window.
         let newest = self.samples.back().map_or(ts, |s| s.ts);
         self.prune(newest - self.window_secs);
@@ -175,6 +220,7 @@ impl TBuffer {
             parent: parent.to_string(),
             child: child.to_string(),
             ts: s.ts,
+            stamp_ns: s.stamp_ns,
             iso: s.iso,
         })
     }
@@ -202,6 +248,23 @@ impl MultiTBuffer {
             .add(ts, iso);
     }
 
+    fn receive_transform(&mut self, transform: &Transform) {
+        if transform.stamp_ns.is_none() {
+            self.receive(
+                &transform.parent,
+                &transform.child,
+                transform.ts,
+                transform.iso,
+            );
+            return;
+        }
+        let window_secs = self.window_secs;
+        self.buffers
+            .entry((transform.parent.clone(), transform.child.clone()))
+            .or_insert_with(|| TBuffer::new(window_secs))
+            .add_stamped(transform.ts, transform.iso, transform.stamp_nanoseconds());
+    }
+
     fn connections(&self, frame: &str) -> Vec<String> {
         let mut out = Vec::new();
         for (parent, child) in self.buffers.keys() {
@@ -227,6 +290,7 @@ impl MultiTBuffer {
                 parent: parent.to_string(),
                 child: child.to_string(),
                 ts: time.unwrap_or_else(now_secs),
+                stamp_ns: None,
                 iso: Isometry3::identity(),
             });
         }
@@ -253,11 +317,17 @@ impl MultiTBuffer {
         }
         let path = self.bfs(parent, child, time, tolerance)?;
         // A composition is only as fresh as its stalest edge.
-        let oldest = path.iter().map(|t| t.ts).fold(f64::INFINITY, f64::min);
+        let oldest = path.iter().min_by(|a, b| {
+            a.ts.total_cmp(&b.ts)
+                .then_with(|| a.stamp_nanoseconds().cmp(&b.stamp_nanoseconds()))
+        })?;
+        let oldest_ts = oldest.ts;
+        let oldest_ns = oldest.stamp_nanoseconds();
         let mut steps = path.into_iter();
         let first = steps.next()?;
         let mut composed = steps.fold(first, |acc, step| acc.compose(&step));
-        composed.ts = oldest;
+        composed.ts = oldest_ts;
+        composed.stamp_ns = oldest_ns;
         Some(composed)
     }
 
@@ -393,7 +463,7 @@ impl Tf {
         let payload = (self.encode)(transforms)?;
         self.graph.update(|buffer| {
             for t in transforms {
-                buffer.receive(&t.parent, &t.child, t.ts, t.iso);
+                buffer.receive_transform(t);
             }
         });
         crate::module::publish_encoded(&self.sender, payload).await
@@ -582,7 +652,7 @@ impl Route for TfRoute {
         };
         self.graph.update(|buffer| {
             for t in transforms {
-                buffer.receive(&t.parent, &t.child, t.ts, t.iso);
+                buffer.receive_transform(&t);
             }
         });
     }
@@ -1245,5 +1315,94 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+    #[test]
+    fn wire_nanoseconds_survive_direct_reverse_and_latest_lookup() {
+        for ns in [0, -1, 1_700_000_000_123_456_789] {
+            let (tf, _) = tf_with(DEFAULT_TF_WINDOW_SECS);
+            let edge = Transform::from_nanoseconds(
+                "world",
+                "base",
+                ns,
+                Isometry3::translation(1., 2., 3.),
+            );
+            tf.graph.update(|buffer| buffer.receive_transform(&edge));
+            let direct = tf.get_latest("world", "base").unwrap();
+            let inverse = tf.get_latest("base", "world").unwrap();
+            assert_eq!(direct.stamp_nanoseconds(), Some(ns));
+            assert_eq!(inverse.stamp_nanoseconds(), Some(ns));
+            assert_eq!(inverse.translation(), Vector3::new(-1., -2., -3.));
+        }
+    }
+
+    #[test]
+    fn sub_float_resolution_samples_are_ordered_by_exact_wire_time() {
+        let (tf, _) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        let base = 1_700_000_000_123_456_789;
+        let newest =
+            Transform::from_nanoseconds("a", "b", base + 2, Isometry3::translation(2., 0., 0.));
+        let late =
+            Transform::from_nanoseconds("a", "b", base + 1, Isometry3::translation(1., 0., 0.));
+        assert_eq!(
+            newest.ts, late.ts,
+            "fixture must exercise a float collision"
+        );
+        tf.graph.update(|buffer| {
+            buffer.receive_transform(&newest);
+            buffer.receive_transform(&late);
+        });
+        let found = tf.get_latest("a", "b").unwrap();
+        assert_eq!(found.stamp_nanoseconds(), Some(base + 2));
+        assert_eq!(found.translation().x, 2.);
+    }
+
+    #[test]
+    fn composed_wire_time_is_the_exact_stalest_edge() {
+        let (tf, _) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        let base = 1_700_000_000_123_456_789;
+        let first =
+            Transform::from_nanoseconds("a", "b", base + 2, Isometry3::translation(1., 0., 0.));
+        let second =
+            Transform::from_nanoseconds("b", "c", base + 1, Isometry3::translation(2., 0., 0.));
+        tf.graph.update(|buffer| {
+            buffer.receive_transform(&first);
+            buffer.receive_transform(&second);
+        });
+        let found = tf.get_latest("a", "c").unwrap();
+        assert_eq!(found.stamp_nanoseconds(), Some(base + 1));
+        assert_eq!(found.translation().x, 3.);
+    }
+
+    #[test]
+    fn public_seconds_updates_invalidate_saved_wire_metadata() {
+        let mut value =
+            Transform::from_nanoseconds("a", "b", 1_700_000_000_123_456_789, Isometry3::identity());
+        value.ts = 3.5;
+        assert_eq!(value.stamp_nanoseconds(), Some(3_500_000_000));
+        value.ts = f64::NAN;
+        assert_eq!(value.stamp_nanoseconds(), None);
+        assert_eq!(
+            Transform::new("a", "b", 1.25, Isometry3::identity()).stamp_nanoseconds(),
+            Some(1_250_000_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn publication_keeps_exact_time_in_the_local_graph() {
+        let (tf, mut rx, _) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
+        let ns = 1_700_000_000_123_456_789;
+        tf.publish(&[Transform::from_nanoseconds(
+            "a",
+            "b",
+            ns,
+            Isometry3::identity(),
+        )])
+        .await
+        .unwrap();
+        assert!(rx.recv().await.is_some());
+        assert_eq!(
+            tf.get_latest("a", "b").unwrap().stamp_nanoseconds(),
+            Some(ns)
+        );
     }
 }
