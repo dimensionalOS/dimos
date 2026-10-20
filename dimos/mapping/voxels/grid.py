@@ -18,6 +18,9 @@ from collections.abc import Callable
 import time
 from typing import TYPE_CHECKING
 
+import numpy as np
+from numpy.typing import NDArray
+
 from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -87,6 +90,24 @@ class VoxelGrid:
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
 
+    def add_points(self, points: NDArray[np.float32], *, timestamp: float | None = None) -> None:
+        """Accumulate finite Nx3 coordinates without requiring a message wrapper.
+
+        The optional per-frame timestamp uses the existing store's seconds unit;
+        stream adapters keep their exact source Header separately.
+        """
+        self._check_disposed()
+        values = np.asarray(points, dtype=np.float32)
+        if values.ndim != 2 or values.shape[1] != 3:
+            raise ValueError("Voxel points must have shape Nx3")
+        if not np.isfinite(values).all():
+            raise ValueError("Voxel points must be finite")
+        if timestamp is not None:
+            self._latest_frame_ts = timestamp
+        self._impl.add_points(values, timestamp)
+        self.get_global_pointcloud.invalidate_cache(self)
+        self.get_global_pointcloud2.invalidate_cache(self)
+
     def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
         """Move every voxel to where `place` puts its stamped original position."""
         self._check_disposed()
@@ -113,7 +134,7 @@ class VoxelGrid:
         self._check_disposed()
         cpu = o3c.Device("CPU:0")
         out = o3d.t.geometry.PointCloud(device=cpu)
-        out.point["positions"] = o3c.Tensor(self._impl.points(), device=cpu)
+        out.point["positions"] = o3c.Tensor(self._impl.points(), dtype=o3c.float32, device=cpu)
         return out
 
     def size(self) -> int:
