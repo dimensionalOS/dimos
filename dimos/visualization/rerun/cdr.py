@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos.msgs.image import image_from_compressed, image_to_rgb, image_view
@@ -101,6 +102,23 @@ def cloud_archetype(message: PointCloud2) -> rr.Points3D:
     )
 
 
+def entity_points(message: EntityMarkers) -> rr.Points3D:
+    """Render generated world entities with the existing labels, colors and radii."""
+    import rerun as rr
+
+    colors = {
+        "person": (255, 100, 100, 255),
+        "object": (100, 255, 100, 255),
+        "location": (100, 100, 255, 255),
+    }
+    return rr.Points3D(
+        positions=[[m.position.x, m.position.y, m.position.z] for m in message.markers],
+        labels=[f"{m.entity_id}: {m.label[:40]}" for m in message.markers],
+        colors=[colors.get(m.entity_type, (200, 200, 200, 255)) for m in message.markers],
+        radii=[0.15] * len(message.markers),
+    )
+
+
 def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
     """Render stamped geometry and its exact fields; other domains remain explicit."""
     import rerun as rr
@@ -114,7 +132,11 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         if frame:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{frame}")))
         return entries
-    if type(message) is PoseStamped:
+    if type(message) is EntityMarkers:
+        entries = [(entity, entity_points(message))]
+        if message.header.frame_id:
+            entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
+    elif type(message) is PoseStamped:
         point, rotation = message.pose.position, message.pose.orientation
         entries = [
             (

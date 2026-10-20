@@ -25,8 +25,10 @@ import rerun as rr
 from dimos.core.cdr_transport import CdrTransport
 from dimos.core.global_config import GlobalConfig
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import PointStamped
+from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
+from dimos.messages.geometry_msgs.msg import Point, PointStamped
 from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb
@@ -178,3 +180,30 @@ def test_blueprint_does_not_construct_pubsubs_and_resolution_keeps_backend(mocke
     expected = zenoh if backend == "zenoh" else lcm
     expected.assert_called_once_with()
     assert resolved == [expected.return_value]
+
+
+def test_generated_entity_marker_adapter_keeps_labels_colors_frame_and_exact_fields():
+    header = Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789))
+    message = EntityMarkers(
+        header=header,
+        markers=[
+            EntityMarker(
+                entity_id="E1",
+                label="person",
+                entity_type="person",
+                position=Point(x=1, y=2, z=0.3),
+            )
+        ],
+    )
+    message = decode(encode(message), EntityMarkers)
+    entries = generated_archetypes(message, "memory/entities")
+    assert entries is not None
+    points, frame, fields = [value for _, value in entries]
+    np.testing.assert_allclose(points.positions.as_arrow_array().to_pylist(), [[1, 2, 0.3]])
+    assert points.labels.as_arrow_array().to_pylist() == ["E1: person"]
+    assert points.colors.as_arrow_array().to_pylist() == [0xFF6464FF]
+    assert frame.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+    assert (
+        json.loads(fields.text.as_arrow_array().to_pylist()[0])["header"]["stamp"]["nanosec"]
+        == 123456789
+    )

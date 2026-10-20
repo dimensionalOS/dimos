@@ -14,19 +14,27 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import json
 import os
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+import reactivex as rx
+from reactivex import Observable, operators as ops
+from reactivex.abc import SchedulerBase
+
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.create import create
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.image import image_sharpness, image_to_bgr, image_to_jpeg
+from dimos.msgs.time import to_seconds
+from dimos.types.timestamped import TimestampedBufferCollection, TimestampedData
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 from dimos.utils.threadpool import run_in_thread
@@ -39,6 +47,25 @@ if TYPE_CHECKING:
 
 
 logger = setup_logger()
+
+
+def _sharpness_window(
+    frequency: float, source: Observable[Image], *, scheduler: SchedulerBase | None = None
+) -> Observable[Image]:
+    """Keep the existing source-time rolling selection and repeated timer emissions."""
+    if frequency <= 0:
+        raise ValueError("frequency must be positive")
+    window: TimestampedBufferCollection[TimestampedData[Image]] = TimestampedBufferCollection(
+        1 / frequency
+    )
+
+    def remember(image: Image) -> None:
+        window.add(TimestampedData(image, to_seconds(image.header.stamp)))
+
+    return rx.interval(1 / frequency, scheduler=scheduler).pipe(
+        ops.with_latest_from(source.pipe(ops.do_action(remember))),
+        ops.map(lambda _: max(window, key=lambda item: image_sharpness(item.value)).value),
+    )
 
 
 class PerceiveLoopSkill(Module):
@@ -114,7 +141,7 @@ class PerceiveLoopSkill(Module):
 
             model = self._vl_model.result()
             sharpest = backpressure(
-                sharpness_window(1.0 / self._period, self.color_image.pure_observable())
+                _sharpness_window(1.0 / self._period, self.color_image.pure_observable())
             )
             model.start()
             self._model_started = True
@@ -181,7 +208,7 @@ class PerceiveLoopSkill(Module):
         continuation_context: dict[str, Any] = {
             "bbox": list(best.bbox),
             "label": best.name,
-            "image": image.to_base64(quality=70),
+            "image": base64.b64encode(image_to_jpeg(image, quality=70)).decode("ascii"),
         }
         logger.info(
             "Lookout matched, dispatching continuation",
@@ -208,7 +235,7 @@ def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBB
     import cv2
 
     try:
-        debug_img = image.to_opencv().copy()
+        debug_img = image_to_bgr(image).copy()
         for det in detections.detections:
             x1, y1, x2, y2 = (int(v) for v in det.bbox)
             cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)

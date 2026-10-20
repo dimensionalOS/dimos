@@ -173,6 +173,14 @@ source timestamp zero is not replaced by wall time. Until default encoding
 cutover, these generated ports require the explicit CDR transports described
 above. Offline boundary tests do not constitute full model or robot acceptance.
 
+Temporal memory and PerceiveLoop also accept generated images. Pixel comparison
+and CLIP frame preparation respect encoding and row stride. PerceiveLoop retains
+its rolling sharpest-frame selection and repeated timer output, with disposable
+source subscriptions. Temporal memory publishes generated `dimos_msgs/EntityMarkers`
+with a world Header; the Rerun adapter owns marker labels, colors and geometry.
+Generated values themselves have no rendering methods. Existing query and skill
+APIs remain unchanged.
+
 ## Experimental WorldBelief
 
 The experimental xArm6 WorldBelief stack records RGB-D observations and processes

@@ -16,16 +16,27 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 import threading
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import create_autospec, patch
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
+import rerun as rr
 
+from dimos.core.cdr_transport import CdrTransport
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
+from dimos.messages.geometry_msgs.msg import Point
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
+from dimos.perception.experimental.temporal_memory.clip_filter import _get_image_data
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
 from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
     Frame,
@@ -38,7 +49,10 @@ from dimos.perception.experimental.temporal_memory.temporal_state import Tempora
 from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
     extract_time_window,
 )
+from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import is_scene_stale
+from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.cdr import entity_points
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,7 +66,7 @@ logger = setup_logger()
 
 def _make_image(value: int = 128, shape: tuple[int, ...] = (64, 64, 3)) -> Image:
     data = np.full(shape, value, dtype=np.uint8)
-    return Image.from_numpy(data)
+    return image_from_array(data, encoding="rgb8")
 
 
 class TestFrameWindowAccumulator:
@@ -61,7 +75,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(10):
             img = _make_image(i * 25)
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         assert acc.buffer_size == 5
         assert acc.frame_count == 10
@@ -74,7 +88,7 @@ class TestFrameWindowAccumulator:
         # Add 3 frames
         for i in range(3):
             img = _make_image()
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         frames = acc.try_extract_window()
         assert frames is not None
@@ -85,7 +99,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(3):
             img = _make_image()
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         # First extraction should succeed
         frames = acc.try_extract_window()
@@ -104,7 +118,7 @@ class TestFrameWindowAccumulator:
         acc = FrameWindowAccumulator(max_buffer_frames=50, window_s=1.0, stride_s=1.0, fps=1.0)
         acc.set_start_time(0.0)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         acc.add_frame(img, 0.0)
         assert acc.buffer_size == 1
         acc.clear()
@@ -304,6 +318,7 @@ class TestPersistence:
             return_value=None,
         ):
             tm = TemporalMemory(
+                use_clip_filtering=False,
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
                 db_dir=str(db_dir),
                 new_memory=True,
@@ -329,6 +344,7 @@ class TestPersistence:
             return_value=None,
         ):
             tm = TemporalMemory(
+                use_clip_filtering=False,
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
                 db_dir=str(db_dir),
                 new_memory=False,
@@ -350,6 +366,7 @@ class TestJSONLLogging:
             return_value=log_dir,
         ):
             tm = TemporalMemory(
+                use_clip_filtering=False,
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
                 db_dir=str(db_dir),
             )
@@ -386,62 +403,74 @@ class TestEntityMarkers:
             return_value=None,
         ):
             tm = TemporalMemory(
+                use_clip_filtering=False,
                 vlm=create_autospec(VlModel, spec_set=True, instance=True),
                 db_dir=str(db_dir),
                 visualize=True,
             )
 
-        # Populate DB with world positions
-        tm._graph_db.upsert_entity(
-            "E1",
-            "person",
-            "walking person",
-            1.0,
-            metadata={"world_x": 1.0, "world_y": 2.0, "world_z": 0.0},
-        )
-        tm._graph_db.upsert_entity(
-            "E2",
-            "object",
-            "table",
-            1.0,
-            metadata={"world_x": 3.0, "world_y": 4.0, "world_z": 0.0},
-        )
+        with ExitStack() as cleanup:
+            wire = CdrTransport("entity_markers", EntityMarkers, backend="lcm", url="memq://")
+            cleanup.callback(wire.stop)
+            cleanup.callback(tm.stop)
+            tm.entity_markers.transport = wire
+            tm._graph_db.upsert_entity(
+                "E1",
+                "person",
+                "walking person",
+                1,
+                metadata={"world_x": 1.0, "world_y": 2.0, "world_z": 0.0},
+            )
+            tm._graph_db.upsert_entity(
+                "E2",
+                "object",
+                "table",
+                1,
+                metadata={"world_x": 3.0, "world_y": 4.0, "world_z": 0.0},
+            )
+            received = []
+            ready = threading.Event()
 
-        # Mock the output stream publish
-        tm.entity_markers = MagicMock()
-        tm._publish_entity_markers()
+            def receive(value):
+                received.append(value)
+                ready.set()
 
-        # Should have published EntityMarkers
-        tm.entity_markers.publish.assert_called_once()
-        msg = tm.entity_markers.publish.call_args[0][0]
-        assert len(msg.markers) == 2
-        ids = {m.entity_id for m in msg.markers}
-        assert ids == {"E1", "E2"}
-        e1 = next(m for m in msg.markers if m.entity_id == "E1")
-        assert e1.x == 1.0
-        assert e1.y == 2.0
-        tm.stop()
+            cleanup.callback(wire.subscribe(receive))
+            tm._publish_entity_markers()
+            assert ready.wait(2)
+            assert len(received) == 1
+            msg = received[0]
+            assert msg.header.frame_id == "world"
+            assert {m.entity_id for m in msg.markers} == {"E1", "E2"}
+            e1 = next(m for m in msg.markers if m.entity_id == "E1")
+            assert (e1.position.x, e1.position.y, e1.position.z) == (1, 2, 0.3)
 
     def test_markers_to_rerun(self) -> None:
-        from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
-
         markers = EntityMarkers(
             markers=[
-                Marker("E1", "person walking", "person", 1.0, 2.0, 0.3),
-                Marker("E2", "wooden table", "object", 3.0, 4.0, 0.3),
-            ]
+                EntityMarker(
+                    entity_id="E1",
+                    label="person walking",
+                    entity_type="person",
+                    position=Point(x=1.0, y=2.0, z=0.3),
+                ),
+                EntityMarker(
+                    entity_id="E2",
+                    label="wooden table",
+                    entity_type="object",
+                    position=Point(x=3.0, y=4.0, z=0.3),
+                ),
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
-        archetype = markers.to_rerun()
+        archetype = entity_points(cdr_decode(cdr_encode(markers), EntityMarkers))
         # Should return rr.Points3D
-        import rerun as rr
 
         assert isinstance(archetype, rr.Points3D)
 
 
 class TestWindowAnalyzer:
     def test_analyze_window_calls_vlm(self) -> None:
-        from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
-
         mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = json.dumps(
             {
@@ -455,7 +484,7 @@ class TestWindowAnalyzer:
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
         state_dict = {"entity_roster": [], "rolling_summary": ""}
 
@@ -466,22 +495,18 @@ class TestWindowAnalyzer:
         mock_vlm.query.assert_called_once()
 
     def test_analyze_window_vlm_error(self) -> None:
-        from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
-
         mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.side_effect = RuntimeError("VLM error")
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
 
         result = analyzer.analyze_window([frame], {}, 0.0, 2.0)
         assert result is None
 
     def test_update_summary(self) -> None:
-        from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
-
         mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = "Updated summary text"
 
@@ -493,8 +518,6 @@ class TestWindowAnalyzer:
         assert result.summary_text == "Updated summary text"
 
     def test_answer_query(self) -> None:
-        from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
-
         mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = "The answer is 42"
 
@@ -504,3 +527,30 @@ class TestWindowAnalyzer:
         result = analyzer.answer_query("What is the answer?", {}, img)
         assert result is not None
         assert result.answer == "The answer is 42"
+
+
+def test_scene_staleness_compares_pixels_not_padding():
+    first = Image(
+        width=2,
+        height=2,
+        encoding="rgb8",
+        step=8,
+        data=np.asarray([10] * 6 + [0, 0] + [10] * 6 + [0, 0], dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
+    )
+    last = cdr_decode(cdr_encode(first), Image)
+    last.data = np.asarray([10] * 6 + [255, 255] + [10] * 6 + [255, 255], dtype=np.uint8)
+    assert is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
+    last.data = np.asarray([30] * 6 + [255, 255] + [30] * 6 + [255, 255], dtype=np.uint8)
+    assert not is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
+
+
+def test_clip_frame_comparison_uses_rgb_colors_for_bgr_wire_images():
+    pixels = np.zeros((4, 4, 3), dtype=np.uint8)
+    pixels[:, :, 0] = 255
+    rgb = image_from_array(pixels, encoding="rgb8")
+    bgr = image_from_array(pixels[:, :, ::-1], encoding="bgr8")
+    bgr = cdr_decode(cdr_encode(bgr), Image)
+    np.testing.assert_array_equal(_get_image_data(rgb), _get_image_data(bgr))
+    np.testing.assert_array_equal(_get_image_data(bgr)[0, 0], [255, 0, 0])
