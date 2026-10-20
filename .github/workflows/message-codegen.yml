@@ -262,3 +262,8 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_map; from importlib import import_module; astar = import_module("dimos.navigation.go2.replanning_a_star.min_cost_astar"); import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (path_map, astar)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_astar.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_map.py dimos/navigation/go2/replanning_a_star/min_cost_astar.py
+      - name: Verify generated path resampling and exact source metadata
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_resampling; import pytest; import sys; assert "site-packages" in str(path_resampling.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_path_resampling.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_resampling.py
