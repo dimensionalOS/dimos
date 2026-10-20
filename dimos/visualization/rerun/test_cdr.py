@@ -34,7 +34,12 @@ from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, _resolve_pubsubs
-from dimos.visualization.rerun.cdr import cloud_archetype, generated_archetypes, image_archetype
+from dimos.visualization.rerun.cdr import (
+    cloud_archetype,
+    generated_archetypes,
+    image_archetype,
+    register_colormap_annotation,
+)
 from dimos.visualization.vis_module import vis_module
 from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
 
@@ -207,3 +212,29 @@ def test_generated_entity_marker_adapter_keeps_labels_colors_frame_and_exact_fie
         json.loads(fields.text.as_arrow_array().to_pylist()[0])["header"]["stamp"]["nanosec"]
         == 123456789
     )
+
+
+@pytest.mark.parametrize("mode", ["points", "boxes", "spheres"])
+def test_fixed_display_color_overrides_sensor_rgb_after_invalid_points_filter(mode):
+    cloud = pointcloud_from_xyz_rgb(
+        np.array([[1, 2, 3], [np.nan, 0, 0]], dtype=np.float32),
+        np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id="world"),
+    )
+    before = encode(cloud)
+    value = cloud_archetype(cloud, mode=mode, color=(76, 220, 41))
+    positions = value.centers if mode == "boxes" else value.positions
+    assert positions.as_arrow_array().to_pylist() == [[1, 2, 3]]
+    assert value.colors.as_arrow_array().to_pylist() == [0x4CDC29FF]
+    assert encode(cloud) == before
+
+
+def test_height_palette_uses_all_class_ids_at_the_recording_root(mocker):
+    log = mocker.patch.object(rr, "log")
+    register_colormap_annotation("turbo")
+    log.assert_called_once()
+    path, annotation = log.call_args.args
+    assert path == "/" and log.call_args.kwargs == {"static": True}
+    [classes] = annotation.context.as_arrow_array().to_pylist()
+    assert [item["class_id"] for item in classes] == list(range(256))
+    assert classes[0]["class_description"]["info"]["color"] == 0x30123BFF

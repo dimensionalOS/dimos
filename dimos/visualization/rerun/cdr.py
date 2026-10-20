@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import lru_cache
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +99,7 @@ def cloud_archetype(
     mode: str = "points",
     bottom_cutoff: float | None = None,
     height_colors: bool = False,
+    color: tuple[int, int, int] | None = None,
 ) -> rr.Points3D | rr.Boxes3D:
     """Render plain cloud values, keeping color/geometry filters aligned.
 
@@ -118,12 +120,40 @@ def cloud_archetype(
         z = points[:, 2]
         levels = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
         colors = (colormaps["turbo"](levels)[:, :3] * 255).astype(np.uint8)
+    if color is not None:
+        colors = np.asarray(color, dtype=np.uint8)
     if mode == "boxes":
         return rr.Boxes3D(centers=points, half_sizes=[voxel_size / 2] * 3, colors=colors)
     return rr.Points3D(
         points,
         colors=colors,
         radii=rr.components.Radius.ui_points(2.0) if mode == "points" else voxel_size / 2,
+    )
+
+
+@lru_cache(maxsize=16)
+def _colormap_lut(name: str) -> np.ndarray[Any, np.dtype[np.uint8]]:
+    from matplotlib import colormaps
+
+    return (colormaps[name](np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+
+
+def register_colormap_annotation(name: str = "turbo") -> None:
+    """Register the height palette outside the generated point-cloud value type."""
+    import rerun as rr
+
+    lut = _colormap_lut(name)
+    rr.log(
+        "/",
+        rr.AnnotationContext(
+            [
+                rr.datatypes.ClassDescription(
+                    info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
+                )
+                for i in range(256)
+            ]
+        ),
+        static=True,
     )
 
 

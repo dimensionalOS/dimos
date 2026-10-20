@@ -411,3 +411,11 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.relocalization import module; from dimos.mapping.relocalization.lidar import module as lidar,relocalize; from dimos.mapping.relocalization.go2 import module as go2; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,relocalize,go2)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/test_module.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/{module,blueprints}.py dimos/mapping/relocalization/lidar/{module,relocalize}.py dimos/mapping/relocalization/go2/module.py
+      - name: Verify CDR relocalization replay and viewer adapters without benchmark studies
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.relocalization import blueprints; from dimos.mapping.relocalization.lidar import replay,tune; from dimos.visualization.rerun import cdr,init; import dimos_voxel_ray_tracing; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (blueprints,replay,tune,cdr,init,dimos_voxel_ray_tracing)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/lidar/test_replay.py" "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/visualization/rerun/test_cdr.py::test_cloud_renderer_filters_nonfinite_positions_with_matching_colors" "$PWD/dimos/visualization/rerun/test_cdr.py::test_fixed_display_color_overrides_sensor_rgb_after_invalid_points_filter" "$PWD/dimos/visualization/rerun/test_cdr.py::test_height_palette_uses_all_class_ids_at_the_recording_root"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/blueprints.py dimos/mapping/relocalization/lidar/{replay,tune}.py dimos/visualization/rerun/{cdr,init}.py

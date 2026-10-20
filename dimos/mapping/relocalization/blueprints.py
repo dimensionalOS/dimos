@@ -41,6 +41,7 @@ from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.cdr import cloud_archetype
 from dimos.visualization.vis_module import vis_module
 
 logger = setup_logger()
@@ -87,9 +88,9 @@ class RecordingPlayer(Module):
         self.register_disposable(tf.observable().subscribe(self.tf.publish))
 
 
-def _fine_points(cloud: Any) -> Any:
+def _fine_points(cloud: PointCloud2) -> Any:
     """The premap is millimetre-scale; draw it at that size, not the 5 cm default."""
-    return cloud.to_rerun(voxel_size=0.0015)
+    return cloud_archetype(cloud, voxel_size=0.0015, mode="spheres", height_colors=True)
 
 
 # Off until asked for.

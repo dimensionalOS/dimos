@@ -16,6 +16,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -25,6 +26,7 @@ from scipy.spatial.transform import Rotation
 pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
+from dimos.mapping.relocalization.blueprints import _fine_points
 from dimos.mapping.relocalization.lidar import replay as replay_module
 from dimos.mapping.relocalization.lidar.relocalize import PRESETS, RelocAttempt
 from dimos.mapping.relocalization.lidar.replay import (
@@ -34,21 +36,47 @@ from dimos.mapping.relocalization.lidar.replay import (
     write_loaded_map,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.geometry import transform_from_matrix
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 
 
-def _fix(yaw_deg: float, x: float = 0.0, y: float = 0.0) -> Transform:
+@pytest.fixture
+def recording():
+    with rr.RecordingStream("relocalization-test") as value:
+        try:
+            yield value
+        finally:
+            rr.disconnect(recording=value)
+
+
+def _cloud(points, *, frame_id, timestamp=0.0):
+    return pointcloud_from_xyz(
+        points, header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp))
+    )
+
+
+def _fix(yaw_deg: float, x: float = 0.0, y: float = 0.0) -> TransformStamped:
     m = np.eye(4)
     m[:3, :3] = Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
     m[0, 3], m[1, 3] = x, y
-    return Transform.from_matrix(m, frame_id="odom", child_frame_id="map")
+    return TransformStamped(
+        header=Header(frame_id="odom", stamp=time_from_seconds(0)),
+        child_frame_id="map",
+        transform=transform_from_matrix(m),
+    )
 
 
-def _edge(parent: str, child: str, ts: float, x: float = 0.0) -> Transform:
-    return Transform(frame_id=parent, child_frame_id=child, translation=Vector3(x, 0.0, 0.0), ts=ts)
+def _edge(parent: str, child: str, ts: float, x: float = 0.0) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id=parent, stamp=time_from_seconds(ts)),
+        child_frame_id=child,
+        transform=Transform(translation=Vector3(x, 0, 0), rotation=Quaternion(0, 0, 0, 1)),
+    )
 
 
 def test_fix_error_wraps_yaw_and_measures_translation() -> None:
@@ -61,16 +89,19 @@ def test_fix_error_wraps_yaw_and_measures_translation() -> None:
 @pytest.mark.skipif_macos
 def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
     pts = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
-    premap = PointCloud2.from_numpy(pts, frame_id="map")
+    premap = _cloud(pts, frame_id="map")
     fix = _fix(90.0, x=1.0)
+    originals = encode(premap), encode(fix)
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
         assert write_loaded_map(store, premap, fix, 5.0, "odom") is True
         stream = store.stream(LOADED_MAP_STREAM, PointCloud2)
         assert stream.count() == 1
         written = stream.first()
-        assert written.data.frame_id == "odom"
+        assert written.data.header.frame_id == "odom"
         assert written.ts == 5.0
-        np.testing.assert_allclose(written.data.points_f32(), [[1, 1, 0], [0, 0, 0]], atol=1e-6)
+        assert written.data.header.stamp == time_from_seconds(5.0)
+        assert (encode(premap), encode(fix)) == originals
+        np.testing.assert_allclose(pointcloud_xyz(written.data), [[1, 1, 0], [0, 0, 0]], atol=1e-6)
 
         assert write_loaded_map(store, premap, fix, 6.0, "odom") is False
         assert stream.count() == 1
@@ -87,18 +118,18 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
             _edge("odom", "map", 2.0, x=2.0),
             _edge("odom", "map", 3.0, x=3.0),
         ):
-            tf.append(TFMessage(edge), ts=edge.ts, pose=None)
+            tf.append(TFMessage(transforms=[edge]), ts=to_seconds(edge.header.stamp), pose=None)
 
         recorded = recorded_fix(store, "odom", "map")
         assert recorded is not None
-        assert recorded.translation.x == 2.0
+        assert recorded.transform.translation.x == 2.0
         assert recorded_fix(store, "odom", "nowhere") is None
 
 
 @pytest.mark.skipif_aarch64
 @pytest.mark.skipif_macos
 def test_replay_spaces_attempts_and_stops_after_the_fix(
-    tmp_path: Path, mocker: MockerFixture
+    tmp_path: Path, mocker: MockerFixture, recording
 ) -> None:
     fix = _fix(90.0, x=1.0)
     attempts = [
@@ -111,7 +142,7 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
     set_time = mocker.spy(rr, "set_time")
     span = np.arange(0.0, 1.0, 0.05)
     dense = np.array([(x, y, 0.5) for x in span for y in span], dtype=np.float32)
-    premap = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map")
+    premap = _cloud(np.eye(3, dtype=np.float32), frame_id="map")
 
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
         lidar = store.stream("lidar", PointCloud2)
@@ -120,8 +151,8 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
             ts = 10.0 + i * 0.5
             # The first frame's local map is under min_local_points.
             points = dense[:3] if i == 0 else dense
-            tf.append(TFMessage(_edge("odom", "lidar", ts)), ts=ts, pose=None)
-            lidar.append(PointCloud2.from_numpy(points, frame_id="lidar", timestamp=ts), ts=ts)
+            tf.append(TFMessage(transforms=[_edge("odom", "lidar", ts)]), ts=ts, pose=None)
+            lidar.append(_cloud(points, frame_id="lidar", timestamp=ts), ts=ts)
         result = replay(
             store,
             lidar_stream="lidar",
@@ -136,7 +167,10 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
             to_time=None,
         )
 
-    relocalizer_class.assert_called_once_with(premap.pointcloud, PRESETS["mid360"])
+    relocalizer_class.assert_called_once()
+    geometry, config = relocalizer_class.call_args.args
+    np.testing.assert_allclose(np.asarray(geometry.points), pointcloud_xyz(premap))
+    assert config is PRESETS["mid360"]
     assert attempt.call_count == 2
     # The sparse frame at 0.0 s is skipped, so the first attempt waits for 0.5 s.
     assert [a.t_s for a in result.attempts] == [0.5, 1.5]
@@ -147,3 +181,12 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
     # The frame at 12.0 is inside after_s of the fix, the ones at 12.5 and 13.0 are past it.
     processed = [call.kwargs["timestamp"] for call in set_time.call_args_list]
     assert processed == [10.0, 10.5, 11.0, 11.5, 12.0]
+
+
+def test_premap_renderer_preserves_fine_point_size_with_generated_values():
+    cloud = _cloud(np.array([[1, 2, 3]], dtype=np.float32), frame_id="map")
+    before = encode(cloud)
+    value = _fine_points(cloud)
+    assert value.positions.as_arrow_array().to_pylist() == [[1, 2, 3]]
+    np.testing.assert_allclose(value.radii.as_arrow_array().to_pylist(), [0.00075], atol=1e-9)
+    assert encode(cloud) == before
