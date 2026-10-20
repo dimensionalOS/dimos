@@ -63,11 +63,13 @@ def test_main_wheel_owns_messages_and_schema_closure(artifacts):
         assert "dimos/messages_schemas/schemas/builtin_interfaces/msg/Time.msg" in names
         assert "dimos/messages_schemas/package/cpp/CMakeLists.txt" in names
         assert "dimos/messages_schemas/package/rust/Cargo.toml" in names
+        assert "dimos/_native/rust/dimos-module/examples/transport_bench.rs" in names
     with tarfile.open(sdist) as archive:
         names = {name.split("/", 1)[-1] for name in archive.getnames()}
         assert "packages/dimos-generated/interfaces/std_msgs/msg/Header.msg" in names
         assert "packages/dimos-generated/interfaces/licenses/dimos_msgs-LICENSE" in names
         assert "packages/dimos-generated/catalog.json" in names
+        assert "native/rust/dimos-module/examples/transport_bench.rs" in names
 
 
 @pytest.mark.parametrize("mode", ["wheel", "source", "editable", "git"])

@@ -62,5 +62,6 @@ include native/cpp/CMakeLists.txt
 recursive-include native/cpp/include *.hpp
 include native/rust/dimos-module/Cargo.toml native/rust/dimos-module/Cargo.lock
 recursive-include native/rust/dimos-module/src *.rs
+recursive-include native/rust/dimos-module/examples *.rs
 include native/rust/dimos-module-macros/Cargo.toml
 recursive-include native/rust/dimos-module-macros/src *.rs
