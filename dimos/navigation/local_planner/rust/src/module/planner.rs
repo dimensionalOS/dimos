@@ -14,7 +14,8 @@
 
 //! The SE(2) local planner as a robot-side module. Cloud from
 //! `local_map`, pose from tf (`world_frame -> base_frame`), goal a carrot `goal_lookahead_m`
-//! along `planner_path`. A refusal or a stale map publishes a one-pose hold stub.
+//! along `planner_path`, pulled back along it to where the body fits. A refusal or a stale
+//! map publishes a one-pose hold stub.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -548,6 +549,27 @@ mod tests {
     fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Option<(f64, f64)> {
         let end = *approach_along(route, robot, lookahead)?.last()?;
         Some((end[0], end[1]))
+    }
+
+    #[test]
+    fn approach_runs_from_the_closest_waypoint_to_the_carrot() {
+        let r = route(&[(0.0, 0.0), (2.0, 0.0), (2.0, 4.0)]);
+        assert_eq!(
+            approach_along(&r, (2.1, 0.5), 1.5),
+            Some(vec![[2.0, 0.0], [2.0, 1.5]])
+        );
+    }
+
+    #[test]
+    fn an_approach_past_the_route_end_is_the_rest_of_the_route() {
+        let r = route(&[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]);
+        assert_eq!(approach_along(&r, (0.9, 0.0), 5.0), Some(r[1..].to_vec()));
+    }
+
+    #[test]
+    fn an_approach_from_the_last_waypoint_is_that_waypoint() {
+        let r = route(&[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]);
+        assert_eq!(approach_along(&r, (2.5, 0.0), 1.0), Some(vec![[2.0, 0.0]]));
     }
 
     // carrot_along

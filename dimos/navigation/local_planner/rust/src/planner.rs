@@ -618,7 +618,7 @@ fn build_world_explored(
     cap: f64,
 ) -> World {
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
-    // Working area over {pose, approach, cloud} padded by `PAD`, low corner snapped
+    // Working area over {pose, approach, cloud} padded by PAD, low corner snapped
     // onto the absolute lattice.
     let (mut x0, mut y0, mut x1, mut y1) = (pose.0, pose.1, pose.0, pose.1);
     for (x, y) in approach
@@ -968,6 +968,14 @@ impl<'a> Clear<'a> {
         m
     }
 
+    /// The cell holding `(x, y)`, clamped to the world.
+    fn cell_of(&self, x: f64, y: f64) -> (usize, usize) {
+        (
+            ((x / CELL).round_even_i64() - self.w.kx).clamp(0, self.nx as i64 - 1) as usize,
+            ((y / CELL).round_even_i64() - self.w.ky).clamp(0, self.ny as i64 - 1) as usize,
+        )
+    }
+
     /// Does swept box `fp` clear `thresh` at (bin, cell)? Union first; every
     /// row is nested in it.
     #[inline]
@@ -1064,15 +1072,9 @@ fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
 fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Option<(f64, f64)> {
     let end = *approach.last()?;
     let walk = fps.id(emb, Some(0.0));
-    let (kx, ky, nx, ny, margin) = (cl.w.kx, cl.w.ky, cl.nx, cl.ny, cl.margin);
-    let cell_of = |x: f64, y: f64| {
-        (
-            ((x / CELL).round_even_i64() - kx).clamp(0, nx as i64 - 1) as usize,
-            ((y / CELL).round_even_i64() - ky).clamp(0, ny as i64 - 1) as usize,
-        )
-    };
+    let margin = cl.margin;
     let fits = |cl: &mut Clear, x: f64, y: f64| {
-        let (i, j) = cell_of(x, y);
+        let (i, j) = cl.cell_of(x, y);
         (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
     };
     if fits(cl, end[0], end[1]) {
@@ -1104,16 +1106,9 @@ fn se2_search_in(
 ) -> Option<Vec<[f64; 3]>> {
     let offs = fps.union().to_vec();
     let stand_offs = fps.stand().to_vec();
-    let (kx, ky) = (cl.w.kx, cl.w.ky);
     let (nx, ny) = (cl.nx, cl.ny);
     let thetas = yaw_bins();
 
-    let cell_of = |px: f64, py: f64| -> (usize, usize) {
-        (
-            ((px / CELL).round_even_i64() - kx).clamp(0, nx as i64 - 1) as usize,
-            ((py / CELL).round_even_i64() - ky).clamp(0, ny as i64 - 1) as usize,
-        )
-    };
     let mut sb = 0;
     let mut sbest = f64::INFINITY;
     for (k, &th) in thetas.iter().enumerate() {
@@ -1123,8 +1118,8 @@ fn se2_search_in(
             sb = k;
         }
     }
-    let (si, sj) = cell_of(start.0, start.1);
-    let (gi, gj) = cell_of(goal.0, goal.1);
+    let (si, sj) = cl.cell_of(start.0, start.1);
+    let (gi, gj) = cl.cell_of(goal.0, goal.1);
     // The seed is witnessed at the true start pose on the standing box (nested
     // in every row, so a replan from a published route cannot refuse); below
     // the witness, the nearest standing-fit lattice state with a clear segment.
@@ -1872,7 +1867,7 @@ pub fn plan_explored(
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
     let mut w = build_world_explored(points, terrain, step_reach(emb), pose, approach, cap);
     let margin = emb.precision;
-    // World from {pose, approach, cloud}, never the incumbent; one clearance table for both.
+    // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
@@ -2275,6 +2270,28 @@ mod tests {
         )
     }
 
+    fn slot_x(lo: f64, hi: f64, from_y: f64) -> Vec<[f64; 2]> {
+        let mut pts = Vec::new();
+        let mut y = from_y;
+        while y <= 3.0 {
+            pts.extend([[lo, y], [hi, y]]);
+            y += 0.02;
+        }
+        pts
+    }
+
+    fn end_xy(states: &[[f64; 3]]) -> [f64; 2] {
+        let end = states.last().unwrap();
+        [end[0], end[1]]
+    }
+
+    fn assert_near(got: [f64; 2], want: [f64; 2]) {
+        assert!(
+            (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+            "{got:?} != {want:?}"
+        );
+    }
+
     #[test]
     fn a_goal_against_a_wall_is_pulled_back_along_the_approach() {
         let pts = wall_x(2.0, None);
@@ -2284,28 +2301,39 @@ mod tests {
             "the body cannot stand at the goal"
         );
         let states = plan_along(&pts, &[[0.0, 0.0], goal]).expect("pulled back, not refused");
-        let end = states.last().unwrap();
-        assert!(end[0] < goal[0] && end[0] > 1.0, "{end:?}");
-        assert!(end[1].abs() < 0.1, "{end:?}");
+        assert_near(end_xy(&states), [1.68, 0.0]);
     }
 
     #[test]
     fn a_carrot_in_a_narrow_door_is_pulled_back_short_of_it() {
         let pts = wall_x(2.0, Some((-0.2, 0.2)));
+        assert!(
+            plan_along(&pts, &[[2.0, 0.0]]).is_none(),
+            "the body cannot stand in the door"
+        );
         let states = plan_along(&pts, &[[0.0, 0.0], [2.0, 0.0]]).expect("pulled back");
-        let end = states.last().unwrap();
-        assert!(end[0] < 2.0 - 0.3 && end[0] > 1.0, "{end:?}");
+        assert_near(end_xy(&states), [1.68, 0.0]);
     }
 
     #[test]
     fn a_carrot_the_body_fits_is_not_moved() {
         let pts = wall_x(3.0, None);
+        let alone = plan_along(&pts, &[[2.0, 0.0]]).expect("a plan");
         let states = plan_along(&pts, &[[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]]).expect("a plan");
-        let end = states.last().unwrap();
-        assert!(
-            (end[0] - 2.04).abs() < 1e-9 && end[1].abs() < 1e-9,
-            "{end:?}"
-        );
+        assert_near(end_xy(&states), end_xy(&alone));
+    }
+
+    #[test]
+    fn a_blocked_last_leg_pulls_back_onto_the_leg_before() {
+        let pts = slot_x(1.3, 1.7, -0.25);
+        let states = plan_along(&pts, &[[0.0, 0.0], [1.5, 0.0], [1.5, 1.5]]).expect("pulled back");
+        assert_near(end_xy(&states), [0.96, 0.0]);
+    }
+
+    #[test]
+    fn an_approach_the_body_fits_nowhere_on_is_refused() {
+        let pts = slot_x(1.3, 1.7, -0.25);
+        assert!(plan_along(&pts, &[[1.5, 0.5], [1.5, 1.0], [1.5, 1.5]]).is_none());
     }
 
     /// The governor price stays in [1.0, max_speed / min_speed].
