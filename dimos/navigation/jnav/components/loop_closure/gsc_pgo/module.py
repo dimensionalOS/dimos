@@ -88,6 +88,8 @@ class PGOConfig(NativeModuleConfig):
 
     # only use global map for debugging
     global_map_publish_rate: float = 0.0
+    # Where each pose graph snapshot's keyframes go for offline checks (f64 ts, raw xyz+q, corrected xyz+q), empty for never.
+    dump_path: str = ""
     global_map_voxel_size: float = 0.1
 
     # Scan Context place recognition (used by loop closure search), https://arxiv.org/abs/2109.13494

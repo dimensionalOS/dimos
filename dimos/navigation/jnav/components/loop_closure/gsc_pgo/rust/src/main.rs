@@ -100,6 +100,8 @@ pub struct Config {
     // Debug global-map publishing (rate <= 0 disables; see module.py).
     pub global_map_voxel_size: f64,
     pub global_map_publish_rate: f64,
+    // Where each pose graph snapshot's keyframes go, for offline checks; empty for never.
+    pub dump_path: String,
 
     // Scan Context place recognition
     pub use_scan_context: bool,
@@ -766,6 +768,11 @@ impl Worker {
         self.publish(&self.pose_graph, &graph, "pose_graph");
         let records = build_pose_graph_records(pgo.key_poses(), ts, frame_id);
         self.publish(&self.pose_graph_records, &records, "pose_graph_records");
+        if !self.config.dump_path.is_empty() {
+            if let Err(e) = dump_keyframes(&self.config.dump_path, pgo.key_poses()) {
+                warn!(error = %e, "Failed to dump the keyframes.");
+            }
+        }
         self.publish_deformation_nodes(
             pgo.key_poses(),
             deformation_tf_id,
@@ -857,4 +864,27 @@ impl Worker {
 #[tokio::main]
 async fn main() {
     run_with_transport::<GscPgoModule>().await;
+}
+
+/// Each keyframe as little-endian f64s: ts, raw (local) x y z qx qy qz qw, then
+/// corrected (global) x y z qx qy qz qw, written atomically.
+fn dump_keyframes(path: &str, key_poses: &[KeyPoseWithCloud]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(key_poses.len() * 15 * 8);
+    for kp in key_poses {
+        let mut values = vec![kp.time];
+        for (rotation, translation) in [
+            (&kp.rotation_local, &kp.translation_local),
+            (&kp.rotation_global, &kp.translation_global),
+        ] {
+            let q = mat3::quat_from_mat(rotation);
+            values.extend_from_slice(translation);
+            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+        }
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }
