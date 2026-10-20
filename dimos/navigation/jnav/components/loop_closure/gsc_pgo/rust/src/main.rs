@@ -61,6 +61,10 @@ use utils::{
     interpolate_odom, SplitMix64,
 };
 
+// A keyframe pose change smaller than this waits to add up before it is sent.
+const POSE_CHANGE_M: f64 = 1e-3;
+const POSE_CHANGE_RAD: f64 = 1e-4;
+
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
@@ -512,6 +516,8 @@ impl Worker {
         let mut deformation_rng = SplitMix64::from_entropy();
         let mut deformation_ids: Vec<u64> = Vec::new();
         let mut deformation_last: Vec<(Mat3, Vec3)> = Vec::new();
+        // Each keyframe's pose as fast-reform consumers last heard it.
+        let mut published: Vec<(Mat3, Vec3)> = Vec::new();
 
         while !self.stop.load(Ordering::Relaxed) {
             // Drain pending LocationConstraints first, independent of scans,
@@ -541,6 +547,13 @@ impl Worker {
                     );
                     if pgo.add_location_constraint(&node_pose, &interp_frame, &constraint) {
                         pgo.smooth_and_update();
+                        self.publish_pose_changes(
+                            &pgo,
+                            &mut published,
+                            false,
+                            constraint.ts,
+                            &frame_id,
+                        );
                     } else {
                         warn!(
                             to_id = %constraint.to_id,
@@ -577,6 +590,7 @@ impl Worker {
                 };
                 if gnc_folded {
                     let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
                     self.publish_graph(
                         &pgo,
                         last_time,
@@ -652,8 +666,12 @@ impl Worker {
                 continue;
             }
 
-            // Keyframe added. Snapshot global poses BEFORE search + smooth so
-            // we can publish the delta iSAM2 applies if a loop actually fires.
+            // Keyframe added: consumers hold its scans where the current offset put them.
+            published.extend(
+                pgo.key_poses()[published.len()..]
+                    .iter()
+                    .map(|kp| (kp.rotation_global, kp.translation_global)),
+            );
             // Never search for loops while scans are waiting: skip it rather than fall behind.
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
             if behind {
@@ -662,14 +680,6 @@ impl Worker {
                 pgo.search_for_loop_pairs();
             }
             let had_loop = pgo.has_loop();
-            let pre_poses: Vec<(Mat3, Vec3)> = if had_loop {
-                pgo.key_poses()
-                    .iter()
-                    .map(|kp| (kp.rotation_global, kp.translation_global))
-                    .collect()
-            } else {
-                Vec::new()
-            };
 
             // Everything below is on the pipeline thread; time it on closures to
             // confirm the batch GNC no longer blocks here (was seconds inline).
@@ -692,18 +702,8 @@ impl Worker {
                     pgo.key_poses().len(),
                     pipeline_thread_t0.elapsed().as_secs_f64() * 1000.0,
                 );
-                let msg =
-                    build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
-                self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
-                let records =
-                    build_loop_closure_records(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
-                self.publish(&self.loop_closure_records, &records, "loop_closure_records");
-                if !self.config.dump_path.is_empty() {
-                    if let Err(e) = append_closure(&self.config.dump_path, cur_time, &records) {
-                        warn!(error = %e, "Failed to dump the loop closure.");
-                    }
-                }
             }
+            self.publish_pose_changes(&pgo, &mut published, had_loop, cur_time, &frame_id);
 
             self.publish_corrected(
                 &pgo,
@@ -786,6 +786,46 @@ impl Worker {
             deformation_last,
             deformation_rng,
         );
+    }
+
+    /// Send fast-reform consumers every keyframe pose change since they last
+    /// heard: a loop's update, and also iSAM2 relinearizing after earlier
+    /// loops or an adopted GNC solve, which move keyframes without a new loop.
+    /// Changes too small to matter wait in `published` and add up.
+    fn publish_pose_changes(
+        &self,
+        pgo: &GscPgo,
+        published: &mut Vec<(Mat3, Vec3)>,
+        loop_closed: bool,
+        ts: f64,
+        frame_id: &str,
+    ) {
+        let poses = pgo.key_poses();
+        let moved = poses
+            .iter()
+            .zip(published.iter())
+            .any(|(kp, (rotation, translation))| {
+                let shift = mat3::sub(&kp.translation_global, translation);
+                let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
+                let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+                mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
+            });
+        if !loop_closed && !moved {
+            return;
+        }
+        let msg = build_loop_closure_event(published, poses, ts, frame_id);
+        self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
+        let records = build_loop_closure_records(published, poses, ts, frame_id);
+        self.publish(&self.loop_closure_records, &records, "loop_closure_records");
+        if !self.config.dump_path.is_empty() {
+            if let Err(e) = append_closure(&self.config.dump_path, ts, &records) {
+                warn!(error = %e, "Failed to dump the loop closure.");
+            }
+        }
+        *published = poses
+            .iter()
+            .map(|kp| (kp.rotation_global, kp.translation_global))
+            .collect();
     }
 
     fn publish_corrected(
