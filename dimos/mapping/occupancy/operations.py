@@ -12,15 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+from typing import TypeVar
+
 import numpy as np
+from numpy.typing import NDArray
 from scipy import ndimage
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.occupancy import CostValues, occupancy_view
+
+_GridT = TypeVar("_GridT", OccupancyGrid, CdrOccupancyGrid)
 
 
-def smooth_occupied(
-    occupancy_grid: OccupancyGrid, min_neighbor_fraction: float = 0.4
-) -> OccupancyGrid:
+def _grid_values(message: _GridT) -> NDArray[np.int8]:
+    if isinstance(message, CdrOccupancyGrid):
+        return occupancy_view(message)
+    return message.grid
+
+
+def _with_grid(message: _GridT, cells: NDArray[np.int8]) -> _GridT:
+    if isinstance(message, CdrOccupancyGrid):
+        if cells.shape != (message.info.height, message.info.width):
+            raise ValueError("Replacement occupancy cells must retain map dimensions")
+        result = deepcopy(message)
+        result.data = np.array(cells, dtype=np.int8, copy=True).reshape(-1)
+        return result
+    return OccupancyGrid(
+        grid=cells,
+        resolution=message.resolution,
+        origin=message.origin,
+        frame_id=message.frame_id,
+        ts=message.ts,
+    )
+
+
+def smooth_occupied(occupancy_grid: _GridT, min_neighbor_fraction: float = 0.4) -> _GridT:
     """Smooth occupied zones by removing unsupported protrusions.
 
     Removes occupied cells that don't have sufficient neighboring occupied
@@ -33,7 +61,7 @@ def smooth_occupied(
     Returns:
         New OccupancyGrid with smoothed occupied zones
     """
-    grid_array = occupancy_grid.grid
+    grid_array = _grid_values(occupancy_grid)
     occupied_mask = grid_array >= CostValues.OCCUPIED
 
     # Count occupied neighbors for each cell (8-connectivity).
@@ -49,16 +77,10 @@ def smooth_occupied(
     result_grid = grid_array.copy()
     result_grid[unsupported] = CostValues.FREE
 
-    return OccupancyGrid(
-        grid=result_grid,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return _with_grid(occupancy_grid, result_grid)
 
 
-def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGrid:
+def overlay_occupied(base: _GridT, overlay: _GridT) -> _GridT:
     """Overlay occupied zones from one grid onto another.
 
     Marks cells as occupied in the base grid wherever they are occupied
@@ -70,19 +92,13 @@ def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGr
     Returns:
         New OccupancyGrid with combined occupied zones
     """
-    if base.grid.shape != overlay.grid.shape:
+    if _grid_values(base).shape != _grid_values(overlay).shape:
         raise ValueError(
-            f"Grid shapes must match: base {base.grid.shape} vs overlay {overlay.grid.shape}"
+            f"Grid shapes must match: base {_grid_values(base).shape} vs overlay {_grid_values(overlay).shape}"
         )
 
-    result_grid = base.grid.copy()
-    overlay_occupied_mask = overlay.grid >= CostValues.OCCUPIED
+    result_grid = _grid_values(base).copy()
+    overlay_occupied_mask = _grid_values(overlay) >= CostValues.OCCUPIED
     result_grid[overlay_occupied_mask] = CostValues.OCCUPIED
 
-    return OccupancyGrid(
-        grid=result_grid,
-        resolution=base.resolution,
-        origin=base.origin,
-        frame_id=base.frame_id,
-        ts=base.ts,
-    )
+    return _with_grid(base, result_grid)

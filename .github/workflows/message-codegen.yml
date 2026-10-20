@@ -19,6 +19,7 @@ on:
       - dimos/msgs/**
       - dimos/protocol/tf/**
       - dimos/memory/**
+      - dimos/mapping/occupancy/**
       - dimos/protocol/cdr_mcap.py
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
@@ -221,3 +222,8 @@ jobs:
           .native-review/bin/python -I -c 'import dimos.msgs.occupancy as values; import pytest; import sys; assert "site-packages" in str(values.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_occupancy.py"
           .native-review/bin/python -I -c 'import dimos.msgs.nav_msgs.OccupancyGrid; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/nav_msgs/test_OccupancyGrid.py" -k block_max_reduce
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/occupancy.py
+      - name: Verify occupancy algorithms preserve generated and existing value contracts
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import operations, gradient, inflation, extrude_occupancy; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (operations, gradient, inflation, extrude_occupancy)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_operations.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/operations.py dimos/mapping/occupancy/gradient.py dimos/mapping/occupancy/inflation.py dimos/mapping/occupancy/extrude_occupancy.py

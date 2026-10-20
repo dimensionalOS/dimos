@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 import numpy as np
 from scipy import ndimage
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.mapping.occupancy.operations import _grid_values, _GridT, _with_grid
+from dimos.msgs.occupancy import CostValues
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -27,8 +28,8 @@ GradientStrategy: TypeAlias = Literal["gradient", "voronoi"]
 
 
 def gradient(
-    occupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
-) -> OccupancyGrid:
+    occupancy_grid: _GridT, obstacle_threshold: int = 50, max_distance: float = 2.0
+) -> _GridT:
     """Create a gradient OccupancyGrid for path planning.
 
     Creates a gradient where free space has value 0 and values increase near obstacles.
@@ -49,19 +50,19 @@ def gradient(
     """
 
     # Remember which cells are unknown
-    unknown_mask = occupancy_grid.grid == CostValues.UNKNOWN
+    unknown_mask = _grid_values(occupancy_grid) == CostValues.UNKNOWN
 
     # Create binary obstacle map
     # Consider cells >= threshold as obstacles (1), everything else as free (0)
     # Unknown cells are not considered obstacles for distance calculation
-    obstacle_map = (occupancy_grid.grid >= obstacle_threshold).astype(np.float32)
+    obstacle_map = (_grid_values(occupancy_grid) >= obstacle_threshold).astype(np.float32)
 
     # Compute distance transform (distance to nearest obstacle in cells)
     # Unknown cells are treated as if they don't exist for distance calculation
     distance_cells = cast("NDArray[np.float64]", ndimage.distance_transform_edt(1 - obstacle_map))
 
     # Convert to meters and clip to max distance
-    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)
+    distance_meters = np.clip(distance_cells * occupancy_grid.info.resolution, 0, max_distance)
 
     # Invert and scale to 0-100 range
     # Far from obstacles (max_distance) -> 0
@@ -78,20 +79,14 @@ def gradient(
     gradient_data[unknown_mask] = CostValues.UNKNOWN
 
     # Create new OccupancyGrid with gradient
-    gradient_grid = OccupancyGrid(
-        grid=gradient_data,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    gradient_grid = _with_grid(occupancy_grid, gradient_data)
 
     return gradient_grid
 
 
 def voronoi_gradient(
-    occupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
-) -> OccupancyGrid:
+    occupancy_grid: _GridT, obstacle_threshold: int = 50, max_distance: float = 2.0
+) -> _GridT:
     """Create a Voronoi-based gradient OccupancyGrid for path planning.
 
     Unlike the regular gradient which can result in suboptimal paths in narrow
@@ -122,23 +117,17 @@ def voronoi_gradient(
         - 100: At obstacles
     """
     # Remember which cells are unknown
-    unknown_mask = occupancy_grid.grid == CostValues.UNKNOWN
+    unknown_mask = _grid_values(occupancy_grid) == CostValues.UNKNOWN
 
     # Create binary obstacle map
-    obstacle_map = (occupancy_grid.grid >= obstacle_threshold).astype(np.float32)
+    obstacle_map = (_grid_values(occupancy_grid) >= obstacle_threshold).astype(np.float32)
 
     # Check if there are any obstacles
     if not np.any(obstacle_map):
         # No obstacles - everything is free
-        gradient_data = np.zeros_like(occupancy_grid.grid, dtype=np.int8)
+        gradient_data = np.zeros_like(_grid_values(occupancy_grid), dtype=np.int8)
         gradient_data[unknown_mask] = CostValues.UNKNOWN
-        return OccupancyGrid(
-            grid=gradient_data,
-            resolution=occupancy_grid.resolution,
-            origin=occupancy_grid.origin,
-            frame_id=occupancy_grid.frame_id,
-            ts=occupancy_grid.ts,
-        )
+        return _with_grid(occupancy_grid, gradient_data)
 
     # Label connected obstacle regions (clusters)
     # This groups all cells of the same wall/obstacle together
@@ -192,7 +181,7 @@ def voronoi_gradient(
     gradient_values[obstacle_map > 0] = CostValues.OCCUPIED
 
     # Apply max_distance clipping - cells beyond max_distance from obstacles get cost 0
-    max_distance_cells = max_distance / occupancy_grid.resolution
+    max_distance_cells = max_distance / occupancy_grid.info.resolution
     gradient_values[distance_cells > max_distance_cells] = 0
 
     # Convert to int8
@@ -201,10 +190,4 @@ def voronoi_gradient(
     # Preserve unknown cells
     gradient_data[unknown_mask] = CostValues.UNKNOWN
 
-    return OccupancyGrid(
-        grid=gradient_data,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return _with_grid(occupancy_grid, gradient_data)
