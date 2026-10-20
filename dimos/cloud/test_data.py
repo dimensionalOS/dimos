@@ -25,8 +25,8 @@ import pytest
 import typer
 
 from dimos.cloud import cli, data as cd
+from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
-from dimos.core.global_config import global_config
 
 
 class FakeTransport:
@@ -142,7 +142,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
-    monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
 
@@ -277,10 +276,9 @@ def test_recordings_discovery(
 
 
 def test_not_logged_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cd, "api_key", lambda: None)
-    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    monkeypatch.setattr(cd, "api_key", lambda config: None)
     with pytest.raises(RuntimeError, match="dimos login"):
-        CloudData()
+        CloudData(config=CloudConfig(api_key=None))
 
 
 def test_pull_with_cross_filesystem_staging(
@@ -436,7 +434,7 @@ def test_upload_cli_prints_console_link(
 ) -> None:
     cloud, _, db = env
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
-    monkeypatch.setattr(global_config, "dimos_cloud_url", api_url)
+    monkeypatch.setattr(cloud.config, "url", api_url)
     if skipped:
         cloud.upload(db)
 
@@ -469,7 +467,7 @@ def test_upload_cli_omits_console_link_for_unknown_api(
 ) -> None:
     cloud, _, db = env
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
-    monkeypatch.setattr(global_config, "dimos_cloud_url", api_url)
+    monkeypatch.setattr(cloud.config, "url", api_url)
 
     cli.upload(db, None, None, None, None)
 
@@ -499,7 +497,7 @@ def test_upload_cli_keeps_quota_warning_without_preview(
 
     monkeypatch.setattr(t, "request", warning_request)
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
-    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
+    monkeypatch.setattr(cloud.config, "url", "https://api.dimensional.org")
 
     cli.upload(blob, None, None, None, None)
 
@@ -531,7 +529,7 @@ def test_upload_cli_exits_nonzero_on_server_error(
 
     monkeypatch.setattr(t, "request", failing_request)
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
-    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
+    monkeypatch.setattr(cloud.config, "url", "https://api.dimensional.org")
     with pytest.raises(typer.Exit) as e:
         cli.upload(db, None, None, None, None)
     assert e.value.exit_code == 1

@@ -25,7 +25,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.go2 import GO2
-from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.local_planner.viz import (
     motion_visual_override,
     plan_clearance,
@@ -44,6 +43,14 @@ def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
 
 def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     return Path(frame_id="odom", poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)])
+
+
+def _stamp(plan: Path, speeds: NDArray[np.float64]) -> Path:
+    """Per-segment speeds as stamp deltas over the 0.1 m spacing, the planner's dialect."""
+    ts = np.concatenate([[0.0], np.cumsum(0.1 / speeds)])
+    for pose, t in zip(plan.poses, ts, strict=True):
+        pose.ts = float(t)
+    return plan
 
 
 def _rgba(boxes) -> NDArray[np.float64]:
@@ -66,9 +73,10 @@ def test_boxes_are_subsampled_by_arc_not_by_index() -> None:
 
 def test_colour_tracks_the_precision_the_planner_stamped() -> None:
     """The colour channel is decoded from the path, not passed alongside it."""
-    plan = _plan()
-    tight = np.concatenate([np.full(15, 0.6), np.full(10, 0.02), np.full(15, 0.6)])
-    encode_precision(plan, tight, GO2)
+    fast, slow = GO2.max_speed, GO2.min_speed
+    plan = _stamp(
+        _plan(), np.concatenate([np.full(14, fast), np.full(11, slow), np.full(14, fast)])
+    )
 
     room = plan_clearance(plan, GO2)
     assert room is not None
@@ -89,7 +97,7 @@ def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     must not manufacture a varying profile out of noise: every box comes out
     the same colour.
     """
-    plan = _plan()  # never passed through encode_precision
+    plan = _plan()  # never stamped
     room = plan_clearance(plan, GO2)
     assert room is not None and len(np.unique(np.round(room, 6))) == 1
     colors = _rgba(render_body(plan))
@@ -127,4 +135,7 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
     assert veto is not None and veto[-1][0] == "world/path/body"
     # an empty path is "no route": hold the last picture rather than blank it
     assert render_plan(Path(frame_id="odom", poses=[])) is None
-    assert set(motion_visual_override(body_dilate_m=-0.03)) == {"world/path"}
+    assert set(motion_visual_override(body_dilate_m=-0.03)) == {
+        "world/path",
+        "world/ground_support",
+    }

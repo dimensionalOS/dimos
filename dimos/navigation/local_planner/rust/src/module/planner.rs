@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The SE(2) local planner as a robot-side module; `adapter/planner.py` is the spec. Cloud from
+//! The SE(2) local planner as a robot-side module. Cloud from
 //! `local_map`, pose from tf (`world_frame -> base_frame`), goal a carrot `goal_lookahead_m`
 //! along `planner_path`. A refusal or a stale map publishes a one-pose hold stub.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, Emb, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
@@ -28,23 +28,29 @@ use tracing::{debug, info, warn};
 use validator::ValidationError;
 
 use crate::module::emb;
+use crate::module::ground::{self, Plane};
 use crate::module::msg;
-use crate::module::obstacles::{self, ObstacleModel};
+use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
 
-/// Mirrors `LocalPlannerConfig` (adapter/planner.py); the python `planner` registry
-/// field does not cross, this module is the rust target planner.
+/// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
 #[native_config]
 #[derive(Clone)]
 #[validate(schema(function = "validate_obstacle_model"))]
 pub struct Config {
-    /// The python module's own value (`embodiment/base.py`), so both halves plan the same robot.
+    /// The body record from `embodiment/base.py`.
     pub embodiment: Emb,
     /// Growth of every planning box per side (m); negative shrinks.
     pub body_dilate_m: f64,
     /// Price multiplier per metre over lattice cells with no floor return; <= 1 turns it off.
     pub unseen_cost: f64,
-    /// Plan discretisation (m); the python reads `planners/base.py RESOLUTION`.
+    /// Extra price per meter where the body steps on a low object, at `steppable` height.
+    #[validate(range(min = 0.0))]
+    pub step_cost: f64,
+    /// Speed ceiling (m/s) over waypoints that step on a low object.
+    #[validate(range(exclusive_min = 0.0))]
+    pub step_speed: f64,
+    /// Waypoint spacing of the published route (m).
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
     #[validate(range(exclusive_min = 0.0))]
@@ -104,6 +110,10 @@ pub struct LocalPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
+    /// The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
+    #[output(encode = PointCloud2::encode)]
+    ground_support: Output<PointCloud2>,
+
     #[config]
     config: Config,
 
@@ -117,7 +127,7 @@ pub struct LocalPlanner {
 impl LocalPlanner {
     async fn spawn_worker(&mut self) {
         let emb = emb::dilated(self.config.embodiment.clone(), self.config.body_dilate_m);
-        let model = obstacles::load(&self.config.obstacle_model, &emb)
+        let model = obstacles::load(&self.config.obstacle_model, &emb, self.config.step_cost)
             .expect("validated obstacle model name");
         let worker = Worker {
             shared: Arc::clone(&self.shared),
@@ -125,6 +135,7 @@ impl LocalPlanner {
             emb,
             model,
             path: self.path.clone(),
+            ground_support: self.ground_support.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -158,7 +169,7 @@ impl LocalPlanner {
 }
 
 /// `lookahead` metres of arc from the waypoint closest to the robot, clamped to
-/// the route's end; port of `planner.carrot_along`.
+/// the route's end.
 pub fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Option<(f64, f64)> {
     let last = route.last()?;
     // np.argmin keeps the first minimum on a tie
@@ -204,8 +215,7 @@ pub fn replan_due(
     }
 }
 
-/// One tick's branch of the replan loop, the python `_plan_loop`'s three-way,
-/// lifted out so it tests without a transport.
+/// One tick's branch of the replan loop, lifted out so it tests without a transport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tick {
     /// The map has gone quiet: refuse.
@@ -259,8 +269,7 @@ impl StaleGate {
     }
 }
 
-/// One search plus the precision annotation: `planner.py::_plan_once` then
-/// `planner.py::annotate`. Free so it runs with no transport.
+/// One search plus the precision annotation. Free so it runs with no transport.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_once(
     config: &Config,
@@ -269,20 +278,24 @@ pub fn plan_once(
     points: &[[f32; 3]],
     pose: (f64, f64, f64),
     goal: (f64, f64),
-    ground_z: f64,
+    ground: &Plane,
     incumbent: Option<&[[f64; 3]]>,
 ) -> Path {
     let started = Instant::now();
     let t0 = msg::now_secs();
     // The model decides which returns are obstacles; the search only sees xy.
-    let hard = obstacles::hard_points(model, points, ground_z);
-    let ground = obstacles::ground_points(points, ground_z);
+    let FieldPoints { hard, soft } = obstacles::field_points(model, points, ground);
+    let seen = obstacles::ground_points(points, ground, emb.steppable);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
+    let terrain = Terrain {
+        ground: &seen,
+        unseen_cost: config.unseen_cost,
+        soft: &soft,
+    };
     let states = match plan_explored(
         &cloud,
-        &ground,
-        config.unseen_cost,
+        &terrain,
         pose,
         goal,
         emb,
@@ -296,12 +309,26 @@ pub fn plan_once(
                 plan_ms = ms_since(started),
                 "planner refused; publishing a hold stub"
             );
-            return hold_stub(pose, &config.world_frame, t0, ground_z);
+            return hold_stub(pose, &config.world_frame, t0, ground.z);
         }
     };
     // Room is measured off the same points the search saw, or the stamps price a different world.
     let xy: Vec<[f64; 2]> = states.iter().map(|s| [s[0], s[1]]).collect();
-    let room = clearance::path_clearance(&xy, points, emb::half_width(emb));
+    let mut room = clearance::path_clearance(&xy, points, emb::half_width(emb));
+    // Over a low object the room is clamped to what the governor grants the step speed.
+    let stepped: Vec<[f32; 3]> = soft
+        .iter()
+        .map(|s| [s.xy[0] as f32, s.xy[1] as f32, 0.0])
+        .collect();
+    let step_room = stamps::governor_clearance(config.step_speed, &emb::governor(emb));
+    for (r, over) in room
+        .iter_mut()
+        .zip(clearance::path_clearance(&xy, &stepped, step_reach(emb)))
+    {
+        if over <= 0.0 {
+            *r = r.min(step_room);
+        }
+    }
     let ts = stamps::encode_precision(&states, &room, t0, &emb::governor(emb));
     debug_throttled!(
         Duration::from_secs(5),
@@ -309,7 +336,7 @@ pub fn plan_once(
         plan_ms = ms_since(started),
         "path planned"
     );
-    msg::build_path(&states, &ts, t0, &config.world_frame, ground_z)
+    msg::build_path(&states, &ts, t0, &config.world_frame, ground.z)
 }
 
 /// Owns the replan cadence and the publishing, off the dispatch loop.
@@ -319,6 +346,7 @@ struct Worker {
     emb: Emb,
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
+    ground_support: Output<PointCloud2>,
     tf: Tf,
 }
 
@@ -356,8 +384,8 @@ impl Worker {
                 &self.config.base_frame,
                 now,
             );
-            // the ground is `Emb::base_height` under the body, not read off the scene
-            let ground_z = pose.map(|p| p.z - self.config.embodiment.base_height);
+            // The floor a base height under the body, until the map shows one.
+            let body_z = pose.map(|p| p.z - self.config.embodiment.base_height);
             let pose = pose.map(|p| (p.state[0], p.state[1], p.state[2]));
             match decide(
                 pose.is_some(),
@@ -383,7 +411,7 @@ impl Worker {
                         pose,
                         &self.config.world_frame,
                         msg::now_secs(),
-                        ground_z.unwrap_or(0.0),
+                        body_z.unwrap_or(0.0),
                     );
                     published = true;
                     msg::publish(&self.path, &held).await;
@@ -428,18 +456,24 @@ impl Worker {
                     // workers, hence the module's 2 threads.
                     let produced = tokio::task::block_in_place(|| {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
-                        Some(plan_once(
+                        let body = body_z.unwrap_or(0.0);
+                        let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
+                        let path = plan_once(
                             &self.config,
                             &self.emb,
                             self.model.as_ref(),
                             &pts,
                             pose,
                             goal,
-                            ground_z.unwrap_or(0.0),
+                            &ground.plane,
                             incumbent.as_deref(),
-                        ))
+                        );
+                        Some((path, ground.support))
                     });
-                    if let Some(produced) = produced {
+                    if let Some((produced, support)) = produced {
+                        let floor =
+                            msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
+                        msg::publish(&self.ground_support, &floor).await;
                         planned = Some((snap.cloud_seq, goal));
                         incumbent = Some(msg::path_states(&produced));
                         published = true;
@@ -503,7 +537,7 @@ mod tests {
         points.iter().map(|&(x, y)| [x, y]).collect()
     }
 
-    // carrot_along: the cases in adapter/test_planner.py
+    // carrot_along
 
     #[test]
     fn carrot_walks_arc_from_the_closest_waypoint() {
@@ -621,6 +655,8 @@ mod tests {
             embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
             unseen_cost: 1.0,
+            step_cost: 5.0,
+            step_speed: 0.5,
             resolution: 0.1,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,
@@ -639,7 +675,7 @@ mod tests {
     }
 
     fn model(cfg: &Config) -> Box<dyn ObstacleModel> {
-        obstacles::load(&cfg.obstacle_model, &cfg.embodiment).expect("known model")
+        obstacles::load(&cfg.obstacle_model, &cfg.embodiment, cfg.step_cost).expect("known model")
     }
 
     #[test]
@@ -652,7 +688,7 @@ mod tests {
             &[],
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "expected a real plan, got a stub");
@@ -677,7 +713,7 @@ mod tests {
         let cfg = config();
         let gap = |half: f32| {
             let mut pts = Vec::new();
-            let z = obstacles::LOW as f32 + 0.05;
+            let z = 0.3f32;
             let mut t = -2.0f32;
             while t <= 2.0 {
                 pts.push([1.5, half + t.max(0.0), z]);
@@ -698,7 +734,7 @@ mod tests {
             &gap(1.4),
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         let tight = plan_once(
@@ -708,7 +744,7 @@ mod tests {
             &gap(0.45),
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(roomy.poses.len() > 1 && tight.poses.len() > 1);
@@ -724,7 +760,7 @@ mod tests {
     fn a_refused_search_publishes_a_stub_at_the_current_pose() {
         // sealed box, the pure crate's own refusal fixture
         let mut walls = Vec::new();
-        let z = obstacles::LOW as f32 + 0.05;
+        let z = 0.3f32;
         let mut t = -1.0f32;
         while t <= 1.0 {
             walls.push([-1.0, t, z]);
@@ -741,7 +777,7 @@ mod tests {
             &walls,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert_eq!(produced.poses.len(), 1, "a refusal is a one-pose stub");
@@ -769,7 +805,7 @@ mod tests {
             &lifted,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "an overhead wall is not a wall");
@@ -813,16 +849,15 @@ mod tests {
             &room,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            -0.28,
+            &Plane::flat(-0.28),
             None,
         );
         assert_eq!(seen.poses.len(), 1, "the walls are still invisible");
     }
 
-    /// Twin of `adapter/test_planner.py::test_a_tall_body_plans_around_what_the_old_band_cut_off`:
-    /// a 0.55 m wall is inside a 0.60 m body's band and outside the absolute 0.05..0.45 one.
+    /// A 0.55 m wall is under the top of a robot carrying its lidar to 0.60 m, and over a 0.45 m trunk.
     #[test]
-    fn a_tall_body_plans_around_what_the_old_band_cut_off() {
+    fn the_lidar_plans_around_a_wall_over_the_trunk() {
         let mut wall: Vec<[f32; 3]> = Vec::new();
         let mut y = -1.0f32;
         while y <= 1.0 {
@@ -837,7 +872,7 @@ mod tests {
                 &wall,
                 (0.0, 0.0, 0.0),
                 (3.0, 0.0),
-                0.0,
+                &Plane::flat(0.0),
                 None,
             );
             if out.poses.len() < 2 {
@@ -848,20 +883,23 @@ mod tests {
                 .map(|q| q.pose.position.y.abs())
                 .fold(0.0f64, f64::max)
         };
-        let tall = Emb {
-            height: 0.60,
+        let cfg = config();
+        assert!(
+            detour(model(&cfg).as_ref()) > 0.8,
+            "the lidar drove through its own obstacle"
+        );
+        // control: without the lidar the same wall is over the trunk, so it is not a wall
+        let trunk = Emb {
+            height: 0.45,
             ..Emb::fixture()
         };
-        let tall_model = obstacles::load("body_band", &tall).expect("known model");
+        let trunk_model = obstacles::load("body_band", &trunk, cfg.step_cost).expect("known model");
         assert!(
-            detour(tall_model.as_ref()) > 0.8,
-            "the tall body drove through its own obstacle"
+            obstacles::field_points(trunk_model.as_ref(), &wall, &Plane::flat(0.0))
+                .hard
+                .is_empty()
         );
-        // control: the same wall is over a go2's belly, so it is not a wall
-        let cfg = config();
-        let fixture_model = model(&cfg);
-        assert!(obstacles::hard_points(fixture_model.as_ref(), &wall, 0.0).is_empty());
-        assert!(detour(fixture_model.as_ref()) < 0.2);
+        assert!(detour(trunk_model.as_ref()) < 0.2);
     }
 
     #[test]
@@ -890,10 +928,134 @@ mod tests {
             &slab,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            -0.28,
+            &Plane::flat(-0.28),
             None,
         );
         assert!(produced.poses.len() > 1, "the ground read as a wall");
+    }
+
+    /// A low object: one voxel layer over the floor layer, as the local map shows a 10 cm box.
+    fn low_object(x: (f32, f32), y: (f32, f32)) -> Vec<[f32; 3]> {
+        let mut pts = Vec::new();
+        let mut u = x.0;
+        while u <= x.1 {
+            let mut v = y.0;
+            while v <= y.1 {
+                pts.push([u, v, 0.12]);
+                v += 0.08;
+            }
+            u += 0.08;
+        }
+        pts
+    }
+
+    #[test]
+    fn a_low_object_is_walked_around_when_there_is_room() {
+        let cfg = config();
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &low_object((1.4, 1.64), (-0.12, 0.12)),
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            &Plane::flat(0.0),
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused");
+        let widest = produced
+            .poses
+            .iter()
+            .map(|q| q.pose.position.y.abs())
+            .fold(0.0f64, f64::max);
+        assert!(widest > 0.4, "stepped on it, widest {widest}");
+    }
+
+    #[test]
+    fn a_low_object_wall_to_wall_is_crossed_slowly() {
+        let cfg = Config {
+            step_speed: 0.3,
+            ..config()
+        };
+        let mut world = low_object((1.4, 1.64), (-0.9, 0.9));
+        let mut x = -1.0f32;
+        while x <= 4.0 {
+            for y in [-0.95f32, 0.95] {
+                world.push([x, y, 0.3]);
+            }
+            x += 0.04;
+        }
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &world,
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            &Plane::flat(0.0),
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused to step on it");
+        let states = msg::path_states(&produced);
+        let e = Emb::fixture();
+        let params = emb::base_params(&e, [e.min_speed, e.max_speed]);
+        let ceilings = stamps::decode_ceilings(&msg::path_stamps(&produced), &states, &params)
+            .expect("stamped");
+        let over: Vec<f64> = states
+            .iter()
+            .zip(&ceilings)
+            .filter(|(s, _)| (1.1..=1.9).contains(&s[0]))
+            .map(|(_, &c)| c)
+            .collect();
+        assert!(!over.is_empty());
+        assert!(over.iter().all(|&c| c <= 0.3 + 1e-6), "{over:?}");
+        let away = states
+            .iter()
+            .zip(&ceilings)
+            .filter(|(s, _)| s[0] < 0.5)
+            .map(|(_, &c)| c)
+            .fold(0.0f64, f64::max);
+        assert!(away > 0.3 + 1e-3, "slowed off the object too: {away}");
+    }
+
+    #[test]
+    fn a_tilted_floor_is_walked_at_full_speed() {
+        // a 3 percent grade along the way, so the floor crosses voxel layers ahead of the robot
+        let cfg = Config {
+            step_speed: 0.3,
+            ..config()
+        };
+        let v = obstacles::VOXEL;
+        let mut cloud = Vec::new();
+        for i in -25..=62 {
+            for j in -18..=18 {
+                let (x, y) = ((i as f64 + 0.5) * v, (j as f64 + 0.5) * v);
+                let k = ((-0.25 + 0.03 * x) / v).floor();
+                cloud.push([x as f32, y as f32, (k * v + v * 0.5) as f32]);
+            }
+        }
+        let ground = ground::read(&cloud, 0.0, 0.0, -0.25, &fixture());
+        assert!(!ground.support.is_empty(), "the floor was not read");
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &cloud,
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            &ground.plane,
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused");
+        let states = msg::path_states(&produced);
+        let e = Emb::fixture();
+        let params = emb::base_params(&e, [e.min_speed, e.max_speed]);
+        let ceilings = stamps::decode_ceilings(&msg::path_stamps(&produced), &states, &params)
+            .expect("stamped");
+        assert!(
+            ceilings.iter().all(|&c| c > cfg.step_speed + 1e-3),
+            "slowed on bare floor: {ceilings:?}"
+        );
     }
 
     const CARROT_M: f64 = 0.2;

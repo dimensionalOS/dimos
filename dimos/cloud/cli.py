@@ -28,7 +28,6 @@ from urllib.parse import quote
 import typer
 
 from dimos.cloud.data import CloudData, recordings
-from dimos.core.global_config import global_config
 
 
 def tz_label() -> str:
@@ -102,7 +101,7 @@ def upload(
     console_url, matched = re.subn(
         r"\Ahttps://api\.(staging\.)?dimensional\.org/?\Z",
         r"https://console.\1dimensional.org",
-        global_config.dimos_cloud_url,
+        cloud.config.url,
     )
     targets = recordings(since_s) if since_s else [path] if path else recordings()[-1:]
     if not targets:
