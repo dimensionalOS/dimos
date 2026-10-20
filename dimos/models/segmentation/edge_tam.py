@@ -20,7 +20,6 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
-from dimos.messages.sensor_msgs.msg import Image
 from hydra.utils import instantiate
 import numpy as np
 from numpy.typing import NDArray
@@ -28,6 +27,7 @@ from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import default_torch_device
 from dimos.msgs.image import image_to_bgr, image_to_jpeg
 from dimos.perception.detection.detectors.base import Detector
