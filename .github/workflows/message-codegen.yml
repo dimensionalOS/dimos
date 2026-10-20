@@ -215,3 +215,9 @@ jobs:
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/depth2depth_cloud/module.py
           cargo test --locked --manifest-path dimos/perception/depth2depth_cloud/rust/Cargo.toml -j 2 --lib
           cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml -j 2 pointcloud::tests
+      - name: Verify generated occupancy values and retained numeric helpers
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos.msgs.occupancy as values; import pytest; import sys; assert "site-packages" in str(values.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_occupancy.py"
+          .native-review/bin/python -I -c 'import dimos.msgs.nav_msgs.OccupancyGrid; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/nav_msgs/test_OccupancyGrid.py" -k block_max_reduce
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/occupancy.py
