@@ -6,6 +6,7 @@ description = "Experimental native stream recorder for DimOS memory stores"
 license = "Apache-2.0"
 
 [dependencies]
+re_cdr = "=0.1.0"
 anyhow = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"

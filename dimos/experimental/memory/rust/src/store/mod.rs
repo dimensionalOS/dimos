@@ -42,6 +42,7 @@ impl RecordingStoreConfig {
 pub struct Observation {
     pub stream: Arc<StreamConfig>,
     pub source_ts: f64,
+    pub source_ns: Option<u64>,
     pub reception_ts: f64,
     pub data: Vec<u8>,
 }

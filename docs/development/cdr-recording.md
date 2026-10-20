@@ -68,3 +68,60 @@ The main test suite runs the exact example. Focused verification is:
 ```sh
 python -m pytest --import-mode=importlib dimos/memory/store/test_cdr_recording.py
 ```
+
+
+## Native Rust recording
+
+The experimental Rust recorder accepts the same installed generated values.
+Its native binary stores plain CDR bytes; adding an external message does not
+require regenerating or compiling another Rust definition for the recorder.
+The Python wrapper resolves the owner and complete schema before launch.
+
+```python
+from dimos.core.stream import In
+from dimos.experimental.memory.rust_recorder import RustRecorder, RustMcapStoreConfig
+from dimos.messages.geometry_msgs.msg import PoseStamped
+
+class PoseRecorder(RustRecorder):
+    pose: In[PoseStamped]
+
+record = PoseRecorder.blueprint(
+    store=RustMcapStoreConfig(path="recording.mcap"),
+    record_tf=False,
+)
+```
+
+Bind that port to the explicit raw CDR channel used by its producer. The opt-in
+CDR transport/SDK example is a separate slice; this change does not alter default
+transport factories. A generated value selects `cdr`; legacy Image/JPEG, LCM,
+LZ4 and JSON selections retain their existing behavior. Selecting a legacy wire
+codec for a generated value fails before the native process starts.
+
+The wrapper reads the `.msg` definitions through the published generator's parser.
+It supplies a timestamp projection for `header.stamp` (even after variable-size
+prefix fields), with numeric `ts` as the fallback convention. Rust traverses that
+projection with `re_cdr`'s runtime reader. Unstamped values use reception time.
+It does not decode/re-encode or fully validate unrelated payload fields. Zero
+source stamps are preserved. MCAP keeps exact Header nanoseconds rather than
+rounding them through the SQLite/Mem2 floating-point index.
+
+A CDR-only MCAP uses the ROS2 profile, `cdr` message encoding and complete
+`ros2msg` schema closure. The Python Mem2 reader restores the installed owner
+class and imported Header identity. Unavailable owners retain the existing raw
+read behavior. This does not promise automatic conversion of legacy recordings.
+
+After building the native recorder, run the actual loopback acceptance:
+
+```sh
+cargo build --manifest-path dimos/experimental/memory/rust/Cargo.toml --locked
+DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE="$PWD/target/debug/dimos-memory-recorder" \
+python -m pytest --noconftest -o addopts='' \
+  -o 'markers=self_hosted: native recording acceptance' \
+  dimos/experimental/memory/test_rust_recorder_e2e.py -k cdr_native
+```
+
+The executable override uses this repository's Cargo target directory. The two
+cases publish an actual generated PoseStamped over discovery-disabled loopback
+Zenoh into the real native binary, then replay SQLite and MCAP through Python.
+They assert the complete fields, byte identity, source time, shared classes and
+exact MCAP nanoseconds/schema. No hardware or host configuration is required.

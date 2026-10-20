@@ -9,6 +9,9 @@ on:
       - scripts/*builtin*
       - examples/message-package/**
       - dimos/message_codegen/**
+      - dimos/experimental/memory/**
+      - dimos/memory/codecs/cdr.py
+      - docs/development/cdr-recording.md
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
       - pyproject.toml
@@ -47,3 +50,28 @@ jobs:
           DIMOS_BUNDLE_DIST: ${{ github.workspace }}/dist
           DIMOS_BUNDLE_WHEELHOUSE: ${{ github.workspace }}/build/bundle-wheelhouse
         run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_bundled.py
+
+  native-recording:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install native recording test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake nasm pkg-config libsqlite3-dev
+          uv venv .record-review --python 3.12 --seed
+          .record-review/bin/python -m pip install -e . mcap pytest pytest-mock pytest-env pytest-asyncio
+      - name: Verify schema planning and wrapper compatibility
+        run: .record-review/bin/python -m pytest --noconftest -o addopts='' -q dimos/experimental/memory/test_cdr_schema.py dimos/experimental/memory/test_rust_recorder.py
+      - name: Verify native CDR storage and legacy codec tests
+        run: |
+          cargo test --manifest-path dimos/experimental/memory/rust/Cargo.toml --locked --lib --jobs 2
+          cargo clippy --manifest-path dimos/experimental/memory/rust/Cargo.toml --locked --lib --no-deps --jobs 2 -- -D warnings
+          cargo build --manifest-path dimos/experimental/memory/rust/Cargo.toml --locked --bin dimos-memory-recorder --jobs 2
+      - name: Verify actual native recording and Python replay
+        env:
+          DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE: ${{ github.workspace }}/target/debug/dimos-memory-recorder
+        run: |
+          .record-review/bin/python -m pytest --noconftest -o addopts='' -o 'markers=self_hosted: native recording acceptance' -q dimos/experimental/memory/test_rust_recorder_e2e.py -k cdr_native
