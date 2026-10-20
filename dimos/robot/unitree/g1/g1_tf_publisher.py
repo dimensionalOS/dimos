@@ -32,11 +32,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.driver import transform_message
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.time import header_now
-from dimos.robot.unitree.type.conversion import transform_message
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

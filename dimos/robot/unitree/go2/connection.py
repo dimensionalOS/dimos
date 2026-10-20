@@ -52,6 +52,11 @@ from dimos.messages.sensor_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.driver import (
+    camera_info_message as _camera_info_message,
+    cloud_message as _cloud_message,
+    image_message,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -62,11 +67,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.time import time_from_seconds
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.type.conversion import (
-    camera_info_message as _camera_info_message,
-    cloud_message as _cloud_message,
-    image_message,
-)
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache

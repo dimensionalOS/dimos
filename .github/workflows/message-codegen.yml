@@ -213,7 +213,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           uv pip install --python .native-review/bin/python 'mujoco==3.10.0'
-          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree.g1 import connection, mujoco_sim, g1_tf_publisher; from dimos.robot.unitree.go2 import connection as go2; from dimos.robot.unitree.type import conversion; from dimos.robot.unitree import mujoco_connection; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,mujoco_sim,g1_tf_publisher,go2,conversion,mujoco_connection)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/test_mujoco_connection.py"
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree.g1 import connection, mujoco_sim, g1_tf_publisher; from dimos.robot.unitree.go2 import connection as go2; from dimos.msgs import driver as conversion; from dimos.robot.unitree import mujoco_connection; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,mujoco_sim,g1_tf_publisher,go2,conversion,mujoco_connection)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/test_mujoco_connection.py"
       - name: Verify generated ROS conversion against a separate CDR oracle without ROS installation
         if: runner.os == 'Linux'
         run: |
@@ -223,6 +223,10 @@ jobs:
         run: |
           uv pip install --python .native-review/bin/python 'onnxruntime==1.24.1'
           DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.hardware.whole_body.transport import adapter; from dimos.robot.unitree.g1 import wholebody_connection; from dimos.robot.galaxea.r1pro import connection; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (adapter,wholebody_connection,connection)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/whole_body/transport/test_adapter.py" "$PWD/dimos/robot/unitree/g1/test_wholebody_connection.py"
+      - name: Verify canonical generic MuJoCo streams with bounded CPU-only physics
+        if: runner.os == 'Linux'
+        run: |
+          DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.msgs import driver; from dimos.simulation.engines import mujoco_sim_module; from dimos.robot.unitree.g1 import g1_rerun; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (driver,mujoco_sim_module,g1_rerun)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/simulation/engines/test_cdr_streams.py" "$PWD/dimos/simulation/engines/test_mujoco_sim_module.py" "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/robot/unitree/go2/test_connection.py"
       - name: Verify generated manipulator commands preserve built-in IK task behavior
         if: runner.os == 'Linux'
         run: |

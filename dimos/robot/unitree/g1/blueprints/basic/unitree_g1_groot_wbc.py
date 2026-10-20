@@ -71,8 +71,8 @@ from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.nav_msgs.msg import Path as NavPath
 from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
@@ -86,6 +86,7 @@ from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.cdr import path_archetype
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
 
@@ -376,7 +377,7 @@ def _g1_groot_rerun_blueprint() -> Any:
 
 
 def _g1_nav_path(path: NavPath) -> Any:
-    return path.to_rerun(z_offset=0.3)
+    return path_archetype(path, z_offset=0.3)
 
 
 # Mesh root: sim roots under the /odom transform; real hw under the LIO's

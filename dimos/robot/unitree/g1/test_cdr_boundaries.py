@@ -29,6 +29,7 @@ from dimos.core.cdr_transport import CdrTransport
 from dimos.core.module import Module
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos.msgs.driver import transform_message
 from dimos.msgs.image import image_view
 from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.msgs.sensor_msgs.Image import Image as DriverImage, ImageFormat
@@ -37,7 +38,6 @@ from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher, mount_transforms
 from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.conversion import transform_message
 from dimos.robot.unitree.type.odometry import Odometry
 
 

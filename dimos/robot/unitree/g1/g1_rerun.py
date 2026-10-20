@@ -20,6 +20,12 @@ from typing import Any
 
 import numpy as np
 
+from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPose
+from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.occupancy import occupancy_view
+from dimos.msgs.time import to_seconds
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
@@ -43,6 +49,16 @@ def g1_costmap(grid: Any, z_offset: float = 0.02) -> Any:
     The default z_offset lifts the mesh 2cm off the floor plane to avoid
     z-fighting with the ground.
     """
+    if isinstance(grid, CdrGrid):
+        p, q = grid.info.origin.position, grid.info.origin.orientation
+        # Preserve the existing renderer's numerical and palette contract.
+        grid = OccupancyGrid(
+            grid=occupancy_view(grid),
+            resolution=grid.info.resolution,
+            origin=Pose(position=[p.x, p.y, p.z], orientation=[q.x, q.y, q.z, q.w]),
+            frame_id=grid.header.frame_id,
+            ts=to_seconds(grid.header.stamp),
+        )
     return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=z_offset)
 
 
@@ -82,14 +98,19 @@ def g1_odometry_tf_override(odom: Any) -> Any:
     """
     import rerun as rr
 
+    if isinstance(odom, CdrPose):
+        position, orientation = odom.pose.position, odom.pose.orientation
+        x, y = position.x, position.y
+    else:
+        x, y, orientation = odom.x, odom.y, odom.orientation
     tf = rr.Transform3D(
-        translation=[odom.x, odom.y, 0.0],
+        translation=[x, y, 0.0],
         rotation=rr.Quaternion(
             xyzw=[
-                odom.orientation.x,
-                odom.orientation.y,
-                odom.orientation.z,
-                odom.orientation.w,
+                orientation.x,
+                orientation.y,
+                orientation.z,
+                orientation.w,
             ]
         ),
         parent_frame="tf#/map",

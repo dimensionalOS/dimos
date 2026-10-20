@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit adapters from Unitree driver math values to canonical wire values."""
+"""Explicit adapters from internal numerical driver values to canonical wire values."""
 
 from copy import deepcopy
 
@@ -28,6 +28,7 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.sensor_msgs.msg import (
     CameraInfo as CdrCameraInfo,
     Image as CdrImage,
+    Imu as CdrImu,
     PointCloud2 as CdrCloud,
     PointField,
     RegionOfInterest,
@@ -37,6 +38,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.image import image_from_array
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.time import time_from_seconds
 
@@ -47,10 +49,10 @@ def camera_info_message(info: CameraInfo) -> CdrCameraInfo:
         height=info.height,
         width=info.width,
         distortion_model=info.distortion_model,
-        d=np.asarray(info.D, dtype=np.float64),
-        k=np.asarray(info.K, dtype=np.float64),
-        r=np.asarray(info.R, dtype=np.float64),
-        p=np.asarray(info.P, dtype=np.float64),
+        d=np.asarray(info.D, dtype=np.float64).copy(),
+        k=np.asarray(info.K, dtype=np.float64).copy(),
+        r=np.asarray(info.R, dtype=np.float64).copy(),
+        p=np.asarray(info.P, dtype=np.float64).copy(),
         binning_x=info.binning_x,
         binning_y=info.binning_y,
         roi=RegionOfInterest(0, 0, 0, 0, False),
@@ -126,4 +128,21 @@ def transform_message(value: Transform, stamp: Time | None = None) -> TransformS
         ),
         child_frame_id=value.child_frame_id,
         transform=CdrTransform(Vector3(t.x, t.y, t.z), Quaternion(q.x, q.y, q.z, q.w)),
+    )
+
+
+def imu_message(value: Imu) -> CdrImu:
+    q, g, a = value.orientation, value.angular_velocity, value.linear_acceleration
+    return CdrImu(
+        header=Header(time_from_seconds(value.ts), value.frame_id),
+        orientation=Quaternion(q.x, q.y, q.z, q.w),
+        orientation_covariance=np.asarray(value.orientation_covariance, dtype=np.float64).copy(),
+        angular_velocity=Vector3(g.x, g.y, g.z),
+        angular_velocity_covariance=np.asarray(
+            value.angular_velocity_covariance, dtype=np.float64
+        ).copy(),
+        linear_acceleration=Vector3(a.x, a.y, a.z),
+        linear_acceleration_covariance=np.asarray(
+            value.linear_acceleration_covariance, dtype=np.float64
+        ).copy(),
     )
