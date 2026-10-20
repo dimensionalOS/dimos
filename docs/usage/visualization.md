@@ -145,3 +145,46 @@ When a `RerunBridgeModule` is already part of your blueprint, you typically don'
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
+
+## Generated CDR geometry
+
+Generated message classes are plain values. The Rerun bridge supplies the
+PoseStamped/PointStamped adapters, including pose axes and a text view of every
+field. An explicit CDR subscription is independent of legacy pubsub discovery:
+
+```python
+from dimos.core.cdr_transport import CdrTransport
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+viewer = RerunBridgeModule(pubsubs=[], cdr_transports={
+    "measured_pose": CdrTransport("measured_pose", PoseStamped, backend="zenoh"),
+})
+viewer.start()
+# Stop the bridge when the application shuts down:
+viewer.stop()
+```
+
+The producer must use the matching explicit CDR channel and schema. Each
+transport instance in `cdr_transports` belongs to the bridge; use a separate
+instance for the producer. Header stamps use a source timeline with exact
+nanoseconds, including zero. Header frames remain named `tf#/<frame_id>` frames;
+they are not silently reinterpreted as world coordinates. The existing TF tree
+must locate that frame for a shared spatial view. Other generated message
+domains still need their own adapters; this does not change transport defaults.
+
+To see an actual offline exchange, from this checkout with its normal installed
+DimOS environment:
+
+```sh
+python examples/message-viewer/demo_cdr_rerun.py pose.rrd
+rerun pose.rrd
+```
+
+The example sends generated PoseStamped bytes over discovery-disabled loopback
+Zenoh/CDR, then writes a real Rerun recording. Its layout shows the pose axes and
+complete message values side by side. For this demonstration only, it explicitly
+places the message's map frame at the viewer origin. It refuses an existing
+output, needs no robot, and does not start the module coordinator or change host
+configuration. CI runs this exact example and reads the RRD back with the
+pinned Rerun CLI to check geometry, axes, fields and nanosecond timestamps.

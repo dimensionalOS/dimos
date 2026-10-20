@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import field
 import functools
 from operator import attrgetter
@@ -47,6 +48,7 @@ from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.core.cdr_transport import CdrTransport
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
@@ -61,6 +63,7 @@ from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.cdr import generated_archetypes
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
@@ -276,6 +279,9 @@ class Config(ModuleConfig):
     """
 
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    # Explicit subscriptions for the proposal's generated CDR channels. Each
+    # transport belongs to this bridge; legacy discovery/defaults stay intact.
+    cdr_transports: dict[str, CdrTransport[Any]] = field(default_factory=dict)
 
     visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
@@ -387,7 +393,7 @@ class RerunBridgeModule(Module):
                 return msg
             if isinstance(msg, RerunConvertible):
                 return msg.to_rerun()
-            return None
+            return generated_archetypes(msg, entity_path)
 
         # compose all converters
         def composed(msg: Any) -> RerunData | None:
@@ -573,6 +579,32 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+        for topic, transport in self.config.cdr_transports.items():
+            self._subscribe_cdr(topic, transport)
+
+    def _subscribe_cdr(self, topic: str, transport: CdrTransport[Any]) -> None:
+        cleanup = ExitStack()
+        cleanup.callback(transport.stop)
+        try:
+            unsubscribe = transport.subscribe(functools.partial(self._on_cdr_message, topic=topic))
+            cleanup.callback(unsubscribe)
+        except BaseException:
+            cleanup.close()
+            raise
+        self.register_disposable(Disposable(cleanup.close))
+
+    def _on_cdr_message(self, msg: Any, *, topic: str) -> None:
+        import rerun as rr
+
+        stamp = getattr(getattr(msg, "header", None), "stamp", None)
+        if stamp is not None:
+            nanos = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+            rr.set_time("source", timestamp=np.datetime64(nanos, "ns"))
+        try:
+            self._on_message(msg, "/" + topic.strip("/"))
+        finally:
+            if stamp is not None:
+                rr.disable_timeline("source")
 
     def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
         """Subscribe to the named topics, or to everything when none are named.
