@@ -366,6 +366,56 @@ class PerceptionLocalize(Module):
         call has reported that id."""
         return self._clouds.get(object_id)
 
+    @rpc
+    def scene_cloud(self, object_id: str, margin: float = 0.15) -> PointCloud2 | None:
+        """What surrounds an object localize reported, for collision checks: the newest
+        embedded frame's depth lifted to world, within ``margin`` of the object's footprint,
+        the object's own points removed, one point per 5 mm cell. None without the object's
+        cloud or a posed depth frame."""
+        cloud = self._clouds.get(object_id)
+        if cloud is None or not self._ready.is_set():
+            return None
+        try:
+            obs = self.index.last()
+        except LookupError:
+            return None
+        frame = obs.tags.get("camera") or obs.data.frame_id
+        backdrop = self.rig.backdrop(obs.ts, frame)
+        if backdrop is None:
+            return None
+        points = scene_around(backdrop.points_f32(), cloud.points_f32(), margin)
+        return PointCloud2.from_numpy(points, frame_id=self.config.world_frame, timestamp=obs.ts)
+
+
+# A scene point closer than this to an object point is the object's own surface.
+OBJECT_CLEARANCE_M = 0.01
+SCENE_CELL_M = 0.005
+
+
+def scene_around(
+    scene: np.ndarray,
+    target: np.ndarray,
+    margin: float,
+    clearance: float = OBJECT_CLEARANCE_M,
+    cell: float = SCENE_CELL_M,
+) -> np.ndarray:
+    """The ``scene`` points within ``margin`` (XY) of the ``target`` cloud's bounding box, less
+    those within ``clearance`` of a target point, one point per ``cell``-sized voxel."""
+    from scipy.spatial import cKDTree
+
+    if not len(scene):
+        return np.zeros((0, 3), dtype=np.float32)
+    lo, hi = target[:, :2].min(axis=0) - margin, target[:, :2].max(axis=0) + margin
+    near = scene[np.all((scene[:, :2] >= lo) & (scene[:, :2] <= hi), axis=1)]
+    if len(near) and len(target):
+        distance, _ = cKDTree(target).query(near, distance_upper_bound=clearance)
+        near = near[~np.isfinite(distance)]
+    if not len(near):
+        return np.zeros((0, 3), dtype=np.float32)
+    cells = np.floor(near / cell).astype(np.int64)
+    _, first = np.unique(cells, axis=0, return_index=True)
+    return near[np.sort(first)].astype(np.float32)
+
 
 def footprint(
     points: np.ndarray,

@@ -21,13 +21,15 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 
 
 class GraspCandidate:
-    """A robot TCP pose and its generator-local ranking score."""
+    """A robot TCP pose, its generator-local ranking score and an optional note on why it was
+    proposed or what about it is uncertain."""
 
     msg_name = "manipulation_msgs.GraspCandidate"
 
-    def __init__(self, pose: Pose | None = None, score: float = 0.0) -> None:
+    def __init__(self, pose: Pose | None = None, score: float = 0.0, note: str = "") -> None:
         self.pose = pose if pose is not None else Pose(0.0, 0.0, 0.0)
         self.score = float(score)
+        self.note = note
         if not math.isfinite(self.score):
             raise ValueError("GraspCandidate.score must be finite")
 
@@ -39,9 +41,9 @@ class GraspCandidate:
         return cls(data["pose"], data["score"])  # type: ignore[arg-type]
 
     def encode(self) -> bytes:
-        return pickle.dumps({"pose": self.pose, "score": self.score})
+        return pickle.dumps({"pose": self.pose, "score": self.score, "note": self.note})
 
     @classmethod
     def decode(cls, data: bytes) -> GraspCandidate:
         value = pickle.loads(data)
-        return cls(value["pose"], value["score"])
+        return cls(value["pose"], value["score"], value.get("note", ""))

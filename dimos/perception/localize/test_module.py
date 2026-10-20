@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from dimos.perception.localize.association import Groups
-from dimos.perception.localize.module import best_candidate, footprint
+from dimos.perception.localize.module import best_candidate, footprint, scene_around
 
 
 def _group(groups: Groups, *sightings: tuple[float, float, tuple[float, float, float]]) -> None:
@@ -75,3 +75,26 @@ def test_footprint_measures_a_rotated_box(yaw: float) -> None:
 
 def test_footprint_needs_points() -> None:
     assert footprint(np.zeros((2, 3))) is None
+
+
+def test_scene_around_keeps_the_surroundings_and_drops_the_object() -> None:
+    table = np.stack(
+        np.meshgrid(np.linspace(0.0012, 1.0012, 401), np.linspace(-0.4988, 0.5012, 401)), -1
+    ).reshape(-1, 2)
+    table = np.column_stack([table, np.full(len(table), 0.80)])
+    box = _box_cloud(0.10, 0.06, 0.0, (0.5, 0.0))
+    around = scene_around(np.concatenate([table, box]), box, margin=0.1)
+    # Inside the margin box only, nothing within 1 cm of the object, thinned to 5 mm cells.
+    assert np.all(np.abs(around[:, 0] - 0.5) <= 0.15 + 1e-6)
+    assert np.all(np.abs(around[:, 1]) <= 0.13 + 1e-6)
+    assert not np.any(around[:, 2] > 0.85)  # the box's own surfaces are gone, the table stays
+    assert len(around) > 100
+    # A 2.5 mm grid thinned to one point per 5 mm cell keeps about a quarter of it.
+    assert len(around) < 0.3 * np.sum(
+        np.all(np.abs(table[:, :2] - [0.5, 0.0]) <= [0.15, 0.13], axis=1)
+    )
+
+
+def test_scene_around_with_nothing_near_is_empty() -> None:
+    box = _box_cloud(0.10, 0.06, 0.0, (0.5, 0.0))
+    assert scene_around(np.asarray([[3.0, 3.0, 0.8]]), box, margin=0.1).shape == (0, 3)

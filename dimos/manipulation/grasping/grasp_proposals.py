@@ -25,11 +25,14 @@ from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
+from dimos.manipulation.grasping import grasp_filters
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXError, GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x.remote import RemoteGraspGenX
 from dimos.manipulation.grasping.heuristic_grasp import top_down_grasps
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import Spec
@@ -37,6 +40,8 @@ from dimos.spec.utils import Spec
 
 class ObjectCloudSpec(Spec, Protocol):
     def object_cloud(self, object_id: str) -> PointCloud2 | None: ...
+
+    def scene_cloud(self, object_id: str, margin: float = 0.15) -> PointCloud2 | None: ...
 
 
 class ReachabilitySpec(Spec, Protocol):
@@ -57,6 +62,16 @@ class GraspProposalsConfig(ModuleConfig):
     grasp_depth: float = Field(default=0.02, ge=0.0)
     # How many of a proposer's best grasps are checked for reach; the listed ones come from these.
     check_count: int = Field(default=30, gt=0)
+    # A shared GraspGenX server (graspgenx_runtime.server) for proposer "graspgenx" when no
+    # GraspGenX module is in the stack, e.g. GRASPPROPOSALS__GRASPGENX_URL=http://host:8701.
+    # Empty: no server. The seed makes the same cloud give the same grasps; None leaves it unseeded.
+    graspgenx_url: str = ""
+    graspgenx_seed: int | None = 0
+    # GraspGenX grasps are checked against the scene around the object (localize's scene_cloud):
+    # gripper samples within this of a scene point collide (metres).
+    collision_m: float = Field(default=grasp_filters.COLLISION_M, gt=0.0)
+    # A cloud with fewer points than this gets a hint to look from another angle.
+    sparse_cloud_points: int = Field(default=60, gt=0)
 
 
 class GraspProposals(Module):
@@ -69,7 +84,13 @@ class GraspProposals(Module):
     _graspgenx: GraspGenXModule | None = None
 
     @skill
-    def grasps(self, object_id: str, proposer: str = "heuristic", count: int = 5) -> str:
+    def grasps(
+        self,
+        object_id: str,
+        proposer: str = "heuristic",
+        count: int = 5,
+        max_tilt: float = 180.0,
+    ) -> str:
         """Grasp poses for an object localize reported: the best ones IK reaches, best first.
 
         proposer "heuristic": straight down at the centre of the object's footprint, jaws
@@ -77,19 +98,23 @@ class GraspProposals(Module):
         open container wider than the jaws (a bin, a tray) is grasped on its walls instead:
         straight down, jaws across one wall, a little below its rim, long walls first.
         proposer "graspgenx": a learned model's grasps from any direction, ranked by its
-        confidence; suits other shapes, rims and handles. Both read only the surfaces the
-        camera saw.
+        confidence; suits other shapes, rims and handles. Its grasps are checked against what
+        the camera saw around the object: those whose gripper would hit it, or go below the
+        table, are dropped and counted. Both read only the surfaces the camera saw.
 
         Each grasp gives the tool centre point (TCP) position and orientation to pass to
         arm.move_pose, the direction the gripper approaches along, a pre-grasp pose back
         along that approach, the object's width between the jaws and the proposer's score.
-        IK must reach the grasp and the pre-grasp from the current joints; collisions are not
-        checked. The proposals do not know the task; choose the one that suits it.
+        A note says why each was proposed or what about it is uncertain. IK must reach the
+        grasp and the pre-grasp from the current joints. The proposals do not know the task;
+        choose the one that suits it.
 
         Args:
             object_id: The id localize printed for the object.
             proposer: "heuristic" or "graspgenx".
             count: How many reachable grasps to list at most.
+            max_tilt: Drop grasps whose approach is more than this many degrees from straight
+                down (0 keeps only top-down ones).
         """
         cloud = self._localize.object_cloud(object_id)
         if cloud is None:
@@ -116,7 +141,54 @@ class GraspProposals(Module):
                     "seen below its rim, so no wall to hold either."
                 )
             return f"{proposer} proposed no grasps for {object_id}."
-        return self._describe(object_id, proposer, cloud, proposals, max(count, 1))
+        candidates, dropped, caveat = self._filter(object_id, proposer, cloud, proposals, max_tilt)
+        if not candidates:
+            return f"{proposer}: {len(proposals.candidates)} grasp(s) for {object_id}, none left: {dropped}."
+        proposals = GraspCandidateArray(proposals.header, candidates)
+        return self._describe(object_id, proposer, cloud, proposals, max(count, 1), dropped, caveat)
+
+    def _filter(
+        self,
+        object_id: str,
+        proposer: str,
+        cloud: PointCloud2,
+        proposals: GraspCandidateArray,
+        max_tilt: float,
+    ) -> tuple[list[GraspCandidate], str, str]:
+        """The candidates that pass the tilt limit and, for graspgenx, the scene checks; what
+        was dropped and what could not be checked, as text."""
+        candidates = list(proposals.candidates)
+        if not candidates:
+            return [], "", ""
+        poses = grasp_filters.pose_matrices(
+            np.asarray([c.pose.position.to_numpy() for c in candidates]),
+            np.asarray([c.pose.orientation.to_numpy() for c in candidates]),
+        )
+        keep = np.ones(len(candidates), dtype=bool)
+        dropped, caveat = [], ""
+        if max_tilt < 180.0:
+            tilted = grasp_filters.tilt_degrees(poses) > max_tilt
+            dropped.append(f"{int((tilted & keep).sum())} tilted over {max_tilt:.0f}deg")
+            keep &= ~tilted
+        if proposer == "graspgenx":
+            scene = self._localize.scene_cloud(object_id)
+            points = scene.points_f32() if scene is not None else np.zeros((0, 3))
+            if not len(points):
+                caveat = "collisions not checked: no scene cloud around the object"
+            else:
+                gripper = grasp_filters.box_surface_points()
+                support = grasp_filters.support_height(
+                    points, below=float(np.quantile(cloud.points_f32()[:, 2], 0.5))
+                )
+                if support is not None:
+                    low = grasp_filters.below_support(poses, support, gripper)
+                    dropped.append(f"{int((low & keep).sum())} below the table (z {support:.3f})")
+                    keep &= ~low
+                hit = grasp_filters.colliding(poses, points, gripper, self.config.collision_m)
+                dropped.append(f"{int((hit & keep).sum())} colliding with the scene seen around it")
+                keep &= ~hit
+        kept = [c for c, k in zip(candidates, keep, strict=True) if k]
+        return kept, ("dropped " + ", ".join(dropped)) if dropped else "", caveat
 
     def _describe(
         self,
@@ -125,6 +197,8 @@ class GraspProposals(Module):
         cloud: PointCloud2,
         proposals: GraspCandidateArray,
         count: int,
+        dropped: str = "",
+        caveat: str = "",
     ) -> str:
         checked = proposals.candidates[: self.config.check_count]
         grasps = [
@@ -150,10 +224,20 @@ class GraspProposals(Module):
         points = cloud.points_f32()
         bottom, top = np.quantile(points[:, 2], [0.05, 0.95])
         header = (
-            f"{proposer}: {len(proposals.candidates)} grasp(s) for {object_id}, the best {n} "
-            f"checked, {len(reachable)} reachable; cloud of {len(points)} points, surfaces seen "
-            f"from z {bottom:.3f} to {top:.3f}."
+            f"{proposer}: {len(proposals.candidates)} grasp(s) for {object_id}"
+            + (f" after the checks ({dropped})" if dropped else "")
+            + f", the best {n} checked, {len(reachable)} reachable; cloud of {len(points)} "
+            f"points, surfaces seen from z {bottom:.3f} to {top:.3f}."
         )
+        if caveat:
+            header += f" {caveat[0].upper()}{caveat[1:]}."
+        if len(points) < self.config.sparse_cloud_points:
+            header += (
+                f" Only {len(points)} points: view the object from another angle and localize "
+                "again before trusting these."
+            )
+        elif top - bottom < 0.005:
+            header += " The surfaces seen span under 5 mm (the top only): look from the side too."
         if not reachable:
             first = reasons[0] or reasons[n]
             return f"{header} None reachable from the current joints (first: {first})."
@@ -173,6 +257,7 @@ class GraspProposals(Module):
                 )
                 + f", score {checked[i].score:.2f}; "
                 f"pre-grasp {_xyz(pregrasps[i].position)}"
+                + (f" ({checked[i].note})" if checked[i].note else "")
             )
         return "\n".join(lines)
 

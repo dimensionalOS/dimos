@@ -44,11 +44,15 @@ def _block_cloud() -> PointCloud2:
 
 
 class FakeLocalize:
-    def __init__(self, clouds: dict[str, PointCloud2]) -> None:
+    def __init__(self, clouds: dict[str, PointCloud2], scene: PointCloud2 | None = None) -> None:
         self.clouds = clouds
+        self.scene = scene
 
     def object_cloud(self, object_id: str) -> PointCloud2 | None:
         return self.clouds.get(object_id)
+
+    def scene_cloud(self, object_id: str, margin: float = 0.15) -> PointCloud2 | None:
+        return self.scene
 
 
 class FakeReachability:
@@ -104,7 +108,9 @@ def test_heuristic_lists_a_top_down_grasp_ready_for_move_pose(proposals: GraspPr
     assert lines[1].startswith("1. position [0.500, 0.100, 0.828]")
     assert "approach straight down" in lines[1]
     assert "object width between the jaws 0.03" in lines[1]  # 4 cm, trimmed 2% each side
-    assert lines[1].endswith("pre-grasp [0.500, 0.100, 0.928]")
+    assert lines[1].endswith(
+        "pre-grasp [0.500, 0.100, 0.928] (footprint centre, across its narrow side)"
+    )
 
 
 def test_graspgenx_checks_thirty_and_lists_the_best_reachable(proposals: GraspProposals) -> None:
@@ -141,3 +147,77 @@ def test_an_unknown_proposer_names_both(proposals: GraspProposals) -> None:
 
 def test_an_unknown_id_points_back_to_localize(proposals: GraspProposals) -> None:
     assert "Pass an id from a localize result" in proposals.grasps("nope")
+
+
+def _table(z: float = 0.81) -> PointCloud2:
+    """A table top around the block, 5 mm apart."""
+    xy = np.stack(np.meshgrid(np.arange(0.35, 0.65, 0.005), np.arange(-0.05, 0.25, 0.005)), -1)
+    points = np.column_stack([xy.reshape(-1, 2), np.full(xy.size // 2, z)])
+    return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
+
+
+class FakeGraspGenXDownAndLow:
+    """One grasp from straight above the block, one from the side at table height."""
+
+    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
+        down = Quaternion.from_euler(Vector3(math.pi, 0.0, 0.0))
+        side = Quaternion.from_euler(Vector3(0.0, math.pi / 2, 0.0))
+        return GraspCandidateArray(
+            Header(1.0, "world"),
+            [
+                GraspCandidate(Pose(Vector3(0.5, 0.1, 0.83), down), 0.9),
+                GraspCandidate(Pose(Vector3(0.45, 0.1, 0.812), side), 0.95),
+            ],
+        )
+
+
+def test_graspgenx_grasps_that_would_hit_the_table_are_dropped_and_counted() -> None:
+    module = GraspProposals()
+    module._localize = FakeLocalize({"blk": _block_cloud()}, scene=_table())
+    module._reachability = FakeReachability()
+    module._graspgenx = FakeGraspGenXDownAndLow()  # type: ignore[assignment]
+    try:
+        lines = module.grasps("blk", proposer="graspgenx").splitlines()
+    finally:
+        module.stop()
+
+    assert lines[0].startswith(
+        "graspgenx: 1 grasp(s) for blk after the checks (dropped 1 below the table (z 0.810)"
+    )
+    assert len(lines) == 2 and "approach straight down" in lines[1]
+
+
+def test_graspgenx_without_a_scene_says_collisions_were_not_checked() -> None:
+    module = GraspProposals()
+    module._localize = FakeLocalize({"blk": _block_cloud()})
+    module._reachability = FakeReachability()
+    module._graspgenx = FakeGraspGenXDownAndLow()  # type: ignore[assignment]
+    try:
+        text = module.grasps("blk", proposer="graspgenx")
+    finally:
+        module.stop()
+
+    assert "Collisions not checked: no scene cloud around the object." in text.splitlines()[0]
+
+
+def test_max_tilt_keeps_only_grasps_near_straight_down() -> None:
+    module = GraspProposals()
+    module._localize = FakeLocalize({"blk": _block_cloud()})
+    module._reachability = FakeReachability()
+    module._graspgenx = FakeGraspGenXDownAndLow()  # type: ignore[assignment]
+    try:
+        lines = module.grasps("blk", proposer="graspgenx", max_tilt=30.0).splitlines()
+    finally:
+        module.stop()
+
+    assert "1 tilted over 30deg" in lines[0]
+    assert len(lines) == 2 and "approach straight down" in lines[1]
+
+
+def test_a_sparse_cloud_asks_for_another_view(proposals: GraspProposals) -> None:
+    few = _block_cloud().points_f32()[:20]
+    proposals._localize = FakeLocalize(
+        {"cap": PointCloud2.from_numpy(few, frame_id="world", timestamp=1.0)}
+    )
+
+    assert "Only 20 points: view the object from another angle" in proposals.grasps("cap")

@@ -103,9 +103,21 @@ def top_down_grasps(
             _wall_grasps(points, (cx, cy), sides, short_yaw, float(high_z)),
         )
     position = Vector3(cx, cy, float(min((low_z + high_z) / 2.0, high_z - grasp_depth)))
-    candidates = [GraspCandidate(_top_down(position, short_yaw), score=1.0)]
+    candidates = [
+        GraspCandidate(
+            _top_down(position, short_yaw),
+            score=1.0,
+            note="footprint centre, across its narrow side",
+        )
+    ]
     if max(sides) <= max_jaw_span and not math.isclose(sides[0], sides[1], rel_tol=0.05):
-        candidates.append(GraspCandidate(_top_down(position, short_yaw + math.pi / 2), score=0.5))
+        candidates.append(
+            GraspCandidate(
+                _top_down(position, short_yaw + math.pi / 2),
+                score=0.5,
+                note="footprint centre, across its long side",
+            )
+        )
     return GraspCandidateArray(
         Header(float(object_pointcloud.ts), object_pointcloud.frame_id), candidates
     )
@@ -148,16 +160,22 @@ def _wall_grasps(
                 & (np.abs(tangent) < half_t * 0.7)
             )
             grip = floor + _WALL_GRIP
+            kind = "long wall" if score > 0.75 else "short wall"
             if wall.sum() >= _MIN_WALL_POINTS:
                 n = float(np.median(outward[wall]))
                 grip = min(grip, float(np.quantile(z[wall], 0.98)) - 0.005)
+                note = f"{kind}, {int(wall.sum())} of its points seen"
             else:
                 n = edge + _WALL_HALF
+                note = (
+                    f"{kind} not seen: placed {_WALL_HALF * 1000:.0f} mm beyond the floor's edge "
+                    f"and {_WALL_GRIP * 100:.0f} cm above the floor; check it in an image"
+                )
             if grip < floor + 0.015:
                 continue
             xy_w = np.asarray(centre) + n_axis * (sign * n)
             position = Vector3(float(xy_w[0]), float(xy_w[1]), grip)
-            candidates.append(GraspCandidate(_top_down(position, jaw_yaw), score=score))
+            candidates.append(GraspCandidate(_top_down(position, jaw_yaw), score=score, note=note))
     return candidates
 
 
