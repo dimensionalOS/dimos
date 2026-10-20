@@ -75,6 +75,51 @@ helpers. Their embedding API keeps seconds-based timestamps, including a
 valid zero stamp. Model weights follow each existing backend's cache policy;
 message import and message installation do not trigger model downloads.
 
+## Fiducial markers
+
+Fiducial detection uses generated images, calibration and stamped transforms.
+This example renders and detects a marker entirely on CPU; it needs the existing
+OpenCV contrib dependency, but no camera, model download, network or API key:
+
+```python
+import cv2
+import numpy as np
+
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.image import image_from_array
+from dimos.perception.fiducial.marker_detect import detect_markers_in_image
+
+pixels = np.full((400, 400), 255, dtype=np.uint8)
+dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+pixels[100:300, 100:300] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
+header = Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=123456789))
+image = image_from_array(pixels, encoding="mono8", header=header)
+camera = camera_info_from_intrinsics(400, 400, 200, 200, 400, 400, header=header)
+mount = TransformStamped(
+    header=Header(frame_id="world", stamp=header.stamp),
+    child_frame_id="camera_optical",
+    transform=Transform(translation=Vector3(x=2, y=0, z=0), rotation=Quaternion(x=0, y=0, z=0, w=1)),
+)
+markers = detect_markers_in_image(
+    image, camera_info=camera, world_T_optical=mount,
+    marker_length_m=0.2, aruco_dictionary="DICT_4X4_50",
+)
+message = markers[0].to_detection3d_msg()
+assert message.id == "7"
+assert message.header == Header(frame_id="world", stamp=header.stamp)
+assert abs(message.bbox.center.position.z - 0.4) < 0.01
+```
+
+`MarkerDetectionStreamModule` and `MarkerTfModule` keep their existing stream
+names. Marker arrays and resulting TF messages preserve the image source
+nanoseconds, including zero. Frame aggregation also distinguishes adjacent
+nanoseconds when the local Observation API represents their times as the same
+floating-point second. Select explicit CDR transports until the default runtime
+cutover is complete; the desk blueprint retains its LCM backend with CDR encoding.
+
 ## Experimental WorldBelief
 
 The experimental xArm6 WorldBelief stack records RGB-D observations and processes

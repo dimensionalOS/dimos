@@ -23,6 +23,7 @@ on:
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
       - dimos/perception/detection/**
+      - dimos/perception/fiducial/**
       - dimos/models/embedding/**
       - dimos/perception/experimental/moduleDB.py
       - dimos/models/vl/base.py
@@ -176,3 +177,9 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/detection/reid/test_generated_module.py" "$PWD/dimos/models/embedding/test_generated_images.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/person_tracker.py dimos/perception/detection/reid/module.py dimos/models/embedding/base.py dimos/models/embedding/clip.py dimos/models/embedding/dino.py dimos/models/embedding/siglip.py dimos/models/embedding/siglip2.py dimos/models/embedding/treid.py dimos/types/timestamped.py
+      - name: Verify generated fiducial detections and TF without hardware
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'reportlab==4.5.0'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/fiducial/test_helpers.py" "$PWD"/dimos/perception/fiducial/test_*.py "$PWD"/dimos/perception/fiducial/blueprints/test_*.py
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/fiducial/marker_pose.py dimos/perception/fiducial/marker_detect.py dimos/perception/fiducial/marker_transformer.py dimos/perception/fiducial/marker_detection_stream_module.py dimos/perception/fiducial/marker_tf_module.py dimos/perception/fiducial/blueprints/desk_marker_tf.py
