@@ -20,7 +20,7 @@ required-features = ["module"]
 # The body (`Emb`) the laws are parameterised from; python feature off, see adapter.
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "fbbd1b5233886cc2cd4aa64756e730bb63c443e3", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
