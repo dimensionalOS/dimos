@@ -20,11 +20,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::laws::hinted::update as hinted_update;
+use dimos_generated_messages::geometry_msgs::msg::twist::Twist;
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::std_msgs::msg::bool::Bool;
 use dimos_local_planner::planner::Emb;
 use dimos_module::{native_config, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::Twist;
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::std_msgs::Bool;
 // serde derives come in through #[native_config]
 use tracing::info;
 
@@ -118,19 +118,19 @@ struct Shared {
 #[derive(Module)]
 #[module(name = "trajectory_follower", setup = spawn_worker, teardown = stop_worker)]
 pub struct TrajectoryFollower {
-    #[input(decode = Path::decode, handler = on_path)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_path)]
     path: Input<Path>,
 
-    #[output(encode = Twist::encode)]
+    #[output(encode = msg::encode)]
     nav_cmd_vel: Output<Twist>,
 
-    #[output(encode = Bool::encode)]
+    #[output(encode = msg::encode)]
     goal_reached: Output<Bool>,
 
     #[config]
     config: Config,
 
-    #[tf]
+    #[tf(decode = msg::decode_tf,encode = msg::encode_tf)]
     tf: Tf,
 
     shared: Arc<Mutex<Shared>>,
@@ -307,7 +307,7 @@ impl Worker {
                     let pose = pose.expect("Drive implies a pose");
                     let path = snap.path.clone().expect("Drive implies a path");
                     let states = msg::path_states(&path);
-                    let ts = msg::path_stamps(&path);
+                    let ts = msg::relative_path_stamps(&path);
                     // no clearance array: the law decodes the stamps itself
                     let (vx, vy, wz) = hinted_update(pose, &states, None, Some(&ts), &hinted);
                     self.publish_twist(vx, vy, wz).await;
@@ -333,6 +333,38 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cdr_paths_retain_epoch_nanoseconds_and_arrival_goal_in_both_byte_orders() {
+        let mut path = path_of(&[[0.0, 0.0, 0.0], [1.0, 2.0, 0.0]]);
+        for (index, pose) in path.poses.iter_mut().enumerate() {
+            pose.header.stamp.sec = 1_700_000_000;
+            pose.header.stamp.nanosec = 123_456_789 + index as u32;
+        }
+        for little_endian in [false, true] {
+            let bytes = dimos_module::cdr::encode_endian(&path, little_endian).unwrap();
+            let decoded: Path = dimos_module::cdr::decode(&bytes).unwrap();
+            assert_eq!(msg::relative_path_stamps(&decoded), vec![0.0, 1e-9]);
+            assert_eq!(decoded.poses[0].header.stamp.nanosec, 123_456_789);
+            let mut latch = latch();
+            latch.set_goal(goal_of(&decoded).unwrap());
+            assert_eq!(
+                decide(Some((1.0, 2.0, 0.0)), Some(0.0), 1.0, &mut latch),
+                Tick::Arrived
+            );
+            assert_eq!(
+                decide(Some((1.0, 2.0, 0.0)), Some(0.0), 1.0, &mut latch),
+                Tick::Holding
+            );
+        }
+    }
+
+    #[test]
+    fn arrival_boolean_is_plain_cdr_and_empty_path_has_no_goal() {
+        assert_eq!(msg::encode(&Bool { data: true }), vec![0, 1, 0, 0, 1]);
+        let empty: Path = dimos_module::cdr::decode(&msg::encode(&path_of(&[]))).unwrap();
+        assert_eq!(goal_of(&empty), None);
+    }
 
     #[test]
     fn a_hold_stub_is_a_stop_to_every_law() {

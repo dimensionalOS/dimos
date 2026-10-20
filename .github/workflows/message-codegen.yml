@@ -320,3 +320,12 @@ jobs:
           export DIMOS_NATIVE_LOCAL_PLANNER_BINARY="$PWD/dimos/navigation/local_planner/rust/target/debug/local_planner"
           .native-review/bin/python -I -c 'from dimos.navigation.local_planner import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/local_planner/test_generated_native.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/local_planner/native.py
+      - name: Verify native follower CDR drive, arrival and stop without hardware
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --jobs 2
+          cargo clippy --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --bin trajectory_follower --jobs 2
+          export DIMOS_NATIVE_FOLLOWER_BINARY="$PWD/dimos/navigation/trajectory_follower/fancy/rust/target/debug/trajectory_follower"
+          .native-review/bin/python -I -c 'from dimos.navigation.trajectory_follower.fancy import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/trajectory_follower/fancy/test_generated_native.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/trajectory_follower/fancy/native.py
