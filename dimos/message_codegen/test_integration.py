@@ -81,10 +81,11 @@ source = "interfaces"
     wheel = next((project / "dist").glob("*.whl"))
     installed = tmp_path / "installed"
     run(
-        sys.executable,
-        "-m",
+        "uv",
         "pip",
         "install",
+        "--python",
+        sys.executable,
         "--no-deps",
         "--target",
         str(installed),

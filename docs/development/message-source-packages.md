@@ -35,7 +35,9 @@ Use a Python environment with the published generator and test tools:
 
 ```sh
 uv pip install 'dimos-cdrgen[native]==0.1.0' numpy build pytest pytest-asyncio pytest-env
-python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
+python -m pytest --noconftest -o addopts='' \
+  -o 'markers=native_e2e: compiled native consumer acceptance' \
+  -q dimos/message_codegen/test_integration.py
 ```
 
 The tests check SDK discovery, an installed message wheel built from a source
