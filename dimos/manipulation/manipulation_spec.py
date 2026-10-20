@@ -276,6 +276,7 @@ class ManipulationSpec(Spec, Protocol):
         contact_margin: float,
         obstacle_margin: float,
         planning_group: PlanningGroupID | None = None,
+        min_gap_points: int = 0,
     ) -> list[GraspContact] | None: ...
 
     def reset(self) -> CommandResult: ...

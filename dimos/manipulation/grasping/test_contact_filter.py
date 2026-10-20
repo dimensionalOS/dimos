@@ -16,7 +16,12 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from dimos.manipulation.grasping.contact_filter import add_facts, drop_touching, scene_obstacles
+from dimos.manipulation.grasping.contact_filter import (
+    add_facts,
+    contact_note,
+    drop_touching,
+    scene_obstacles,
+)
 from dimos.manipulation.planning.spec.gripper import GraspContact
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -102,6 +107,35 @@ def test_drop_touching_keeps_the_clear_grasps() -> None:
         "objects": 1,
         "while_closing": 1,
     }
+
+
+def test_drop_touching_counts_grasps_that_close_on_nothing() -> None:
+    manipulation = MagicMock()
+    manipulation.check_grasp_contacts.return_value = [
+        GraspContact(empty_gap=True),
+        GraspContact(("table",), empty_gap=True),
+        GraspContact(),
+    ]
+
+    kept, facts = drop_touching(
+        manipulation, _array(0.9, 0.8, 0.7), _cloud(), {"table": _cloud()}, 0.005, 0.003, "arm", 10
+    )
+
+    assert [c.score for c in kept.candidates] == [0.7]
+    assert manipulation.check_grasp_contacts.call_args.kwargs == {"min_gap_points": 10}
+    del facts["seconds"]
+    assert facts == {
+        "checked": 3,
+        "rejected": 2,
+        "target": 0,
+        "table": 1,
+        "empty_gap": 2,
+        "while_closing": 0,
+    }
+    assert contact_note(facts) == (
+        " The contact check dropped 2 grasp(s) whose gripper would touch the object off its "
+        "finger pads, hit the scene or close on nothing."
+    )
 
 
 def test_drop_touching_keeps_everything_without_a_gripper_spec() -> None:

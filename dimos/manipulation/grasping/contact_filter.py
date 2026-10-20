@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drop grasp candidates whose gripper would touch the object off its pads, or hit the scene.
+"""Drop grasp candidates whose gripper would touch the object off its pads, hit the scene,
+or close on nothing.
 
 The check itself runs in the manipulation module, which holds the robot's gripper
 shape (``ManipulationSpec.check_grasp_contacts``). This module prepares what it
@@ -114,6 +115,7 @@ def drop_touching(
     contact_margin: float,
     obstacle_margin: float,
     planning_group: PlanningGroupID | None,
+    min_gap_points: int = 0,
 ) -> tuple[GraspCandidateArray, dict[str, Any]]:
     """Keep the grasps whose gripper touches the object only at its contact patches.
 
@@ -125,18 +127,27 @@ def drop_touching(
         contact_margin: Closer than this (metres) to the object is a touch.
         obstacle_margin: Closer than this (metres) to an obstacle is an overlap.
         planning_group: Group whose tool tip the grasps pose.
+        min_gap_points: Fewest object points (one per 5 mm cube) the gap
+            between the finger pads must hold; 0 skips this.
 
     Returns the grasps that pass and the facts of the check: ``checked``,
     ``rejected``, how many touched each of "target" and the obstacles,
-    ``while_closing`` (rejected only for what the closing fingers hit) and
-    ``seconds``; or ``{"skipped": why}`` with every grasp kept when the robot
+    ``empty_gap`` (too few object points between the pads; only when
+    ``min_gap_points`` is set), ``while_closing`` (rejected only for what the
+    closing fingers hit) and ``seconds``; or ``{"skipped": why}`` with every grasp kept when the robot
     model has no gripper spec.
     """
     if not candidates.candidates:
         return candidates, {"checked": 0, "rejected": 0}
     started = time.monotonic()
     verdicts = manipulation.check_grasp_contacts(
-        candidates, target, obstacles, contact_margin, obstacle_margin, planning_group
+        candidates,
+        target,
+        obstacles,
+        contact_margin,
+        obstacle_margin,
+        planning_group,
+        min_gap_points=min_gap_points,
     )
     if verdicts is None:
         return candidates, {"skipped": "the robot model has no gripper spec"}
@@ -151,6 +162,8 @@ def drop_touching(
     }
     for name in ("target", *obstacles):
         facts[name] = sum(name in verdict.touches for verdict in verdicts)
+    if min_gap_points > 0:
+        facts["empty_gap"] = sum(verdict.empty_gap for verdict in verdicts)
     facts["while_closing"] = sum(verdict.while_closing for verdict in verdicts)
     facts["seconds"] = round(time.monotonic() - started, 3)
     return _kept(candidates, verdicts), facts
@@ -165,6 +178,7 @@ def check_in_scene(
     contact_margin: float,
     obstacle_margin: float,
     planning_group: PlanningGroupID,
+    min_gap_points: int = 0,
 ) -> tuple[GraspCandidateArray, dict[str, Any]]:
     """Check grasps against an object's points and the camera's view of the scene around it.
 
@@ -180,6 +194,8 @@ def check_in_scene(
         contact_margin: Closer than this (metres) to the object is a touch.
         obstacle_margin: Closer than this (metres) to the table or another object is an overlap.
         planning_group: Group whose tool tip the grasps pose.
+        min_gap_points: Fewest object points (one per 5 mm cube) the gap
+            between the finger pads must hold; 0 skips this.
 
     Returns what ``drop_touching`` returns; every grasp is kept, with
     ``{"skipped": why}``, when there is no scene in the object's frame or the
@@ -202,6 +218,7 @@ def check_in_scene(
             contact_margin,
             obstacle_margin,
             planning_group,
+            min_gap_points,
         )
     except Exception as exc:
         logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))
@@ -213,6 +230,11 @@ def contact_note(facts: dict[str, Any]) -> str:
     rejected = facts.get("rejected", 0)
     if not rejected:
         return ""
+    if facts.get("empty_gap"):
+        return (
+            f" The contact check dropped {rejected} grasp(s) whose gripper would touch the "
+            "object off its finger pads, hit the scene or close on nothing."
+        )
     return (
         f" The contact check dropped {rejected} grasp(s) whose gripper would touch the "
         "object off its finger pads or hit the scene."

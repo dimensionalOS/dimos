@@ -525,6 +525,7 @@ class ManipulationModule(Module):
         contact_margin: float,
         obstacle_margin: float,
         planning_group: PlanningGroupID | None = None,
+        min_gap_points: int = 0,
     ) -> list[GraspContact] | None:
         """Check where each grasp candidate's gripper would touch, open and while closing.
 
@@ -540,6 +541,9 @@ class ManipulationModule(Module):
                 allowed only at a contact patch.
             obstacle_margin: Closer than this (metres) to an obstacle point is an overlap.
             planning_group: Group whose tool tip the candidates pose; None for the only one.
+            min_gap_points: Fewest target points (one per 5 mm cube) the gap
+                between the finger pads must hold; fewer marks the grasp
+                ``empty_gap``. 0 skips this.
 
         Returns one GraspContact per candidate, or None when the robot model has
         no gripper spec. Raises ValueError when the frames differ or the group
@@ -570,6 +574,7 @@ class ManipulationModule(Module):
             {name: cloud.points_f32() for name, cloud in obstacles.items()},
             contact_margin,
             obstacle_margin,
+            min_gap_points,
         )
 
     @rpc

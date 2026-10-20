@@ -75,6 +75,11 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
     # A gripper part closer than this (metres) to a table or object point overlaps it.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
+    # With the contact check, also drop grasps that would close on nothing:
+    # fewer than grasp_min_gap_points target points (one per 5 mm cube) in the
+    # gap the finger pads close across.
+    grasp_require_object_in_gap: bool = True
+    grasp_min_gap_points: int = Field(default=10, gt=0)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -169,8 +174,8 @@ class PickAndPlaceModule(Module):
         """Generate ranked grasps and pick one object from the latest scan.
 
         ``contact_rejected`` in the result counts the grasps dropped for
-        touching the object off the finger pads (``target``) or hitting the
-        ``table`` or other ``objects``.
+        touching the object off the finger pads (``target``), hitting the
+        ``table`` or other ``objects``, or closing on nothing (``empty_gap``).
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -259,6 +264,7 @@ class PickAndPlaceModule(Module):
             self.config.grasp_contact_margin,
             self.config.grasp_obstacle_margin,
             group,
+            self.config.grasp_min_gap_points if self.config.grasp_require_object_in_gap else 0,
         )
         add_facts(self._contact, facts)
         return kept
