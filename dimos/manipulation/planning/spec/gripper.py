@@ -25,6 +25,9 @@ from typing_extensions import Self
 from dimos.protocol.service.spec import BaseConfig
 
 _Vector3 = tuple[float, float, float]
+# Name GraspContact.touches gives a grasp a depth search did not reach because
+# enough grasps before it passed (``GripperContactModel.fit_depth``).
+UNCHECKED = "unchecked"
 
 
 class ContactPatch(BaseConfig):
@@ -110,11 +113,15 @@ class GraspContact:
             close, not at the open pose.
         empty_gap: True when too few of the object's points lie in the gap the
             finger pads close across, so the gripper would close on nothing.
+        depth_shift: How far (metres) the grasp must move along its approach to
+            get this verdict; positive is deeper, toward the object. Only a depth
+            search (``GripperContactModel.fit_depth``) sets it.
     """
 
     touches: tuple[str, ...] = ()
     while_closing: bool = False
     empty_gap: bool = False
+    depth_shift: float = 0.0
 
     @property
     def clear(self) -> bool:

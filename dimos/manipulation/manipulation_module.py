@@ -50,7 +50,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.manipulation.planning.factory import WorldBackend, create_planning_specs, create_world
-from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.planning.gripper_contact import GripperContactModel, depth_shifts
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
@@ -526,6 +526,10 @@ class ManipulationModule(Module):
         obstacle_margin: float,
         planning_group: PlanningGroupID | None = None,
         min_gap_points: int = 0,
+        depth_search: float = 0.0,
+        depth_step: float = 0.005,
+        floor: float | None = None,
+        depth_enough: int = 0,
     ) -> list[GraspContact] | None:
         """Check where each grasp candidate's gripper would touch, open and while closing.
 
@@ -544,6 +548,17 @@ class ManipulationModule(Module):
             min_gap_points: Fewest target points (one per 5 mm cube) the gap
                 between the finger pads must hold; fewer marks the grasp
                 ``empty_gap``. 0 skips this.
+            depth_search: How far (metres) a candidate that fails where it is
+                may slide along its approach, each way, to the nearest depth that
+                passes (see ``GripperContactModel.fit_depth``); the verdict's
+                ``depth_shift`` says how far it moved. 0 checks each candidate
+                where it is.
+            depth_step: Spacing (metres) of the depths tried.
+            floor: Height (metres) of the table's top; a candidate with any
+                gripper part below it touches "floor". None skips this.
+            depth_enough: With ``depth_search``, stop once this many candidates
+                pass, taking them in order; the rest touch "unchecked". 0 checks
+                every candidate.
 
         Returns one GraspContact per candidate, or None when the robot model has
         no gripper spec. Raises ValueError when the frames differ or the group
@@ -568,13 +583,27 @@ class ManipulationModule(Module):
         poses = np.asarray(
             [pose_to_matrix(candidate.pose) for candidate in candidates.candidates]
         ).reshape((-1, 4, 4))
+        points = {name: cloud.points_f32() for name, cloud in obstacles.items()}
+        if depth_search > 0.0:
+            return model.fit_depth(
+                poses,
+                target.points_f32(),
+                points,
+                contact_margin,
+                obstacle_margin,
+                min_gap_points,
+                depth_shifts(depth_search, depth_step),
+                floor,
+                depth_enough,
+            )
         return model.check(
             poses,
             target.points_f32(),
-            {name: cloud.points_f32() for name, cloud in obstacles.items()},
+            points,
             contact_margin,
             obstacle_margin,
             min_gap_points,
+            floor,
         )
 
     @rpc

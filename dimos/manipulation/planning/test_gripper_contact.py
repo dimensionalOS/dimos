@@ -32,7 +32,11 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
-from dimos.manipulation.planning.gripper_contact import GripperContactModel, approach_offsets
+from dimos.manipulation.planning.gripper_contact import (
+    GripperContactModel,
+    approach_offsets,
+    depth_shifts,
+)
 from dimos.manipulation.planning.spec.gripper import ContactPatch, GraspContact, GripperSpec
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel
@@ -397,6 +401,172 @@ def _thin(points: NDArray, cell: float) -> NDArray:
     return points[np.sort(first)]
 
 
+# Sliding grasps along their approach to a depth that passes.
+
+
+def _lying_cylinder(radius: float, length: float) -> NDArray:
+    """Points about 2 mm apart on a cylinder lying on the table along X, centred on the origin."""
+    angles = np.linspace(0.0, 2 * np.pi, int(2 * np.pi * radius / 0.002), endpoint=False)
+    along = np.arange(-length / 2.0, length / 2.0 + 1e-9, 0.002)
+    a, x = np.meshgrid(angles, along)
+    return np.stack([x.ravel(), radius * np.sin(a.ravel()), radius + radius * np.cos(a.ravel())], 1)
+
+
+# A marker lying flat: 2 cm across, 12 cm long.
+MARKER = _lying_cylinder(0.01, 0.12)
+MARKER_TABLE = _table(hole=(-0.06, 0.06, -0.01, 0.01))
+SHIFTS = depth_shifts(0.03, 0.005)
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_lifts_a_grasp_on_a_flat_marker_off_the_table(
+    xarm: GripperContactModel,
+) -> None:
+    from dimos.robot.manipulators.xarm.config import XARM_APPROACH_OFFSETS
+
+    # The closed pads' centre on the marker's middle puts the fingertips through the table.
+    grasp = _top_down(0.0, 0.0, 0.01 - XARM_APPROACH_OFFSETS.pad_behind_tcp)
+    obstacles = {"table": MARKER_TABLE}
+
+    [where_given] = xarm.check(
+        grasp[None], MARKER, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS
+    )
+    [found] = xarm.fit_depth(
+        grasp[None], MARKER, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS, SHIFTS
+    )
+
+    assert "table" in where_given.touches
+    assert found.clear
+    # Backed off, but not so far that the pads close above the marker.
+    assert -0.03 < found.depth_shift < 0.0
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_leaves_a_passing_grasp_where_it_is(xarm: GripperContactModel) -> None:
+    # High on the box, the pads hold only its top, but the grasp passes.
+    grasp = _top_down(0.0, 0.0, 0.055)
+
+    [found] = xarm.fit_depth(
+        grasp[None], BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN, 0, SHIFTS
+    )
+
+    assert found == _check(xarm, grasp, BOX, table=BOX_TABLE) == CLEAR
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_keeps_the_given_verdict_when_no_depth_passes(
+    xarm: GripperContactModel,
+) -> None:
+    # Pads closing beside the box hold nothing at any depth.
+    beside = _top_down(0.05, 0.0, 0.03)
+    obstacles = {"table": BOX_TABLE}
+
+    given = xarm.check(
+        beside[None], BOX, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS
+    )
+    found = xarm.fit_depth(
+        beside[None], BOX, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS, SHIFTS
+    )
+
+    assert found == given == [EMPTY_GAP]
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_with_no_shifts_is_the_check(xarm: GripperContactModel) -> None:
+    heights = np.linspace(0.0, 0.12, 25)
+    grasps = np.stack([_top_down(0.0, 0.0, z) for z in heights])
+    obstacles = {"table": BOX_TABLE}
+
+    assert xarm.fit_depth(
+        grasps, BOX, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS, ()
+    ) == xarm.check(grasps, BOX, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, MIN_GAP_POINTS)
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_backs_a_deep_grasp_off_only_until_it_passes(
+    xarm: GripperContactModel,
+) -> None:
+    # The tool tip 2 cm under the table, as a grasp source centring the marker
+    # in the open fingers gives it: the nearest depth that passes is the lowest.
+    grasp = _top_down(0.0, 0.0, -0.02)
+
+    [found] = xarm.fit_depth(
+        grasp[None],
+        MARKER,
+        {"table": MARKER_TABLE},
+        CONTACT_MARGIN,
+        OBSTACLE_MARGIN,
+        MIN_GAP_POINTS,
+        depth_shifts(0.05, 0.0025),
+        floor=0.0,
+    )
+
+    assert found.clear
+    # Low enough that the fingers meet the 2 cm marker's sides, not just its top.
+    assert -0.02 - found.depth_shift < 0.01
+
+
+@pytest.mark.self_hosted
+def test_xarm_floor_rejects_a_grasp_from_under_the_table(xarm: GripperContactModel) -> None:
+    # Pointing up from 1 cm under the table top, below a marker that sinks
+    # 2 mm into the table: no table point lies near the gripper.
+    sunk = MARKER - np.array([0.0, 0.0, 0.002])
+    from_below = _top_down(0.0, 0.0, -0.01)
+    from_below[:3, :3] = from_below[:3, :3] @ np.diag([1.0, -1.0, -1.0])
+
+    def check(floor: float | None) -> GraspContact:
+        return xarm.check(
+            from_below[None],
+            sunk,
+            {"table": MARKER_TABLE},
+            CONTACT_MARGIN,
+            OBSTACLE_MARGIN,
+            floor=floor,
+        )[0]
+
+    assert check(None) == CLEAR
+    assert check(0.0) == GraspContact(("floor",))
+    # From above with the open fingertips 2 mm into the table: below the floor too.
+    into = _top_down(0.0, 0.0, -0.002 - XARM_TIP_BEHIND_TCP)
+    short_box = _box((0.0, 0.0, 0.015), (0.04, 0.04, 0.03))
+    assert (
+        "floor"
+        in xarm.check(into[None], short_box, {}, CONTACT_MARGIN, OBSTACLE_MARGIN, floor=0.0)[
+            0
+        ].touches
+    )
+    # A grasp from above, its fingertips just over the table, is above the floor.
+    assert _check(xarm, _top_down(0.0, 0.0, 0.03), BOX, table=BOX_TABLE) == CLEAR
+    assert xarm.check(
+        _top_down(0.0, 0.0, 0.03)[None],
+        BOX,
+        {"table": BOX_TABLE},
+        CONTACT_MARGIN,
+        OBSTACLE_MARGIN,
+        floor=0.0,
+    ) == [CLEAR]
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_stops_once_enough_grasps_pass(xarm: GripperContactModel) -> None:
+    # 120 grasps that all pass on the box: the first 50 are checked, the rest are not.
+    grasps = np.stack([_top_down(0.0, 0.0, 0.03, yaw=0.01 * i) for i in range(120)])
+
+    found = xarm.fit_depth(
+        grasps, BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN, 0, SHIFTS, enough=10
+    )
+
+    assert all(verdict.clear for verdict in found[:50])
+    assert found[50:] == [GraspContact(("unchecked",))] * 70
+
+
+def test_depth_shifts_run_through_zero() -> None:
+    assert depth_shifts(0.015, 0.005) == pytest.approx(
+        [-0.015, -0.01, -0.005, 0.0, 0.005, 0.01, 0.015]
+    )
+    assert depth_shifts(0.0, 0.005) == [0.0]
+
+
 def _cloud(points: NDArray) -> PointCloud2:
     return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
 
@@ -558,6 +728,26 @@ def test_three_finger_hand_sweep_catches_the_fingertips_swinging_into_the_table(
 
     assert _check(hand, grasp, CAN, table=CAN_TABLE) == GraspContact(("table",), while_closing=True)
     assert _check(open_only, grasp, CAN, table=CAN_TABLE) == CLEAR
+
+
+def test_three_finger_hand_depth_search_backs_the_sweep_off_the_table(
+    hand: GripperContactModel,
+) -> None:
+    # Open, the fingertips clear the table by 4 mm; closing, they reach it.
+    grasp = _top_down(0.0, 0.0, 0.004 + _lowest_fingertip(hand, 0))
+
+    [found] = hand.fit_depth(
+        grasp[None],
+        CAN,
+        {"table": CAN_TABLE},
+        CONTACT_MARGIN,
+        OBSTACLE_MARGIN,
+        MIN_GAP_POINTS,
+        SHIFTS,
+    )
+
+    assert found.clear
+    assert found.depth_shift < 0.0
 
 
 def test_approach_offsets_of_the_three_finger_hand(hand_urdf: Path) -> None:

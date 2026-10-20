@@ -15,6 +15,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from dimos.manipulation.grasping.contact_filter import (
     add_facts,
@@ -24,6 +25,7 @@ from dimos.manipulation.grasping.contact_filter import (
 )
 from dimos.manipulation.planning.spec.gripper import GraspContact
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
@@ -56,20 +58,23 @@ def test_the_scene_splits_into_the_table_under_the_object_and_other_objects() ->
         (1.2, 0.0, TABLE_Z),  # out of the gripper's reach: dropped
     )
 
-    found = scene_obstacles(scene, target, [Vector3(0.5, 0.0, TABLE_Z + 0.3)])
+    found, height = scene_obstacles(scene, target, [Vector3(0.5, 0.0, TABLE_Z + 0.3)])
 
     assert _xyz(found["table"]) == _xyz(_cloud(*table, (0.5, 0.006, TABLE_Z + 0.002)))
     assert _xyz(found["objects"]) == {(0.6, 0.0, round(TABLE_Z + 0.05, 3))}
     assert found["table"].frame_id == found["objects"].frame_id == "world"
+    # The middle of the 5 mm height bin holding the table.
+    assert height == pytest.approx(TABLE_Z, abs=0.005)
 
 
 def test_with_no_table_under_the_object_every_point_is_an_object() -> None:
     target = _cloud((0.5, 0.0, 0.9))
 
-    found = scene_obstacles(scene=_cloud((0.6, 0.0, 1.0)), target=target, tips=[])
+    found, height = scene_obstacles(scene=_cloud((0.6, 0.0, 1.0)), target=target, tips=[])
 
     assert len(found["table"].points_f32()) == 0
     assert _xyz(found["objects"]) == {(0.6, 0.0, 1.0)}
+    assert height is None
 
 
 def _array(*scores: float) -> GraspCandidateArray:
@@ -122,7 +127,13 @@ def test_drop_touching_counts_grasps_that_close_on_nothing() -> None:
     )
 
     assert [c.score for c in kept.candidates] == [0.7]
-    assert manipulation.check_grasp_contacts.call_args.kwargs == {"min_gap_points": 10}
+    assert manipulation.check_grasp_contacts.call_args.kwargs == {
+        "min_gap_points": 10,
+        "depth_search": 0.0,
+        "depth_step": 0.005,
+        "floor": None,
+        "depth_enough": 0,
+    }
     del facts["seconds"]
     assert facts == {
         "checked": 3,
@@ -136,6 +147,47 @@ def test_drop_touching_counts_grasps_that_close_on_nothing() -> None:
         " The contact check dropped 2 grasp(s) whose gripper would touch the object off its "
         "finger pads, hit the scene or close on nothing."
     )
+
+
+def test_drop_touching_moves_kept_grasps_to_the_depth_the_search_found() -> None:
+    # A grasp pointing straight down (tool z along world -z), 10 cm up.
+    down = GraspCandidate(Pose(Vector3(0.1, 0.2, 0.1), Quaternion(1.0, 0.0, 0.0, 0.0)), 0.9)
+    candidates = GraspCandidateArray(Header(1.0, "world"), [down, down])
+    manipulation = MagicMock()
+    manipulation.check_grasp_contacts.return_value = [
+        GraspContact(depth_shift=-0.015),
+        GraspContact(("table",), depth_shift=0.0),
+    ]
+
+    kept, facts = drop_touching(
+        manipulation, candidates, _cloud(), {"table": _cloud()}, 0.005, 0.003, "arm", 10, 0.03
+    )
+
+    [moved] = kept.candidates
+    # Backed off 1.5 cm along the approach: up.
+    assert moved.pose.position.to_numpy() == pytest.approx([0.1, 0.2, 0.115])
+    assert moved.pose.orientation == down.pose.orientation
+    assert moved.score == 0.9
+    assert manipulation.check_grasp_contacts.call_args.kwargs["depth_search"] == 0.03
+    assert facts["moved"] == 1
+
+
+def test_drop_touching_uses_moved_grasps_only_when_none_pass_where_they_are() -> None:
+    down = GraspCandidate(Pose(Vector3(0.1, 0.2, 0.1), Quaternion(1.0, 0.0, 0.0, 0.0)), 0.9)
+    candidates = GraspCandidateArray(Header(1.0, "world"), [down, down])
+    manipulation = MagicMock()
+
+    def kept_scores(verdicts: list[GraspContact]) -> list[float]:
+        manipulation.check_grasp_contacts.return_value = verdicts
+        kept, _ = drop_touching(
+            manipulation, candidates, _cloud(), {}, 0.005, 0.003, "arm", 10, 0.05
+        )
+        return [round(c.pose.position.z, 3) for c in kept.candidates]
+
+    # One passes where it is: the moved one is dropped.
+    assert kept_scores([GraspContact(depth_shift=-0.01), GraspContact()]) == [0.1]
+    # None passes where it is: the moved one is used, 1 cm higher.
+    assert kept_scores([GraspContact(depth_shift=-0.01), GraspContact(("table",))]) == [0.11]
 
 
 def test_drop_touching_keeps_everything_without_a_gripper_spec() -> None:
