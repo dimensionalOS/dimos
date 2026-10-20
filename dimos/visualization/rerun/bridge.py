@@ -58,9 +58,14 @@ from dimos.messages.sensor_msgs.msg import (
     CompressedImage as CdrCompressedImage,
     Image as CdrImage,
 )
+from dimos.messages.tf2_msgs.msg import TFMessage as CdrTFMessage
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.msgs.time import to_seconds
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -446,6 +451,33 @@ class RerunBridgeModule(Module):
             if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
                 return
             self._last_log[entity_path] = now
+
+        if self._tf_tree is not None and isinstance(msg, CdrTFMessage):
+            # The existing frame-tree layout helper consumes local numerical values.
+            transforms = [
+                Transform(
+                    translation=Vector3(
+                        t.transform.translation.x,
+                        t.transform.translation.y,
+                        t.transform.translation.z,
+                    ),
+                    rotation=Quaternion(
+                        t.transform.rotation.x,
+                        t.transform.rotation.y,
+                        t.transform.rotation.z,
+                        t.transform.rotation.w,
+                    ),
+                    frame_id=t.header.frame_id,
+                    child_frame_id=t.child_frame_id,
+                    ts=to_seconds(t.header.stamp),
+                )
+                for t in msg.transforms
+            ]
+            with self._tf_lock:
+                for entry in generated_archetypes(msg, entity_path) or []:
+                    rr.log(entry[0], entry[1])
+                self._tf_tree.update(transforms)
+            return
 
         if self._tf_tree is not None and isinstance(msg, TFMessage):
             with self._tf_lock:

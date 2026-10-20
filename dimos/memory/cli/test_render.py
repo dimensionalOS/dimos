@@ -16,12 +16,25 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import rerun as rr
 
 from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
 from dimos.memory.store.memory import MemoryStore
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Quaternion as CdrQuaternion,
+    Transform as CdrTransform,
+    TransformStamped,
+    Vector3 as CdrVector3,
+)
+from dimos.messages.sensor_msgs.msg import CameraInfo as CdrCameraInfo, CompressedImage
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage as CdrTFMessage
+from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.image import compressed_image_from_image, image_from_array
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -182,3 +195,50 @@ def test_frame_first_seen_takes_first_ts_per_frame() -> None:
         tf.append(_tf("a", 7.0), ts=7.0)
         seen = _frame_first_seen([("tf", tf, tf.first())], {"a", "b"})
     assert seen == {"a": 5.0, "b": 6.0}
+
+
+def test_generated_compressed_image_pinhole_waits_for_its_frame(tmp_path, capsys, mocker):
+    log = mocker.spy(rr, "log")
+    set_time = mocker.spy(rr, "set_time")
+    info = camera_info_from_intrinsics(
+        fx=5.0, fy=5.0, cx=2.0, cy=2.0, width=4, height=4, header=Header(Time(0, 0), "camera")
+    )
+    image = compressed_image_from_image(
+        image_from_array(
+            np.full((4, 4, 3), [255, 0, 0], dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(Time(0, 0), "camera"),
+        )
+    )
+    image.header.stamp = Time(1_789_654_321, 1)
+    tf = CdrTFMessage(
+        [
+            TransformStamped(
+                Header(Time(1_789_654_321, 2), "world"),
+                "camera",
+                CdrTransform(CdrVector3(1.0, 0.0, 0.0), CdrQuaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ]
+    )
+    with MemoryStore() as store:
+        store.stream("info", CdrCameraInfo).append(info, ts=90.0)
+        store.stream("image", CompressedImage).append(image, ts=100.0)
+        store.stream("tf", CdrTFMessage).append(tf, ts=101.0)
+        output = render_store(store, out=str(tmp_path / "generated.rrd"), no_gui=True, root="run")
+    assert _written(output)
+    assert "frame 'camera' at +1.00s" in capsys.readouterr().out
+    entries = [(call.args[0], call.args[1]) for call in log.call_args_list]
+    assert any(path == "run/image" and isinstance(value, rr.Pinhole) for path, value in entries)
+    assert any(
+        path == "run/image" and isinstance(value, rr.EncodedImage) for path, value in entries
+    )
+    transform = next(value for path, value in entries if path == "tf#/camera")
+    assert transform.translation.as_arrow_array().to_pylist() == [[1.0, 0.0, 0.0]]
+    assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+    assert any(
+        call.args == ("source",)
+        and call.kwargs.get("timestamp") == np.datetime64(1_789_654_321_000_000_001, "ns")
+        for call in set_time.call_args_list
+    )
+    assert image.header.stamp == Time(1_789_654_321, 1)
+    assert not hasattr(image, "to_rerun")

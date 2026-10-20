@@ -26,9 +26,21 @@ from dimos.core.cdr_transport import CdrTransport
 from dimos.core.global_config import GlobalConfig
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
-from dimos.messages.geometry_msgs.msg import Point, PointStamped
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb
@@ -238,3 +250,49 @@ def test_height_palette_uses_all_class_ids_at_the_recording_root(mocker):
     [classes] = annotation.context.as_arrow_array().to_pylist()
     assert [item["class_id"] for item in classes] == list(range(256))
     assert classes[0]["class_description"]["info"]["color"] == 0x30123BFF
+
+
+def test_generated_odometry_exposes_pose_axes_and_full_covariance_fields():
+    pose = build_messages()[0][1]
+    value = Odometry(
+        pose.header,
+        "base",
+        PoseWithCovariance(pose.pose, np.zeros(36)),
+        TwistWithCovariance(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)), np.zeros(36)),
+    )
+    value.pose.covariance[0] = 0.25
+    entries = generated_archetypes(value, "world/odometry")
+    assert entries is not None
+    assert isinstance(entries[0][1], rr.Transform3D)
+    assert isinstance(entries[1][1], rr.TransformAxes3D)
+    assert entries[0][1].translation.as_arrow_array().to_pylist() == [[1.5, -2.5, 0.25]]
+    fields = json.loads(entries[-1][1].text.as_arrow_array().to_pylist()[0])
+    assert fields["pose"]["covariance"][0] == 0.25
+    assert fields["child_frame_id"] == "base"
+    assert entries[0][1].child_frame.as_arrow_array().to_pylist() == ["tf#/base"]
+    assert fields["header"]["stamp"]["nanosec"] == 500000123
+    assert value.pose.covariance[0] == 0.25
+
+
+def test_generated_tf_preserves_frame_tree_layout_and_transform_values(bridge, mocker):
+    bridge.config.tf_axes = 0.35
+    bridge._tf_tree = bridge._new_tf_tree()
+    log = mocker.patch.object(rr, "log")
+    value = TFMessage(
+        [
+            TransformStamped(
+                Header(Time(0, 1), "world"),
+                "camera",
+                Transform(Vector3(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ]
+    )
+    bridge._on_message(value, "tf")
+    assert bridge._tf_tree.placements() == {
+        "world": "world/tf/world",
+        "camera": "world/tf/world/camera",
+    }
+    transform = next(call.args[1] for call in log.call_args_list if call.args[0] == "tf#/camera")
+    assert transform.translation.as_arrow_array().to_pylist() == [[1.0, 2.0, 3.0]]
+    assert transform.child_frame.as_arrow_array().to_pylist() == ["tf#/camera"]
+    assert value.transforms[0].header.stamp == Time(0, 1)

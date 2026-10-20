@@ -11,6 +11,7 @@ Use your existing local MCAP or memory SQLite file and choose a **new** output n
 dimos mem convert old.db converted.mcap --dry-run
 dimos mem convert old.db converted.mcap
 dimos mem summary converted.mcap
+dimos mem rerun converted.mcap --seconds 5 --no-gui
 ```
 
 `--dry-run` checks declared types, schemas and row counts; payload integrity is
@@ -66,6 +67,11 @@ pickle, raw captures, external blob/vector stores and MCAP attachments are rejec
 No class named by a recording is imported or instantiated. Declared CDR input must
 match the installed full schema. Untrusted native-format recordings are not a
 sandboxed input format; use recordings from trusted producers.
+
+The Rerun command exports generated image, cloud, pose/odometry and TF streams
+through external adapters. CameraInfo is paired with its image frame; source
+Header timestamps are logged at integer nanosecond precision. The generated
+message classes need no viewer methods.
 
 Open `converted.mcap` as a local file in Foxglove.
 Foxglove may require your existing desktop installation or signed-in browser;

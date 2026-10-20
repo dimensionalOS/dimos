@@ -25,8 +25,9 @@ import numpy as np
 
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.image import image_from_compressed, image_to_rgb, image_view
 from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 
@@ -46,16 +47,17 @@ def message_frame_id(message: Any) -> str | None:
     return frame if isinstance(frame, str) else None
 
 
-def camera_pinhole(info: CameraInfo) -> rr.Pinhole:
+def camera_pinhole(info: CameraInfo, optical_frame: str | None = None) -> rr.Pinhole:
     import rerun as rr
 
+    frame = info.header.frame_id if optical_frame is None else optical_frame
     return rr.Pinhole(
         focal_length=[info.k[0], info.k[4]],
         principal_point=[info.k[2], info.k[5]],
         width=info.width,
         height=info.height,
         image_plane_distance=1.0,
-        parent_frame=f"tf#/{info.header.frame_id}" if info.header.frame_id else None,
+        parent_frame=f"tf#/{frame}" if frame else None,
     )
 
 
@@ -205,7 +207,24 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         if frame:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{frame}")))
         return entries
-    if type(message) is Path:
+    if type(message) is CameraInfo:
+        entries = [(entity, camera_pinhole(message))]
+    elif type(message) is TFMessage:
+        entries = []
+        for value in message.transforms:
+            t, q = value.transform.translation, value.transform.rotation
+            entries.append(
+                (
+                    "tf#/" + rr.escape_entity_path_part(value.child_frame_id),
+                    rr.Transform3D(
+                        translation=[t.x, t.y, t.z],
+                        quaternion=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
+                        parent_frame="tf#/" + value.header.frame_id,
+                        child_frame="tf#/" + value.child_frame_id,
+                    ),
+                )
+            )
+    elif type(message) is Path:
         entries = [(entity, path_archetype(message))]
         if message.header.frame_id:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
@@ -213,8 +232,9 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         entries = [(entity, entity_points(message))]
         if message.header.frame_id:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
-    elif type(message) is PoseStamped:
-        point, rotation = message.pose.position, message.pose.orientation
+    elif type(message) in (PoseStamped, Odometry):
+        pose = message.pose.pose if type(message) is Odometry else message.pose
+        point, rotation = pose.position, pose.orientation
         entries = [
             (
                 entity,
@@ -223,6 +243,9 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
                     quaternion=rr.Quaternion(xyzw=[rotation.x, rotation.y, rotation.z, rotation.w]),
                     parent_frame=f"tf#/{message.header.frame_id}"
                     if message.header.frame_id
+                    else None,
+                    child_frame=f"tf#/{message.child_frame_id}"
+                    if type(message) is Odometry and message.child_frame_id
                     else None,
                 ),
             ),
@@ -239,5 +262,16 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         message,
         dict_factory=lambda items: {key: value for key, value in items if key != "__msgtype__"},
     )
-    entries.append((entity + "/message", rr.TextDocument(json.dumps(fields, indent=2))))
+    entries.append(
+        (entity + "/message", rr.TextDocument(json.dumps(fields, indent=2, default=_json_value)))
+    )
     return entries
+
+
+def _json_value(value: Any) -> Any:
+    """Represent generated numerical arrays without changing their source values."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Cannot render {type(value).__name__} as JSON")
