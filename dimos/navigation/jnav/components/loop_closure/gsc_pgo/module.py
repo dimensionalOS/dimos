@@ -185,6 +185,9 @@ class GscPGO(NativeModule):
     corrected_odometry: Out[Odometry]
     pose_graph: Out[Graph3D]
     loop_closure_event: Out[GraphDelta3D]
+    # pose_graph and loop_closure_event as packed PointCloud2 records, for fast-reform consumers.
+    pose_graph_records: Out[PointCloud2]
+    loop_closure_records: Out[PointCloud2]
     correction: Out[
         TFMessage
     ]  # i know, kinda redundant, but makes visuals much easier to make and is low-cost

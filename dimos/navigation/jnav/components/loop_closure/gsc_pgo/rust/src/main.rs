@@ -56,8 +56,9 @@ use lcm_msgs::tf2_msgs::TFMessage;
 mod utils;
 use tracing::{error, info, warn};
 use utils::{
-    build_loop_closure_event, build_odometry, build_pointcloud2, build_pose_graph,
-    build_tf_message, extract_xyz, frobenius_diff, interpolate_odom, SplitMix64,
+    build_loop_closure_event, build_loop_closure_records, build_odometry, build_pointcloud2,
+    build_pose_graph, build_pose_graph_records, build_tf_message, extract_xyz, frobenius_diff,
+    interpolate_odom, SplitMix64,
 };
 
 #[native_config]
@@ -267,6 +268,13 @@ struct GscPgoModule {
     #[output(encode = GraphDelta3D::encode)]
     loop_closure_event: Output<GraphDelta3D>,
 
+    // pose_graph and loop_closure_event as packed PointCloud2 records, for fast-reform consumers.
+    #[output(encode = PointCloud2::encode)]
+    pose_graph_records: Output<PointCloud2>,
+
+    #[output(encode = PointCloud2::encode)]
+    loop_closure_records: Output<PointCloud2>,
+
     #[output(encode = DeformationNode::encode)]
     tf_deformation_nodes: Output<DeformationNode>,
 
@@ -300,6 +308,8 @@ impl GscPgoModule {
             correction: self.correction.clone(),
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
+            pose_graph_records: self.pose_graph_records.clone(),
+            loop_closure_records: self.loop_closure_records.clone(),
             tf_deformation_nodes: self.tf_deformation_nodes.clone(),
             global_map: self._global_map.clone(),
             rt: tokio::runtime::Handle::current(),
@@ -439,6 +449,8 @@ struct Worker {
     correction: Output<TFMessage>,
     pose_graph: Output<Graph3D>,
     loop_closure_event: Output<GraphDelta3D>,
+    pose_graph_records: Output<PointCloud2>,
+    loop_closure_records: Output<PointCloud2>,
     tf_deformation_nodes: Output<DeformationNode>,
     global_map: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
@@ -664,6 +676,9 @@ impl Worker {
                 let msg =
                     build_loop_closure_event(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
+                let records =
+                    build_loop_closure_records(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
+                self.publish(&self.loop_closure_records, &records, "loop_closure_records");
             }
 
             self.publish_corrected(
@@ -732,6 +747,8 @@ impl Worker {
             .collect();
         let graph = build_pose_graph(pgo.key_poses(), &active_pairs, ts, frame_id);
         self.publish(&self.pose_graph, &graph, "pose_graph");
+        let records = build_pose_graph_records(pgo.key_poses(), ts, frame_id);
+        self.publish(&self.pose_graph_records, &records, "pose_graph_records");
         self.publish_deformation_nodes(
             pgo.key_poses(),
             deformation_tf_id,
