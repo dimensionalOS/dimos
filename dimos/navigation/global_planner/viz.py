@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-    from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-    from dimos.msgs.nav_msgs.Path import Path
+    from dimos.messages.geometry_msgs.msg import PointStamped
+    from dimos.messages.nav_msgs.msg import Path
     from dimos.visualization.rerun.bridge import VisualOverride
 
 # rerun is imported inside the renderers: it is heavy and only viewers load it.
@@ -66,7 +66,12 @@ def render_path(msg: Path) -> Archetype | None:
     """The planned route. An empty path means no route, so the last one stays drawn."""
     if len(msg.poses) == 0:
         return None
-    return path_strip(np.array([[p.x, p.y, p.z] for p in msg.poses], dtype=np.float32))
+    return path_strip(
+        np.array(
+            [[p.pose.position.x, p.pose.position.y, p.pose.position.z] for p in msg.poses],
+            dtype=np.float32,
+        )
+    )
 
 
 def goal_point(xyz: tuple[float, float, float]) -> Archetype:
@@ -77,9 +82,9 @@ def goal_point(xyz: tuple[float, float, float]) -> Archetype:
 
 def render_goal(msg: PointStamped) -> Archetype | None:
     """The active goal. NaN is the movement manager's placeholder for none."""
-    if any(math.isnan(v) for v in (msg.x, msg.y, msg.z)):
+    if any(math.isnan(v) for v in (msg.point.x, msg.point.y, msg.point.z)):
         return None
-    return goal_point((msg.x, msg.y, msg.z))
+    return goal_point((msg.point.x, msg.point.y, msg.point.z))
 
 
 def robot_body_box(length: float, width: float, height: float) -> Archetype:

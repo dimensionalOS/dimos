@@ -26,6 +26,8 @@ on:
       - dimos/navigation/spec.py
       - dimos/navigation/local_planner/**
       - dimos/navigation/trajectory_follower/**
+      - dimos/navigation/global_planner/viz.py
+      - dimos/navigation/global_planner/test_viz.py
       - dimos/navigation/test_tf_pose.py
       - dimos/navigation/movement_manager/**
       - dimos/navigation/go2/replanning_a_star/**
@@ -329,3 +331,8 @@ jobs:
           export DIMOS_NATIVE_FOLLOWER_BINARY="$PWD/dimos/navigation/trajectory_follower/fancy/rust/target/debug/trajectory_follower"
           .native-review/bin/python -I -c 'from dimos.navigation.trajectory_follower.fancy import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/trajectory_follower/fancy/test_generated_native.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/trajectory_follower/fancy/native.py
+      - name: Verify generated navigation path and goal rendering
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.local_planner import viz as local; from dimos.navigation.global_planner import viz as global_; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (local,global_)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/local_planner/test_viz.py" "$PWD/dimos/navigation/global_planner/test_viz.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/local_planner/viz.py dimos/navigation/global_planner/viz.py
