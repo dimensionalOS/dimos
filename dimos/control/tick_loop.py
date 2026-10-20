@@ -85,6 +85,7 @@ class TickLoop:
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
+        publish_command_callback: Optional callback for adapter-accepted position targets
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
         publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
         frame_pose_hz: Maximum rate for publish_tf_callback
@@ -106,6 +107,7 @@ class TickLoop:
         frame_pose_hz: float = 30.0,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
+        publish_command_callback: Callable[[JointState], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -114,6 +116,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._publish_command_callback = publish_command_callback
         self._publish_robot_callback = publish_robot_callback
         self._publish_tf_callback = publish_tf_callback
         self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
@@ -202,7 +205,7 @@ class TickLoop:
 
         hw_commands = self._route_to_hardware(joint_commands)
 
-        self._write_all_hardware(hw_commands)
+        self._write_all_hardware(hw_commands, joint_states.timestamp)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -427,9 +430,12 @@ class TickLoop:
     def _write_all_hardware(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        timestamp: float | None = None,
     ) -> None:
-        """Write commands to all hardware interfaces."""
+        """Write commands and publish accepted position payloads outside the lock."""
         hardware = self._hardware
+        names: list[str] = []
+        values: list[float] = []
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -441,8 +447,24 @@ class TickLoop:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
                             )
+                        else:
+                            dispatched = hardware[hw_id].dispatched_positions
+                            if dispatched is not None:
+                                names.extend(hardware[hw_id].joint_names)
+                                values.extend(dispatched)
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
+        if names and self._publish_command_callback is not None:
+            self._publish_command_callback(
+                JointState(
+                    ts=timestamp,
+                    frame_id=self._frame_id,
+                    name=names,
+                    position=values,
+                    velocity=[],
+                    effort=[],
+                )
+            )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""
