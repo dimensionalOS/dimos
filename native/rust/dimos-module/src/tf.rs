@@ -338,6 +338,11 @@ impl Graph {
     }
 }
 
+/// Decode a wire packet into the existing transform graph values.
+pub type DecodeTransforms = fn(&[u8]) -> io::Result<Vec<Transform>>;
+/// Encode graph values for publication on the selected TF wire format.
+pub type EncodeTransforms = fn(&[Transform]) -> io::Result<Vec<u8>>;
+
 /// A cheap-to-clone handle for querying and publishing transforms.
 ///
 /// Obtain one from `Builder::tf` (or a `#[tf]` field on a `#[derive(Module)]`
@@ -346,9 +351,15 @@ impl Graph {
 pub struct Tf {
     graph: Arc<Graph>,
     sender: mpsc::Sender<Vec<u8>>,
+    decode: DecodeTransforms,
+    encode: EncodeTransforms,
 }
 
 impl Tf {
+    pub(crate) fn uses_codec(&self, decode: DecodeTransforms, encode: EncodeTransforms) -> bool {
+        std::ptr::fn_addr_eq(self.decode, decode) && std::ptr::fn_addr_eq(self.encode, encode)
+    }
+
     /// Start a lookup of the transform from `parent` to `child`.
     ///
     /// Refine it with [`Lookup::at`] and [`Lookup::tolerance`], then finish with
@@ -379,15 +390,13 @@ impl Tf {
     /// The transforms also feed the local graph, so a lookup right after sees
     /// them without waiting for the transport round trip.
     pub async fn publish(&self, transforms: &[Transform]) -> io::Result<()> {
+        let payload = (self.encode)(transforms)?;
         self.graph.update(|buffer| {
             for t in transforms {
                 buffer.receive(&t.parent, &t.child, t.ts, t.iso);
             }
         });
-        let msg = lcm_msgs::tf2_msgs::TFMessage {
-            transforms: transforms.iter().map(to_stamped).collect(),
-        };
-        crate::module::publish_encoded(&self.sender, msg.encode()).await
+        crate::module::publish_encoded(&self.sender, payload).await
     }
 }
 
@@ -515,17 +524,52 @@ fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
     }
 }
 
-// Decodes /tf messages into the shared graph. Registered as a Route so the
-// module's existing recv loop dispatches tf traffic to it.
+pub(crate) fn encode_legacy(transforms: &[Transform]) -> io::Result<Vec<u8>> {
+    Ok(lcm_msgs::tf2_msgs::TFMessage {
+        transforms: transforms.iter().map(to_stamped).collect(),
+    }
+    .encode())
+}
+
+pub(crate) fn decode_legacy(data: &[u8]) -> io::Result<Vec<Transform>> {
+    let msg = lcm_msgs::tf2_msgs::TFMessage::decode(data)?;
+    let mut transforms = Vec::with_capacity(msg.transforms.len());
+    for st in msg.transforms {
+        let t = &st.transform.translation;
+        let q = &st.transform.rotation;
+        let Some(rotation) = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
+        else {
+            crate::error_throttled!(
+                Duration::from_secs(1),
+                parent = %st.header.frame_id,
+                child = %st.child_frame_id,
+                "tf rotation is not a valid quaternion"
+            );
+            continue;
+        };
+        let iso = Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation);
+        let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
+        transforms.push(Transform::new(
+            st.header.frame_id,
+            st.child_frame_id,
+            ts,
+            iso,
+        ));
+    }
+    Ok(transforms)
+}
+
+// The existing receive loop dispatches TF using the codec selected by the module.
 struct TfRoute {
     topic: String,
     graph: Arc<Graph>,
+    decode: DecodeTransforms,
 }
 
 impl Route for TfRoute {
     fn try_dispatch(&self, data: &[u8]) {
-        let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
-            Ok(msg) => msg,
+        let transforms = match (self.decode)(data) {
+            Ok(transforms) => transforms,
             Err(e) => {
                 crate::error_throttled!(
                     Duration::from_secs(1),
@@ -537,44 +581,42 @@ impl Route for TfRoute {
             }
         };
         self.graph.update(|buffer| {
-            for st in &msg.transforms {
-                let t = &st.transform.translation;
-                let q = &st.transform.rotation;
-                // Normalizing a zero-norm quaternion yields a NaN rotation.
-                let Some(rotation) =
-                    UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
-                else {
-                    crate::error_throttled!(
-                        Duration::from_secs(1),
-                        topic = %self.topic,
-                        parent = %st.header.frame_id,
-                        child = %st.child_frame_id,
-                        "tf rotation is not a valid quaternion"
-                    );
-                    continue;
-                };
-                let iso = Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation);
-                let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
-                buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
+            for t in transforms {
+                buffer.receive(&t.parent, &t.child, t.ts, t.iso);
             }
         });
     }
 }
 
-// Builds the shared graph plus the handle and the route that feeds it. The
-// sender carries published messages to the tf topic's publish worker.
-pub(crate) fn tf_subscription(
+pub(crate) fn tf_subscription_with_codec(
     topic: String,
     window_secs: f64,
     sender: mpsc::Sender<Vec<u8>>,
+    decode: DecodeTransforms,
+    encode: EncodeTransforms,
 ) -> (Tf, Box<dyn Route>) {
     let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
         graph: Arc::clone(&graph),
         sender,
+        decode,
+        encode,
     };
-    let route = Box::new(TfRoute { topic, graph });
+    let route = Box::new(TfRoute {
+        topic,
+        graph,
+        decode,
+    });
     (tf, route)
+}
+
+#[cfg(test)]
+pub(crate) fn tf_subscription(
+    topic: String,
+    window_secs: f64,
+    sender: mpsc::Sender<Vec<u8>>,
+) -> (Tf, Box<dyn Route>) {
+    tf_subscription_with_codec(topic, window_secs, sender, decode_legacy, encode_legacy)
 }
 
 #[cfg(test)]
@@ -594,6 +636,8 @@ mod tests {
             Tf {
                 graph: Arc::clone(&graph),
                 sender: tx,
+                decode: decode_legacy,
+                encode: encode_legacy,
             },
             rx,
             MultiHandle { graph },

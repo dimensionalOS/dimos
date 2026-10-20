@@ -419,13 +419,35 @@ impl Builder {
     /// The graph fills in the background as `tf` messages arrive. Repeated calls
     /// share one graph.
     pub fn tf(&mut self) -> crate::tf::Tf {
+        self.tf_with_codec(crate::tf::decode_legacy, crate::tf::encode_legacy)
+    }
+
+    /// Select TF wire codecs while retaining the same graph and lookup API.
+    /// Repeated calls share one graph and must select the same codec pair.
+    ///
+    /// # Panics
+    /// Panics if this module already selected a different pair for its TF topic.
+    pub fn tf_with_codec(
+        &mut self,
+        decode: crate::tf::DecodeTransforms,
+        encode: crate::tf::EncodeTransforms,
+    ) -> crate::tf::Tf {
         if let Some(tf) = &self.tf {
+            assert!(
+                tf.uses_codec(decode, encode),
+                "one TF topic cannot mix codec pairs"
+            );
             return tf.clone();
         }
         let topic = self.topic_for("tf");
         let sender = self.add_publisher(&topic);
-        let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        let (tf, route) = crate::tf::tf_subscription_with_codec(
+            topic.clone(),
+            crate::tf::DEFAULT_TF_WINDOW_SECS,
+            sender,
+            decode,
+            encode,
+        );
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -1046,6 +1068,82 @@ mod tests {
         builder.tf();
         assert_eq!(builder.outputs.len(), 1);
         assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
+    }
+
+    fn encode_tagged_tf(values: &[crate::tf::Transform]) -> io::Result<Vec<u8>> {
+        let mut bytes = b"test-tf:".to_vec();
+        bytes.extend(crate::tf::encode_legacy(values)?);
+        Ok(bytes)
+    }
+
+    fn decode_tagged_tf(bytes: &[u8]) -> io::Result<Vec<crate::tf::Transform>> {
+        crate::tf::decode_legacy(bytes.strip_prefix(b"test-tf:").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "missing test codec prefix")
+        })?)
+    }
+
+    #[derive(crate::Module)]
+    struct TaggedTfModule {
+        #[tf(decode = decode_tagged_tf, encode = encode_tagged_tf)]
+        tf: crate::tf::Tf,
+    }
+
+    #[tokio::test]
+    async fn derived_tf_field_uses_selected_codecs_for_publish_and_receive() {
+        let mut sender = builder_with_topics(&[("tf", "/robot/tf")]);
+        let mut receiver = builder_with_topics(&[("tf", "/robot/tf")]);
+        let producer = TaggedTfModule::build(&mut sender, NoConfig);
+        let consumer = TaggedTfModule::build(&mut receiver, NoConfig);
+        let edge = crate::tf::Transform::new(
+            "map",
+            "camera",
+            3.25,
+            nalgebra::Isometry3::translation(1.0, 2.0, 3.0),
+        );
+        producer.tf.publish(&[edge]).await.unwrap();
+        let bytes = sender.outputs[0].1.recv().await.unwrap();
+        assert!(bytes.starts_with(b"test-tf:"));
+        receiver.routes["/robot/tf"][0].try_dispatch(b"wrong codec");
+        assert!(consumer.tf.get_latest("map", "camera").is_none());
+        receiver.routes["/robot/tf"][0].try_dispatch(&bytes);
+        let found = consumer.tf.get_latest("map", "camera").unwrap();
+        assert_eq!(found.translation(), nalgebra::Vector3::new(1.0, 2.0, 3.0));
+        assert_eq!(found.ts, 3.25);
+        receiver.tf_with_codec(decode_tagged_tf, encode_tagged_tf);
+        assert_eq!(receiver.outputs.len(), 1);
+        assert_eq!(receiver.routes["/robot/tf"].len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "one TF topic cannot mix codec pairs")]
+    fn tf_rejects_mixed_codecs_on_one_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        builder.tf_with_codec(decode_tagged_tf, encode_tagged_tf);
+        builder.tf();
+    }
+
+    #[tokio::test]
+    async fn tf_encode_error_does_not_publish_or_change_the_local_graph() {
+        fn reject(_: &[crate::tf::Transform]) -> io::Result<Vec<u8>> {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unencodable transform",
+            ))
+        }
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        let tf = builder.tf_with_codec(decode_tagged_tf, reject);
+        let edge =
+            crate::tf::Transform::new("map", "camera", 3.25, nalgebra::Isometry3::identity());
+        let error = tf
+            .publish(&[edge])
+            .await
+            .expect_err("codec error must reach the caller");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(tf.get_latest("map", "camera").is_none());
+        assert!(matches!(
+            builder.outputs[0].1.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     // recv/publish concurrency
