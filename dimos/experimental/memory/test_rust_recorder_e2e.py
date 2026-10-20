@@ -45,6 +45,7 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -420,3 +421,100 @@ def test_tf_records_over_zenoh_and_replays_through_python(
             "base_link",
             "camera",
         ]
+
+
+class CommandRustRecorder(RustRecorder):
+    coordinator_joint_command: In[ControlValues]
+
+
+@pytest.mark.parametrize("store_kind", ["sqlite", "mcap"])
+def test_control_values_lcm_write_time_survives_native_recording(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = tmp_path / ("commands.db" if store_kind == "sqlite" else "commands.mcap")
+    store = (
+        RustSqliteStoreConfig(path=str(artifact))
+        if store_kind == "sqlite"
+        else RustMcapStoreConfig(path=str(artifact))
+    )
+    endpoint = f"tcp/127.0.0.1:{_free_port()}"
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    recorder = CommandRustRecorder(
+        source_dir=None,
+        build_command=None,
+        executable=str(rust_recorder_executable),
+        store=store,
+        record_tf=False,
+        session=ZenohConfig(
+            mode="peer",
+            connect=[],
+            listen=[endpoint],
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        ),
+    )
+    session_pool = ZenohSessionPool()
+    publisher = ZenohTransport(
+        ZenohTopic(f"dimos/commands_{uuid.uuid4().hex}", ControlValues),
+        session_pool=session_pool,
+        mode="client",
+        connect=[endpoint],
+        multicast=False,
+        gossip=False,
+        connect_timeout=5,
+    )
+    recorder.coordinator_joint_command.transport = FakeTransport(publisher.channel)  # type: ignore[assignment]
+    specs = recorder._stream_specs()
+    recorder._prepare_store(specs)
+    recorder.config.streams = specs
+    process = subprocess.Popen(
+        [str(rust_recorder_executable)],
+        cwd=_RUST_PACKAGE,
+        env={
+            **os.environ,
+            "DIMOS_TRANSPORT": "zenoh",
+            "RUST_LOG": "info,dimos_memory_recorder=debug",
+        },
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    expected = ControlValues(
+        source="ControlCoordinator",
+        source_ts=123.25,
+        interface_names=["arm/gripper/position", "base/vx/velocity"],
+        values=[600.0, -0.4],
+    )
+    try:
+        assert process.stdin is not None
+        process.stdin.write(recorder._stdin_blob({"coordinator_joint_command": publisher.channel}))
+        process.stdin.close()
+        _wait_for_log(process, "memory recorder ready")
+        publisher.broadcast(None, expected)
+        _wait_for_log(process, "memory recorder batch written")
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=10.0) == 0
+    finally:
+        publisher.stop()
+        session_pool.close_all()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10.0)
+        recorder.stop()
+    memory = (
+        SqliteStore(path=str(artifact))
+        if store_kind == "sqlite"
+        else McapStore(
+            path=str(artifact), codecs={"coordinator_joint_command": LcmCodec(ControlValues)}
+        )
+    )
+    with memory:
+        observation = memory.stream("coordinator_joint_command", ControlValues).first()
+        assert observation is not None
+        assert observation.ts == 123.25
+        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert observation.data.interface_names == ["arm/gripper/position", "base/vx/velocity"]

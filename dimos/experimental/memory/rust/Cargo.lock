@@ -672,7 +672,7 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
  "dimos-module",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=2852e00946df52a5503b4b26e1ac2822c0c9d2aa)",
  "lz4_flex 0.14.0",
  "mcap",
  "rayon",
@@ -693,7 +693,7 @@ source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
  "nalgebra",
  "rayon",
  "serde",
@@ -1551,6 +1551,14 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 name = "lcm-msgs"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "lcm-msgs"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=2852e00946df52a5503b4b26e1ac2822c0c9d2aa#2852e00946df52a5503b4b26e1ac2822c0c9d2aa"
 dependencies = [
  "byteorder",
 ]

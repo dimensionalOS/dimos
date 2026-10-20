@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
+from dimos.control.command_state import CommandState
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
@@ -246,11 +247,20 @@ class TestConnectedHardware:
         assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.035)
 
         # Write: one call carrying arm and gripper, gripper value untouched.
-        assert hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
+        state = CommandState()
+        command = state.prepare(hardware, {"arm/gripper": 0.07}, ControlMode.POSITION)
+        assert command is not None
+        assert hardware.write_command(
+            dict(zip(command.joint_names, command.get_values(), strict=True)), command.mode
+        )
         mock_adapter.write_joint_positions.assert_called_once_with([0.0] * 6 + [0.07])
 
         # Velocity commands use the same complete joint order and zero omitted joints.
-        assert hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
+        command = state.prepare(hardware, {"arm/joint1": 0.5}, ControlMode.VELOCITY)
+        assert command is not None
+        assert hardware.write_command(
+            dict(zip(command.joint_names, command.get_values(), strict=True)), command.mode
+        )
         mock_adapter.write_joint_velocities.assert_called_once_with([0.5] + [0.0] * 6)
 
     def test_joint_names_prefixed(self, connected_hardware):
@@ -277,6 +287,7 @@ class TestConnectedHardware:
         commands = {
             "arm/joint1": 0.5,
             "arm/joint2": 1.0,
+            **dict.fromkeys(make_joints("arm", 6)[2:], 0.0),
         }
         connected_hardware.write_command(commands, ControlMode.POSITION)
         mock_adapter.write_joint_positions.assert_called()
@@ -301,8 +312,17 @@ class TestConnectedWholeBody:
             ),
         )
 
-        assert hardware.write_command({"robot/arm": 0.8}, ControlMode.SERVO_POSITION)
-        assert hardware.write_command({"robot/leg": -0.4}, ControlMode.SERVO_POSITION)
+        state = CommandState()
+        first = state.prepare(hardware, {"robot/arm": 0.8}, ControlMode.SERVO_POSITION)
+        assert first is not None
+        assert hardware.write_command(
+            dict(zip(first.joint_names, first.get_values(), strict=True)), first.mode
+        )
+        second = state.prepare(hardware, {"robot/leg": -0.4}, ControlMode.SERVO_POSITION)
+        assert second is not None
+        assert hardware.write_command(
+            dict(zip(second.joint_names, second.get_values(), strict=True)), second.mode
+        )
 
         commands = adapter.write_motor_commands.call_args.args[0]
         assert [command.q for command in commands] == [-0.4, 0.2, 0.8]
@@ -1286,6 +1306,9 @@ class TestTickLoop:
     def test_write_all_hardware_rejected_command_logs_error(self, mocker):
         hardware = {"arm": MagicMock()}
         hardware["arm"].write_command.return_value = False
+        hardware["arm"].joint_names = ["arm/joint1"]
+        hardware["arm"].hardware_id = "arm"
+        hardware["arm"].adapter.read_joint_positions.return_value = [0.0]
         log_error = mocker.patch("dimos.control.tick_loop.logger.error")
         tick_loop = TickLoop(
             tick_rate=100.0,

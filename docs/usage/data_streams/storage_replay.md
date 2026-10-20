@@ -229,56 +229,65 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 | `first_timestamp()`                              | Get first timestamp                   |
 | `load(name)`                                     | Load specific frame by name/index     |
 
-## Record coordinator position targets
+## Record coordinator commands
 
-`ControlCoordinator.coordinator_joint_position_command` publishes the complete
-intended position target as `JointState`. It uses the existing wrapper hold
-values after IK, task constraints, and arbitration. Partial updates retain those
-values; measured feedback initializes a wrapper's hold values only once.
-Hardware registration order and `HardwareComponent.joints` determine array order.
-Grippers and other joints retain their native adapter units.
+`ControlCoordinator.coordinator_joint_command` publishes the existing LCM
+`control_msgs.ControlValues` type. `interface_names` names each joint and the
+quantity commanded; the parallel `values` array contains its intended target:
 
-A complete snapshot requires initialized position targets on every registered
-non-base hardware component. Until then, or after a component handles a velocity
-or torque command, no position snapshot is published. Twist bases are excluded.
-Both POSITION and SERVO_POSITION use `position`; `velocity` and `effort` are empty.
-Use a position-control graph with a known mode for policy collection.
+```text
+arm/joint1/position    0.25
+base/vx/velocity     -0.40
+```
 
-Failed writes do not remove existing intended targets. A readiness-gated write
-keeps the previous hold values; the skipped update does not become a new target.
-Idle ticks can publish existing targets without issuing any additional writes.
-This stream does not acknowledge adapter success or physical execution, and does
-not describe transformations inside a driver. Whole-body entries contain only
-`MotorCommand.q`, without gains or feed-forward torque.
+POSITION and SERVO_POSITION use `/position`, VELOCITY uses `/velocity`, and TORQUE
+uses `/effort`. The wire message omits the exact `ControlMode`: POSITION and
+SERVO_POSITION are indistinguishable. Offline consumers must use an explicit robot
+configuration; a bare joint name cannot reconstruct arbitrary dynamic mode changes.
+Quantity suffixes identify what each number means, not adapter mode or execution.
+Unsupported adapter modes remain unsupported and are rejected before changing holds.
 
-`ts` is Unix time taken once at the end of the batch write, after assembling the
-complete target vector. It differs from the earlier measured-state timestamp and
-is not a per-motor execution time. Publication runs outside the hardware lock;
-subscriber failures are logged without interrupting measured-state or TF output.
+CC owns the command state after IK, existing task constraints, and arbitration.
+Position commands initialize from feedback on first use and retain omitted targets.
+Manipulator velocity commands zero omitted joints without changing position holds.
+Twist bases start at zero velocity and retain omitted velocities. Interfaces receive
+complete commands and perform conversion, mode switching, and I/O. Output follows
+hardware registration and configured joint order, in native adapter units.
 
-Add this recorder to your application's importable Blueprint module. Here,
-`robot_blueprint` is the existing graph containing one coordinator:
+Output waits until all hardware has a defined complete command. Failed adapter
+writes retain intended targets; readiness-gated updates retain the previous command.
+Idle output adds no hardware writes. Removing hardware clears its CC state, while
+state persists across tick-loop restarts. The stream records intentions, not adapter
+acceptance, physical execution, or transformations inside a driver.
+
+`source_ts` is Unix time at the batch-write completion boundary, separate from
+measured-state time. This recording output does not establish a control-session
+protocol through `epoch` or `sequence`. Publication runs outside the hardware lock;
+subscriber exceptions do not suppress measured-state or TF output.
+
+Define the following in an importable Blueprint module. `robot_blueprint` is your
+existing graph containing one coordinator:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
-from dimos.memory.module import Recorder
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.experimental.memory.rust_recorder import RustRecorder, RustMcapStoreConfig
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 
 
-class ActionRecorder(Recorder):
-    coordinator_joint_position_command: In[JointState]
+class ActionRecorder(RustRecorder):
+    coordinator_joint_command: In[ControlValues]
 
 
 recording_blueprint = autoconnect(
     robot_blueprint,
     ActionRecorder.blueprint(
-        db_path="actions.db",
+        store=RustMcapStoreConfig(path="commands.mcap"),
         record_tf=False,
-        poseless_streams=["coordinator_joint_position_command"],
+        stream_codecs={"coordinator_joint_command": "lcm"},
     ),
 )
 ```
 
-Autoconnect matches the port by name and type. Normal Blueprint shutdown flushes
-`coordinator_joint_position_command` to the SQLite recording.
+The Rust recorder stores LCM bytes and reads `source_ts` from the existing schema.
+No Python pickle or new LCM definition is required. Normal shutdown flushes storage.

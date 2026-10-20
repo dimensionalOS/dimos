@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -33,8 +33,8 @@ from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 JOINTS = ["arm/joint2", "arm/joint1", "arm/gripper"]
 
@@ -51,6 +51,7 @@ def hardware(whole_body: bool = False) -> tuple[ConnectedHardware, MagicMock]:
         adapter.read_joint_efforts.return_value = [9.0] * 3
         adapter.set_control_mode.return_value = True
         adapter.write_joint_positions.return_value = True
+        adapter.write_joint_velocities.return_value = True
     component = HardwareComponent(
         hardware_id="arm",
         joints=JOINTS,
@@ -60,10 +61,10 @@ def hardware(whole_body: bool = False) -> tuple[ConnectedHardware, MagicMock]:
     return wrapper(adapter, component), adapter
 
 
-def loop(hardware_by_id: dict[str, ConnectedHardware], received: list[JointState]) -> TickLoop:
+def loop(hardware_by_id: dict[str, ConnectedHardware], received: list[ControlValues]) -> TickLoop:
     lock = threading.Lock()
 
-    def receive(msg: JointState) -> None:
+    def receive(msg: ControlValues) -> None:
         assert not lock.locked()
         received.append(msg)
 
@@ -92,12 +93,12 @@ def test_partial_targets_reuse_existing_hold_values(whole_body, mode):
         adapter.read_joint_positions.return_value = [9.0, 9.0, 9.0]
     write(tick, {"arm": ({"arm/joint2": -0.4}, mode)}, 124.0)
 
-    assert [(msg.name, msg.position, msg.ts, msg.frame_id) for msg in received] == [
-        (JOINTS, [0.1, 1.2, 600.0], 123.0, "robot"),
-        (JOINTS, [-0.4, 1.2, 600.0], 124.0, "robot"),
+    assert [(msg.interface_names, msg.values, msg.source_ts, msg.source) for msg in received] == [
+        ([name + "/position" for name in JOINTS], [0.1, 1.2, 600.0], 123.0, "ControlCoordinator"),
+        ([name + "/position" for name in JOINTS], [-0.4, 1.2, 600.0], 124.0, "ControlCoordinator"),
     ]
-    assert received[0].velocity == []
-    assert received[0].effort == []
+    assert tick._command_state.commands["arm"].mode == mode
+    assert received[0].interface_names == [name + "/position" for name in JOINTS]
     if whole_body:
         payloads = [
             [cmd.q for cmd in call.args[0]] for call in adapter.write_motor_commands.call_args_list
@@ -125,8 +126,8 @@ def test_failed_write_retains_intended_targets_without_claiming_execution(whole_
     tick = loop({"arm": hw}, received)
     write(tick, {"arm": ({"arm/joint1": 2.4}, ControlMode.SERVO_POSITION)})
     assert len(received) == 1
-    assert received[0].position == [0.1, 2.4, 0.3]
-    assert received[0].ts == 123.0
+    assert received[0].values == [0.1, 2.4, 0.3]
+    assert received[0].source_ts == 123.0
     assert [state.position for state in hw.read_state().values()] == [0.1, 0.2, 0.3]
     send.assert_called_once()
 
@@ -136,7 +137,7 @@ def test_failed_mode_switch_still_exposes_the_existing_intended_target():
     adapter.set_control_mode.return_value = False
     received = []
     write(loop({"arm": hw}, received), {"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)})
-    assert received[0].position == [0.1, 1.2, 0.3]
+    assert received[0].values == [0.1, 1.2, 0.3]
     adapter.write_joint_positions.assert_not_called()
 
 
@@ -169,8 +170,10 @@ def test_complete_snapshot_waits_for_initialization_then_uses_fixed_hardware_ord
         },
     )
     write(tick, {})
-    assert [msg.name for msg in received] == [[*JOINTS, "right/gripper"]] * 3
-    assert [msg.position for msg in received] == [
+    assert [msg.interface_names for msg in received] == [
+        [*(name + "/position" for name in JOINTS), "right/gripper/position"]
+    ] * 3
+    assert [msg.values for msg in received] == [
         [0.1, 1.2, 0.3, 0.7],
         [-0.4, 1.2, 0.3, 0.8],
         [-0.4, 1.2, 0.3, 0.8],
@@ -187,49 +190,84 @@ def test_unready_hardware_does_not_invent_or_update_hold_targets(whole_body):
     with patch.object(hw, "ready_for_control", return_value=False):
         write(tick, {"arm": ({"arm/joint1": 9.0}, ControlMode.POSITION)})
     assert received == []
-    assert hw.position_targets is None
+    assert tick._command_state.commands == {}
     write(tick, {"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)})
     with patch.object(hw, "ready_for_control", return_value=False):
         write(tick, {"arm": ({"arm/joint1": 9.0}, ControlMode.POSITION)})
-    assert [msg.position for msg in received] == [[0.1, 1.2, 0.3]] * 2
+    assert [msg.values for msg in received] == [[0.1, 1.2, 0.3]] * 2
     send = adapter.write_motor_commands if whole_body else adapter.write_joint_positions
     send.assert_called_once()
 
 
-@pytest.mark.parametrize("mode", [ControlMode.VELOCITY, ControlMode.TORQUE])
-def test_other_modes_cannot_publish_old_position_targets(mode):
-    hw, _ = hardware()
+def test_velocity_modes_use_velocity_values_and_position_holds_survive():
+    hw, adapter = hardware()
     received = []
     tick = loop({"arm": hw}, received)
     write(tick, {"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)})
-    received.clear()
-    write(tick, {"arm": ({"arm/joint1": 0.5}, mode)})
-    write(tick, {})
-    assert received == []
+    write(tick, {"arm": ({"arm/joint2": 0.5}, ControlMode.VELOCITY)})
+    assert received[-1].interface_names == [name + "/velocity" for name in JOINTS]
+    assert received[-1].values == [0.5, 0.0, 0.0]
+    adapter.write_joint_velocities.assert_called_once_with([0.5, 0.0, 0.0])
+    write(tick, {"arm": ({"arm/gripper": 0.6}, ControlMode.SERVO_POSITION)})
+    assert received[-1].values == [0.1, 1.2, 0.6]
+    assert tick._command_state.commands["arm"].mode == ControlMode.SERVO_POSITION
 
 
-def test_twist_base_never_labels_velocity_as_position():
+def test_unsupported_torque_cannot_corrupt_position_holds_or_switch_mode():
+    hw, adapter = hardware()
+    received = []
+    tick = loop({"arm": hw}, received)
+    write(tick, {"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)})
+    adapter.set_control_mode.reset_mock()
+    write(tick, {"arm": ({"arm/joint1": 99.0}, ControlMode.TORQUE)})
+    adapter.set_control_mode.assert_not_called()
+    assert received[-1].values == [0.1, 1.2, 0.3]
+    assert received[-1].interface_names == [name + "/position" for name in JOINTS]
+    write(tick, {"arm": ({"arm/gripper": 0.6}, ControlMode.POSITION)})
+    assert received[-1].values == [0.1, 1.2, 0.6]
+
+
+def test_mixed_base_and_arm_commands_share_one_lcm_snapshot():
+    arm, _ = hardware()
     adapter = MagicMock(spec=TwistBaseAdapter)
     adapter.write_velocities.return_value = True
-    hw = ConnectedTwistBase(
+    base = ConnectedTwistBase(
         adapter,
         HardwareComponent(
             hardware_id="base",
             hardware_type=HardwareType.BASE,
-            joints=["base/vx"],
+            joints=["base/vx", "base/wz"],
         ),
     )
     received = []
-    write(loop({"base": hw}, received), {"base": ({"base/vx": 0.5}, ControlMode.POSITION)})
-    assert adapter.write_velocities.call_args.args[0] == [0.5]
-    assert received == []
+    tick = loop({"arm": arm, "base": base}, received)
+    write(
+        tick,
+        {
+            "base": ({"base/vx": 0.5}, ControlMode.POSITION),
+            "arm": ({"arm/joint1": 1.2}, ControlMode.SERVO_POSITION),
+        },
+    )
+    assert received[0].interface_names == [
+        *(name + "/position" for name in JOINTS),
+        "base/vx/velocity",
+        "base/wz/velocity",
+    ]
+    assert received[0].values == [0.1, 1.2, 0.3, 0.5, 0.0]
+    decoded = ControlValues.lcm_decode(received[0].lcm_encode())
+    assert decoded.interface_names == received[0].interface_names
+    assert decoded.values == received[0].values
+    assert decoded.source_ts == received[0].source_ts == 123.0
+    write(tick, {"base": ({"base/wz": -0.4}, ControlMode.VELOCITY)})
+    assert received[-1].values[-2:] == [0.5, -0.4]
+    adapter.write_velocities.assert_called_with([0.5, -0.4])
 
 
 def test_initialization_failure_does_not_publish_a_partial_vector():
     hw, adapter = hardware()
     adapter.read_joint_positions.return_value = []
     received = []
-    with patch("dimos.control.hardware_interface.time.sleep"):
+    with patch("dimos.control.command_state.time.sleep"):
         write(loop({"arm": hw}, received), {"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)})
     assert received == []
     adapter.write_joint_positions.assert_not_called()
@@ -262,14 +300,14 @@ def test_tick_publishes_winning_targets_at_write_boundary_and_isolates_subscribe
     loser.compute.return_value = JointCommandOutput(joint_names=["arm/joint1"], positions=[99.0])
     loser.measured_frame_poses.return_value = {}
 
-    def receive(msg: JointState) -> None:
+    def receive(msg: ControlValues) -> None:
         assert adapter.write_joint_positions.call_count == 1
         assert not tick._hardware_lock.locked()
         received.append(msg)
         if subscriber_raises:
             raise RuntimeError("recording subscriber failed")
 
-    unsubscribe = coordinator.coordinator_joint_position_command.subscribe(receive)
+    unsubscribe = coordinator.coordinator_joint_command.subscribe(receive)
     tick = TickLoop(
         tick_rate=100,
         hardware={"arm": hw},
@@ -280,18 +318,16 @@ def test_tick_publishes_winning_targets_at_write_boundary_and_isolates_subscribe
         publish_callback=measured,
         publish_robot_callback=per_robot,
         publish_tf_callback=transforms,
-        publish_command_callback=coordinator.coordinator_joint_position_command.publish,
+        publish_command_callback=coordinator.coordinator_joint_command.publish,
     )
     try:
         with patch("dimos.control.tick_loop.time.time", side_effect=[100.0, 200.0]):
             with patch("dimos.control.tick_loop.logger.exception") as log_error:
                 tick._tick()
         assert (
-            received[0].position
-            == adapter.write_joint_positions.call_args.args[0]
-            == [0.1, 1.5, 0.3]
+            received[0].values == adapter.write_joint_positions.call_args.args[0] == [0.1, 1.5, 0.3]
         )
-        assert received[0].ts == 200.0
+        assert received[0].source_ts == 200.0
         assert measured.call_args.args[0].position == [0.1, 0.2, 0.3]
         assert measured.call_args.args[0].ts == 100.0
         measured.assert_called_once()
@@ -312,7 +348,7 @@ def test_coordinator_wires_command_output_separately_from_measured_state():
             coordinator.start()
             assert (
                 tick_cls.call_args.kwargs["publish_command_callback"]
-                == coordinator.coordinator_joint_position_command.publish
+                == coordinator.coordinator_joint_command.publish
             )
             assert (
                 tick_cls.call_args.kwargs["publish_callback"]
@@ -320,3 +356,62 @@ def test_coordinator_wires_command_output_separately_from_measured_state():
             )
         finally:
             coordinator.stop()
+
+
+def test_cc_command_state_persists_across_tick_loop_restart_and_clears_on_remove():
+    hw, adapter = hardware()
+    received = []
+    first = loop({"arm": hw}, received)
+    write(first, {"arm": ({"arm/joint1": 1.2}, ControlMode.SERVO_POSITION)})
+    second = TickLoop(
+        tick_rate=100,
+        hardware={"arm": hw},
+        hardware_lock=threading.Lock(),
+        tasks={},
+        task_lock=threading.Lock(),
+        joint_to_hardware={},
+        command_state=first._command_state,
+        publish_command_callback=received.append,
+    )
+    adapter.read_joint_positions.return_value = [9.0] * 3
+    write(second, {"arm": ({"arm/gripper": 0.6}, ControlMode.SERVO_POSITION)})
+    assert received[-1].values == [0.1, 1.2, 0.6]
+    adapter.read_joint_positions.assert_called_once()
+    second._command_state.remove("arm")
+    write(second, {"arm": ({"arm/gripper": 0.7}, ControlMode.SERVO_POSITION)})
+    assert received[-1].values == [9.0, 9.0, 0.7]
+
+
+def test_torque_rejection_before_initialization_does_not_read_feedback():
+    hw, adapter = hardware()
+    received = []
+    tick = loop({"arm": hw}, received)
+    write(tick, {"arm": ({"arm/joint1": 99.0}, ControlMode.TORQUE)})
+    assert received == []
+    adapter.read_joint_positions.assert_not_called()
+    adapter.set_control_mode.assert_not_called()
+    adapter.write_joint_positions.assert_not_called()
+
+
+def test_supported_mode_transitions_preserve_exact_adapter_call_sequence():
+    hw, adapter = hardware()
+    tick = loop({"arm": hw}, [])
+    write(tick, {"arm": ({"arm/joint1": 0.5}, ControlMode.POSITION)})
+    write(tick, {"arm": ({"arm/joint2": -0.2}, ControlMode.VELOCITY)})
+    write(tick, {"arm": ({"arm/gripper": 0.8}, ControlMode.SERVO_POSITION)})
+    adapter.set_control_mode.return_value = False
+    write(tick, {"arm": ({"arm/joint2": 0.9}, ControlMode.POSITION)})
+    adapter.set_control_mode.return_value = True
+    write(tick, {"arm": ({"arm/joint1": 0.7}, ControlMode.POSITION)})
+    assert adapter.mock_calls == [
+        call.read_joint_positions(),
+        call.set_control_mode(ControlMode.POSITION),
+        call.write_joint_positions([0.1, 0.5, 0.3]),
+        call.set_control_mode(ControlMode.VELOCITY),
+        call.write_joint_velocities([-0.2, 0.0, 0.0]),
+        call.set_control_mode(ControlMode.SERVO_POSITION),
+        call.write_joint_positions([0.1, 0.5, 0.8]),
+        call.set_control_mode(ControlMode.POSITION),
+        call.set_control_mode(ControlMode.POSITION),
+        call.write_joint_positions([0.9, 0.7, 0.8]),
+    ]
