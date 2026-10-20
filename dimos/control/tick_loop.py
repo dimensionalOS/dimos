@@ -436,7 +436,6 @@ class TickLoop:
         hardware = self._hardware
         names: list[str] = []
         values: list[float] = []
-        timestamp: float | None = None
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -447,8 +446,6 @@ class TickLoop:
                         and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
                         and hardware[hw_id].component.hardware_type != HardwareType.BASE
                     ):
-                        if timestamp is None:
-                            timestamp = time.time()
                         joints = [name for name in hardware[hw_id].joint_names if name in positions]
                         names.extend(joints)
                         values.extend(positions[name] for name in joints)
@@ -464,7 +461,7 @@ class TickLoop:
             try:
                 self._publish_command_callback(
                     JointState(
-                        ts=timestamp,
+                        ts=time.time(),
                         frame_id=self._frame_id,
                         name=names,
                         position=values,

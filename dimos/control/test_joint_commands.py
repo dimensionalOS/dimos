@@ -55,11 +55,19 @@ def make_loop(callback):
 def test_intended_subset_matches_dispatch_even_on_failure(mode, result):
     messages = []
     tick, hardware = make_loop(messages.append)
-    hardware.write_command.side_effect = result if isinstance(result, Exception) else None
-    hardware.write_command.return_value = result
     values = {"arm/gripper": 600.0, "arm/joint1": 1.2}
-    with patch("dimos.control.tick_loop.time.time", return_value=123.25):
+    with patch("dimos.control.tick_loop.time") as clock:
+        clock.time.return_value = 123.25
+
+        def dispatch(*args):
+            clock.time.assert_not_called()
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        hardware.write_command.side_effect = dispatch
         tick._write_all_hardware({"arm": (values, mode)})
+        clock.time.assert_called_once_with()
     hardware.write_command.assert_called_once_with(values, mode)
     (message,) = messages
     assert message.name == ["arm/joint1", "arm/gripper"]

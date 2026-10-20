@@ -228,34 +228,3 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 | `first()`                                        | Get first frame                       |
 | `first_timestamp()`                              | Get first timestamp                   |
 | `load(name)`                                     | Load specific frame by name/index     |
-
-
-## Record coordinator position commands
-
-`ControlCoordinator.coordinator_joint_command` publishes the existing LCM
-`JointState` type. Targets come from routed commands after task computation/IK
-and arbitration. `name` and `position` contain only this tick's intended position
-updates, in configured joint order and native units, including gripper updates.
-`velocity` and `effort` are empty. POSITION and SERVO_POSITION are included;
-other modes and twist bases are excluded. `ts` is taken immediately before the
-first position dispatch in the batch. Publication happens outside the hardware lock.
-
-Partial commands remain partial. Missing joints are not filled from feedback or
-held targets, and empty ticks publish nothing. Hardware behavior is unchanged.
-A message records sending intent even if the write fails, not successful execution.
-
-Add this input to your existing recorder subclass and autoconnect it to the robot
-Blueprint, just like `coordinator_joint_state`:
-
-```python skip
-from dimos.core.stream import In
-from dimos.experimental.memory.rust_recorder import RustRecorder
-from dimos.msgs.sensor_msgs.JointState import JointState
-
-
-class ActionRecorder(RustRecorder):
-    coordinator_joint_command: In[JointState]
-```
-
-The existing Rust recorder supports JointState LCM bytes and its source timestamp.
-No schema, dependency, or recorder changes are needed.
