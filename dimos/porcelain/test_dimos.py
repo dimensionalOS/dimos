@@ -20,6 +20,7 @@ import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.demos.stress_test_module import StressTestModule
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.porcelain.dimos import Dimos, _resolve_target
@@ -120,6 +121,13 @@ def test_peek_stream_returns_published_value(app):
     assert value is not None
     assert isinstance(value, int)
     assert value > 1000
+
+
+def test_peek_stream_hidden_stream_reads_as_absent(app, monkeypatch):
+    monkeypatch.setattr(global_config, "peek_hidden_streams", "other,tick")
+    app.run(TickerModule)
+    with pytest.raises(LookupError, match="No running module exposes a stream named 'tick'"):
+        app.peek_stream("tick", timeout=2.0)
 
 
 def test_restart_before_run(app):

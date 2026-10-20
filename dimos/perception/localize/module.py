@@ -27,6 +27,9 @@ frames, only as long as the embed tail and the pairing need them. What
 the depth frame or lidar scan paired with each of them, stored lz4. Both roll
 over ``horizon_s`` seconds. A lidar call lifts through its window's scans
 merged.
+
+Agents calling ``state`` and ``localize`` over MCP: ``SKILL.md`` in this
+package covers windows, watching labels, narrowing a position and params.
 """
 
 from __future__ import annotations
@@ -38,9 +41,10 @@ import threading
 import time
 from typing import Any, Literal
 
+import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-from pydantic import Field
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -58,10 +62,18 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.localize.association import Groups
+from dimos.perception.localize.association import M_CX, M_CZ, M_KX, M_KZ, M_SCORE, M_TS, Groups
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, Rig, RigCamera
-from dimos.perception.localize.types import Localization
+from dimos.perception.localize.localize_params import XARM_PARAMS, parse_params
+from dimos.perception.localize.rig import (
+    DEPTH_TOLERANCE,
+    EMBED_HZ,
+    TF_TOLERANCE,
+    WALK_EMBED_HZ,
+    Rig,
+    RigCamera,
+)
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -78,6 +90,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     world_frame: str = "world"
     # what lifts a detection: the aligned depth_image, or the lidar
     geometry: Literal["depth", "lidar"] = "depth"
+    # the camera rides a walking base: the index runs at WALK_EMBED_HZ
+    mobile: bool = False
     horizon_s: float = 600.0
     # raw frames kept for the embed tail and the pairing
     feed_frames: int = 300
@@ -85,8 +99,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     embedder: str = "siglip"
     detector: str = "owlv2"
     segmenter: str = "edgetam"
-    # LocalizePolicy overrides on the models' shifts, tuned offline with tools/tool_localize
-    policy: dict[str, Any] = Field(default_factory=dict)
+    # the rig's params, a localize_params preset or built from one; localize() can change them
+    params: LocalizeParams = XARM_PARAMS
 
 
 class PerceptionLocalize(Module):
@@ -116,8 +130,10 @@ class PerceptionLocalize(Module):
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
+        self._clouds: dict[str, PointCloud2] = {}  # by instance id, as last reported
 
-        memory_frames = int(self.config.horizon_s * EMBED_HZ)
+        embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
+        memory_frames = int(self.config.horizon_s * embed_hz)
         feed_frames = self.config.feed_frames
         geometry_type = Image if self.config.geometry == "depth" else PointCloud2
         self._memory = self.register_disposable(MemoryStore())
@@ -206,6 +222,7 @@ class PerceptionLocalize(Module):
             tf=self._tf_buffer,
             world_frame=self.config.world_frame,
             lidar=None if depth is not None else self._geometry_memory,
+            mobile=self.config.mobile,
         )
         self.detector.embed_live(self.rig, self._color_feed, self.index)
         self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
@@ -229,34 +246,74 @@ class PerceptionLocalize(Module):
         return f"not ready: {self._stage}"
 
     @skill
+    def camera_pose(self) -> str:
+        """World pose of the camera's optical frame at its newest colour frame, as JSON.
+
+        ``{"t", "frame", "xyz", "quaternion_xyzw"}``; optical +Z forward, +X image right,
+        +Y image down. With the depth stream and camera_info's K, a depth pixel (u, v)
+        back-projects as z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, and this
+        pose takes it to world.
+        """
+        camera = self._camera
+        if camera is None:
+            return "camera_pose cannot answer yet: no camera_info"
+        try:
+            ts = self._color_feed.last().ts
+        except LookupError:
+            return "camera_pose cannot answer yet: no colour frame"
+        transform = self._tf_buffer.get(camera.frame_id, self.config.world_frame, ts, TF_TOLERANCE)
+        if transform is None:
+            return f"camera_pose: no transform from {self.config.world_frame} to {camera.frame_id}"
+        pose = (-transform).to_pose()
+        return json.dumps(
+            {
+                "t": ts,
+                "frame": self.config.world_frame,
+                "xyz": [round(v, 5) for v in pose.position.to_numpy().tolist()],
+                "quaternion_xyzw": [round(v, 6) for v in pose.orientation.to_numpy().tolist()],
+            }
+        )
+
+    @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, policy: str = ""
+        self,
+        objects: str | list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        params: str = "",
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
-        ``objects`` is one label, or several separated by commas.
+        ``objects`` is one label, several separated by commas, or a list of labels.
+        Labels that describe how an object looks (colour and shape, e.g. "brown square
+        object") match better than object names.
 
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``policy`` is a JSON object of LocalizePolicy field overrides,
-        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'.
+        ``params`` changes the module's params for this call only: a preset,
+        ``xarm`` or ``dual_yam`` (desk) or ``go2`` (room), switches to it; a
+        JSON object sets LocalizeParams fields on the module's params, or on the
+        preset its "base" key names, e.g. '{"accept_score": 0.45}'.
+
+        Usage guide: dimos/perception/localize/SKILL.md.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
-        queries = [q.strip() for q in objects.split(",") if q.strip()]
+        labels = objects.split(",") if isinstance(objects, str) else objects
+        queries = [q.strip() for q in labels if q.strip()]
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        tuning = self.detector.policy({**self.config.policy, **json.loads(policy or "{}")})
+        call_params = self.detector.shifted(*parse_params(params, self.config.params))
         results = self.detector.localize(
-            queries, index=index, rig=rig, policy=tuning, groups=self._groups
+            queries, index=index, rig=rig, params=call_params, groups=self._groups
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
 
@@ -266,15 +323,82 @@ class PerceptionLocalize(Module):
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
-                lines.append(f"no verified detection of {query!r}")
+                line = f"no verified detection of {query!r}"
+                near = best_candidate(self._groups.get(query), lo, lo + duration)
+                if near is not None:
+                    score, views, (x, y, z) = near
+                    line += (
+                        f"; best candidate score={score:.2f} views={views} at "
+                        f"({x:.2f}, {y:.2f}, {z:.2f}), needs accept_score={call_params.accept_score:.2f} "
+                        f"min_views={call_params.min_views}"
+                    )
+                lines.append(line)
             for hit in hits:
+                self._clouds[hit.instance_id] = hit.point_cloud
                 x, y, z = hit.position_world_xyz
+                line = f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
+                box = footprint(hit.point_cloud.as_numpy()[0])
+                if box is not None:
+                    (cx, cy), (length, width), yaw, (bottom, top) = box
+                    line += (
+                        f"footprint {length:.3f} x {width:.3f} m centred ({cx:.3f}, {cy:.3f}) "
+                        f"long side yaw={yaw:.0f}deg, seen surface z {bottom:.3f} to {top:.3f} "
+                    )
                 lines.append(
-                    f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
-                    f"score={hit.semantic_score:.2f} views={hit.n_views} id={hit.instance_id} "
-                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
+                    line + f"score={hit.semantic_score:.2f} views={hit.n_views} "
+                    f"id={hit.instance_id} seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def object_cloud(self, object_id: str) -> PointCloud2 | None:
+        """The world-frame point cloud of an object localize reported, by its id; None if no
+        call has reported that id."""
+        return self._clouds.get(object_id)
+
+
+def footprint(
+    points: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float], float, tuple[float, float]] | None:
+    """Grasp geometry of a lifted cloud: the smallest rectangle around its XY points (centre,
+    long and short side in metres, long side's yaw in degrees in [-90, 90)) and the z range of
+    the surfaces the camera saw. The outer 2% each way is trimmed as depth noise. Faces the
+    camera never saw are missing, so the bottom is only as low as what was in view."""
+    if len(points) < 3:
+        return None
+    lo, hi = np.quantile(points, [0.02, 0.98], axis=0)
+    kept = points[np.all((points >= lo) & (points <= hi), axis=1)]
+    if len(kept) < 3:
+        return None
+    rect = cv2.minAreaRect(kept[:, :2].astype(np.float32))
+    corners = cv2.boxPoints(rect)
+    edges = [corners[1] - corners[0], corners[2] - corners[1]]
+    lengths = [float(np.hypot(*e)) for e in edges]
+    long_edge = edges[int(np.argmax(lengths))]
+    yaw = (np.degrees(np.arctan2(long_edge[1], long_edge[0])) + 90.0) % 180.0 - 90.0
+    centre = (float(rect[0][0]), float(rect[0][1]))
+    return centre, (max(lengths), min(lengths)), float(yaw), (float(lo[2]), float(hi[2]))
+
+
+def best_candidate(
+    groups: Groups | None, t0: float, t1: float
+) -> tuple[float, int, tuple[float, float, float]] | None:
+    """The highest-scoring group a call left unverified, from its sightings in ``[t0, t1]``:
+    best score, distinct views and newest position. None when nothing was lifted there."""
+    if groups is None:
+        return None
+    best = None
+    for i in range(len(groups.centers)):
+        rows = groups.rows(i)
+        rows = rows[(rows[:, M_TS] >= t0) & (rows[:, M_TS] <= t1)]
+        if not len(rows):
+            continue
+        score = float(rows[:, M_SCORE].max())
+        if best is None or score > best[0]:
+            views = len(np.unique(np.round(rows[:, M_KX : M_KZ + 1], 2), axis=0))
+            newest = rows[rows[:, M_TS].argmax(), M_CX : M_CZ + 1]
+            best = (score, views, (float(newest[0]), float(newest[1]), float(newest[2])))
+    return best
 
 
 def as_detection_array(

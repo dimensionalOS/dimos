@@ -21,7 +21,7 @@ stub, and runner environments implement the same lifecycle as real environments.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import threading
@@ -52,6 +52,7 @@ from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
+    _answered_at,
     choice,
     exact,
     final,
@@ -1059,3 +1060,19 @@ def test_parsers_take_the_answer_after_an_explanation() -> None:
         first_number("none")
     with pytest.raises(ValueError, match="not a yes/no"):
         yes_no("maybe\n\nunclear")
+
+
+def test_grading_stops_at_the_final_answer() -> None:
+    def outcome(*steps: SimpleNamespace) -> Any:
+        return SimpleNamespace(trajectory=SimpleNamespace(steps=steps))
+
+    asked = SimpleNamespace(source="user", tool_calls=None, timestamp="2026-10-13T20:00:00Z")
+    moved = SimpleNamespace(source="agent", tool_calls=("move",), timestamp="2026-10-13T20:00:05Z")
+    answered = SimpleNamespace(source="agent", tool_calls=None, timestamp="2026-10-13T20:00:09Z")
+
+    assert (
+        _answered_at(outcome(asked, moved, answered))
+        == datetime(2026, 10, 13, 20, 0, 9, tzinfo=timezone.utc).timestamp()
+    )
+    # Out of steps or time: the last step still called a tool, so the whole recording counts.
+    assert _answered_at(outcome(asked, moved)) is None

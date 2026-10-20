@@ -21,6 +21,7 @@ import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
+from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
@@ -52,8 +53,13 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom,overview_image,"
+        "overview_camera_info",
     ]
+
+    assert proc.extra_env["PEEK_HIDDEN_STREAMS"] == (
+        "body_poses,overview_image,overview_camera_info"
+    )
 
     proc = DimosCliCall()
     environment().configure_launch(proc)
@@ -185,8 +191,18 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
         store.stream("coordinator_joint_state", JointState).append(
             JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
         )
-        store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
+        store.stream("body_poses", TFMessage).append(_tf(now, "apple", 0.17))
         env.wait_ready(store, deadline=time.monotonic() + 2.0)
+
+
+def test_body_poses_are_read_from_body_poses_or_from_tf_in_old_recordings():
+    with MemoryStore() as old:
+        old.stream("tf", TFMessage).append(_tf(1.0, "apple", 0.17))
+        assert last_body_transform(old, "apple").translation.z == pytest.approx(0.17)
+    with MemoryStore() as store:
+        store.stream("tf", TFMessage).append(_tf(1.0, "wrist_camera_link", 0.5))
+        store.stream("body_poses", TFMessage).append(_tf(1.0, "apple", 0.2))
+        assert last_body_transform(store, "apple").translation.z == pytest.approx(0.2)
 
 
 def test_settle_waits_for_joints_to_stop():
@@ -242,3 +258,21 @@ def test_launch_and_cleanup(tmp_path, mocker):
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_launch_without_mcp_waits_on_the_run_instead(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc.extra_env = {}
+    proc.global_args = []
+    adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], python_guide="DIMOS.md")
+    waited = mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        adapter.assert_not_called()
+        waited.assert_called_once()
+        assert result.mcp_url == "" and result.python_guide == "DIMOS.md"
+    finally:
+        env.stop()

@@ -97,9 +97,9 @@ def _result_text(result: JsonValue) -> str:
 
 
 def _response_id(body: JsonValue) -> str | None:
-    """Read the provider response ID from an OpenAI or Anthropic JSON/SSE body."""
+    """Read the provider response ID from an OpenAI, Anthropic or Gemini JSON/SSE body."""
     if isinstance(body, dict):
-        response_id = body.get("id")
+        response_id = body.get("id") or body.get("responseId")
         return response_id if isinstance(response_id, str) else None
     if isinstance(body, str):
         for line in body.splitlines():
@@ -109,6 +109,8 @@ def _response_id(body: JsonValue) -> str | None:
             if data == "[DONE]":
                 continue
             event = _json_object.validate_json(data)
+            if isinstance(event.get("responseId"), str):  # Gemini: on every chunk
+                return str(event["responseId"])
             response = event.get("response") or event.get("message")
             if isinstance(response, dict) and isinstance(response.get("id"), str):
                 return str(response["id"])

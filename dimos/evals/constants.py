@@ -14,10 +14,28 @@
 
 """Tunables for the eval harness. Literals only; nothing here imports dimos."""
 
+from dataclasses import asdict, replace
+import json
+from typing import Literal
+
+from dimos.perception.localize.localize_params import XARM_PARAMS
+
 # Model providers: API key variable and default upstream base URL, by provider name.
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+    "google": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
+}
+
+# Pi's --thinking level as a Gemini thinkingLevel ("off" leaves the model's default).
+GOOGLE_THINKING_LEVELS: dict[str, Literal["LOW", "MEDIUM", "HIGH"] | None] = {
+    "off": None,
+    "minimal": "LOW",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "xhigh": "HIGH",
+    "max": "HIGH",
 }
 
 # Host variables a Pi process may inherit; the provider key is added by name.
@@ -68,6 +86,114 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
                            Speeds are clamped to {max_linear:g} m/s and {max_angular:g} rad/s; non-finite values are ignored.
 
 There is no other interface to this robot.
+"""
+
+# The xArm7 gripper's geometry, stated the same way to every agent that drives it.
+XARM7_GRIPPER_NOTES = (
+    "Gripper: the TCP is 0.172 m along the gripper axis from its root; the finger pads sit "
+    "11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open)."
+)
+
+# Localize in MuJoCo: the wrist camera starts parked, so confirm objects from one view, and
+# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the xarm preset's 0.40.
+SIM_LOCALIZE_PARAMS = replace(XARM_PARAMS, min_views=1, candidate_floor=0.2, accept_score=0.25)
+SIM_LOCALIZE_ENV = {"PERCEPTIONLOCALIZE__PARAMS": json.dumps(asdict(SIM_LOCALIZE_PARAMS))}
+
+DIMOS_PYTHON_README = """\
+Robot interface: a live dimOS runtime driving the arm, reached from Python. Write scripts and run
+them with bash (`python script.py`); each script connects, acts and exits.
+Don't name scripts after standard-library modules (inspect.py, test.py, types.py, ...): Python
+imports the script's folder first, so they shadow the real module and break `import dimos`.
+
+    from dimos import Dimos
+    from dimos.manipulation.sdk import Arm, MotionError
+
+    app = Dimos.connect()
+    arm = Arm.from_app(app)
+    try:
+        ...
+    finally:
+        app.stop()  # closes this client's connection; the robot keeps running
+
+Arm (help(arm.<method>) shows the full docstring):
+  arm.pose()                     measured tool centre point (TCP) in world: .position.x/.y/.z,
+                                 .orientation (x, y, z, w)
+  arm.joints()                   joint positions, radians
+  arm.state().gripper_position   measured gripper opening, 0 closed .. 1 open; fingers that stop
+                                 short of closed are holding something
+  arm.move_pose([x, y, z], orientation=[qx, qy, qz, qw])
+                                 plan and move the TCP to a world pose; omit orientation to keep
+                                 the current one. Endpoint only, the path may curve.
+  arm.move_linear(dx=0, dy=0, dz=0, check_collision=False)
+                                 straight world-frame translation of the TCP, in metres
+  arm.move_joints(q)             plan and move to joint positions
+  arm.set_gripper_position(p)    0 closed .. 1 open; arm.open_gripper(), arm.close_gripper()
+Moves block until the motion ends, so no sleep is needed before looking. They raise MotionError on
+failure, including when the arm stops short of the planned end (e.g. blocked by contact); the
+message says how far off, error.result says why.
+Every arm move accepts speed_scale and timeout. Gripper calls accept timeout only (default 2 s):
+they wait until the fingers stop, at the target or on an object. arm.reset() stops any motion and clears a failed
+state; a move that fails with "call reset()" needs it before the next one.
+
+Camera (the wrist camera, moving with the gripper; at the start pose it looks straight down:
+image right = world -Y, image up = world +X):
+  app.peek_stream("color_image", 2.0).save("view.jpg")
+                                 the latest RGB frame, saved for the read tool
+  app.peek_stream("depth_image", 2.0).as_numpy()
+                                 the latest depth frame: float32 metres per pixel, the same
+                                 pixels as color_image
+  app.peek_stream("camera_info", 2.0).K
+                                 the 3x3 intrinsics of both, row-major (fx, 0, cx, 0, fy, cy, 0, 0, 1)
+  app.skills.camera_pose()       JSON {"t", "frame", "xyz", "quaternion_xyzw"}: the camera's optical
+                                 pose in world at its newest frame; optical +Z forward, +X image
+                                 right, +Y image down. Depth pixel (u, v) back-projects as
+                                 z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, then
+                                 this pose takes it to world.
+
+Perception:
+  app.skills.localize(objects="red cube, blue cup")
+                                 the named objects in the camera's recent frames, as text. Name what
+                                 the camera sees, colour + shape from above ("yellow rectangular
+                                 object", "blue circle"), not what the object is ("bin", "cap"):
+                                 names often score under 0.15. It cannot read text or letters.
+                                 Each found object reports:
+                                 world position; footprint: length x width (m) of the smallest
+                                 rectangle around it seen from above, its centre and the long
+                                 side's yaw; the z range of the surfaces the camera saw (the top
+                                 is reliable, the bottom only as low as was in view); score,
+                                 views and an id that stays the same across calls.
+  app.skills.localize(objects="...", params='{"accept_score": 0.2}')
+                                 per-call thresholds, a JSON object of LocalizeParams fields:
+                                 candidate_floor (detector score to form a box), accept_score
+                                 (score to report an object), min_views (camera positions to
+                                 confirm it), max_object_extent_m, min_points. A miss reports
+                                 its best candidate's score and views; lowering accept_score or
+                                 min_views to it accepts that candidate, and lower values also
+                                 admit wrong matches. help(LocalizeParams) from
+                                 dimos.perception.localize.types lists every field.
+  app.skills.state()             whether localize is ready to answer
+
+Grasps:
+  app.skills.grasps(object_id="31e1f624")
+                                 grasp poses for an object localize reported, by its id: the
+                                 best ones IK reaches from the current joints, best first. Each
+                                 gives the TCP position and orientation for arm.move_pose, the
+                                 approach direction, a pre-grasp pose back along it, the
+                                 object's width between the jaws and a score. They point
+                                 straight down at the centre of the object's footprint, jaws
+                                 across its narrow side, and read only the surfaces the camera
+                                 saw; suited to small box-like objects. Collisions are not
+                                 checked, and the proposals do not know the task; choose the one
+                                 that suits it. localize merges every view of an object into its
+                                 cloud; when the surfaces seen span only a few millimetres, the
+                                 camera saw just the top: look from another angle and localize
+                                 again before asking for grasps.
+
+Other streams: app.list_streams() lists every module's streams, and app.peek_stream(name) reads
+any of them except the simulator's ground truth (exact object poses, the scene camera), which
+reads as absent. help(<call>) shows any call's full docstring.
+
+Print only what you need: what a script prints is what you see.
 """
 
 RAW_ARM_README = """\

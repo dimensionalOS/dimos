@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -52,10 +53,23 @@ class MotionError(RuntimeError):
         self,
         operation: str,
         result: PlanResult | ExecutionResult | MoveResult | CommandResult,
+        detail: str | None = None,
     ) -> None:
         self.operation = operation
         self.result = result
-        super().__init__(f"{operation}: {result}")
+        self.detail = detail
+        super().__init__(f"{operation}: {detail}; {result}" if detail else f"{operation}: {result}")
+
+
+# A move completes when the arm's commands reach the plan's end, even if the arm itself is blocked
+# or lagging, so after every move the measured joints must settle within this of the plan's end.
+REACH_TOLERANCE_RAD = 0.05
+SETTLE_TIMEOUT_S = 1.0
+# The gripper command returns at once; gripper calls then wait until the fingers stop: at the
+# target, or held still this long (closed on an object).
+GRIPPER_STILL_S = 0.3
+GRIPPER_STILL_TOLERANCE = 0.005
+GRIPPER_TARGET_TOLERANCE = 0.05
 
 
 def _vector(values: ArrayLike, size: int, name: str) -> NDArray[np.float64]:
@@ -182,7 +196,38 @@ class Arm:
         result = self.rpc.execute(blocking=True, timeout=timeout, plan_id=plan.plan.plan_id)
         if result.status is not ExecutionStatus.COMPLETED:
             raise MotionError(operation, result)
+        self._check_reached(operation, plan, result)
         return result
+
+    def _check_reached(
+        self, operation: str, plan: PlanResult, result: ExecutionResult | MoveResult
+    ) -> None:
+        """Raise ``MotionError`` if the measured joints never settle at the plan's last waypoint."""
+        trajectory = plan.plan.trajectory if plan.plan is not None else None
+        if trajectory is None or not trajectory.points:
+            return
+        names = trajectory.joint_names or list(self.info.joint_names)
+        end = dict(zip(names, trajectory.points[-1].positions, strict=False))
+        if any(name not in end for name in self.info.joint_names):
+            return
+        goal = np.asarray([end[name] for name in self.info.joint_names], dtype=np.float64)
+        deadline = time.monotonic() + SETTLE_TIMEOUT_S
+        while True:
+            error = np.abs(self.joints() - goal)
+            if error.max() <= REACH_TOLERANCE_RAD or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        if error.max() <= REACH_TOLERANCE_RAD:
+            return
+        worst = int(error.argmax())
+        tip = self.pose().position
+        raise MotionError(
+            operation,
+            result,
+            f"stopped short of the planned end: joint {self.info.joint_names[worst]} is "
+            f"{error[worst]:.3f} rad off (tolerance {REACH_TOLERANCE_RAD}); the arm may be blocked "
+            f"by contact. End effector now at ({tip.x:.3f}, {tip.y:.3f}, {tip.z:.3f})",
+        )
 
     def move_linear(
         self,
@@ -215,10 +260,27 @@ class Arm:
             or result.execution.status is not ExecutionStatus.COMPLETED
         ):
             raise MotionError("move_linear", result)
+        self._check_reached("move_linear", result.plan, result)
         return result
 
-    def set_gripper_position(self, position: float) -> CommandResult:
-        """Set normalized gripper travel: 0 closed, 1 open."""
+    def reset(self) -> CommandResult:
+        """Stop any motion and clear a failed state so new moves are accepted.
+
+        A move that fails with "Cannot plan while manipulation is ..." needs this first.
+        """
+        result = self.rpc.reset()
+        if not result.succeeded:
+            raise MotionError("reset", result)
+        return result
+
+    def set_gripper_position(
+        self, position: float, *, timeout: float | None = 2.0
+    ) -> CommandResult:
+        """Set normalized gripper travel: 0 closed, 1 open.
+
+        Waits up to ``timeout`` seconds for the fingers to stop, at the target or on an
+        object; ``timeout=0`` returns once the command is accepted.
+        """
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:
             raise ValueError("Gripper position must be finite and between 0 and 1")
         if not self.info.has_gripper:
@@ -226,15 +288,32 @@ class Arm:
         result = self.rpc.set_gripper_position(position, planning_group=self.info.id)
         if not result.succeeded:
             raise MotionError("set_gripper_position", result)
+        if timeout:
+            self._wait_gripper_still(position, timeout)
         return result
 
-    def open_gripper(self) -> CommandResult:
-        """Open the gripper."""
-        return self.set_gripper_position(1.0)
+    def _wait_gripper_still(self, target: float, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        last, still_since = None, time.monotonic()
+        while time.monotonic() < deadline:
+            current = self.state().gripper_position
+            if current is None:
+                return
+            if abs(current - target) <= GRIPPER_TARGET_TOLERANCE:
+                return
+            if last is None or abs(current - last) > GRIPPER_STILL_TOLERANCE:
+                last, still_since = current, time.monotonic()
+            elif time.monotonic() - still_since >= GRIPPER_STILL_S:
+                return
+            time.sleep(0.05)
 
-    def close_gripper(self) -> CommandResult:
-        """Close the gripper."""
-        return self.set_gripper_position(0.0)
+    def open_gripper(self, *, timeout: float | None = 2.0) -> CommandResult:
+        """Open the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(1.0, timeout=timeout)
+
+    def close_gripper(self, *, timeout: float | None = 2.0) -> CommandResult:
+        """Close the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(0.0, timeout=timeout)
 
     def home(
         self, *, speed_scale: float | None = None, timeout: float | None = None

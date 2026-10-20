@@ -25,6 +25,7 @@ services:
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ${EVAL_RUNS_DIR:-./eval-runs}:/state
       # Private per container: a shared pid-keyed registry deletes others' live runs.

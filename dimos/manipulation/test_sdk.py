@@ -41,6 +41,7 @@ from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.porcelain.dimos import Dimos
 
 
@@ -213,6 +214,64 @@ def test_joint_inputs_plan_before_blocking_execution(arm, rpc):
     )
 
 
+def _plan_ending_at(*positions):
+    trajectory = JointTrajectory(
+        points=[TrajectoryPoint(time_from_start=1.0, positions=list(positions))],
+        joint_names=["j0", "j1"],
+    )
+    return PlanResult(PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), trajectory))
+
+
+def test_move_that_reaches_the_plan_end_returns(arm, rpc):
+    rpc.plan_to_joints.return_value = _plan_ending_at(0.11, 0.2)
+
+    assert arm.move_joints([0.11, 0.2]) is rpc.execute.return_value
+
+
+def test_move_that_stops_short_raises_with_the_shortfall(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.SETTLE_TIMEOUT_S", 0.0)
+    rpc.plan_to_joints.return_value = _plan_ending_at(0.1, 0.5)
+
+    with pytest.raises(MotionError, match=r"stopped short.*joint j1 is 0\.300 rad off") as caught:
+        arm.move_joints([0.1, 0.5])
+
+    assert caught.value.result is rpc.execute.return_value
+    assert caught.value.operation == "move_joints"
+
+
+def test_linear_move_that_stops_short_raises(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.SETTLE_TIMEOUT_S", 0.0)
+    rpc.move_linear.return_value = replace(
+        rpc.move_linear.return_value, plan=_plan_ending_at(0.4, 0.2)
+    )
+
+    with pytest.raises(MotionError, match="joint j0 is 0.300 rad off"):
+        arm.move_linear(dz=0.05)
+
+
+def test_lagging_arm_is_given_time_to_settle(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    rpc.plan_to_joints.return_value = _plan_ending_at(0.3, 0.2)
+    lagging = replace(
+        rpc.get_state.return_value.groups["arm"],
+        joints=JointState(name=["j0", "j1"], position=[0.2, 0.2]),
+    )
+    settled = rpc.get_state.return_value
+    rpc.get_state.side_effect = [
+        replace(settled, groups={"arm": lagging}),
+        replace(
+            settled,
+            groups={
+                "arm": replace(lagging, joints=JointState(name=["j0", "j1"], position=[0.3, 0.2]))
+            },
+        ),
+    ]
+
+    arm.move_joints([0.3, 0.2])
+
+    assert rpc.get_state.call_count == 2
+
+
 @pytest.mark.parametrize("positions", [[0.0], [[0.0, 0.1]], [0.0, np.nan], [np.inf, 0], [1j, 0]])
 def test_invalid_joint_inputs_never_plan_or_execute(arm, rpc, positions):
     with pytest.raises(ValueError):
@@ -371,6 +430,22 @@ def test_nonfinite_linear_delta_is_rejected_locally(arm, rpc):
     rpc.move_linear.assert_not_called()
 
 
+def test_reset_returns_the_module_result(arm, rpc):
+    rpc.reset.return_value = CommandResult(CommandStatus.SUCCEEDED, "Reset to IDLE")
+
+    assert arm.reset() is rpc.reset.return_value
+    rpc.reset.assert_called_once_with()
+
+
+def test_refused_reset_raises_with_the_result(arm, rpc):
+    rpc.reset.return_value = CommandResult(CommandStatus.FAILED, "stop not confirmed")
+
+    with pytest.raises(MotionError) as error:
+        arm.reset()
+
+    assert error.value.result is rpc.reset.return_value
+
+
 @pytest.mark.parametrize("method,position", [("open_gripper", 1.0), ("close_gripper", 0.0)])
 def test_gripper_shortcuts_use_normalized_positions(arm, rpc, method, position):
     result = getattr(arm, method)()
@@ -394,6 +469,40 @@ def test_gripperless_arm_rejects_gripper_command(rpc):
         arm.open_gripper()
 
     rpc.set_gripper_position.assert_not_called()
+
+
+def _gripper_readings(rpc, *positions):
+    snapshot = rpc.get_state.return_value
+    group = snapshot.groups["arm"]
+    rpc.get_state.side_effect = [
+        replace(snapshot, groups={"arm": replace(group, gripper_position=p)}) for p in positions
+    ]
+
+
+def test_gripper_waits_until_the_fingers_reach_the_target(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    _gripper_readings(rpc, 0.6, 0.8, 1.0)
+
+    arm.open_gripper()
+
+    assert rpc.get_state.call_count == 3
+
+
+def test_gripper_stops_waiting_once_the_fingers_hold_on_an_object(arm, rpc, mocker):
+    clock = iter(np.arange(0.0, 10.0, 0.1))
+    mocker.patch("dimos.manipulation.sdk.time.monotonic", side_effect=lambda: next(clock))
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    _gripper_readings(rpc, 0.5, 0.3, 0.2, *[0.2] * 20)
+
+    arm.close_gripper(timeout=5.0)
+
+    assert rpc.get_state.call_count < 10
+
+
+def test_gripper_timeout_zero_does_not_wait(arm, rpc):
+    arm.close_gripper(timeout=0)
+
+    rpc.get_state.assert_not_called()
 
 
 def test_gripper_failure_retains_result(arm, rpc):

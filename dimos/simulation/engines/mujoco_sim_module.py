@@ -30,7 +30,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 import mujoco
 import numpy as np
@@ -133,6 +133,27 @@ def _imu_from_mujoco_wxyz(
         frame_id=frame_id,
         ts=ts,
     )
+
+
+class _ThreadReleases:
+    """Switch off a part's hold once its thread's hinge has turned to the end of its range."""
+
+    def __init__(self, model: mujoco.MjModel, holds: dict[str, str]) -> None:
+        self._threads: list[tuple[int, int, int]] = []
+        for thread_name, hold_name in holds.items():
+            thread, hold = model.equality(thread_name).id, model.equality(hold_name).id
+            if model.eq_type[thread] != mujoco.mjtEq.mjEQ_JOINT or model.eq_obj2id[thread] < 0:
+                raise ValueError(
+                    f"Thread {thread_name!r} must be a joint equality between two joints"
+                )
+            hinge = int(model.eq_obj2id[thread])
+            self._threads.append((hold, hinge, int(model.jnt_qposadr[hinge])))
+
+    def __call__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        for hold, hinge, hinge_adr in self._threads:
+            if data.eq_active[hold] and data.qpos[hinge_adr] >= model.jnt_range[hinge][1] - 1e-3:
+                data.eq_active[hold] = 0
+                logger.info("MujocoSimModule: thread released", equality=model.equality(hold).name)
 
 
 class _WholeBodySimHooks:
@@ -254,6 +275,14 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
+    # Contact solver overrides applied to the loaded model; None keeps the MJCF's own option.
+    # Exported robosuite scenes lost robosuite's <option cone="elliptic" impratio="20">, and
+    # with MuJoCo's pyramidal default a closed gripper lets objects creep out.
+    friction_cone: Literal["pyramidal", "elliptic"] | None = None
+    impratio: float | None = None
+    # Cancel the robot's own weight, as real arm firmware does; without it the position
+    # actuators settle below their targets (about 1-2 cm at the xArm7's TCP).
+    gravity_compensation: bool = False
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -268,6 +297,13 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    overview_camera_name: str | None = None
+    overview_fps: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    # Screw threads, as {thread: hold}: the thread is a joint equality tying a slide (joint1) to a
+    # hinge (joint2), the hold an equality (a weld) fixing a free part to the threaded body. Once
+    # the hinge reaches the top of its range the hold is switched off and the part (a bottle cap)
+    # is loose.
+    thread_releases: dict[str, str] = Field(default_factory=dict)
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -328,12 +364,17 @@ class MujocoSimModule(
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    overview_image: Out[Image]
+    overview_camera_info: Out[CameraInfo]
     imu: Out[Imu]
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
+    # World poses of ``tracked_bodies``: simulator ground truth for recording and grading, kept
+    # off ``tf`` so a consumer of the robot's frames does not also get the objects' true poses.
+    body_poses: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -410,6 +451,8 @@ class MujocoSimModule(
 
     @rpc
     def start(self) -> None:
+        if self.config.overview_camera_name == self.config.camera_name:
+            raise ValueError("Overview and primary camera names must be different")
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
                 "MujocoSimModule: either config.address (legacy MJCF path) "
@@ -469,6 +512,16 @@ class MujocoSimModule(
         if primary_needed:
             add_camera(self.config.camera_name)
 
+        if self.config.overview_camera_name:
+            name = self.config.overview_camera_name
+            cameras_by_name[name] = CameraConfig(
+                name=name,
+                width=self.config.width,
+                height=self.config.height,
+                fps=self.config.overview_fps,
+                render_depth=False,
+            )
+
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
                 raycast_lidars.append(
@@ -495,6 +548,7 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            gravity_compensation=self.config.gravity_compensation,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
@@ -506,6 +560,10 @@ class MujocoSimModule(
             engine_kwargs["spawn_z"] = self.config.spawn_z
             engine_kwargs["spawn_yaw"] = self.config.spawn_yaw
         self._engine = MujocoEngine(**engine_kwargs)
+        for camera in cameras:
+            if self._engine.get_camera_fovy(camera.name) is None:
+                raise ValueError(f"Configured camera {camera.name!r} not found in MJCF")
+        self._apply_solver_options(self._engine.model)
 
         # Detect gripper (extra joint beyond dof).
         dof = self.config.dof
@@ -561,10 +619,15 @@ class MujocoSimModule(
             gripper_ctrl_range=self._gripper_ctrl_range,
             gripper_joint_range=self._gripper_joint_range,
         )
-        self._engine.set_step_hooks(
-            before=self._sim_hooks.pre_step,
-            after=self._publish_shm_and_lcm,
-        )
+        after_step = self._publish_shm_and_lcm
+        if self.config.thread_releases:
+            releases = _ThreadReleases(self._engine.model, self.config.thread_releases)
+
+            def after_step(engine: MujocoEngine) -> None:
+                releases(engine.model, engine.data)
+                self._publish_shm_and_lcm(engine)
+
+        self._engine.set_step_hooks(before=self._sim_hooks.pre_step, after=after_step)
 
         # Start physics (sim thread spawned inside engine.connect()).
         if not self._engine.connect():
@@ -611,6 +674,22 @@ class MujocoSimModule(
             camera=self.config.camera_name,
             shm_key=shm_key,
         )
+
+    def _apply_solver_options(self, model: mujoco.MjModel) -> None:
+        if self.config.friction_cone is not None:
+            model.opt.cone = (
+                mujoco.mjtCone.mjCONE_ELLIPTIC
+                if self.config.friction_cone == "elliptic"
+                else mujoco.mjtCone.mjCONE_PYRAMIDAL
+            )
+        if self.config.impratio is not None:
+            model.opt.impratio = self.config.impratio
+        if self.config.friction_cone is not None or self.config.impratio is not None:
+            logger.info(
+                "MujocoSimModule: solver options",
+                cone=int(model.opt.cone),
+                impratio=float(model.opt.impratio),
+            )
 
     def _compose_model(self) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + scene-package entities."""
@@ -879,8 +958,11 @@ class MujocoSimModule(
         if engine is None:
             return
 
-        interval = 1.0 / self.config.fps
+        interval = 1.0 / max(
+            self.config.fps, self.config.overview_fps if self.config.overview_camera_name else 0.0
+        )
         last_timestamp = 0.0
+        last_overview_timestamp = 0.0
         published_count = 0
 
         # Wait for engine to actually be connected (sim thread may take a tick).
@@ -898,6 +980,11 @@ class MujocoSimModule(
             loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
+                if self.config.overview_camera_name:
+                    overview = engine.read_camera(self.config.overview_camera_name)
+                    if overview is not None and overview.timestamp > last_overview_timestamp:
+                        self._publish_overview(overview)
+                        last_overview_timestamp = overview.timestamp
             except RuntimeError as exc:
                 logger.error(
                     "MuJoCo render failed; stopping publish loop",
@@ -924,7 +1011,7 @@ class MujocoSimModule(
                 )
                 self.color_image.publish(color_img)
 
-            if self.config.enable_depth:
+            if self.config.enable_depth and frame.depth is not None:
                 depth_img = Image(
                     data=frame.depth,
                     format=ImageFormat.DEPTH,
@@ -940,13 +1027,51 @@ class MujocoSimModule(
                 logger.info(
                     "MujocoSimModule first frame published",
                     rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
+                    depth_shape=frame.depth.shape if frame.depth is not None else None,
                 )
 
             elapsed = time.monotonic() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _publish_overview(self, frame: CameraFrame) -> None:
+        """Publish an RGB-only view and its capture-time optical calibration/pose."""
+        frame_id = f"{self.config.overview_camera_name}_color_optical_frame"
+        height, width = frame.rgb.shape[:2]
+        self.overview_image.publish(
+            Image(
+                data=frame.rgb,
+                format=ImageFormat.RGB,
+                frame_id=frame_id,
+                ts=frame.timestamp,
+            )
+        )
+        self.overview_camera_info.publish(
+            CameraInfo.from_fov(
+                fov_deg=frame.fovy,
+                width=width,
+                height=height,
+                frame_id=frame_id,
+            ).with_ts(frame.timestamp)
+        )
+        optical_rotation = R.from_matrix(frame.cam_mat.reshape(3, 3)) * _RX180
+        self.tf.publish(
+            TFMessage(
+                _transform_from_matrix(
+                    _pose_matrix(frame.cam_pos, optical_rotation.as_matrix()),
+                    frame_id="world",
+                    child_frame_id=frame_id,
+                    ts=frame.timestamp,
+                ),
+                _transform_from_matrix(
+                    _pose_matrix(frame.cam_pos, frame.cam_mat.reshape(3, 3)),
+                    frame_id="world",
+                    child_frame_id=f"{self.config.overview_camera_name}_link",
+                    ts=frame.timestamp,
+                ),
+            )
+        )
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
@@ -1002,9 +1127,11 @@ class MujocoSimModule(
                     child_frame_id=self._camera_link,
                     ts=ts,
                 ),
-                *self._body_transforms(),
             )
         )
+        bodies = self._body_transforms()
+        if bodies:
+            self.body_poses.publish(TFMessage(*bodies))
 
     def _body_transforms(self) -> list[Transform]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
@@ -1044,7 +1171,7 @@ class MujocoSimModule(
         if camera_info is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
-        if frame is None:
+        if frame is None or frame.depth is None:
             return
         try:
             color_img = Image(

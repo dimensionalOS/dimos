@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ground-truth object poses that a simulator published on ``tf``."""
+"""Ground-truth object poses that a simulator published on ``body_poses`` (``tf`` before)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
     from dimos.msgs.geometry_msgs.Transform import Transform
 
 
@@ -33,11 +34,18 @@ def first_body_transform(recording: Store, body: str) -> Transform:
     return _body_transform(recording, body, newest=False)
 
 
+def body_pose_stream(recording: Store) -> Stream[Any, Any]:
+    """The recorded stream that carries tracked-body poses. Recordings made before the sim moved
+    them off ``tf`` have them on ``tf``."""
+    for name in ("body_poses", "tf"):
+        if name in recording.streams:
+            return cast("Stream[Any, Any]", getattr(recording.streams, name))
+    raise LookupError("No body_poses or tf recorded")
+
+
 def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
-    # Several modules publish on tf, so scan messages until one names the body.
-    if "tf" not in recording.streams:
-        raise LookupError("No tf recorded")
-    for record in recording.streams.tf.order_by("ts", desc=newest):
+    # A message may carry other frames too (old recordings: tf), so scan until one names the body.
+    for record in body_pose_stream(recording).order_by("ts", desc=newest):
         for transform in record.data.transforms:
             if transform.child_frame_id == body:
                 return cast("Transform", transform)

@@ -241,7 +241,12 @@ def test_run_reports_stop_reason_and_cleans_up_pi(
 
 
 @pytest.mark.parametrize(
-    "provider,key", [("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")]
+    "provider,key",
+    [
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("google", "GEMINI_API_KEY"),
+    ],
 )
 def test_model_proxy_keeps_native_provider_and_no_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: Provider, key: str
@@ -261,6 +266,8 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
     assert config.base_url == "http://provider.test"
     assert config.key_env == key
     assert config.max_output_tokens == 4096
+    # Pi's default "medium"; only Google requests get a thinkingLevel from the runtime.
+    assert config.google_thinking_level == ("MEDIUM" if provider == "google" else None)
     env = agent._build_process_env(paths)
     assert env[key] == "private-value"
     assert "AWS_SECRET_ACCESS_KEY" not in env  # only the allowlist and the provider key pass
@@ -308,12 +315,50 @@ def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
     assert result.final_metrics.total_cost_usd is None
 
 
+def test_gemini_sse_trace_matching(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    request_path(raw, 0).write_text("{}")
+    chunk = {"candidates": [{"content": {"parts": [{"text": "answer"}]}}], "responseId": "r_1"}
+    response_path(raw, 0).write_text(json.dumps({"body": f"data: {json.dumps(chunk)}\n\n"}))
+    events = PiToAtif(raw, TrajectoryBuilder("Question", name="Pi"))
+    events.append_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "responseId": "r_1",
+                "model": "gemini-4-argon",
+                "content": [{"type": "text", "text": "answer"}],
+                "usage": {"input": 10, "output": 4, "reasoning": 3},
+            },
+        }
+    )
+    result = events.trajectory.build("answer")
+    assert result.final_answer == "answer"
+    assert result.final_metrics.total_prompt_tokens == 10
+
+
 def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     command = PiAdapter()._build_pi_command(
         "Question", "Shared context", RunPaths.for_run(tmp_path)
     )
     assert "--append-system-prompt" in command
     assert "--system-prompt" not in command
+
+
+def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path) -> None:
+    live = RunningEnvironment(
+        mcp_url="http://localhost:9990/mcp",
+        streams=(),
+        artifacts={},
+        python_guide="app = Dimos.connect()",
+    )
+    prompt = PiAdapter()._prepare_case(live, tmp_path)
+    assert (tmp_path / "DIMOS.md").read_text() == "app = Dimos.connect()"
+    assert "DIMOS.md" in prompt
+    # The tools stay up for readiness, but nothing points the agent at them.
+    assert "dimos mcp call" not in prompt and "Tools:" not in prompt
 
 
 @pytest.mark.parametrize(

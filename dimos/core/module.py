@@ -889,8 +889,11 @@ class Module(ModuleBase):
         """Return the next emission on a named stream, a `PeekNotFound`
         sentinel if no such stream exists, or `None` on timeout/error.
 
-        Used by `Dimos.peek_stream` to scan running modules.
+        Used by `Dimos.peek_stream` to scan running modules. Names in the
+        global ``peek_hidden_streams`` read as absent.
         """
+        if stream_name in self.config.g.peek_hidden_streams.split(","):
+            return PeekNotFound()
         stream = (
             self.outputs.get(stream_name)
             or self.inputs.get(stream_name)

@@ -1894,6 +1894,63 @@ def test_cartesian_rejects_official_planner_failure(
     assert "tracking failed" in result.message
 
 
+def test_cartesian_toppra_failure_retries_without_blending(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world = _make_world(fake_roboplan, robot_config)
+    selection = _selection(robot_config, "manipulator")
+    plan = FakeCartesianPathPlanner.plan
+    toppra_failure = RuntimeError("TOPP-RA time parameterization failed: return code 3")
+
+    def blended_fails(self: FakeCartesianPathPlanner, *args: Any) -> FakeJointTrajectory:
+        if self.options.toppra_blend_deviation > 0.0:
+            raise toppra_failure
+        return plan(self, *args)
+
+    mocker.patch.object(FakeCartesianPathPlanner, "plan", autospec=True, side_effect=blended_fails)
+
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        {"manipulator": _relative_target(Transform(translation=Vector3(0.0, 0.0, 0.2)))},
+        RoboPlanCartesianPathConfig(),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    blends = [p.options.toppra_blend_deviation for p in FakeCartesianPathPlanner.instances[-2:]]
+    assert blends == [0.05, 0.0]
+
+
+def test_cartesian_toppra_failure_without_blending_is_reported(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world = _make_world(fake_roboplan, robot_config)
+    selection = _selection(robot_config, "manipulator")
+    mocker.patch.object(
+        FakeCartesianPathPlanner,
+        "plan",
+        autospec=True,
+        side_effect=RuntimeError("TOPP-RA time parameterization failed: return code 3"),
+    )
+
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        {"manipulator": _relative_target(Transform(translation=Vector3(0.0, 0.0, 0.2)))},
+        RoboPlanCartesianPathConfig(),
+    )
+
+    assert result.status == PlanningStatus.NO_SOLUTION
+    assert "return code 3" in result.message
+    assert FakeCartesianPathPlanner.plan.call_count == 2  # type: ignore[attr-defined]
+
+
 def test_cartesian_postvalidation_checks_between_waypoints(
     fake_roboplan: None,
     robot_config: RobotModelConfig,

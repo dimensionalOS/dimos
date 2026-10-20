@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The localize answer type and the thresholds a caller tunes per call."""
+"""The localize answer type and its thresholds; each rig's values are in ``localize_params``."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,30 +38,34 @@ class Localization:
 
 
 @dataclass(frozen=True)
-class LocalizePolicy:
-    """Per-call thresholds. The funnel generalizes; these numbers do not.
+class LocalizeParams:
+    """The thresholds of one localize call. The funnel generalizes; these numbers do not.
 
-    Each was fit to one measured scene, so a different rig, object scale or
-    detector vocabulary passes its own instance instead of the defaults.
-    The scores are on the models' scales, the defaults on SigLIP and OWLv2's.
+    Each rig's values are in ``localize_params``, fit on its recordings; the
+    scores are on the scales of the models they were fit with.
     """
 
-    candidate_floor: float = 0.25  # detector score at which a box is formed
-    accept_score: float = 0.40  # group's best member score to be returned
-    min_views: int = 2  # distinct camera positions (1 cm) to confirm a group
-    cluster_radius_m: float = 0.08  # two lifts are one object within this
-    peak_prominence: float = 0.02
-    peak_distance_s: float = 1.0
-    peak_width_s: float | None = 0.5  # None disables the width gate
-    verify_radius_m: float = 1.6  # gather index frames this close to a peak
-    verify_window_s: float = 0.5  # keep the sharpest gathered frame per window
-    settled_window_fraction: float = 0.5  # of 1/embed_hz; collapses split windows
-    tail_k: int = 1  # extra frames past the last peak, so the tail can be latest
-    max_object_extent_m: float = 0.60
-    surface_patch_max_rise_m: float = 0.003  # with the drop test, a lift hugging
-    surface_patch_min_drop_m: float = -0.02  # the support is surface, not object
-    min_points: int = 60  # points on a lift
-    min_camera_range_m: float = 0.28
-    fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
-    plane_keyframes: int = 5
-    plane_cell_m: float = 2.0  # XY cell of the support-plane cache
+    candidate_floor: float  # detector score at which a box is formed
+    accept_score: float  # group's best member score to be returned
+    min_views: int  # distinct camera positions (1 cm) to confirm a group
+    cluster_radius_m: float  # two lifts are one object within this
+    peak_prominence: float
+    peak_distance_s: float
+    peak_width_s: float | None  # None disables the width gate
+    verify_radius_m: float  # gather index frames this close to a peak
+    verify_window_s: float  # keep the sharpest gathered frame per window
+    settled_window_fraction: float  # of 1/embed_hz; collapses split windows
+    tail_k: int  # extra frames past the last peak, so the tail can be latest
+    max_object_extent_m: float
+    surface_patch_max_rise_m: float  # with the drop test, a lift hugging
+    surface_patch_min_drop_m: float  # the support is surface, not object
+    min_points: int  # points on a lift
+    min_camera_range_m: float
+    fuse_voxel_m: float  # union cloud voxel at merge; 0 concatenates
+    plane_keyframes: int
+    plane_cell_m: float  # XY cell of the support-plane cache
+
+    def read_key(self) -> LocalizeParams:
+        """What a frame counts as read under: these params without the answer gates,
+        which act only once the answer is built, so changing them reads no frame again."""
+        return replace(self, accept_score=0.0, min_views=0)

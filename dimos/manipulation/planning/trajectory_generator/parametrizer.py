@@ -26,6 +26,8 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
+# Waypoints closer than this, per joint, are one waypoint to time parametrization.
+_REPEATED_WAYPOINT_TOLERANCE = 1e-4
 
 
 class TrajectoryParametrizationError(ValueError):
@@ -52,7 +54,12 @@ class BaseTrajectoryParametrizer(ABC):
         path = [JointState(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
         if result.timestamps is None:
-            trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
+            # Time parametrization needs distinct waypoints; a path that goes nowhere holds still.
+            path = self._merge_repeated_waypoints(path)
+            if len(path) == 1:
+                trajectory = self._stationary_trajectory(selection, path[0])
+            else:
+                trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
         else:
             trajectory = self._timed_trajectory(selection, path, result.timestamps)
         self._validate_trajectory(
@@ -117,6 +124,34 @@ class BaseTrajectoryParametrizer(ABC):
                 positions,
                 f"Waypoint {waypoint_index} positions",
             )
+
+    @classmethod
+    def _merge_repeated_waypoints(cls, path: Sequence[JointState]) -> list[JointState]:
+        """Drop waypoints that repeat the previous one, keeping the path's goal."""
+        merged = [path[0]]
+        for state in path[1:]:
+            if not cls._positions_close(
+                state.position, merged[-1].position, _REPEATED_WAYPOINT_TOLERANCE
+            ):
+                merged.append(state)
+        if len(merged) > 1:
+            merged[-1] = path[-1]
+        return merged
+
+    @staticmethod
+    def _stationary_trajectory(
+        selection: PlanningGroupSelection, state: JointState
+    ) -> JointTrajectory:
+        return JointTrajectory(
+            joint_names=list(selection.joint_names),
+            points=[
+                TrajectoryPoint(
+                    time_from_start=0.0,
+                    positions=list(state.position),
+                    velocities=[0.0] * len(selection.joint_names),
+                )
+            ],
+        )
 
     @classmethod
     def _timed_trajectory(
@@ -197,13 +232,17 @@ class BaseTrajectoryParametrizer(ABC):
             )
 
     @staticmethod
-    def _positions_close(first: Sequence[float], second: Sequence[float]) -> bool:
+    def _positions_close(
+        first: Sequence[float],
+        second: Sequence[float],
+        tolerance: float = _TRAJECTORY_POSITION_TOLERANCE,
+    ) -> bool:
         return len(first) == len(second) and all(
             math.isclose(
                 left,
                 right,
                 rel_tol=0.0,
-                abs_tol=_TRAJECTORY_POSITION_TOLERANCE,
+                abs_tol=tolerance,
             )
             for left, right in zip(first, second, strict=True)
         )
