@@ -84,10 +84,10 @@ Open the companion `{DB_NAME}.rrd` in Rerun to verify loop closure before deploy
 
 ## 3. Relocalize in replay
 
-Test alignment without the robot. `unitree-go2-relocalization` is `unitree-go2` plus `RelocalizationModule`:
+Test alignment without the robot. `unitree-go2` relocalizes whenever `map_file` is set:
 
 ```bash
-dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
+dimos --replay --replay-db recording_go2 run unitree-go2 \
   --map-file=recording_go2
 ```
 
@@ -118,7 +118,7 @@ Watch alignment in Rerun, which is enabled by default on Go2 blueprints:
 Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
-dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
+dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2 \
   --map-file=recording_go2
 ```
 
@@ -131,28 +131,21 @@ Before sending navigation goals, walk through this checklist:
 
 ## How it works
 
-The `unitree-go2-relocalization` blueprint is the standard [Go2 navigation stack](/docs/capabilities/navigation/deep_dive.md) plus `RelocalizationModule`:
+`unitree-go2` is the [Go2 navigation stack](/docs/capabilities/navigation/deep_dive.md) with `PGOVoxelMapper` and `Go2Relocalization`:
 
 <details>
 <summary>diagram source</summary>
 
 ```python skip fold output=assets/go2_reloc_blueprint.svg
-from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.svg import to_svg
-from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-unitree_go2_relocalization = autoconnect(
-    unitree_go2,
-    RelocalizationModule.blueprint(),
-).global_config(n_workers=11)
-
-to_svg(unitree_go2_relocalization, "assets/go2_reloc_blueprint.svg")
+to_svg(unitree_go2, "assets/go2_reloc_blueprint.svg")
 ```
 
 </details>
 
-![unitree-go2-relocalization blueprint module graph](assets/go2_reloc_blueprint.svg)
+![unitree-go2 blueprint module graph](assets/go2_reloc_blueprint.svg)
 
 Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from the merged map only while [`RelocalizationModule`](/dimos/mapping/relocalization/module.py) has a good alignment; until then it falls back to the live map alone.
 
@@ -177,6 +170,8 @@ for example `--relocalizationmodule.map-file=…`.
 | `tf_interval` | `10.0` | Seconds between tf republishes of the accepted fix (published immediately on every fix) |
 | `republish_loaded_map` | `0.0` | Seconds between `loaded_map` republishes once placed; `0` publishes once per fix |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
+| `settle_after` | `3` | Stop once this many fixes in a row agree; `0` keeps relocalizing |
+| `settle_m` / `settle_deg` | `0.25` / `2.0` | How close consecutive fixes must be to count as agreeing |
 
 Constants are not overridable via CLI today:
 
@@ -189,7 +184,7 @@ Constants are not overridable via CLI today:
 To accept all candidates for visualization only (not for production nav):
 
 ```bash
-dimos run unitree-go2-relocalization \
+dimos run unitree-go2 \
   --map-file=recording_go2 \
   --fitness-threshold=0.0
 ```

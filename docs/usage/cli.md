@@ -88,7 +88,7 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
 # Blueprint configuration (both value forms are accepted)
-dimos run unitree-go2-relocalization --map-file recording_go2
+dimos run unitree-go2 --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop

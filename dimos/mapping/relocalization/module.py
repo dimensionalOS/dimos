@@ -63,6 +63,12 @@ def yaw_deg(tf: Transform) -> float:
     return math.degrees(tf.rotation.euler.z)
 
 
+def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
+    """Yaw in degrees and translation in meters between two fixes of the same frame pair."""
+    dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
+    return dyaw, (fix.translation - recorded.translation).length()
+
+
 def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
     """Every accepted fix as it lands, then again every ``interval`` s (once only if <= 0)."""
 

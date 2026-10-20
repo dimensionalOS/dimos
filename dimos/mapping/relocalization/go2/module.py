@@ -22,7 +22,7 @@ from reactivex import combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.go2.relocalize import relocalize
-from dimos.mapping.relocalization.module import Config, RelocalizationModule
+from dimos.mapping.relocalization.module import Config, RelocalizationModule, fix_error
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -39,6 +39,12 @@ class Go2Config(Config):
     # Wall-only fine inlier ratio, not open3d's own fitness
     fitness_threshold: float = 0.45
     use_carving: bool = True
+    # Keep refining against the premap as the loop-closed map grows
+    relocalize_once: bool = False
+    # Stop once this many fixes in a row agree within settle_m / settle_deg; 0 never stops
+    settle_after: int = 3
+    settle_m: float = 0.25
+    settle_deg: float = 2.0
 
 
 class Go2Relocalization(RelocalizationModule):
@@ -47,6 +53,28 @@ class Go2Relocalization(RelocalizationModule):
     config: Go2Config
     global_map: In[PointCloud2]
     merged_map: Out[PointCloud2]
+
+    _last_fix: Transform | None = None
+    _agreeing: int = 0
+
+    @property
+    def settled(self) -> bool:
+        return 0 < self.config.settle_after <= self._agreeing
+
+    def keep_relocalizing(self) -> bool:
+        return super().keep_relocalizing() and not self.settled
+
+    def submit(self, tf: Transform, source: str = "") -> None:
+        last, self._last_fix = self._last_fix, tf
+        if last is None:
+            self._agreeing = 1
+        else:
+            dyaw, dist_m = fix_error(tf, last)
+            agrees = dist_m <= self.config.settle_m and abs(dyaw) <= self.config.settle_deg
+            self._agreeing = self._agreeing + 1 if agrees else 1
+        super().submit(tf, source)
+        if self.settled:
+            logger.info(f"relocalize {source}: settled after {self._agreeing} agreeing fixes")
 
     @rpc
     def start(self) -> None:
@@ -57,7 +85,6 @@ class Go2Relocalization(RelocalizationModule):
             backpressure(
                 self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
                     ops.throttle_first(self.config.reloc_interval),
-                    ops.filter(self._has_enough_points),
                 )
             ).subscribe(self._relocalize)
         )
@@ -70,13 +97,15 @@ class Go2Relocalization(RelocalizationModule):
             ).subscribe(self._on_merge_input)
         )
 
-    def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= self.config.min_local_points
-
     def _relocalize(self, msg: PointCloud2) -> None:
         assert self.premap is not None
         # Checked here, not upstream, so an attempt queued behind the fix is dropped
         if not self.keep_relocalizing():
+            return
+        if len(msg) < self.config.min_local_points:
+            logger.info(
+                f"relocalize go2: waiting for map n_pts={len(msg)} < {self.config.min_local_points}"
+            )
             return
         t0 = time.monotonic()
         try:
