@@ -134,6 +134,7 @@ def copy_native_sdk(root: Path, target: Path) -> None:
         if (source / "Cargo.lock").is_file():
             sources.append(source / "Cargo.lock")
         sources.extend((source / "src").rglob("*.rs"))
+        sources.extend((source / "examples").rglob("*.rs"))
     if not (root / "native/cpp/include/dimos/native/module.hpp").is_file():
         raise RuntimeError("Native SDK sources missing from source distribution")
     with TemporaryDirectory(prefix=".native-sdk-", dir=target.parent) as directory:

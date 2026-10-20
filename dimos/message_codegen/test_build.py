@@ -181,7 +181,8 @@ def test_sdk_source_packaging_reconciles_deletions_and_excludes_build_outputs(tm
         "native/cpp/include/dimos/native/module.hpp": "#pragma once",
         "native/cpp/include/dimos/native/old.hpp": "old header",
         "native/cpp/tests/test.cpp": "not a shipped library header",
-        "native/rust/dimos-module/Cargo.toml": '[package]\nname="dimos-module"',
+        "native/rust/dimos-module/Cargo.toml": '[package]\nname="dimos-module"\n[[example]]\nname="demo"',
+        "native/rust/dimos-module/examples/demo.rs": "fn main() {}",
         "native/rust/dimos-module/src/lib.rs": "pub mod cdr;",
         "native/rust/dimos-module/target/output": "not a shipped source",
         "native/rust/dimos-module-macros/Cargo.toml": '[package]\nname="dimos-module-macros"',
@@ -195,6 +196,7 @@ def test_sdk_source_packaging_reconciles_deletions_and_excludes_build_outputs(tm
     copy_native_sdk(root, target)
     assert (target / "cpp/include/dimos/native/module.hpp").read_text() == "#pragma once"
     assert (target / "rust/dimos-module/src/lib.rs").read_text() == "pub mod cdr;"
+    assert (target / "rust/dimos-module/examples/demo.rs").read_text() == "fn main() {}"
     assert not (target / "cpp/tests").exists()
     assert not (target / "rust/dimos-module/target").exists()
     (root / "native/cpp/include/dimos/native/old.hpp").unlink()
