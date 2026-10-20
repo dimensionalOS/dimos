@@ -37,6 +37,15 @@ logger = setup_logger()
 
 
 @dataclass(frozen=True)
+class JointMimic:
+    """A joint that follows another: its position is multiplier * that joint's + offset."""
+
+    joint: str
+    multiplier: float = 1.0
+    offset: float = 0.0
+
+
+@dataclass(frozen=True)
 class JointDescription:
     """A joint parsed from a materialized URDF description."""
 
@@ -51,6 +60,34 @@ class JointDescription:
     velocity: float | None = None
     acceleration: float | None = None
     effort: float | None = None
+    axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    mimic: JointMimic | None = None
+
+
+@dataclass(frozen=True)
+class CollisionDescription:
+    """One collision shape of a link, placed in the link's frame. Lengths are metres.
+
+    ``geometry`` is the URDF shape: "box" uses ``size``, "sphere" ``radius``,
+    "cylinder" ``radius`` and ``length``, "mesh" ``filename`` and ``scale``.
+    """
+
+    geometry: str
+    origin_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    origin_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    size: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    radius: float = 0.0
+    length: float = 0.0
+    filename: str = ""
+    scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+
+
+@dataclass(frozen=True)
+class LinkDescription:
+    """A link parsed from a materialized URDF description."""
+
+    name: str
+    collisions: tuple[CollisionDescription, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,7 +99,9 @@ class LoadedRobotModel:
     package_paths: Mapping[str, Path]
 
     @cached_property
-    def _topology(self) -> tuple[tuple[JointDescription, ...], str]:
+    def _topology(
+        self,
+    ) -> tuple[tuple[JointDescription, ...], str, tuple[LinkDescription, ...]]:
         return _parse_topology(self.xml)
 
     @property
@@ -74,6 +113,11 @@ class LoadedRobotModel:
     def root_link(self) -> str:
         """Return the unique URDF root link, or an empty string if none exists."""
         return self._topology[1]
+
+    @property
+    def links(self) -> tuple[LinkDescription, ...]:
+        """Return links, with their collision shapes, in source-document order."""
+        return self._topology[2]
 
     def get_joint(self, name: str) -> JointDescription | None:
         """Return the named joint when it exists."""
@@ -560,9 +604,16 @@ def _set_missing_joint_acceleration_limits(xml: str, value: float) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
-def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
+def _parse_topology(
+    xml: str,
+) -> tuple[tuple[JointDescription, ...], str, tuple[LinkDescription, ...]]:
     root = ET.fromstring(xml)
-    links = [name for link in root.findall("link") if (name := link.get("name")) is not None]
+    link_descriptions = tuple(
+        LinkDescription(name, _parse_collisions(link))
+        for link in root.findall("link")
+        if (name := link.get("name")) is not None
+    )
+    links = [link.name for link in link_descriptions]
     child_links: set[str] = set()
     joints: list[JointDescription] = []
 
@@ -576,6 +627,8 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
 
         origin = joint.find("origin")
         limit = joint.find("limit")
+        axis = joint.find("axis")
+        mimic = joint.find("mimic")
         joints.append(
             JointDescription(
                 name=joint.get("name", ""),
@@ -589,6 +642,15 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
                 velocity=_optional_float(limit, "velocity"),
                 acceleration=_optional_float(limit, "acceleration"),
                 effort=_optional_float(limit, "effort"),
+                # URDF's default axis is x.
+                axis=_triple("1 0 0" if axis is None else axis.get("xyz", "1 0 0")),
+                mimic=None
+                if mimic is None
+                else JointMimic(
+                    joint=mimic.get("joint", ""),
+                    multiplier=float(mimic.get("multiplier", "1")),
+                    offset=float(mimic.get("offset", "0")),
+                ),
             )
         )
 
@@ -596,7 +658,30 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
     if len(root_candidates) > 1:
         logger.warning(f"Multiple root candidates: {root_candidates}; using {root_candidates[0]}")
     root_link = root_candidates[0] if root_candidates else ""
-    return tuple(joints), root_link
+    return tuple(joints), root_link, link_descriptions
+
+
+def _parse_collisions(link: ET.Element) -> tuple[CollisionDescription, ...]:
+    collisions = []
+    for collision in link.findall("collision"):
+        geometry = collision.find("geometry")
+        shape = None if geometry is None else next(iter(geometry), None)
+        if shape is None:
+            continue
+        origin = collision.find("origin")
+        collisions.append(
+            CollisionDescription(
+                geometry=shape.tag,
+                origin_xyz=_triple(origin.get("xyz") if origin is not None else None),
+                origin_rpy=_triple(origin.get("rpy") if origin is not None else None),
+                size=_triple(shape.get("size")),
+                radius=float(shape.get("radius", "0")),
+                length=float(shape.get("length", "0")),
+                filename=shape.get("filename", ""),
+                scale=_triple(shape.get("scale", "1 1 1")),
+            )
+        )
+    return tuple(collisions)
 
 
 def _optional_float(element: ET.Element | None, attribute: str) -> float | None:

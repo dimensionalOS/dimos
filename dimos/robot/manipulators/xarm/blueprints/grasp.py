@@ -202,7 +202,7 @@ _XARM_GRASP_MODULES = (
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
+    PickAndPlaceModule.blueprint(planning_frame="world", robot=_model),
     *_sensing(),
     _scene_registration(),
     manipulation_mapping(

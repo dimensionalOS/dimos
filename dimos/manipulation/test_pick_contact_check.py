@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""pick_object with the grasp contact check: the manipulation module says which
-grasps' grippers would touch the cup off the finger pads or hit the scene."""
+"""pick_object with the grasp contact check: the gripper's shape says which
+grasps would touch the cup off the finger pads or hit the scene."""
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.spec.gripper import GraspContact
 
 # The pick-and-place unit tests' arm and cup, and their fixtures.
 from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
@@ -42,76 +42,59 @@ def _table() -> PointCloud2:
 
 
 @pytest.fixture
-def contact_check(module: PickAndPlaceModule) -> PickAndPlaceModule:
-    module.config.grasp_contact_check = True
+def gripper(module: PickAndPlaceModule) -> MagicMock:
+    """The gripper's shape on the arm's tool tip; its check says which grasps pass."""
+    module.config.robot = MagicMock()
+    model = MagicMock()
+    module._contact_models["tool"] = model
     scene: Any = module._scene
     scene.get_full_scene_pointcloud.return_value = _table()
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.12, 0.5)]
     )
-    return module
+    return model
 
 
-def test_pick_skips_grasps_the_contact_check_rejects(contact_check: PickAndPlaceModule) -> None:
-    manipulation: Any = contact_check._manipulation
-    manipulation.check_grasp_contacts.return_value = [
-        GraspContact(("target", "table"), while_closing=True),
-        GraspContact(),
-    ]
+def test_pick_skips_grasps_the_contact_check_rejects(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    gripper.check.return_value = np.array([False, True])
 
-    result = contact_check.pick_object("cup-1")
+    result = module.pick_object("cup-1")
 
     assert result.message == "Pick complete"
     assert result.metadata["score"] == 0.5
-    assert [c.score for c in contact_check.get_grasp_candidates().candidates] == [0.5]
-    facts = result.metadata["contact_rejected"]
-    assert {
-        name: facts[name] for name in ("checked", "rejected", "target", "table", "objects")
-    } == {
-        "checked": 2,
-        "rejected": 1,
-        "target": 1,
-        "table": 1,
-        "objects": 0,
-    }
-    assert facts["while_closing"] == 1
-    candidates, target, obstacles, contact_margin, obstacle_margin, group = (
-        manipulation.check_grasp_contacts.call_args.args
-    )
-    assert len(candidates.candidates) == 2
-    assert target.frame_id == "world"
-    assert set(obstacles) == {"table", "objects"}
-    assert (contact_margin, obstacle_margin, group) == (0.005, 0.003, "arm/tool")
+    assert result.metadata["contact_rejected"] == 1
+    assert [c.score for c in module.get_grasp_candidates().candidates] == [0.5]
+    poses, target, obstacles, contact_margin, obstacle_margin = gripper.check.call_args.args
+    assert poses.shape == (2, 4, 4)
+    assert target.shape == (2, 3)
+    # The table under the cup, cropped to the gripper's reach.
+    assert 0 < len(obstacles) < len(_table().points_f32())
+    assert (contact_margin, obstacle_margin) == (0.005, 0.003)
 
 
 def test_pick_says_when_the_contact_check_rejects_every_grasp(
-    contact_check: PickAndPlaceModule,
+    module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:
-    manipulation: Any = contact_check._manipulation
-    manipulation.check_grasp_contacts.return_value = [GraspContact(("target",))] * 2
+    gripper.check.return_value = np.array([False, False])
 
-    result = contact_check.pick_object("cup-1")
+    result = module.pick_object("cup-1")
 
     assert result.message == (
         "Generated 0 grasp candidates for object cup-1. The contact check dropped 2 grasp(s) "
         "whose gripper would touch the object off its finger pads or hit the scene."
     )
-    assert result.metadata["contact_rejected"]["rejected"] == 2
-    manipulation.plan_to_poses.assert_not_called()
+    assert result.metadata["contact_rejected"] == 2
+    module._manipulation.plan_to_poses.assert_not_called()
 
 
-def test_pick_tries_every_grasp_without_a_gripper_spec(contact_check: PickAndPlaceModule) -> None:
-    contact_check._manipulation.check_grasp_contacts.return_value = None
+def test_pick_tries_every_grasp_when_the_check_fails(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    gripper.check.side_effect = ValueError("bad mesh")
 
-    result = contact_check.pick_object("cup-1")
-
-    assert result.metadata["score"] == 0.9
-    assert result.metadata["contact_check_skipped"] == "the robot model has no gripper spec"
-    assert "contact_rejected" not in result.metadata
-
-
-def test_pick_with_the_contact_check_off_says_so(module: PickAndPlaceModule) -> None:
     result = module.pick_object("cup-1")
 
-    assert result.metadata["contact_check_skipped"] == "off"
-    module._manipulation.check_grasp_contacts.assert_not_called()
+    assert result.metadata["score"] == 0.9
+    assert result.metadata["contact_check_skipped"] == "ValueError: bad mesh"

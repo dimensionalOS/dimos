@@ -27,12 +27,11 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.manipulation.planning.gripper_contact import GripperContactModel
-from dimos.manipulation.planning.spec.gripper import ContactPatch, GraspContact, GripperSpec
+from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
 from dimos.robot.assets.model import RobotModel
 
 CONTACT_MARGIN = 0.005
 OBSTACLE_MARGIN = 0.003
-CLEAR = GraspContact()
 
 
 def _top_down(x: float, y: float, z: float, yaw: float = 0.0) -> NDArray[np.float64]:
@@ -90,25 +89,29 @@ def _table(*, hole: tuple[float, float, float, float] | None = None) -> NDArray:
     return points
 
 
-def _check(
-    model: GripperContactModel,
-    grasp: NDArray,
-    target: NDArray,
-    **obstacles: NDArray,
-) -> GraspContact:
-    return model.check(grasp[None], target, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN)[0]
+def _clear(
+    model: GripperContactModel, grasp: NDArray, target: NDArray, *obstacles: NDArray
+) -> bool:
+    """Whether one grasp passes, with every obstacle point set merged."""
+    scene = np.concatenate([np.empty((0, 3)), *obstacles])
+    return bool(model.check(grasp[None], target, scene, CONTACT_MARGIN, OBSTACLE_MARGIN)[0])
 
 
 # The xArm Gripper, from the xArm description the planner loads.
 
 
-@pytest.fixture(scope="module")
-def xarm() -> GripperContactModel:
+def _xarm(closing_steps: int = 4) -> GripperContactModel:
     from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
 
     config = make_xarm7_sim_robot_config()
     assert config.gripper is not None
-    return GripperContactModel(config.model.load(), config.gripper, "link_tcp")
+    spec = config.gripper.model_copy(update={"closing_steps": closing_steps})
+    return GripperContactModel(config.model.load(), spec, "link_tcp")
+
+
+@pytest.fixture(scope="module")
+def xarm() -> GripperContactModel:
+    return _xarm()
 
 
 # A 4 x 4 x 6 cm box standing at the origin.
@@ -122,7 +125,7 @@ XARM_LEFT_FINGER_Y = 0.06
 
 @pytest.mark.self_hosted
 def test_xarm_keeps_a_grasp_with_the_pads_on_the_box_sides(xarm: GripperContactModel) -> None:
-    assert _check(xarm, _top_down(0.0, 0.0, 0.03), BOX, table=BOX_TABLE) == CLEAR
+    assert _clear(xarm, _top_down(0.0, 0.0, 0.03), BOX, BOX_TABLE)
 
 
 @pytest.mark.self_hosted
@@ -131,7 +134,7 @@ def test_xarm_rejects_a_fingertip_resting_on_top_of_the_box(xarm: GripperContact
     # tool tip's y axis points along world -y when it points down.
     resting = _top_down(0.0, XARM_LEFT_FINGER_Y, 0.06 - XARM_TIP_BEHIND_TCP)
 
-    assert _check(xarm, resting, BOX, table=BOX_TABLE) == GraspContact(("target",))
+    assert not _clear(xarm, resting, BOX)
 
 
 @pytest.mark.self_hosted
@@ -140,9 +143,8 @@ def test_xarm_rejects_pads_pressing_into_a_box_wider_than_the_open_jaws(
 ) -> None:
     # The open pads stand 8.89 cm apart; this box is 9.2 cm across them.
     wide = _box((0.0, 0.0, 0.03), (0.04, 0.092, 0.06))
-    table = _table(hole=(-0.02, 0.02, -0.046, 0.046))
 
-    assert _check(xarm, _top_down(0.0, 0.0, 0.03), wide, table=table) == GraspContact(("target",))
+    assert not _clear(xarm, _top_down(0.0, 0.0, 0.03), wide)
 
 
 @pytest.mark.self_hosted
@@ -155,7 +157,8 @@ def test_xarm_closing_sweep_catches_fingertips_swinging_into_the_table(
     table = _table(hole=(-0.01, 0.01, -0.01, 0.01))
     grasp = _top_down(0.0, 0.0, 0.005 - XARM_TIP_BEHIND_TCP)
 
-    assert _check(xarm, grasp, block, table=table) == GraspContact(("table",), while_closing=True)
+    assert not _clear(xarm, grasp, block, table)
+    assert _clear(_xarm(closing_steps=0), grasp, block, table)
 
 
 @pytest.mark.self_hosted
@@ -166,10 +169,8 @@ def test_xarm_rejects_the_table_and_a_neighbour(xarm: GripperContactModel) -> No
     # A neighbour 3.5 cm from the box, right where the left finger comes down.
     neighbour = _box((0.0, -0.07, 0.03), (0.04, 0.03, 0.06))
 
-    assert _check(xarm, low, short_box, table=BOX_TABLE) == GraspContact(("table",))
-    assert _check(xarm, _top_down(0.0, 0.0, 0.03), BOX, table=BOX_TABLE, objects=neighbour) == (
-        GraspContact(("objects",))
-    )
+    assert not _clear(xarm, low, short_box, BOX_TABLE)
+    assert not _clear(xarm, _top_down(0.0, 0.0, 0.03), BOX, BOX_TABLE, neighbour)
 
 
 @pytest.mark.self_hosted
@@ -177,12 +178,12 @@ def test_xarm_checks_a_hundred_grasps_at_once(xarm: GripperContactModel) -> None
     heights = np.linspace(0.0, 0.12, 100)
     grasps = np.stack([_top_down(0.0, 0.0, z, yaw=z * 20.0) for z in heights])
 
-    results = xarm.check(grasps, BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN)
+    results = xarm.check(grasps, BOX, BOX_TABLE, CONTACT_MARGIN, OBSTACLE_MARGIN)
 
-    assert len(results) == 100
+    assert results.shape == (100,)
     # Low grasps press the knuckles onto the box top; high ones close above it.
-    assert "target" in results[0].touches
-    assert results[-1] == CLEAR
+    assert not results[0]
+    assert results[-1]
 
 
 # A made-up three-finger hand: a palm and three fingers 120 degrees apart, each
@@ -279,15 +280,13 @@ def _lowest_fingertip(hand: GripperContactModel, step: int) -> float:
 
 def test_three_finger_hand_keeps_a_grasp_around_the_can(hand: GripperContactModel) -> None:
     assert hand.links == ["finger_0", "finger_1", "finger_2", "palm"]
-    assert _check(hand, _top_down(0.0, 0.0, 0.04), CAN, table=CAN_TABLE) == CLEAR
+    assert _clear(hand, _top_down(0.0, 0.0, 0.04), CAN, CAN_TABLE)
 
 
 def test_three_finger_hand_rejects_the_palm_on_the_can(hand: GripperContactModel) -> None:
     tall_can = _cylinder(0.02, 0.10)
     # The palm's face is 8 cm behind the tool tip: 1 mm above the can's top.
-    assert _check(hand, _top_down(0.0, 0.0, 0.021), tall_can, table=CAN_TABLE) == GraspContact(
-        ("target",)
-    )
+    assert not _clear(hand, _top_down(0.0, 0.0, 0.021), tall_can)
 
 
 def test_three_finger_hand_sweep_catches_the_fingertips_swinging_into_the_table(
@@ -299,17 +298,15 @@ def test_three_finger_hand_sweep_catches_the_fingertips_swinging_into_the_table(
     grasp = _top_down(0.0, 0.0, 0.004 + _lowest_fingertip(hand, 0))
     open_only = _hand(hand_urdf, closing_steps=0)
 
-    assert _check(hand, grasp, CAN, table=CAN_TABLE) == GraspContact(("table",), while_closing=True)
-    assert _check(open_only, grasp, CAN, table=CAN_TABLE) == CLEAR
+    assert not _clear(hand, grasp, CAN, CAN_TABLE)
+    assert _clear(open_only, grasp, CAN, CAN_TABLE)
 
 
 def test_three_finger_hand_rejects_a_neighbour_under_a_finger(hand: GripperContactModel) -> None:
     # Finger 0 hangs along +x; a neighbour stands right where it comes down.
     neighbour = _box((0.07, 0.0, 0.03), (0.03, 0.03, 0.06))
 
-    assert _check(
-        hand, _top_down(0.0, 0.0, 0.04), CAN, table=CAN_TABLE, objects=neighbour
-    ) == GraspContact(("objects",))
+    assert not _clear(hand, _top_down(0.0, 0.0, 0.04), CAN, CAN_TABLE, neighbour)
 
 
 def test_a_spec_naming_a_link_the_urdf_lacks_is_refused(tmp_path: Path) -> None:

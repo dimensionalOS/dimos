@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
@@ -95,23 +93,3 @@ class GripperSpec(BaseConfig):
             }
             for step in range(steps + 1)
         ]
-
-
-@dataclass(frozen=True)
-class GraspContact:
-    """What one grasp candidate's gripper would touch that it should not.
-
-    Args:
-        touches: "target" when a part other than a contact patch comes near the
-            object being grasped, then the name of each obstacle point set a part
-            overlaps. Empty when the grasp is clear.
-        while_closing: True when every such touch comes only as the fingers
-            close, not at the open pose.
-    """
-
-    touches: tuple[str, ...] = ()
-    while_closing: bool = False
-
-    @property
-    def clear(self) -> bool:
-        return not self.touches

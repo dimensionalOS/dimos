@@ -25,21 +25,25 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-import xml.etree.ElementTree as ET
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 import trimesh
 
-from dimos.manipulation.planning.spec.gripper import GraspContact, GripperSpec
-from dimos.robot.assets.model import LoadedRobotModel
+from dimos.manipulation.planning.spec.gripper import GripperSpec
+from dimos.robot.assets.model import (
+    CollisionDescription,
+    JointDescription,
+    LinkDescription,
+    LoadedRobotModel,
+)
 
-# Name GraspContact.touches gives the object being grasped.
-TARGET = "target"
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
+
 # Object points are thinned to one per cube of this edge (metres) before the
 # check: fine enough for a margin of a few millimetres, and it bounds the work.
 _TARGET_CELL = 0.0025
@@ -96,17 +100,18 @@ class GripperContactModel:
     """
 
     def __init__(self, description: LoadedRobotModel, spec: GripperSpec, tip_link: str) -> None:
-        tree = _UrdfTree(description)
-        for name in [tip_link, *(patch.link for patch in spec.contact_patches)]:
-            tree.require_link(name)
+        links = {link.name: link for link in description.links}
+        parent_joint = {joint.child_link: joint for joint in description.joints}
+        patch_links = [patch.link for patch in spec.contact_patches]
+        for name in [tip_link, *patch_links, *([spec.base_link] if spec.base_link else [])]:
+            if name not in links:
+                raise ValueError(f"Gripper link {name!r} is not in the robot's URDF")
         for name in spec.open_joints:
-            tree.require_joint(name)
-        base = spec.base_link or tree.common_ancestor(
-            [tip_link, *(patch.link for patch in spec.contact_patches)]
-        )
-        tree.require_link(base)
-        links = tree.subtree(base)
-        self._shapes = [shape for link in links if (shape := tree.shape(link)) is not None]
+            if description.get_joint(name) is None:
+                raise ValueError(f"Gripper joint {name!r} is not in the robot's URDF")
+        base = spec.base_link or _common_ancestor(parent_joint, [tip_link, *patch_links])
+        gripper = [link for link in links if base in _ancestors(parent_joint, link)]
+        self._shapes = [shape for link in gripper if (shape := _shape(links[link])) is not None]
         self._patches = {
             link: [
                 (
@@ -116,14 +121,14 @@ class GripperContactModel:
                 for p in spec.contact_patches
                 if p.link == link
             ]
-            for link in links
+            for link in gripper
         }
         # For each pose of the close, each link's pose in the tool tip's frame.
         self._tip_from_link: list[dict[str, NDArray[np.float64]]] = []
-        for joints in spec.joint_positions():
-            world = tree.forward_kinematics(joints)
+        for positions in spec.joint_positions():
+            world = _link_poses(description.joints, parent_joint, [tip_link, *gripper], positions)
             tip_inverse = np.linalg.inv(world[tip_link])
-            self._tip_from_link.append({link: tip_inverse @ world[link] for link in links})
+            self._tip_from_link.append({link: tip_inverse @ world[link] for link in gripper})
         corners = [
             (pose @ np.append(corner, 1.0))[:3]
             for poses in self._tip_from_link
@@ -151,32 +156,29 @@ class GripperContactModel:
         self,
         grasps: NDArray[np.float64],
         target: NDArray[np.float64],
-        obstacles: Mapping[str, NDArray[np.float64]],
+        obstacles: NDArray[np.float64],
         contact_margin: float,
         obstacle_margin: float,
-    ) -> list[GraspContact]:
-        """Say, for each grasp, what its gripper would touch that it should not.
+    ) -> NDArray[np.bool_]:
+        """Say, for each grasp, whether its gripper keeps clear of what it should not touch.
 
         Args:
             grasps: Tool tip poses, shape (N, 4, 4), in the frame of the points.
             target: Points of the object being grasped, shape (M, 3), metres.
-            obstacles: Other point sets the gripper must not overlap, by name (for
-                example "table" and "objects"), each shape (K, 3), metres.
+            obstacles: Other scene points the gripper must not overlap, shape
+                (K, 3), metres.
             contact_margin: A gripper part closer than this (metres) to a target
                 point touches it; allowed only inside a contact patch.
             obstacle_margin: A gripper part closer than this (metres) to an
                 obstacle point overlaps it.
 
-        Returns one GraspContact per grasp, in order.
+        Returns shape (N,): True for each grasp that passes.
         """
         grasps = np.asarray(grasps, dtype=np.float64).reshape((-1, 4, 4))
         steps = len(self._tip_from_link)
         target = _thin(_finite(target), _TARGET_CELL)
         off_patch, pressed = self._touches(grasps, target, contact_margin, patches=True)
-        hits = {
-            name: self._touches(grasps, _finite(points), obstacle_margin, patches=False)[0]
-            for name, points in obstacles.items()
-        }
+        hit, _ = self._touches(grasps, _finite(obstacles), obstacle_margin, patches=False)
         # The fingers stop once a contact patch presses into the object, so the
         # poses from there on are never reached. A patch already pressing at the
         # open pose leaves only the open pose to check, and is itself a touch.
@@ -185,13 +187,7 @@ class GripperContactModel:
         first = np.argmax(pressed, axis=1)
         last = np.where(reached, np.maximum(first - 1, 0), steps - 1)
         checked = np.arange(steps)[None, :] <= last[:, None]
-        results = []
-        for index in range(len(grasps)):
-            touches = [TARGET] if (off_patch[index] & checked[index]).any() else []
-            touches += [name for name, hit in hits.items() if (hit[index] & checked[index]).any()]
-            at_open = off_patch[index, 0] or any(hit[index, 0] for hit in hits.values())
-            results.append(GraspContact(tuple(touches), bool(touches) and not at_open))
-        return results
+        return ~((off_patch | hit) & checked).any(axis=1)  # type: ignore[return-value]
 
     def _touches(
         self,
@@ -258,163 +254,113 @@ class GripperContactModel:
         return owner, local
 
 
-class _UrdfTree:
-    """The links, joints and collision shapes of a URDF, enough for gripper kinematics."""
+def _ancestors(parent_joint: Mapping[str, JointDescription], link: str) -> list[str]:
+    """The link, then its parent, up to the URDF root."""
+    chain = [link]
+    while (joint := parent_joint.get(chain[-1])) is not None:
+        chain.append(joint.parent_link)
+    return chain
 
-    def __init__(self, description: LoadedRobotModel) -> None:
-        self._root = ET.fromstring(description.xml)
-        self._source_dir = Path(description.source_path).parent
-        self._links = {link.get("name", ""): link for link in self._root.findall("link")}
-        self._joints = {joint.get("name", ""): joint for joint in self._root.findall("joint")}
-        self._parent_joint = {
-            _child(joint): joint for joint in self._joints.values() if _child(joint) in self._links
-        }
 
-    def require_link(self, name: str) -> None:
-        if name not in self._links:
-            raise ValueError(f"Gripper link {name!r} is not in the robot's URDF")
+def _common_ancestor(parent_joint: Mapping[str, JointDescription], links: Sequence[str]) -> str:
+    """The deepest link that every one of ``links`` is at or below."""
+    chains = [_ancestors(parent_joint, link) for link in links]
+    shared = set(chains[0]).intersection(*chains[1:])
+    return next(link for link in chains[0] if link in shared)
 
-    def require_joint(self, name: str) -> None:
-        if name not in self._joints:
-            raise ValueError(f"Gripper joint {name!r} is not in the robot's URDF")
 
-    def ancestors(self, link: str) -> list[str]:
-        """The link, then its parent, up to the URDF root."""
-        chain = [link]
-        while (joint := self._parent_joint.get(chain[-1])) is not None:
-            chain.append(_parent(joint))
-        return chain
+def _link_poses(
+    joints: Sequence[JointDescription],
+    parent_joint: Mapping[str, JointDescription],
+    links: Sequence[str],
+    positions: Mapping[str, float],
+) -> dict[str, NDArray[np.float64]]:
+    """Each of ``links``' pose in the URDF root's frame, 4x4.
 
-    def common_ancestor(self, links: Sequence[str]) -> str:
-        """The deepest link that every one of ``links`` is at or below."""
-        chains = [self.ancestors(link) for link in links]
-        shared = set(chains[0]).intersection(*chains[1:])
-        return next(link for link in chains[0] if link in shared)
+    Joints in ``positions`` (radians or metres) take those values, joints that
+    mimic one follow it, and every other joint stays at zero.
+    """
+    by_name = {joint.name: joint for joint in joints}
+    poses: dict[str, NDArray[np.float64]] = {}
 
-    def subtree(self, base: str) -> list[str]:
-        """``base`` and every link below it."""
-        return [link for link in self._links if base in self.ancestors(link)]
-
-    def forward_kinematics(self, positions: Mapping[str, float]) -> dict[str, NDArray[np.float64]]:
-        """Every link's pose in the URDF root's frame, 4x4.
-
-        Joints in ``positions`` (radians or metres) take those values, joints that
-        mimic one follow it, and every other joint stays at zero.
-        """
-        poses: dict[str, NDArray[np.float64]] = {}
-
-        def pose(link: str) -> NDArray[np.float64]:
-            if link in poses:
-                return poses[link]
-            joint = self._parent_joint.get(link)
-            if joint is None:
-                poses[link] = np.eye(4)
-                return poses[link]
-            value = self._joint_value(joint, positions)
-            poses[link] = pose(_parent(joint)) @ _origin(joint) @ _motion(joint, value)
-            return poses[link]
-
-        for link in self._links:
-            pose(link)
-        return poses
-
-    def _joint_value(self, joint: ET.Element, positions: Mapping[str, float]) -> float:
-        name = joint.get("name", "")
-        if name in positions:
-            return float(positions[name])
-        mimic = joint.find("mimic")
-        leader = None if mimic is None else self._joints.get(mimic.get("joint", ""))
-        if mimic is None or leader is None:
+    def value(joint: JointDescription) -> float:
+        if joint.name in positions:
+            return float(positions[joint.name])
+        leader = None if joint.mimic is None else by_name.get(joint.mimic.joint)
+        if joint.mimic is None or leader is None:
             return 0.0
-        multiplier = float(mimic.get("multiplier", "1"))
-        offset = float(mimic.get("offset", "0"))
-        return multiplier * self._joint_value(leader, positions) + offset
+        return joint.mimic.multiplier * value(leader) + joint.mimic.offset
 
-    def shape(self, link: str) -> _LinkShape | None:
-        """The link's collision shape in its own frame, or None when it has none."""
-        bodies = []
-        for collision in self._links[link].findall("collision"):
-            mesh = self._collision_mesh(collision)
-            if mesh is None:
-                continue
-            mesh.apply_transform(_origin(collision))
-            bodies += _bodies(mesh)
-        if not bodies:
-            return None
-        low = np.min([body.low for body in bodies], axis=0)
-        high = np.max([body.high for body in bodies], axis=0)
-        return _LinkShape(link, tuple(bodies), low, high)
-
-    def _collision_mesh(self, collision: ET.Element) -> trimesh.Trimesh | None:
-        geometry = collision.find("geometry")
-        if geometry is None:
-            return None
-        if (box := geometry.find("box")) is not None:
-            return trimesh.creation.box(extents=_floats(box.get("size")))  # type: ignore[no-any-return]
-        if (sphere := geometry.find("sphere")) is not None:
-            return trimesh.creation.icosphere(radius=float(sphere.get("radius", "0")))  # type: ignore[no-any-return]
-        if (cylinder := geometry.find("cylinder")) is not None:
-            return trimesh.creation.cylinder(  # type: ignore[no-any-return]
-                radius=float(cylinder.get("radius", "0")),
-                height=float(cylinder.get("length", "0")),
+    def pose(link: str) -> NDArray[np.float64]:
+        if link not in poses:
+            joint = parent_joint.get(link)
+            poses[link] = (
+                np.eye(4)
+                if joint is None
+                else pose(joint.parent_link)
+                @ _origin(joint.origin_xyz, joint.origin_rpy)
+                @ _motion(joint, value(joint))
             )
-        mesh = geometry.find("mesh")
-        if mesh is None:
-            return None
-        filename = mesh.get("filename", "").removeprefix("file://")
-        path = Path(filename)
-        if not path.is_absolute():
-            path = self._source_dir / path
-        loaded = trimesh.load_mesh(path, force="mesh")
-        if mesh.get("scale"):
-            loaded.apply_scale(np.asarray(_floats(mesh.get("scale"))))  # type: ignore[no-untyped-call]
-        return loaded
+        return poses[link]
+
+    return {link: pose(link) for link in links}
 
 
-def _child(joint: ET.Element) -> str:
-    element = joint.find("child")
-    return "" if element is None else element.get("link", "")
-
-
-def _parent(joint: ET.Element) -> str:
-    element = joint.find("parent")
-    return "" if element is None else element.get("link", "")
-
-
-def _floats(text: str | None) -> tuple[float, ...]:
-    return tuple(float(value) for value in (text or "").split())
-
-
-def _origin(element: ET.Element) -> NDArray[np.float64]:
-    """An element's <origin> as a 4x4 transform; identity when it has none."""
-    origin = element.find("origin")
+def _origin(
+    xyz: tuple[float, float, float], rpy: tuple[float, float, float]
+) -> NDArray[np.float64]:
+    """A URDF origin as a 4x4 transform."""
     transform = np.eye(4)
-    if origin is None:
-        return transform
     # URDF roll-pitch-yaw turns about the fixed x, then y, then z axes.
-    transform[:3, :3] = Rotation.from_euler(
-        "xyz", _floats(origin.get("rpy")) or (0, 0, 0)
-    ).as_matrix()
-    transform[:3, 3] = _floats(origin.get("xyz")) or (0.0, 0.0, 0.0)
+    transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+    transform[:3, 3] = xyz
     return transform
 
 
-def _motion(joint: ET.Element, value: float) -> NDArray[np.float64]:
+def _motion(joint: JointDescription, value: float) -> NDArray[np.float64]:
     """How a joint at ``value`` (radians or metres) moves its child, as a 4x4 transform."""
     transform = np.eye(4)
-    kind = joint.get("type", "fixed")
-    if kind == "fixed" or value == 0.0:
+    if joint.type == "fixed" or value == 0.0:
         return transform
-    axis_element = joint.find("axis")
-    axis = np.asarray(
-        _floats(None if axis_element is None else axis_element.get("xyz")) or (1.0, 0.0, 0.0)
-    )
-    axis = axis / np.linalg.norm(axis)
-    if kind in ("revolute", "continuous"):
+    axis = np.asarray(joint.axis) / np.linalg.norm(joint.axis)
+    if joint.type in ("revolute", "continuous"):
         transform[:3, :3] = Rotation.from_rotvec(axis * value).as_matrix()
-    elif kind == "prismatic":
+    elif joint.type == "prismatic":
         transform[:3, 3] = axis * value
     return transform
+
+
+def _shape(link: LinkDescription) -> _LinkShape | None:
+    """The link's collision shape in its own frame, or None when it has none."""
+    bodies = []
+    for collision in link.collisions:
+        mesh = _collision_mesh(collision)
+        if mesh is None:
+            continue
+        mesh.apply_transform(_origin(collision.origin_xyz, collision.origin_rpy))
+        bodies += _bodies(mesh)
+    if not bodies:
+        return None
+    low = np.min([body.low for body in bodies], axis=0)
+    high = np.max([body.high for body in bodies], axis=0)
+    return _LinkShape(link.name, tuple(bodies), low, high)
+
+
+def _collision_mesh(collision: CollisionDescription) -> trimesh.Trimesh | None:
+    """A collision shape as a triangle mesh, metres; None for a shape it cannot build."""
+    if collision.geometry == "box":
+        return trimesh.creation.box(extents=collision.size)  # type: ignore[no-any-return]
+    if collision.geometry == "sphere":
+        return trimesh.creation.icosphere(radius=collision.radius)  # type: ignore[no-any-return]
+    if collision.geometry == "cylinder":
+        return trimesh.creation.cylinder(  # type: ignore[no-any-return]
+            radius=collision.radius, height=collision.length
+        )
+    if collision.geometry != "mesh":
+        return None
+    mesh = trimesh.load_mesh(collision.filename.removeprefix("file://"), force="mesh")
+    mesh.apply_scale(np.asarray(collision.scale))  # type: ignore[no-untyped-call]
+    return mesh
 
 
 def _bodies(mesh: trimesh.Trimesh) -> list[_Body]:
@@ -432,6 +378,8 @@ def _bodies(mesh: trimesh.Trimesh) -> list[_Body]:
 
 
 def _body(mesh: trimesh.Trimesh, *, closed: bool) -> _Body:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(
         o3d.core.Tensor(np.asarray(mesh.vertices, dtype=np.float32)),
@@ -447,6 +395,8 @@ def _distance(shape: _LinkShape, points: NDArray[np.float64], margin: float) -> 
     Points farther than ``margin`` from every piece's box may get any value of
     at least ``margin``.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     distance = np.full(len(points), np.inf)
     for body in shape.bodies:
         kept = np.flatnonzero(_in_box(points, body.low - margin, body.high + margin))

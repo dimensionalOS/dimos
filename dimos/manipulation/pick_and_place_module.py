@@ -34,9 +34,11 @@ from dimos.manipulation.grasp_verification import (
     grasp_failure,
     open_failure,
 )
-from dimos.manipulation.grasping.contact_filter import add_facts, check_in_scene, contact_note
+from dimos.manipulation.grasping.contact_filter import drop_touching, scene_obstacles
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
+from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -46,6 +48,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # The one box a pick leaves out of the planner's map.
 TARGET_BOX = "pick-and-place/target"
@@ -65,15 +70,15 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
-    # Drop grasps whose gripper would touch the target anywhere but its contact
-    # patches (the finger pads), at the open pose or as the fingers close, or
-    # would overlap the table or another object. Needs a gripper spec in the
-    # robot model; without one the pick skips the check and says so. False
-    # tries every grasp the provider gives.
-    grasp_contact_check: bool = True
+    # The robot, for checking grasps against its gripper's shape before moving:
+    # a grasp whose gripper would touch the target anywhere but its contact
+    # patches (the finger pads), open or as the fingers close, or would overlap
+    # another scene point, is dropped. None, or a robot model without a gripper
+    # spec, tries every grasp the provider gives.
+    robot: RobotModelConfig | None = None
     # A gripper part closer than this (metres) to the target touches it.
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
-    # A gripper part closer than this (metres) to a table or object point overlaps it.
+    # A gripper part closer than this (metres) to another scene point overlaps it.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
 
 
@@ -127,8 +132,8 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
-        # What the grasp contact check did over the current pick (see drop_touching).
-        self._contact: dict[str, Any] = {}
+        # The gripper's shape for the grasp contact check, by tool tip link, built on first use.
+        self._contact_models: dict[str, GripperContactModel] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -168,9 +173,8 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
-        ``contact_rejected`` in the result counts the grasps dropped for
-        touching the object off the finger pads (``target``) or hitting the
-        ``table`` or other ``objects``.
+        ``contact_rejected`` in the result counts the grasps dropped because their
+        gripper would touch the object off its finger pads or hit the scene.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -182,7 +186,6 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
-        self._contact = {}
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
             return SkillResult(
@@ -196,14 +199,7 @@ class PickAndPlaceModule(Module):
             )
         group = self._gripper_group(planning_group)
         candidates = self._grasp_generator.propose_grasps(pointcloud)
-        facts: dict[str, Any] = {}
-        # With grasp_contact_check, grasps whose gripper would touch the object
-        # off its pads or hit the scene are dropped.
-        candidates = self._drop_touching(object_id, pointcloud, candidates, group)
-        if "skipped" in self._contact:
-            facts["contact_check_skipped"] = self._contact["skipped"]
-        elif self._contact:
-            facts["contact_rejected"] = dict(self._contact)
+        candidates, facts = self._drop_touching(object_id, pointcloud, candidates, group)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
@@ -212,10 +208,14 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
+            note = ""
+            if rejected := facts.get("contact_rejected"):
+                note = (
+                    f" The contact check dropped {rejected} grasp(s) whose gripper would touch "
+                    "the object off its finger pads or hit the scene."
+                )
             return SkillResult(
-                f"Generated 0 grasp candidates for object {object_id}."
-                f"{contact_note(self._contact)}",
-                metadata=facts,
+                f"Generated 0 grasp candidates for object {object_id}.{note}", metadata=facts
             )
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
@@ -236,32 +236,51 @@ class PickAndPlaceModule(Module):
         pointcloud: PointCloud2,
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
-    ) -> GraspCandidateArray:
-        """Keep the grasps whose gripper touches the target only at its finger pads.
-
-        See ``contact_filter.check_in_scene``; what it did adds to ``_contact``.
+    ) -> tuple[GraspCandidateArray, dict[str, Any]]:
+        """Drop the grasps whose gripper would touch the target off its finger pads, or hit the scene.
 
         Args:
             object_id: The object to grasp, from the latest scan.
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
+
+        Returns the grasps that pass, and for the pick's result either
+        ``contact_rejected`` (how many were dropped) or ``contact_check_skipped``
+        (why every grasp was kept); nothing when the config has no robot model
+        with a gripper spec.
         """
-        if not self.config.grasp_contact_check:
-            self._contact = {"skipped": "off"}
-            return candidates
-        kept, facts = check_in_scene(
-            self._manipulation,
-            self._scene,
-            object_id,
-            pointcloud,
-            candidates,
-            self.config.grasp_contact_margin,
-            self.config.grasp_obstacle_margin,
-            group,
-        )
-        add_facts(self._contact, facts)
-        return kept
+        robot = self.config.robot
+        if robot is None or robot.gripper is None or not candidates.candidates:
+            return candidates, {}
+        scene = self._scene.get_full_scene_pointcloud(exclude_object_id=object_id)
+        if scene is None or not scene.frame_id == pointcloud.frame_id == candidates.header.frame_id:
+            return candidates, {
+                "contact_check_skipped": "no scene point cloud in the grasps' frame"
+            }
+        tips = [
+            state.end_effector_pose.position
+            for state in self._manipulation.get_state().groups.values()
+            if state.end_effector_pose is not None
+        ]
+        try:
+            tip = self._tip_frame(group)
+            if tip not in self._contact_models:
+                self._contact_models[tip] = GripperContactModel(
+                    robot.model.load(), robot.gripper, tip
+                )
+            kept = drop_touching(
+                self._contact_models[tip],
+                candidates,
+                pointcloud,
+                scene_obstacles(scene, pointcloud, tips),
+                self.config.grasp_contact_margin,
+                self.config.grasp_obstacle_margin,
+            )
+        except Exception as exc:
+            logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))
+            return candidates, {"contact_check_skipped": f"{type(exc).__name__}: {exc}"}
+        return kept, {"contact_rejected": len(candidates.candidates) - len(kept.candidates)}
 
     def _pick_from(
         self,
