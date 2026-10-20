@@ -17,12 +17,12 @@ from __future__ import annotations
 from functools import cached_property
 from typing import overload
 
-from dimos.messages.sensor_msgs.msg import Image
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as functional
 from transformers import SiglipModel as HFSiglipModel, SiglipProcessor
 
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.image import image_to_rgb
