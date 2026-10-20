@@ -122,3 +122,32 @@ def prepare_web_dist(web: Path, *, offline: bool = False) -> None:
             if target.exists():
                 shutil.rmtree(target)
             output.rename(target)
+
+
+def copy_native_sdk(root: Path, target: Path) -> None:
+    """Ship owned SDK source integration, never compile it during Python installation."""
+    sources = [root / "native/cpp/CMakeLists.txt"]
+    sources.extend((root / "native/cpp/include").rglob("*.hpp"))
+    for crate in ("dimos-module", "dimos-module-macros"):
+        source = root / "native/rust" / crate
+        sources.append(source / "Cargo.toml")
+        if (source / "Cargo.lock").is_file():
+            sources.append(source / "Cargo.lock")
+        sources.extend((source / "src").rglob("*.rs"))
+    if not (root / "native/cpp/include/dimos/native/module.hpp").is_file():
+        raise RuntimeError("Native SDK sources missing from source distribution")
+    with TemporaryDirectory(prefix=".native-sdk-", dir=target.parent) as directory:
+        staged = Path(directory) / "sdk"
+        for source in sources:
+            output = staged / source.relative_to(root / "native")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, output)
+        previous = Path(directory) / "previous"
+        if target.exists():
+            target.rename(previous)
+        try:
+            staged.rename(target)
+        except OSError:
+            if previous.exists():
+                previous.rename(target)
+            raise

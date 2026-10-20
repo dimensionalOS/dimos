@@ -56,3 +56,11 @@ recursive-include packages/dimos-generated/interfaces *.msg *LICENSE*
 # Ordinary external CMake builds locate this installed integration.
 recursive-include dimos/message_codegen/cmake *.cmake
 recursive-include dimos/message_codegen/rust-build Cargo.toml *.rs
+
+# Owned native SDK sources travel with the main wheel; pip compiles none of them.
+include native/cpp/CMakeLists.txt
+recursive-include native/cpp/include *.hpp
+include native/rust/dimos-module/Cargo.toml native/rust/dimos-module/Cargo.lock
+recursive-include native/rust/dimos-module/src *.rs
+include native/rust/dimos-module-macros/Cargo.toml
+recursive-include native/rust/dimos-module-macros/src *.rs

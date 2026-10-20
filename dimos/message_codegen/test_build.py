@@ -24,7 +24,7 @@ import tarfile
 
 import pytest
 
-from dimos.message_codegen.build import prepare_builtin_sources, prepare_web_dist
+from dimos.message_codegen.build import copy_native_sdk, prepare_builtin_sources, prepare_web_dist
 
 
 @pytest.fixture
@@ -172,3 +172,35 @@ def test_missing_web_tool_has_actionable_error(web_tree, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda _: None)
     with pytest.raises(RuntimeError, match="isolated pip install"):
         prepare_web_dist(web_tree)
+
+
+def test_sdk_source_packaging_reconciles_deletions_and_excludes_build_outputs(tmp_path):
+    root = tmp_path / "source"
+    files = {
+        "native/cpp/CMakeLists.txt": "project(sdk CXX)",
+        "native/cpp/include/dimos/native/module.hpp": "#pragma once",
+        "native/cpp/include/dimos/native/old.hpp": "old header",
+        "native/cpp/tests/test.cpp": "not a shipped library header",
+        "native/rust/dimos-module/Cargo.toml": '[package]\nname="dimos-module"',
+        "native/rust/dimos-module/src/lib.rs": "pub mod cdr;",
+        "native/rust/dimos-module/target/output": "not a shipped source",
+        "native/rust/dimos-module-macros/Cargo.toml": '[package]\nname="dimos-module-macros"',
+        "native/rust/dimos-module-macros/src/lib.rs": "// macros",
+    }
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    target = tmp_path / "sdk"
+    copy_native_sdk(root, target)
+    assert (target / "cpp/include/dimos/native/module.hpp").read_text() == "#pragma once"
+    assert (target / "rust/dimos-module/src/lib.rs").read_text() == "pub mod cdr;"
+    assert not (target / "cpp/tests").exists()
+    assert not (target / "rust/dimos-module/target").exists()
+    (root / "native/cpp/include/dimos/native/old.hpp").unlink()
+    copy_native_sdk(root, target)
+    assert not (target / "cpp/include/dimos/native/old.hpp").exists()
+    (root / "native/cpp/include/dimos/native/module.hpp").unlink()
+    with pytest.raises(RuntimeError, match="SDK sources missing"):
+        copy_native_sdk(root, target)
+    assert (target / "cpp/include/dimos/native/module.hpp").read_text() == "#pragma once"

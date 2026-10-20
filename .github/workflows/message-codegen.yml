@@ -10,6 +10,10 @@ on:
       - examples/message-package/**
       - examples/external-messages/**
       - dimos/message_codegen/**
+      - dimos/core/cdr_transport.py
+      - dimos/core/test_cdr_transport.py
+      - native/cpp/**
+      - native/rust/dimos-module/**
       - native/cpp/include/dimos/native/cdr_codec.hpp
       - docs/development/message-source-packages.md
       - docs/development/messages-external-project.md
@@ -67,3 +71,28 @@ jobs:
           uv venv .native-review --python 3.12 --seed
           .native-review/bin/python -m pip install --no-index --find-links build/bundle-wheelhouse 'dimos[message-build]==0.0.14'
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py
+
+      - name: Prepare native SDK acceptance dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblcm-dev
+          mkdir -p build/sdk-deps
+          curl --fail --location --retry 3 https://github.com/eclipse-zenoh/zenoh-c/releases/download/1.10.1/zenoh-c-1.10.1-x86_64-unknown-linux-gnu-standalone.zip -o build/sdk-deps/zenoh-c.zip
+          echo '9ee0f2d732b0f3042a7e1cd3076042a2bc3ac0415587c40bc3ed7b8b62fbde11  build/sdk-deps/zenoh-c.zip' | sha256sum --check
+          unzip -q build/sdk-deps/zenoh-c.zip -d build/sdk-deps/zenoh-c
+          git clone --depth 1 --branch 1.10.1 https://github.com/eclipse-zenoh/zenoh-cpp.git build/sdk-deps/zenoh-cpp
+          test "$(git -C build/sdk-deps/zenoh-cpp rev-parse HEAD)" = 9626af8baa7535b6cea599a9cd56a7fc200a176b
+          cmake -S build/sdk-deps/zenoh-cpp -B build/sdk-deps/zenoh-cpp-build -DCMAKE_PREFIX_PATH="$PWD/build/sdk-deps/zenoh-c" -DCMAKE_INSTALL_PREFIX="$PWD/build/sdk-deps/zenoh-cpp-install" -DZENOHCXX_ENABLE_TESTS=OFF -DZENOHCXX_ENABLE_EXAMPLES=OFF
+          cmake --install build/sdk-deps/zenoh-cpp-build
+          .native-review/bin/python -m pip install pytest pytest-mock pytest-env
+      - name: Verify explicit CDR transports and actual SDK coordinator example
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_EXTERNAL_NATIVE_PYTHON: ${{ github.workspace }}/.native-review/bin/python
+          DIMOS_MESSAGE_NATIVE_CACHE: ${{ github.workspace }}/build/native-project-cache
+          DIMOS_CDR_NATIVE_SDK_PREFIX: ${{ github.workspace }}/build/sdk-deps/zenoh-c;${{ github.workspace }}/build/sdk-deps/zenoh-cpp-install
+        run: |
+          .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py"
+          .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
+          cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib cdr::tests --jobs 2

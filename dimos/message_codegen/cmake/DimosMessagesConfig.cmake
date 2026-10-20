@@ -35,3 +35,17 @@ function(dimos_message_project)
   find_package(${module} CONFIG REQUIRED)
   set(DIMOS_MESSAGE_MODULE "${module}" PARENT_SCOPE)
 endfunction()
+
+# Optional SDK modules. Message-only builds do not need transport libraries.
+function(dimos_native_sdk)
+  if(TARGET dimos_native)
+    return()
+  endif()
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -m dimos.message_codegen.native sdk-root
+    OUTPUT_VARIABLE sdk
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  add_subdirectory("${sdk}/cpp" "${CMAKE_CURRENT_BINARY_DIR}/dimos-native" EXCLUDE_FROM_ALL)
+endfunction()

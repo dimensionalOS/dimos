@@ -34,6 +34,7 @@ def run(command, project, env, *, succeeds=True):
         capture_output=True,
         text=True,
         check=False,
+        timeout=600,
     )
     if succeeds:
         assert result.returncode == 0, result.stdout + result.stderr
@@ -152,3 +153,71 @@ def test_normal_native_builds_reconcile_edits_renames_and_deletions(external_pro
     failed = run([*cargo, "--lib"], project, env, succeeds=False)
     assert "No messages found" in failed.stderr
     assert state.read_bytes() == previous
+
+
+def test_installed_sdk_modules_exchange_cdr_through_actual_coordinator(tmp_path):
+    executable = os.environ.get("DIMOS_EXTERNAL_NATIVE_PYTHON")
+    dependencies = os.environ.get("DIMOS_CDR_NATIVE_SDK_PREFIX")
+    if not executable or not dependencies:
+        pytest.skip("Supply an installed review wheel and native SDK dependency prefixes")
+    project = tmp_path / "project"
+    shutil.copytree(ROOT / "examples/external-messages", project)
+    python = Path(executable)
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env["PATH"] = str(python.parent) + os.pathsep + env["PATH"]
+    env["DIMOS_MESSAGE_PYTHON"] = executable
+    env["CARGO_TARGET_DIR"] = env.get("DIMOS_EXTERNAL_CARGO_TARGET", str(project / "target"))
+    run([python, "-m", "pip", "install", "--no-deps", "--no-build-isolation", "."], project, env)
+    prefix = run(
+        [python, "-m", "dimos.message_codegen.native", "cmake-prefix"], project, env
+    ).stdout.strip()
+    run([python, "-m", "dimos.message_codegen.native", "configure-cargo"], project, env)
+    configure = [
+        "cmake",
+        "-S",
+        ".",
+        "-B",
+        "build/cpp",
+        "-DDIMOS_BUILD_MODULE_EXAMPLE=ON",
+        "-DCMAKE_PREFIX_PATH=" + prefix + ";" + dependencies,
+        "-DPKG_CONFIG_USE_CMAKE_PREFIX_PATH=FALSE",
+        "-DPython3_EXECUTABLE=" + str(python),
+    ]
+    for variable, target in (
+        ("DIMOS_CDR_NATIVE_PFR_SOURCE", "PFR"),
+        ("DIMOS_CDR_NATIVE_JSON_SOURCE", "NLOHMANN_JSON"),
+    ):
+        if variable in env:
+            configure.append("-DFETCHCONTENT_SOURCE_DIR_" + target + "=" + env[variable])
+    run(configure, project, env)
+    run(["cmake", "--build", "build/cpp", "--parallel", "2"], project, env)
+    run(
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "--manifest-path",
+            "modules/Cargo.toml",
+            "--jobs",
+            "2",
+            *(["--offline"] if env.get("DIMOS_OFFLINE") == "1" else []),
+        ],
+        project,
+        env,
+    )
+    result = run(
+        [
+            python,
+            "demo_modules.py",
+            "--cpp",
+            "build/cpp/telemetry_module",
+            "--rust",
+            Path(env["CARGO_TARGET_DIR"]) / "debug/telemetry_module",
+        ],
+        project,
+        env,
+    )
+    assert (
+        "PASS: coordinator Python -> C++ -> Rust -> Python over loopback Zenoh CDR" in result.stdout
+    )

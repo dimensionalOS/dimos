@@ -36,11 +36,19 @@ else:
     import tomli as tomllib
 
 
+def sdk_root() -> Path:
+    package = Path(__file__).resolve().parents[1]
+    for native in (package / "_native", package.parent / "native"):
+        if (native / "cpp/CMakeLists.txt").is_file():
+            return native
+    raise ValueError("Install a matching dimOS wheel containing the native SDK sources")
+
+
 def cmake_prefix() -> Path:
     return Path(__file__).with_name("cmake")
 
 
-def prepare_cmake(project: Project) -> dict[str, object]:
+def prepare_cmake(project: Project) -> dict[str, Any]:
     if "cpp" not in project.languages:
         raise ValueError("Enable cpp in tool.dimos.messages.languages before configuring CMake")
     if shutil.which("cmake") is None:
@@ -68,9 +76,7 @@ def prepare_cmake(project: Project) -> dict[str, object]:
     }
 
 
-def prepare_rust(
-    project: Project, manifest: Path, *, cache: Path | None = None
-) -> dict[str, object]:
+def prepare_rust(project: Project, manifest: Path, *, cache: Path | None = None) -> dict[str, Any]:
     if "rust" not in project.languages:
         raise ValueError("Enable rust in tool.dimos.messages.languages before running Cargo")
     cargo = tomllib.loads(manifest.read_text())
@@ -109,6 +115,9 @@ def configure_cargo(project: Project) -> Path:
     patches: dict[str, dict[str, str]] = {
         "dimos-message-build": {"path": str(Path(__file__).with_name("rust-build").resolve())}
     }
+    native_sdk = sdk_root()
+    for crate in ("dimos-module", "dimos-module-macros"):
+        patches[crate] = {"path": str(native_sdk / "rust" / crate)}
     for dependency in project.dependencies():
         native = dependency.root / "rust"
         source = native / "interfaces"
@@ -152,6 +161,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("cmake-prefix")
+    commands.add_parser("sdk-root")
     cargo = commands.add_parser("configure-cargo")
     cargo.add_argument("project", nargs="?", type=Path, default=Path.cwd())
     for name in ("cpp", "rust"):
@@ -163,6 +173,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "cmake-prefix":
         print(cmake_prefix())
+        return
+    if args.command == "sdk-root":
+        print(sdk_root())
         return
     project = Project.load(args.project)
     if args.command == "configure-cargo":

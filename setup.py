@@ -26,7 +26,7 @@ from setuptools.command.build_py import build_py as _build_py
 
 # PEP 517 executes setup.py without putting the checkout on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from dimos.message_codegen.build import prepare_builtin_sources, prepare_web_dist
+from dimos.message_codegen.build import copy_native_sdk, prepare_builtin_sources, prepare_web_dist
 
 
 class sdist(SourceDistribution):
@@ -120,6 +120,7 @@ class build_py(_build_py):
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
+            copy_native_sdk(Path(__file__).resolve().parent, Path(self.build_lib) / "dimos/_native")
 
     def _copy_relay_dist(self):
         src = Path(__file__).parent / "web"

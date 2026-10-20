@@ -85,7 +85,7 @@ corresponding cache. No OS packages or compilers are installed by a build hook.
 Native builds currently target the host, not cross compilation.
 
 ```sh
-export CMAKE_PREFIX_PATH="$(python -m dimos.message_codegen.native cmake-prefix)"
+export CMAKE_PREFIX_PATH="$(python -m dimos.message_codegen.native cmake-prefix):${CMAKE_PREFIX_PATH:-}"
 python -m dimos.message_codegen.native configure-cargo
 ```
 
@@ -211,3 +211,102 @@ cargo build --example relay
 ./target/debug/examples/relay cpp.cdr rust.cdr
 python -I demo_reading.py verify rust.cdr
 ```
+
+
+## Use the same message in real SDK modules
+
+The file-codec example above tests the value format. The optional module example
+uses actual SDK ports and a Python coordinator. Install the native SDK's normal
+prerequisites first: C++20, CMake, liblcm development files, Zenoh-C/C++ >= 1.9
+with its unstable API, and Rust/Cargo. The main dimOS wheel carries owned SDK
+source and build integration, not these upstream libraries. The SDK CMake build
+fetches pinned PFR/JSON headers when they are not supplied by your build cache;
+it never installs OS packages.
+
+C++ selects the CDR codecs explicitly; existing SDK defaults stay unchanged:
+
+```cpp
+using Reading = telemetry_msgs::msg::DeviceReading;
+output_ = builder.output<Reading>("cpp", [](const Reading& value) {
+    return dimos::native::cdr_encode(value);
+});
+builder.input<Reading>("raw", &Relay::receive, this,
+    [](const uint8_t* bytes, size_t size) {
+        return dimos::native::cdr_decode<Reading>(bytes, size);
+    });
+```
+
+Rust enables `dimos-module`'s optional `cdr` feature and uses its existing port
+codec hooks:
+
+```rust
+#[derive(Module)]
+struct Relay {
+    #[input(decode = cdr::decode)]
+    cpp: Input<DeviceReading>,
+    #[output(encode = encode)]
+    done: Output<DeviceReading>,
+}
+fn encode(value: &DeviceReading) -> Vec<u8> {
+    cdr::encode(value).expect("serialize a valid DeviceReading")
+}
+```
+
+The Python module uses the ordinary `In`/`Out` API:
+
+```python
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+
+class Probe(Module):
+    raw: Out[DeviceReading]
+    done: In[DeviceReading]
+
+    @rpc
+    def send(self) -> None:
+        self.raw.publish(DeviceReading(Header(Time(17, 23), "map"), 7, 2.5, "sensor"))
+```
+
+Wire the ports with explicit CDR transports; the coordinator's selected backend
+must match the native modules' transport. For example:
+
+```python
+blueprint = autoconnect(probe, cpp_relay, rust_relay).transports({
+    (name, DeviceReading): CdrTransport.spec(
+        "example/" + name, DeviceReading, backend="zenoh", **session.model_dump(),
+    )
+    for name in ("raw", "cpp", "done")
+}).global_config(transport="zenoh", viewer="none")
+```
+
+Here `probe`, `cpp_relay` and `rust_relay` are the three module blueprints;
+`session` is their shared `ZenohConfig`. The executable example creates a
+loopback router, disables discovery/multicast, waits for the result and stops all
+modules and subscriptions. It checks the exact final fields and Header identity.
+It does not operate a robot or require host-network reconfiguration.
+
+From `examples/external-messages`, after the same SDK path setup used above:
+
+```sh
+pip install .
+python -m dimos.message_codegen.native configure-cargo
+cmake -S . -B build/cpp -DDIMOS_BUILD_MODULE_EXAMPLE=ON
+cmake --build build/cpp
+cargo build --locked --manifest-path modules/Cargo.toml
+python demo_modules.py
+```
+
+`dimos_native_sdk()` in the example CMake exports the installed SDK include/link
+requirements. The Cargo setup patches the matching installed SDK source crates;
+it does not compile them. The separate `modules/Cargo.toml` keeps SDK compilation
+out of ordinary message-only Cargo builds. The final line prints
+`PASS: coordinator Python -> C++ -> Rust -> Python over loopback Zenoh CDR`.
+The original message's value becomes 4.5 and label `sensor/cpp/rust`; its source
+time, frame and sequence are preserved.
+
+`CdrTransport(..., backend="lcm")` uses raw LCM instead. Its canonical
+`example/raw/cdr/telemetry_msgs/msg/DeviceReading` channel is separate from legacy
+LCM-encoded topics. This suffix identifies encoding/type, not a negotiated schema
+hash; both endpoints must install compatible definitions. Changing the default
+transport factories remains a separate cutover.

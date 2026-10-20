@@ -7,10 +7,14 @@ license = "Apache-2.0"
 
 [workspace]
 
+[features]
+cdr = ["dep:re_cdr"]
+
 [dependencies]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+re_cdr = { version = "=0.1.0", optional = true }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "04d78e8622500244123ba9cefa4c51b4cb454549" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "04d78e8622500244123ba9cefa4c51b4cb454549" }
 nalgebra = "0.35.0"
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }

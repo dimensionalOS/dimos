@@ -12,7 +12,7 @@ CMake and Cargo independently select their own outputs through the shared core.
 Set up installed native dependency locations once:
 
 ```sh
-export CMAKE_PREFIX_PATH="$(python -m dimos.message_codegen.native cmake-prefix)"
+export CMAKE_PREFIX_PATH="$(python -m dimos.message_codegen.native cmake-prefix):${CMAKE_PREFIX_PATH:-}"
 python -m dimos.message_codegen.native configure-cargo
 ```
 
@@ -46,3 +46,24 @@ The full guide with embedded definitions and language examples is
 The installed Python provider includes complete dependency schemas and native
 source inputs, not compiled message libraries. Do not commit `.cargo/config.toml`:
 it contains this environment's installed artifact locations.
+
+
+## Real coordinator and SDK ports
+
+With the SDK's C++20/liblcm and Zenoh-C/C++ development dependencies installed,
+the same message can pass through real SDK modules. The wheel supplies owned SDK
+sources; message-only builds above do not compile them.
+
+```sh
+python -m dimos.message_codegen.native configure-cargo
+cmake -S . -B build/cpp -DDIMOS_BUILD_MODULE_EXAMPLE=ON
+cmake --build build/cpp
+cargo build --locked --manifest-path modules/Cargo.toml
+python demo_modules.py
+```
+
+This starts a Python coordinator with a Python probe, C++ relay and Rust relay.
+A temporary loopback Zenoh router connects all three; discovery/multicast are
+disabled. The demo validates the exact same final values and Header identity and
+stops its modules and subscriptions. The SDK codecs are explicit, so existing
+module defaults are unchanged. See the embedded guide above for the port code.

@@ -2,3 +2,5 @@
 /dist/
 /target/
 /.cargo/config.toml
+
+/modules/target/
