@@ -698,6 +698,11 @@ impl Worker {
                 let records =
                     build_loop_closure_records(&pre_poses, pgo.key_poses(), cur_time, &frame_id);
                 self.publish(&self.loop_closure_records, &records, "loop_closure_records");
+                if !self.config.dump_path.is_empty() {
+                    if let Err(e) = append_closure(&self.config.dump_path, cur_time, &records) {
+                        warn!(error = %e, "Failed to dump the loop closure.");
+                    }
+                }
             }
 
             self.publish_corrected(
@@ -887,4 +892,19 @@ fn dump_keyframes(path: &str, key_poses: &[KeyPoseWithCloud]) -> std::io::Result
     let tmp = format!("{path}.tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
+}
+
+/// Append one closure to `<path>.closures`: f64 ts, u32 record count, then the
+/// loop_closure_records bytes (68 per keyframe), for offline replays of real closures.
+fn append_closure(path: &str, ts: f64, records: &PointCloud2) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{path}.closures"))?;
+    let mut bytes = Vec::with_capacity(12 + records.data.len());
+    bytes.extend_from_slice(&ts.to_le_bytes());
+    bytes.extend_from_slice(&(records.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&records.data);
+    file.write_all(&bytes)
 }
