@@ -53,6 +53,7 @@ class LocalizeParams:
     accept_score: float = 0.40  # group's best member score to be returned
     min_views: int = 2  # distinct camera positions (1 cm) to confirm a group
     cluster_radius_m: float = 0.08  # two lifts are one object within this
+    embed_hz: float = 1.0  # index frames per second, capped at the camera's own rate
     peak_prominence: float = 0.02
     peak_distance_s: float = 1.0
     peak_width_s: float | None = 0.5  # None disables the width gate

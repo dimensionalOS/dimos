@@ -174,10 +174,16 @@ class DanDetector(Resource):
         }
         return replace(base, **{**shifts, **(fields or {})})
 
-    def embed_live(self, rig: Rig, source: Stream[Any, Any], index: Stream[Any, Any]) -> None:
+    def embed_live(
+        self,
+        rig: Rig,
+        source: Stream[Any, Any],
+        index: Stream[Any, Any],
+        embed_hz: float | None = None,
+    ) -> None:
         """Tail ``source`` into ``index`` on a background thread while the resource is open."""
         pipeline = (
-            index_frames(rig, source.live())
+            index_frames(rig, source.live(), embed_hz=embed_hz)
             .transform(EmbedImages(self.embedder, batch_size=1))
             .save(index)
         )

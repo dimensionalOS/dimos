@@ -64,7 +64,7 @@ For offline benchmarking on recordings, `tools/tool_localize.py` defines `PRESET
 |---|---|---|---|
 | `xarm` | `XARM_PARAMS` | wrist camera over a desk (`LocalizeParams()`) | |
 | `dual_yam` | `DUAL_YAM_PARAMS` | dual OpenYAM, D405 wrist cameras | `min_camera_range_m` 0.07: the D405s see objects from 7 cm |
-| `go2` | `GO2_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
+| `go2` | `GO2_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `embed_hz` 3.0, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
 | `g1` | `G1_PARAMS` | walking robot with dense depth instead of a 5 cm lidar map | `go2` with `min_points` 30 |
 
 Params originate on the blueprint and can be overridden per call:
