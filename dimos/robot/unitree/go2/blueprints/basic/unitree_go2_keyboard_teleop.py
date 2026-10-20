@@ -30,29 +30,25 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 _go2_joints = make_twist_base_joints("go2")
 
-unitree_go2_keyboard_teleop = (
-    autoconnect(
-        ControlCoordinator.blueprint(
-            hardware=[
-                HardwareComponent(
-                    hardware_id="go2",
-                    hardware_type=HardwareType.BASE,
-                    joints=_go2_joints,
-                    adapter_type="unitree_go2",
-                    adapter_kwargs={"rage_mode": False},
-                ),
-            ],
-            tasks=[
-                TaskConfig(
-                    name="vel_go2",
-                    type="velocity",
-                    joint_names=_go2_joints,
-                    priority=10,
-                ),
-            ],
-        ),
-        KeyboardTeleop.blueprint(),
-    )
-    .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
-    .global_config(obstacle_avoidance=True)
-)
+unitree_go2_keyboard_teleop = autoconnect(
+    ControlCoordinator.blueprint(
+        hardware=[
+            HardwareComponent(
+                hardware_id="go2",
+                hardware_type=HardwareType.BASE,
+                joints=_go2_joints,
+                adapter_type="unitree_go2",
+                adapter_kwargs={"rage_mode": False},
+            ),
+        ],
+        tasks=[
+            TaskConfig(
+                name="vel_go2",
+                type="velocity",
+                joint_names=_go2_joints,
+                priority=10,
+            ),
+        ],
+    ),
+    KeyboardTeleop.blueprint(),
+).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])

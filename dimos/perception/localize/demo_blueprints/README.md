@@ -194,12 +194,9 @@ On an unmeasured hardware stack:
    stack operator.
 
 The client waits 30 seconds for an answer and then gives up. A wide window can
-take longer than that. The wait belongs to the caller, so raise it there. Per
-call, or for every call you make:
+take longer than that. Raise the caller's timeout for each call that needs it:
 
     uv run dimos mcp call localize -a 'objects=chair' --timeout 300
-    uv run dimos --mcp-timeout 300 mcp call localize -a 'objects=chair'
-    MCP_TIMEOUT=300 uv run dimos mcp call localize -a 'objects=chair'
 
 Setting it on the blueprint does nothing. The timeout is on the side that
 waits, not the side that answers.

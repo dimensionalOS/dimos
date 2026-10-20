@@ -45,10 +45,9 @@ if not _worker:
 # machine shares. ``ZENOH_SCOUT_ADDR`` moves each onto its own group.
 #
 # Buckets are seeded with the session run id so concurrent sessions on one
-# machine can't collide. xdist workers mix in the worker name, and also get
-# a per-worker MCP port (``GlobalConfig`` captures ``MCP_PORT``) and state
-# dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
-# between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
+# machine can't collide. Each session gets its own MCP port (``MCPSERVER__PORT``).
+# xdist workers mix in the worker name and get a separate state directory
+# (``run_registry`` captures ``XDG_STATE_HOME``). Exporting ``LCM_DEFAULT_URL`` opts a
 # single-worker session out of the isolation, deliberately joining it to an
 # external bus; ``ZENOH_SCOUT_ADDR`` does the same for zenoh.
 
@@ -62,12 +61,13 @@ if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
     os.environ["ZENOH_SCOUT_ADDR"] = f"224.0.0.224:{17700 + _BUCKET}"
-    os.environ["MCP_PORT"] = str(20000 + _BUCKET)
+    os.environ["MCPSERVER__PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 else:
     _BUCKET = _lcm_bucket(_run_id)
     os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
+    os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
@@ -201,7 +201,9 @@ def pytest_configure(config):
         "runs in the CI rust job and the macOS self-hosted-tests job",
     )
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
-    config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
+    config.addinivalue_line(
+        "markers", "skipif_no_typesafe: skip when TYPESAFENAVIGATIONAGENT__API_KEY is not set"
+    )
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line(
         "markers",
@@ -240,11 +242,6 @@ def _global_config_guard():
 # the class and module guards, a class-scoped fixture's
 # `global_config.update(viewer="none", n_workers=1)` stays in effect for
 # every later test in the session.
-#
-# A build from a parsed config resets the singleton to the parse's full
-# resolution. With a hermetic parse (environ={}) that reverts mcp_port to
-# its schema default, and every later test on the worker then binds the
-# port every other worker also defaults to.
 @pytest.fixture(autouse=True)
 def _restore_global_config():
     yield from _global_config_guard()
@@ -263,7 +260,7 @@ def _restore_global_config_module():
 @pytest.fixture(scope="session")
 def mcp_port() -> int:
     """The MCP server port pinned for this xdist worker (or the default)."""
-    return int(os.environ.get("MCP_PORT", "9990"))
+    return int(os.environ.get("MCPSERVER__PORT", "9990"))
 
 
 @pytest.fixture(scope="session")
@@ -294,7 +291,10 @@ def retry_until():
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
-        "skipif_no_typesafe": (not os.getenv("TYPESAFE_API_KEY"), "TYPESAFE_API_KEY not set"),
+        "skipif_no_typesafe": (
+            not os.getenv("TYPESAFENAVIGATIONAGENT__API_KEY"),
+            "TYPESAFENAVIGATIONAGENT__API_KEY not set",
+        ),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),

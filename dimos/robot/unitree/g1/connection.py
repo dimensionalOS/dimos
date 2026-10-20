@@ -22,6 +22,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
@@ -30,9 +31,13 @@ logger = setup_logger()
 
 class G1Config(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
-    connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
-    # Per-device AES-128 key (G1 fw >=1.5.1); defaults from GlobalConfig.
-    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    connection_type: str = Field(
+        default_factory=lambda m: connection_type(
+            replay=m["g"].replay, simulation=m["g"].simulation
+        )
+    )
+    # Per-device AES-128 key (G1 fw >=1.5.1).
+    aes_128_key: str | None = Field(default=None, repr=False)
 
 
 class G1ConnectionBase(Module, ABC):

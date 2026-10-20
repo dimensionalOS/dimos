@@ -102,8 +102,8 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.4",
-    "lcm-dimos-fork>=1.5.2", # the `lcm` module itself (protocol/service/lcmservice.py)
+    "dimos-lcm>=0.1.6",
+    "lcm>=1.5.3", # the `lcm` module itself (protocol/service/lcmservice.py)
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
@@ -537,7 +537,7 @@ dev = [
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -654,7 +654,6 @@ GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
 ipython = "IPython"
-lcm-dimos-fork = "lcm"
 openai-whisper = "whisper"
 opencv-contrib-python = "cv2"
 Pillow = "PIL"

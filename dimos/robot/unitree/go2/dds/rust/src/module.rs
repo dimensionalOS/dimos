@@ -13,10 +13,12 @@
 // limitations under the License.
 
 //! The Go2 on the graph: `cmd_vel` and `command` in; out go `odometry` (with its tf
-//! edge), the head L1 clouds, the front camera (H.264 on `video` or JPEG on `image`),
-//! and the body's `joint_state`, `imu`, `battery` and remote `joy`, plus the static mount
-//! tree on `tf` and the camera intrinsics on `camera_info`. One thread owns DDS, one the
-//! videohub RTP socket, one the static data; the handlers only forward onto the DDS thread.
+//! edge), the head L1 clouds and height map, the front camera (H.264 on `video` or JPEG on
+//! `image`), the body's `joint_state`, `motor_state`, `imu`, `battery` and remote `joy`, the
+//! low-level `joint_command`, plus the static mount tree on `tf` and the camera intrinsics
+//! on `camera_info`. One thread owns DDS, one the videohub RTP socket, one the static data;
+//! the handlers only forward onto the DDS thread. Robot streams carry the robot's clock: a
+//! sample's own header stamp where it has one, else its DDS source timestamp.
 
 use std::f64::consts::FRAC_PI_2;
 use std::net::{Ipv4Addr, UdpSocket};
@@ -25,10 +27,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cyclonedds_rs::{DdsWriter, SampleBuffer};
+use crate::clock::HostClock;
+use cyclonedds_rs::{DdsWriter, SampleBuffer, TopicType};
 use dimos_module::nalgebra::{Isometry3, Quaternion as NQuaternion, Translation3, UnitQuaternion};
 use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 use lcm_msgs::builtin_interfaces::Time as VideoTime;
+use lcm_msgs::control_msgs::{DynamicJointState, InterfaceValue};
 use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::geometry_msgs::{
     Point, Pose, PoseWithCovariance, Quaternion, Twist, TwistWithCovariance, Vector3,
@@ -53,6 +57,8 @@ const CAMERA_FRAME: &str = "camera_optical";
 const BODY_FRAME: &str = "base_link";
 const MOUNT_FRAME: &str = "front_camera";
 const MID360_FRAME: &str = "mid360_link";
+/// The head L1, the frame its raw cloud is stamped in.
+const L1_FRAME: &str = "utlidar_lidar";
 /// The optical axes off the camera mount: x right, y down, z forward.
 const OPTICAL_RPY: [f64; 3] = [-FRAC_PI_2, 0.0, -FRAC_PI_2];
 /// The first 12 of LowState's 20 motors, in Unitree order.
@@ -70,6 +76,10 @@ const JOINTS: [&str; 12] = [
     "RL_thigh_joint",
     "RL_calf_joint",
 ];
+/// LowState's `foot_force` / `foot_force_est` order.
+const FEET: [&str; 4] = ["FR_foot", "FL_foot", "RR_foot", "RL_foot"];
+/// HeightMap cells at or above this are the L1's "no data" (~1e9).
+const HEIGHT_UNKNOWN: f32 = 1e6;
 /// StandUp alone is the stiff joint lock; RecoveryStand after it hands over to balance.
 const STANDUP_RECOVERY_DELAY: Duration = Duration::from_millis(500);
 /// The Go2's request readers must discover our writers before the first write lands.
@@ -92,6 +102,9 @@ pub struct Config {
     pub mid360_xyz: [f64; 3],
     /// front_camera -> mid360_link, fixed-axis rpy in degrees.
     pub mid360_mount: [f64; 3],
+    /// base_link -> utlidar_lidar (the head L1): metres, and fixed-axis rpy in degrees.
+    pub l1_xyz: [f64; 3],
+    pub l1_mount: [f64; 3],
     /// The front camera's calibration, published at `camera_info_hz`.
     #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
@@ -102,12 +115,15 @@ pub struct Config {
     pub camera_info_hz: f64,
     /// Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     pub lidar_on: bool,
-    /// Also the undeskewed sensor-frame cloud and the L1's own IMU.
+    /// Also the undeskewed sensor-frame cloud, the L1's own IMU and its height map.
     pub lidar_raw_on: bool,
     /// The robot's built-in obstacle avoidance, applied at start.
     pub obstacle_avoidance: bool,
-    /// Body joint states, IMU and battery off `rt/lowstate`, decimated to `lowstate_hz`.
+    /// Body joint and motor states, IMU and battery off `rt/lowstate`, decimated to
+    /// `lowstate_hz`.
     pub lowstate_on: bool,
+    /// Also whatever drives the motors on `rt/lowcmd`, at the same decimated rate.
+    pub lowcmd_on: bool,
     #[validate(range(exclusive_min = 0.0))]
     pub lowstate_hz: f64,
     /// Stream the front camera: "h264" off the videohub RTP multicast onto `video`,
@@ -331,6 +347,15 @@ pub struct Go2Dds {
     #[output(encode = JointState::encode)]
     joint_state: Output<JointState>,
 
+    #[output(encode = DynamicJointState::encode)]
+    motor_state: Output<DynamicJointState>,
+
+    #[output(encode = DynamicJointState::encode)]
+    joint_command: Output<DynamicJointState>,
+
+    #[output(encode = PointCloud2::encode)]
+    height_map: Output<PointCloud2>,
+
     #[output(encode = Imu::encode)]
     imu: Output<Imu>,
 
@@ -367,6 +392,9 @@ impl Go2Dds {
             lidar_raw: self.lidar_raw.clone(),
             lidar_imu: self.lidar_imu.clone(),
             joint_state: self.joint_state.clone(),
+            motor_state: self.motor_state.clone(),
+            joint_command: self.joint_command.clone(),
+            height_map: self.height_map.clone(),
             imu: self.imu.clone(),
             battery: self.battery.clone(),
             joy: self.joy.clone(),
@@ -448,6 +476,55 @@ fn now_secs() -> f64 {
     now_ns() as f64 * 1e-9
 }
 
+/// The robot's clock on ours. Every stamp off the robot (a DDS header, or the writer's
+/// source timestamp for types without one) is on the robot's clock, synced to ours or not.
+/// Low-latency streams pin it (`observe`: the smallest recent arrival - stamp offset) and
+/// every stamp maps through that one estimate. An unset stamp (0) is receipt time.
+#[derive(Default)]
+struct RobotClock(HostClock);
+
+impl RobotClock {
+    fn observe(&mut self, robot_ns: u64) {
+        if robot_ns > 0 {
+            self.0.observe(robot_ns, now_secs());
+        }
+    }
+
+    /// Without pinning, for what can land late (a cloud seconds after a stall): None until
+    /// a low-latency stream has pinned the clock, an unmapped stamp is on the wrong clock.
+    fn map(&self, robot_ns: u64) -> Option<f64> {
+        if robot_ns == 0 {
+            return Some(now_secs());
+        }
+        self.0
+            .is_synced()
+            .then(|| self.0.host_ns(robot_ns) as f64 * 1e-9)
+    }
+
+    /// Pin on a low-latency sample, then map it.
+    fn pinned(&mut self, robot_ns: u64) -> f64 {
+        self.observe(robot_ns);
+        self.map(robot_ns).unwrap_or_else(now_secs)
+    }
+}
+
+/// A ROS2 header stamp in nanoseconds, on the robot's clock.
+fn stamp_ns(t: &types::Time) -> u64 {
+    t.sec.max(0) as u64 * 1_000_000_000 + t.nanosec as u64
+}
+
+/// The `n` samples just taken, each with its writer's DDS source timestamp (ns, the robot's
+/// clock at write), for the types that carry no stamp of their own.
+fn source_stamped<T: TopicType>(
+    buf: &SampleBuffer<T>,
+    n: usize,
+) -> impl Iterator<Item = (&T, u64)> {
+    (0..n).filter_map(move |i| {
+        let ns = buf.source_timestamp(i).max(0) as u64;
+        buf.get(i).try_deref().map(|s| (s, ns))
+    })
+}
+
 fn time_of_secs(ts: f64) -> Time {
     let sec = ts.trunc();
     Time {
@@ -474,8 +551,8 @@ fn set_lidar(w: &mut DdsWriter<types::StdString>, on: bool) {
 }
 
 /// The newest reply that is a JPEG (SOI marker); the videohub also answers other calls.
-pub fn newest_jpeg<'a>(replies: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
-    replies.filter(|b| b.starts_with(&[0xFF, 0xD8])).last()
+pub fn newest_jpeg<'a, X>(replies: impl Iterator<Item = (&'a [u8], X)>) -> Option<(&'a [u8], X)> {
+    replies.filter(|(b, _)| b.starts_with(&[0xFF, 0xD8])).last()
 }
 
 /// Fires at most every `1 / fps` seconds.
@@ -517,6 +594,105 @@ pub fn joint_state(s: &types::LowState, ts: f64) -> JointState {
         position: m.iter().map(|j| j.q as f64).collect(),
         velocity: m.iter().map(|j| j.dq as f64).collect(),
         effort: m.iter().map(|j| j.tau_est as f64).collect(),
+    }
+}
+
+/// ros2_control's per-joint named interfaces; the frame is left empty, as offline.
+fn dynamic_joint_state<'a>(
+    ts: f64,
+    rows: impl Iterator<Item = (&'a str, Vec<(&'static str, f64)>)>,
+) -> DynamicJointState {
+    let (joint_names, interface_values) = rows
+        .map(|(name, vals)| {
+            let (names, values): (Vec<_>, Vec<_>) =
+                vals.into_iter().map(|(n, v)| (n.to_string(), v)).unzip();
+            (
+                name.to_string(),
+                InterfaceValue {
+                    interface_names: names,
+                    values,
+                },
+            )
+        })
+        .unzip();
+    DynamicJointState {
+        header: header("", ts),
+        joint_names,
+        interface_values,
+    }
+}
+
+/// Every leg motor's readings, then each foot's contact force, named as
+/// dds/cli/mcap2db.py names them so live and recorded match.
+pub fn motor_state(s: &types::LowState, ts: f64) -> DynamicJointState {
+    let motors = JOINTS.iter().zip(&s.motor_state).map(|(&n, m)| {
+        let vals = vec![
+            ("position", m.q as f64),
+            ("velocity", m.dq as f64),
+            ("acceleration", m.ddq as f64),
+            ("effort", m.tau_est as f64),
+            ("temperature", m.temperature as f64),
+            ("mode", m.mode as f64),
+            ("lost", m.lost as f64),
+        ];
+        (n, vals)
+    });
+    let feet = FEET.iter().enumerate().map(|(i, &n)| {
+        let vals = vec![
+            ("force", s.foot_force[i] as f64),
+            ("force_est", s.foot_force_est[i] as f64),
+        ];
+        (n, vals)
+    });
+    dynamic_joint_state(ts, motors.chain(feet))
+}
+
+/// The leg targets and PD gains, as mcap2db.py's `joint_command`.
+pub fn joint_command(c: &types::LowCmd, ts: f64) -> DynamicJointState {
+    let rows = JOINTS.iter().zip(&c.motor_cmd).map(|(&n, m)| {
+        let vals = vec![
+            ("position", m.q as f64),
+            ("velocity", m.dq as f64),
+            ("effort", m.tau as f64),
+            ("stiffness", m.kp as f64),
+            ("damping", m.kd as f64),
+            ("mode", m.mode as f64),
+        ];
+        (n, vals)
+    });
+    dynamic_joint_state(ts, rows)
+}
+
+/// The known cells as an xyz float32 cloud in the map's own frame.
+pub fn height_map(s: &types::HeightMap, ts: f64) -> PointCloud2 {
+    let (w, r) = (s.width as usize, s.resolution);
+    let mut data = Vec::with_capacity(s.data.len() * 12);
+    let mut n = 0i32;
+    for (i, &z) in s.data.iter().enumerate() {
+        if !z.is_finite() || z.abs() >= HEIGHT_UNKNOWN || w == 0 {
+            continue;
+        }
+        let x = s.origin[0] + (i % w) as f32 * r;
+        let y = s.origin[1] + (i / w) as f32 * r;
+        [x, y, z].iter().for_each(|v| data.extend(v.to_le_bytes()));
+        n += 1;
+    }
+    let field = |name: &str, offset| PointField {
+        name: name.into(),
+        offset,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: header(&s.frame_id, ts),
+        height: 1,
+        width: n,
+        fields: vec![field("x", 0), field("y", 4), field("z", 8)],
+        is_bigendian: false,
+        point_step: 12,
+        row_step: 12 * n,
+        data,
+        is_dense: true,
     }
 }
 
@@ -611,7 +787,7 @@ pub fn joy(s: &types::WirelessController, ts: f64) -> Joy {
     }
 }
 
-/// The dimos odometry and its tf edge, stamped at receipt (the robot's clock is not ours).
+/// The dimos odometry and its tf edge, at `ts`.
 pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
     let p = &s.pose.pose.position;
     let q = &s.pose.pose.orientation;
@@ -703,7 +879,8 @@ fn inverse(t: Transform) -> Transform {
     Transform::new(t.child, t.parent, t.ts, iso)
 }
 
-/// base_link -> front_camera -> {mid360_link, camera_optical}, re-rooted at `tf_root`.
+/// base_link -> {front_camera -> {mid360_link, camera_optical}, utlidar_lidar},
+/// re-rooted at `tf_root`.
 pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
     let camera = edge(BODY_FRAME, MOUNT_FRAME, c.camera_xyz, [0.0; 3], ts);
     let mid360 = edge(
@@ -714,10 +891,17 @@ pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
         ts,
     );
     let optical = edge(MOUNT_FRAME, CAMERA_FRAME, [0.0; 3], OPTICAL_RPY, ts);
+    let l1 = edge(
+        BODY_FRAME,
+        L1_FRAME,
+        c.l1_xyz,
+        c.l1_mount.map(f64::to_radians),
+        ts,
+    );
     if c.tf_root == MID360_FRAME {
-        vec![inverse(mid360), inverse(camera), optical]
+        vec![inverse(mid360), inverse(camera), optical, l1]
     } else {
-        vec![camera, mid360, optical]
+        vec![camera, mid360, optical, l1]
     }
 }
 
@@ -766,6 +950,9 @@ struct DdsLoop {
     lidar_raw: Output<PointCloud2>,
     lidar_imu: Output<Imu>,
     joint_state: Output<JointState>,
+    motor_state: Output<DynamicJointState>,
+    joint_command: Output<DynamicJointState>,
+    height_map: Output<PointCloud2>,
     imu: Output<Imu>,
     battery: Output<BatteryState>,
     joy: Output<Joy>,
@@ -786,11 +973,15 @@ impl DdsLoop {
             (
                 runtime::make_reader::<types::PointCloud2>(&p, topics::CLOUD),
                 runtime::make_reader::<types::Imu>(&p, topics::IMU),
+                runtime::make_reader::<types::HeightMap>(&p, topics::HEIGHT_MAP),
             )
         });
         let low_reader = c
             .lowstate_on
             .then(|| runtime::make_reader::<types::LowState>(&p, topics::LOWSTATE));
+        let cmd_reader = c
+            .lowcmd_on
+            .then(|| runtime::make_reader::<types::LowCmd>(&p, topics::LOWCMD));
         let joy_reader =
             runtime::make_reader::<types::WirelessController>(&p, topics::WIRELESS_CONTROLLER);
         let mut sport = runtime::make_writer::<types::Request>(&p, topics::SPORT_REQUEST);
@@ -824,10 +1015,14 @@ impl DdsLoop {
         let mut reply_buf = SampleBuffer::<types::Response>::new(8);
         let mut raw_buf = SampleBuffer::<types::PointCloud2>::new(8);
         let mut imu_buf = SampleBuffer::<types::Imu>::new(64);
+        let mut map_buf = SampleBuffer::<types::HeightMap>::new(4);
         let mut low_buf = SampleBuffer::<types::LowState>::new(64);
+        let mut cmd_buf = SampleBuffer::<types::LowCmd>::new(64);
         let mut joy_buf = SampleBuffer::<types::WirelessController>::new(16);
+        let mut clock = RobotClock::default();
         let mut jpeg_poll = Cadence::new(c.video_fps, Instant::now());
         let mut low_tick = Cadence::new(c.lowstate_hz, Instant::now());
+        let mut cmd_tick = Cadence::new(c.lowstate_hz, Instant::now());
         let mut battery_tick = Cadence::new(1.0, Instant::now());
         let deadman = Duration::from_millis(c.deadman_ms);
         let mut last_twist = Instant::now();
@@ -872,7 +1067,7 @@ impl DdsLoop {
 
             let n = odom_reader.take_now(&mut odom_buf).unwrap_or(0);
             for s in odom_buf.iter().take(n) {
-                let (odom, edge) = odometry(s, now_secs());
+                let (odom, edge) = odometry(s, clock.pinned(stamp_ns(&s.header.stamp)));
                 let _ = self.handle.block_on(self.odometry.publish(&odom));
                 if c.tf_root == BODY_FRAME {
                     let _ = self.handle.block_on(self.tf.publish(&[edge]));
@@ -881,61 +1076,99 @@ impl DdsLoop {
             if let Some(reader) = &cloud_reader {
                 let n = reader.take_now(&mut cloud_buf).unwrap_or(0);
                 for s in cloud_buf.iter().take(n) {
-                    let _ = self
-                        .handle
-                        .block_on(self.lidar.publish(&pointcloud(s, now_secs())));
+                    let Some(ts) = clock.map(stamp_ns(&s.header.stamp)) else {
+                        continue;
+                    };
+                    let _ = self.handle.block_on(self.lidar.publish(&pointcloud(s, ts)));
                 }
             }
-            if let Some((cloud, imu_r)) = &raw_readers {
-                let n = cloud.take_now(&mut raw_buf).unwrap_or(0);
-                for s in raw_buf.iter().take(n) {
-                    let _ = self
-                        .handle
-                        .block_on(self.lidar_raw.publish(&pointcloud(s, now_secs())));
-                }
+            if let Some((cloud, imu_r, map_r)) = &raw_readers {
                 let n = imu_r.take_now(&mut imu_buf).unwrap_or(0);
                 for s in imu_buf.iter().take(n) {
+                    let ts = clock.pinned(stamp_ns(&s.header.stamp));
                     let _ = self
                         .handle
-                        .block_on(self.lidar_imu.publish(&lidar_imu(s, now_secs())));
+                        .block_on(self.lidar_imu.publish(&lidar_imu(s, ts)));
+                }
+                // Header stamps, not arrival: a cloud can land seconds late after a stall.
+                let n = cloud.take_now(&mut raw_buf).unwrap_or(0);
+                for s in raw_buf.iter().take(n) {
+                    let Some(ts) = clock.map(stamp_ns(&s.header.stamp)) else {
+                        continue;
+                    };
+                    let _ = self
+                        .handle
+                        .block_on(self.lidar_raw.publish(&pointcloud(s, ts)));
+                }
+                let n = map_r.take_now(&mut map_buf).unwrap_or(0);
+                for s in map_buf.iter().take(n) {
+                    let Some(ts) = clock.map((s.stamp.max(0.0) * 1e9) as u64) else {
+                        continue;
+                    };
+                    let _ = self
+                        .handle
+                        .block_on(self.height_map.publish(&height_map(s, ts)));
                 }
             }
             if let Some(reader) = &low_reader {
                 // Drained every tick, published on the decimated cadence: newest wins.
                 let n = reader.take_now(&mut low_buf).unwrap_or(0);
-                if let Some(s) = low_buf.iter().take(n).last() {
+                if let Some((s, ns)) = source_stamped(&low_buf, n)
+                    .inspect(|&(_, ns)| clock.observe(ns))
+                    .last()
+                {
+                    let ts = clock.pinned(ns);
                     let now = Instant::now();
                     if low_tick.due(now) {
-                        let ts = now_secs();
                         let _ = self
                             .handle
                             .block_on(self.joint_state.publish(&joint_state(s, ts)));
                         let _ = self
                             .handle
+                            .block_on(self.motor_state.publish(&motor_state(s, ts)));
+                        let _ = self
+                            .handle
                             .block_on(self.imu.publish(&imu(&s.imu_state, ts)));
                     }
                     if battery_tick.due(now) {
+                        let _ = self.handle.block_on(self.battery.publish(&battery(s, ts)));
+                    }
+                }
+            }
+            if let Some(reader) = &cmd_reader {
+                let n = reader.take_now(&mut cmd_buf).unwrap_or(0);
+                if let Some((s, ns)) = source_stamped(&cmd_buf, n)
+                    .inspect(|&(_, ns)| clock.observe(ns))
+                    .last()
+                {
+                    let ts = clock.pinned(ns);
+                    if cmd_tick.due(Instant::now()) {
                         let _ = self
                             .handle
-                            .block_on(self.battery.publish(&battery(s, now_secs())));
+                            .block_on(self.joint_command.publish(&joint_command(s, ts)));
                     }
                 }
             }
             let n = joy_reader.take_now(&mut joy_buf).unwrap_or(0);
-            if let Some(s) = joy_buf.iter().take(n).last() {
-                let _ = self.handle.block_on(self.joy.publish(&joy(s, now_secs())));
+            if let Some((s, ns)) = source_stamped(&joy_buf, n)
+                .inspect(|&(_, ns)| clock.observe(ns))
+                .last()
+            {
+                let ts = clock.pinned(ns);
+                let _ = self.handle.block_on(self.joy.publish(&joy(s, ts)));
             }
             if let Some((req, resp)) = &mut videohub {
                 if jpeg_poll.due(Instant::now()) {
                     request(req, topics::video::GET_IMAGE_SAMPLE, "");
                 }
                 let n = resp.take_now(&mut reply_buf).unwrap_or(0);
-                let replies = reply_buf.iter().take(n).map(|r| r.binary.as_slice());
-                if let Some(data) = newest_jpeg(replies) {
+                let replies = source_stamped(&reply_buf, n)
+                    .filter_map(|(r, ns)| Some((r.binary.as_slice(), clock.map(ns)?)));
+                if let Some((data, ts)) = newest_jpeg(replies) {
                     let msg = CompressedImage {
                         header: Header {
                             seq: 0,
-                            stamp: time_of_secs(now_secs()),
+                            stamp: time_of_secs(ts),
                             frame_id: CAMERA_FRAME.to_string(),
                         },
                         format: "jpeg".to_string(),
@@ -1123,6 +1356,33 @@ mod tests {
             (js.position[2], js.velocity[2], js.effort[2]),
             (1.5, -0.5, 2.0)
         );
+        s.motor_state[2].temperature = 41;
+        s.foot_force[3] = 120;
+        let ms = motor_state(&s, 1.0);
+        assert_eq!(ms.joint_names.len(), 16);
+        assert_eq!(
+            (&*ms.joint_names[2], &*ms.joint_names[15]),
+            ("FR_calf_joint", "RL_foot")
+        );
+        let calf = &ms.interface_values[2];
+        assert_eq!(
+            calf.interface_names,
+            [
+                "position",
+                "velocity",
+                "acceleration",
+                "effort",
+                "temperature",
+                "mode",
+                "lost"
+            ]
+        );
+        assert_eq!((calf.values[0], calf.values[4]), (1.5, 41.0));
+        assert_eq!(
+            ms.interface_values[15].interface_names,
+            ["force", "force_est"]
+        );
+        assert_eq!(ms.interface_values[15].values, [120.0, 0.0]);
         let i = imu(&s.imu_state, 1.0);
         assert_eq!((i.orientation.w, i.orientation.z), (0.0, 1.0));
         assert!((i.angular_velocity.y - 0.2).abs() < 1e-6);
@@ -1146,10 +1406,85 @@ mod tests {
     }
 
     #[test]
+    fn robot_clock_maps_robot_stamps() {
+        let t = types::Time {
+            sec: 1_780_066_187,
+            nanosec: 500_000_000,
+        };
+        assert_eq!(stamp_ns(&t), 1_780_066_187_500_000_000);
+        let mut clock = RobotClock::default();
+        // Nothing late-landing is stamped before a low-latency stream pins the clock.
+        assert_eq!(clock.map(stamp_ns(&t)), None);
+        // A robot clock 100 s behind ours: pinned stamps land on our clock, and a cloud
+        // stamped 80 ms before that sample maps 80 ms before it, not to its late arrival.
+        let robot_now = ((now_secs() - 100.0) * 1e9) as u64;
+        let pinned = clock.pinned(robot_now);
+        assert!((pinned - now_secs()).abs() < 0.5);
+        let cloud = clock.map(robot_now - 80_000_000).unwrap();
+        assert!((pinned - cloud - 0.08).abs() < 1e-6);
+        // An unset stamp falls back to receipt rather than 1970.
+        assert!(clock.map(0).unwrap() > 1e9);
+    }
+
+    #[test]
+    fn lowcmd_converts() {
+        let mut c = types::LowCmd::default();
+        c.motor_cmd[1] = types::MotorCmd {
+            mode: 1,
+            q: 0.8,
+            kp: 40.0,
+            kd: 1.0,
+            ..Default::default()
+        };
+        let jc = joint_command(&c, 1.0);
+        assert_eq!(jc.joint_names.len(), 12);
+        let thigh = &jc.interface_values[1];
+        assert_eq!(
+            thigh.interface_names,
+            [
+                "position",
+                "velocity",
+                "effort",
+                "stiffness",
+                "damping",
+                "mode"
+            ]
+        );
+        assert_eq!(thigh.values, [0.8f32 as f64, 0.0, 0.0, 40.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn height_map_keeps_known_cells() {
+        let s = types::HeightMap {
+            frame_id: "odom".into(),
+            resolution: 0.5,
+            width: 2,
+            height: 2,
+            origin: [1.0, -1.0],
+            data: vec![0.1, 1e9, f32::NAN, 0.3],
+            ..Default::default()
+        };
+        let pc = height_map(&s, 1.0);
+        assert_eq!(
+            (pc.width, pc.point_step, pc.header.frame_id.as_str()),
+            (2, 12, "odom")
+        );
+        let xyz: Vec<f32> = pc
+            .data
+            .chunks(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        assert_eq!(xyz, [1.0, -1.0, 0.1, 1.5, -0.5, 0.3]);
+    }
+
+    #[test]
     fn jpeg_replies_are_filtered_and_paced() {
         let frames: [&[u8]; 3] = [&[0xFF, 0xD8, 1], b"not jpeg", &[0xFF, 0xD8, 2]];
-        assert_eq!(newest_jpeg(frames.into_iter()), Some(&[0xFF, 0xD8, 2][..]));
-        assert_eq!(newest_jpeg([b"nope".as_slice()].into_iter()), None);
+        assert_eq!(
+            newest_jpeg(frames.into_iter().zip(0..)),
+            Some((&[0xFF, 0xD8, 2][..], 2))
+        );
+        assert_eq!(newest_jpeg([(b"nope".as_slice(), ())].into_iter()), None);
         let t0 = Instant::now();
         let mut c = Cadence::new(15.0, t0);
         assert!(c.due(t0));
@@ -1192,9 +1527,15 @@ mod tests {
             [
                 (MID360_FRAME, MOUNT_FRAME),
                 (MOUNT_FRAME, BODY_FRAME),
-                (MOUNT_FRAME, CAMERA_FRAME)
+                (MOUNT_FRAME, CAMERA_FRAME),
+                (BODY_FRAME, L1_FRAME)
             ]
         );
+        // The L1 hangs off base_link either way, at the configured mount.
+        assert_eq!(lidar[3].translation(), body[3].translation());
+        let (r, p, y) = body[3].rotation().euler_angles();
+        let rpy = c.l1_mount.map(f64::to_radians);
+        assert!((r - rpy[0]).abs() + (p - rpy[1]).abs() + (y - rpy[2]).abs() < 1e-9);
         // Inverting the lidar edge and composing back lands on the identity.
         let round = body[1].translation() + body[1].rotation() * lidar[0].translation();
         assert!(round.norm() < 1e-9);

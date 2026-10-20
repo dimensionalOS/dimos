@@ -105,9 +105,8 @@ def test_openyam_hardware_physical_mode_returns_one_whole_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(global_config, "simulation", "")
-    monkeypatch.setattr(global_config, "can_port", "can1")
 
-    hardware = openyam_hardware()
+    hardware = openyam_hardware(bus_devices={"openyam": "can1"})
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
         OPENYAM_HARDWARE_ID,
@@ -117,11 +116,10 @@ def test_openyam_hardware_physical_mode_returns_one_whole_body(
     assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
 
 
-def test_openyam_hardware_without_can_port_uses_platform_default(
+def test_openyam_hardware_without_bus_devices_uses_platform_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(global_config, "simulation", "")
-    monkeypatch.setattr(global_config, "can_port", None)
 
     hardware = openyam_hardware()
 
