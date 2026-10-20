@@ -15,7 +15,18 @@
 import numpy as np
 
 from dimos.mapping.ray_tracing.viz import render_map_region, voxel_map_points
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.dimos_msgs.msg import PointCloudRegion
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_nanoseconds
+
+
+def _region(points):
+    header = Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789))
+    return PointCloudRegion(
+        header=header, region_id=0, cloud=pointcloud_from_xyz(points, header=header)
+    )
+
 
 HEIGHT_RANGE = (-1.0, 3.0)
 
@@ -30,15 +41,15 @@ def test_the_height_ramp_spans_the_range_and_clamps_outside_it() -> None:
 
 
 def test_map_regions_land_static_on_their_own_cell_entities() -> None:
-    region = PointCloud2.from_numpy(_at_heights([-1.0, 3.0]))
-    region.seq = (1 << 16) | (-2 & 0xFFFF)
+    region = _region(_at_heights([-1.0, 3.0]))
+    region.region_id = (1 << 16) | (-2 & 0xFFFF)
     (path, arch, static) = render_map_region(region, 0.1, HEIGHT_RANGE)[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 2
     assert arch.class_ids.as_arrow_array().to_pylist() == [0, 255]
 
-    emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
-    emptied.seq = region.seq
+    emptied = _region(np.zeros((0, 3), dtype=np.float32))
+    emptied.region_id = region.region_id
     (path, arch, static) = render_map_region(emptied, 0.1, HEIGHT_RANGE)[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 0

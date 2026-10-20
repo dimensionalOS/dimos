@@ -24,9 +24,13 @@ from scipy.spatial.transform import Rotation
 from dimos.mapping.ray_tracing.utils.loaded_map import first_loaded_map, place_loaded_map
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.geometry import transform_from_matrix
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 
 pytestmark = [pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]
 
@@ -40,18 +44,21 @@ def store(tmp_path: Path) -> Iterator[SqliteStore]:
 
 
 def _cloud(x: float, ts: float) -> PointCloud2:
-    return PointCloud2.from_numpy(
-        np.array([[x, 0.0, 0.0]], dtype=np.float32), frame_id="map", timestamp=ts
+    return pointcloud_from_xyz(
+        np.array([[x, 0, 0]], dtype=np.float32),
+        header=Header(frame_id="map", stamp=time_from_seconds(ts)),
     )
 
 
-def _world_to_map(yaw_deg: float, x: float, y: float, ts: float) -> Transform:
+def _world_to_map(yaw_deg: float, x: float, y: float, ts: float) -> TransformStamped:
     m = np.eye(4)
     m[:3, :3] = Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
     m[0, 3], m[1, 3] = x, y
-    tf = Transform.from_matrix(m, frame_id="world", child_frame_id="map")
-    tf.ts = ts
-    return tf
+    return TransformStamped(
+        header=Header(frame_id="world", stamp=time_from_seconds(ts)),
+        child_frame_id="map",
+        transform=transform_from_matrix(m),
+    )
 
 
 def test_first_loaded_map_is_none_for_a_missing_or_empty_stream(store: SqliteStore) -> None:
@@ -69,17 +76,18 @@ def test_first_loaded_map_is_the_earliest_by_ts(store: SqliteStore) -> None:
 
     assert first is not None
     assert first.ts == T0
-    np.testing.assert_allclose(first.data.points_f32(), [[1.0, 0.0, 0.0]])
+    np.testing.assert_allclose(pointcloud_xyz(first.data), [[1.0, 0.0, 0.0]])
 
 
 def test_place_loaded_map_moves_points_into_the_world(store: SqliteStore) -> None:
     store.stream("tf", TFMessage).append(
-        TFMessage(_world_to_map(90.0, 1.0, 2.0, T0)), ts=T0, pose=None
+        TFMessage(transforms=[_world_to_map(90.0, 1.0, 2.0, T0)]), ts=T0, pose=None
     )
     tf = StreamTF(store.stream("tf", TFMessage))
     points = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
     loaded = store.stream("loaded_map", PointCloud2).append(
-        PointCloud2.from_numpy(points, frame_id="map", timestamp=T0), ts=T0
+        pointcloud_from_xyz(points, header=Header(frame_id="map", stamp=time_from_seconds(T0))),
+        ts=T0,
     )
 
     placed = place_loaded_map(loaded, tf, "world", T0)

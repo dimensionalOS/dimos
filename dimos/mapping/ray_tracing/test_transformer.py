@@ -22,16 +22,27 @@ import pytest
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
+from dimos_cdrgen.registry import encode
+
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
+
+
+def _cloud(points, frame_id="lidar", timestamp=0.0):
+    return pointcloud_from_xyz(
+        points, header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp))
+    )
 
 
 def _default_margin() -> float:
@@ -46,7 +57,7 @@ def _obs(
         id=0,
         ts=ts,
         pose=pose,
-        _data=PointCloud2.from_numpy(points),
+        _data=_cloud(points, timestamp=ts),
     )
 
 
@@ -62,11 +73,27 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
     results = list(RayTraceMap(emit_every=3)(iter(obs)))
 
     assert [r.tags["frame_count"] for r in results] == [3, 6, 7]
+    assert [to_nanoseconds(r.data.header.stamp) for r in results] == [
+        2000000000,
+        5000000000,
+        6000000000,
+    ]
+
+
+@pytest.mark.parametrize("stamp_ns", [-1, 0, 1700000000123456789])
+def test_accumulation_keeps_exact_source_stamp_and_does_not_mutate_input(stamp_ns) -> None:
+    source = _obs(_cube(), ts=stamp_ns / 1e9, pose=(0, 0, 0))
+    source.data.header.stamp = time_from_nanoseconds(stamp_ns)
+    before = encode(source.data)
+    [result] = list(RayTraceMap()(iter([source])))
+    assert result.data.header.frame_id == "world"
+    assert to_nanoseconds(result.data.header.stamp) == stamp_ns
+    assert encode(source.data) == before
 
 
 def test_poseless_obs_are_skipped() -> None:
     points = _cube()
-    poseless = Observation(id=1, ts=0.0, pose=None, _data=PointCloud2.from_numpy(points))
+    poseless = Observation(id=1, ts=0.0, pose=None, _data=_cloud(points, timestamp=0.0))
     posed = _obs(points, ts=1.0, pose=(0.0, 0.0, 0.0))
 
     results = list(RayTraceMap()(iter([poseless, posed])))
@@ -119,7 +146,7 @@ def test_registers_sensor_frame_cloud_by_pose() -> None:
         id=0,
         ts=1.0,
         pose=(5.0, 0.0, 2.0, 0.0, s, 0.0, s),
-        _data=PointCloud2.from_numpy(point),
+        _data=_cloud(point),
     )
 
     [emitted] = list(rtm(iter([obs])))
@@ -147,15 +174,16 @@ def test_reused_instance_continues_the_map() -> None:
 def test_pose_from_tf_attaches_the_pose_at_the_stamp(tmp_path: Path) -> None:
     ts = 10.0
     with SqliteStore(path=str(tmp_path / "tf.db")) as store:
-        edge = Transform(
-            frame_id="world",
+        edge = TransformStamped(
+            header=Header(frame_id="world", stamp=time_from_seconds(ts)),
             child_frame_id="lidar",
-            translation=Vector3(1.0, 2.0, 3.0),
-            ts=ts,
+            transform=Transform(
+                translation=Vector3(x=1, y=2, z=3), rotation=quaternion_from_euler(0, 0, 0)
+            ),
         )
-        store.stream("tf", TFMessage).append(TFMessage(edge), ts=ts, pose=None)
+        store.stream("tf", TFMessage).append(TFMessage(transforms=[edge]), ts=ts, pose=None)
         tf = StreamTF(store.stream("tf", TFMessage))
-        cloud = PointCloud2.from_numpy(_cube(), frame_id="lidar")
+        cloud = _cloud(_cube(), frame_id="lidar")
         matched = Observation(id=0, ts=ts, _data=cloud)
         far = Observation(id=1, ts=ts + 10 * TF_MATCH_TOLERANCE_S, _data=cloud)
 

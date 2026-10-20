@@ -14,12 +14,16 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.transform import FnTransformer, Transformer
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -36,9 +40,12 @@ def pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, P
 
     def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
         t = tf.get(
-            world_frame, obs.data.frame_id, time_point=obs.ts, time_tolerance=TF_MATCH_TOLERANCE_S
+            world_frame,
+            obs.data.header.frame_id,
+            time_point=obs.ts,
+            time_tolerance=TF_MATCH_TOLERANCE_S,
         )
-        return obs.with_pose(t)
+        return obs.with_pose(None if t is None else t.transform)
 
     return FnTransformer(attach)
 
@@ -76,16 +83,13 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         last_obs: Observation[PointCloud2],
         count: int,
     ) -> Observation[PointCloud2]:
-        import open3d as o3d  # type: ignore[import-untyped]
-        import open3d.core as o3c  # type: ignore[import-untyped]
-
         tags = {**last_obs.tags, "frame_count": count}
         cx, cy, radius, z_min, z_max = mapper.take_local_bounds()
         positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
         tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
-        pcd = o3d.t.geometry.PointCloud()
-        pcd.point["positions"] = o3c.Tensor.from_numpy(positions)
-        cloud = PointCloud2(pointcloud=pcd, frame_id="world", ts=last_obs.ts)
+        header = deepcopy(last_obs.data.header)
+        header.frame_id = "world"
+        cloud = pointcloud_from_xyz(positions, header=header)
         return last_obs.derive(data=cloud, tags=tags)
 
     def __call__(
@@ -101,7 +105,9 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
                 logger.warning("RayTraceMap: obs %s has no pose. dropped a cloud", obs.id)
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
-            mapper.add_frame(obs.data.points_f32(), (x, y, z), (qx, qy, qz, qw))
+            mapper.add_frame(
+                np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), (x, y, z), (qx, qy, qz, qw)
+            )
             last_obs = obs
             count += 1
 

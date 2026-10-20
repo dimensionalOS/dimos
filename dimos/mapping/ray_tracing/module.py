@@ -18,10 +18,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.core.stream import IO, In, Out
+from dimos.messages.dimos_msgs.msg import PointCloudRegion, RegionBounds
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.spec import mapping
 
 # Max stamp gap between a cloud and the transform used to register it (s).
@@ -97,18 +97,18 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # An externally loaded map cloud, placed by the latest tf world_frame ->
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
-    tf: In[TFMessage]
+    tf: IO[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
-    region_bounds: Out[PoseStamped]
+    region_bounds: Out[RegionBounds]
     # One region of a seeded map as it lands, gated like local_map. seed_bounds
     # carries its cylinder like region_bounds.
-    seed_map: Out[PointCloud2]
-    seed_bounds: Out[PoseStamped]
+    seed_map: Out[PointCloudRegion]
+    seed_bounds: Out[RegionBounds]
     # The map for viewers, one region cell per message with the cell packed in
-    # the header seq.
-    map_regions: Out[PointCloud2]
+    # the explicit region_id.
+    map_regions: Out[PointCloudRegion]
 
 
 if TYPE_CHECKING:

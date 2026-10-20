@@ -21,6 +21,8 @@ on:
       - dimos/memory/**
       - dimos/mapping/occupancy/**
       - dimos/mapping/voxels/**
+      - dimos/mapping/ray_tracing/**
+      - dimos/spec/mapping.py
       - dimos/navigation/base.py
       - dimos/navigation/tf_pose.py
       - dimos/navigation/spec.py
@@ -340,3 +342,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           .native-review/bin/python -I -c 'import dimos.messages.dimos_msgs.msg; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_regions.py"
+      - name: Verify generated ray-tracing maps, region keys and native interoperability
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --lib --jobs 2
+          cargo clippy --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --bin voxel_ray_tracing --jobs 2
+          .venv/bin/maturin build --locked --profile dev --manifest-path dimos/mapping/ray_tracing/rust/py/Cargo.toml --jobs 2 --out build/mapper-python-wheels --interpreter .native-review/bin/python
+          .native-review/bin/python -m pip install --no-deps build/mapper-python-wheels/*.whl
+          export DIMOS_NATIVE_RAY_TRACING_BINARY="$PWD/dimos/mapping/ray_tracing/rust/target/debug/voxel_ray_tracing"
+          .native-review/bin/python -I -c 'from dimos.mapping.ray_tracing import module,transformer,viz; from dimos.mapping.ray_tracing.utils import loaded_map; import dimos_voxel_ray_tracing; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,transformer,viz,loaded_map,dimos_voxel_ray_tracing)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o $'markers=skipif_aarch64: optional architecture case\nskipif_macos: optional architecture case' -q "$PWD/dimos/mapping/ray_tracing/test_generated_native.py" "$PWD/dimos/mapping/ray_tracing/test_transformer.py" "$PWD/dimos/mapping/ray_tracing/test_viz.py" "$PWD/dimos/mapping/ray_tracing/utils/test_loaded_map.py" "$PWD/dimos/navigation/global_planner/test_viz.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/ray_tracing/{module,transformer,viz}.py dimos/mapping/ray_tracing/utils/loaded_map.py dimos/spec/mapping.py

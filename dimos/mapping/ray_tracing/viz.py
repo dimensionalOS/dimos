@@ -20,13 +20,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.dimos_msgs.msg import PointCloudRegion
+    from dimos.messages.sensor_msgs.msg import PointCloud2
     from dimos.visualization.rerun.bridge import RerunMulti
 
 # rerun is imported inside the renderers: it is heavy and only viewers load it.
@@ -56,12 +58,14 @@ def voxel_map_points(
 def render_voxel_map(
     msg: PointCloud2, voxel_size: float, height_range: tuple[float, float]
 ) -> Archetype:
-    return voxel_map_points(msg.points_f32(), voxel_size, height_range)
+    return voxel_map_points(
+        np.asarray(pointcloud_xyz(msg), dtype=np.float32), voxel_size, height_range
+    )
 
 
 @keyed_by_seq
 def render_map_region(
-    msg: PointCloud2,
+    msg: PointCloudRegion,
     voxel_size: float,
     height_range: tuple[float, float],
     z_band: tuple[float, float] | None = None,
@@ -70,11 +74,11 @@ def render_map_region(
 
     Points outside z_band (world frame) are dropped, to show one storey.
     """
-    pts = msg.points_f32()
+    pts = np.asarray(pointcloud_xyz(msg.cloud), dtype=np.float32)
     if z_band is not None:
         pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] < z_band[1])]
     cell = voxel_map_points(pts, voxel_size, height_range)
-    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=True)]
+    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.region_id), cell, static=True)]
 
 
 def log_loaded_map(points: NDArray[np.float32]) -> None:
