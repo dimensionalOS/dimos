@@ -27,7 +27,8 @@ on:
       - dimos/perception/localize/**
       - dimos/perception/detection/project.py
       - dimos/models/embedding/**
-      - dimos/perception/experimental/moduleDB.py
+      - dimos/perception/experimental/**
+      - dimos/models/segmentation/**
       - dimos/models/vl/base.py
       - dimos/models/vl/qwen.py
       - dimos/models/vl/test_base.py
@@ -190,3 +191,9 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/localize/test_rig.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/codecs/test_codecs.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/localize/association.py dimos/perception/localize/dandetect.py dimos/perception/localize/module.py dimos/perception/localize/rig.py dimos/perception/localize/support_plane.py dimos/perception/localize/types.py dimos/perception/localize/localize.py dimos/perception/localize/tools/tool_localize.py dimos/perception/localize/demo_blueprints/xarm_feed.py dimos/perception/detection/project.py dimos/memory/codecs/jpeg.py dimos/memory/codecs/base.py
+      - name: Verify generated experimental objects, tracking and segmentation boundaries
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'hydra-core==1.3.2'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional heavyweight integration' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/perception/experimental/test_object_generated.py" "$PWD/dimos/perception/experimental/test_object_scene_registration_temporal.py" "$PWD/dimos/perception/experimental/test_generated_tracker.py" "$PWD/dimos/perception/experimental/test_spatial_memory.py" "$PWD/dimos/models/segmentation/test_generated_edge_tam_images.py" "$PWD/dimos/models/segmentation/test_yoloe.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/experimental/object.py dimos/perception/experimental/objectDB.py dimos/perception/experimental/object_scene_registration.py dimos/perception/experimental/object_scene_registration_spec.py dimos/perception/experimental/object_tracker.py dimos/perception/experimental/object_tracker_2d.py dimos/perception/experimental/object_tracker_3d.py dimos/perception/experimental/spatial_perception.py dimos/models/segmentation/edge_tam.py dimos/models/segmentation/yoloe.py

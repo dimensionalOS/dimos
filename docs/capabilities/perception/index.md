@@ -158,6 +158,21 @@ converts that value to a generated Detection3DArray. Live module/blueprint
 execution requires the remaining default transport cutover. Historical recordings
 still require explicit conversion; this slice does not add a legacy decoder.
 
+## Experimental object memory
+
+The experimental object, scene-registration and tracker modules now use generated
+image, calibration, detection and TF values on their typed ports. EdgeTAM and
+YOLO-E segmentation retain their existing model APIs and use the same image
+helpers. OpenCV tracking keeps its existing geometry and processing-time policy.
+
+Object geometry keeps the color source stamp on its pose/detection and the depth
+source stamp on its projected cloud. Scene scans preserve their capture Header;
+spatial deduplication compares source frame and integer nanoseconds rather than
+rounded application seconds. Wall-clock pending-object TTL remains separate, and
+source timestamp zero is not replaced by wall time. Until default encoding
+cutover, these generated ports require the explicit CDR transports described
+above. Offline boundary tests do not constitute full model or robot acceptance.
+
 ## Experimental WorldBelief
 
 The experimental xArm6 WorldBelief stack records RGB-D observations and processes
