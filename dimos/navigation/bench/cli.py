@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""dimos nav-bench: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
+"""dimos nav-bench: freeze a suite, run it against a blueprint, score, report and play episodes back."""
 
 from __future__ import annotations
 
@@ -117,8 +117,8 @@ def run_command(
     ),
 ) -> None:
     """Run every case of the split, several at a time, and score each recording."""
-    from dimos.navigation.bench.runner import RESULTS_FILE, RUNS_DIR, RunConfig, run as run_suite
-    from dimos.navigation.bench.suite import FreezeConfig, freeze
+    from dimos.navigation.bench.runner import RUNS_DIR, RunConfig, new_run_dir, run as run_suite
+    from dimos.navigation.bench.suite import FreezeConfig, Manifest, freeze
 
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
@@ -129,6 +129,8 @@ def run_command(
                 manifest = freeze(FreezeConfig(suite=DEFAULT_SUITE), bar.tick)
             suite.parent.mkdir(parents=True, exist_ok=True)
             manifest.save(suite)
+    if out is None:
+        out = new_run_dir(Manifest.load(suite).suite)
     config = RunConfig(
         suite=suite,
         blueprint=blueprint,
@@ -141,10 +143,15 @@ def run_command(
         viewer=viewer,
     )
     signal.signal(signal.SIGTERM, _interrupt)
-    with _Bar(suite.stem) as bar:
-        run_dir = run_suite(config, _report(bar))
-    typer.echo(f"run finished -> {run_dir}")
-    _summary(run_dir / RESULTS_FILE)
+    try:
+        with _Bar(suite.stem) as bar:
+            run_suite(config, _report(bar))
+    except KeyboardInterrupt:
+        typer.echo(f"run interrupted -> {out}")
+        _finish(out)
+        raise
+    typer.echo(f"run finished -> {out}")
+    _finish(out)
 
 
 @app.command("score")
@@ -155,6 +162,16 @@ def score_command(
     from dimos.navigation.bench.runner import rescore
 
     _summary(rescore(run_dir))
+
+
+@app.command("report")
+def report_command(
+    run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
+) -> None:
+    """Write the run's report.html from its results and print the path."""
+    from dimos.navigation.bench.report import write
+
+    typer.echo(write(run_dir))
 
 
 @app.command("replay")
@@ -213,6 +230,18 @@ def _report(bar: _Bar) -> Report:
         bar.tick(progress.done, progress.total, f"{tally}  running {len(progress.running)}")
 
     return report
+
+
+def _finish(run_dir: Path) -> None:
+    """Print the run's summary and write its report, if any episode finished."""
+    from dimos.navigation.bench.report import write
+    from dimos.navigation.bench.runner import RESULTS_FILE
+
+    results = run_dir / RESULTS_FILE
+    if not results.exists():
+        return
+    _summary(results)
+    typer.echo(f"report -> {write(run_dir)}")
 
 
 def _summary(results: Path) -> None:
