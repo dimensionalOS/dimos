@@ -20,6 +20,9 @@ on:
       - dimos/protocol/tf/**
       - dimos/memory/**
       - dimos/mapping/occupancy/**
+      - dimos/mapping/pointclouds/occupancy.py
+      - dimos/mapping/costmapper.py
+      - dimos/mapping/test_generated_costmapper.py
       - dimos/protocol/cdr_mcap.py
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
@@ -227,3 +230,12 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.occupancy import operations, gradient, inflation, extrude_occupancy; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (operations, gradient, inflation, extrude_occupancy)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_operations.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/operations.py dimos/mapping/occupancy/gradient.py dimos/mapping/occupancy/inflation.py dimos/mapping/occupancy/extrude_occupancy.py
+      - name: Verify generated pointcloud costmaps and real offline Module ports
+        if: runner.os == 'Linux'
+        env:
+          NUMBA_NUM_THREADS: '2'
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -m pip install 'numba==0.68.0'
+          .native-review/bin/python -I -c 'import dimos.mapping.costmapper as module; import dimos.mapping.pointclouds.occupancy as algorithms; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module, algorithms)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional project fixture case' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/mapping/test_generated_costmapper.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/pointclouds/occupancy.py dimos/mapping/costmapper.py

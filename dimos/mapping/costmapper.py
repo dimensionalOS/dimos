@@ -27,8 +27,9 @@ from dimos.mapping.pointclouds.occupancy import (
     HeightCostConfig,
     OccupancyConfig,
 )
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.msgs.occupancy import occupancy_view
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -90,19 +91,22 @@ class CostMapper(Module):
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
         occupancy_function = OCCUPANCY_ALGOS[self.config.algo]
         grid = occupancy_function(msg, **asdict(self.config.config))
+        if not isinstance(grid, OccupancyGrid):
+            raise TypeError("CostMapper algorithms must return generated OccupancyGrid values")
         self._apply_initial_safe_radius(grid)
         return grid
 
     def _apply_initial_safe_radius(self, grid: OccupancyGrid) -> None:
         radius_meters = self.config.initial_safe_radius_meters
-        if radius_meters <= 0 or grid.grid.size == 0:
+        if radius_meters <= 0 or grid.data.size == 0:
             return
 
-        resolution = grid.resolution
-        origin_x = grid.origin.position.x
-        origin_y = grid.origin.position.y
+        resolution = grid.info.resolution
+        origin_x = grid.info.origin.position.x
+        origin_y = grid.info.origin.position.y
 
-        rows, columns = np.ogrid[: grid.grid.shape[0], : grid.grid.shape[1]]
+        cells = occupancy_view(grid).copy()
+        rows, columns = np.ogrid[: cells.shape[0], : cells.shape[1]]
         cell_world_x = columns * resolution + origin_x
         cell_world_y = rows * resolution + origin_y
         distance_squared_meters = cell_world_x**2 + cell_world_y**2
@@ -111,4 +115,5 @@ class CostMapper(Module):
         # the disc. Avoids floating-point boundary flakiness from radius/resolution.
         effective_radius_meters = radius_meters + resolution * 0.5
         safe_mask = distance_squared_meters <= effective_radius_meters**2
-        grid.grid[safe_mask] = 0
+        cells[safe_mask] = 0
+        grid.data = cells.reshape(-1)
