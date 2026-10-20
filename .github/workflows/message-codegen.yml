@@ -164,6 +164,13 @@ jobs:
           uv pip install --python .native-review/bin/python 'aiortc==1.14.0'
           uv pip install --python .native-review/bin/python --no-deps 'unitree-webrtc-connect==2.1.2' 'wasmtime==41.0.0' 'pycryptodome==3.23.0' 'curl-cffi==0.15.0' 'sounddevice==0.5.5'
           LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -c 'from dimos.robot.unitree.go2 import connection; from dimos.robot.unitree.go2.blueprints.basic import unitree_go2_basic; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (connection,unitree_go2_basic)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/test_connection.py" "$PWD/dimos/robot/unitree/go2/blueprints/basic/test_unitree_go2_basic.py"
+      - name: Verify explicit recording conversion, dry-run and fidelity without data downloads
+        if: runner.os == 'Linux'
+        run: |
+          # The existing Embedding API needs PyTorch only for vector preservation.
+          # CPU wheel only; no model weights or CUDA runtime.
+          .native-review/bin/python -m pip install 'https://download-r2.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl'
+          .native-review/bin/python -I -c 'from dimos.memory import convert_recording, recording_migration; from dimos.memory.cli import app; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (convert_recording,recording_migration,app)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/test_convert_recording.py" "$PWD/dimos/memory/test_recording_migration.py"
       - name: Verify generated browser schemas, relay encoding and web consumers
         if: runner.os == 'Linux'
         run: |
