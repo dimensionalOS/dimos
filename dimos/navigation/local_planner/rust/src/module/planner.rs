@@ -297,7 +297,7 @@ pub fn plan_once(
         &cloud,
         &terrain,
         pose,
-        goal,
+        &[[goal.0, goal.1]],
         emb,
         config.resolution,
         incumbent,
