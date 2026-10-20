@@ -19,8 +19,12 @@ import json
 from typing import Any
 import warnings
 
+import cv2
+
 from dimos.core.resource import Resource
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import header_now, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
@@ -83,7 +87,6 @@ def vlm_detection_to_detection2d(
         Detection2DBBox instance or None if invalid
     """
     # Here to prevent unwanted imports in the file.
-    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
     # Validate list/tuple structure
     if not isinstance(vlm_detection, (list, tuple)):
@@ -116,7 +119,7 @@ def vlm_detection_to_detection2d(
         class_id=-1,
         confidence=1.0,
         name=name,
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
     )
 
@@ -140,7 +143,6 @@ def vlm_point_to_detection2d_point(
     Returns:
         Detection2DPoint instance or None if invalid
     """
-    from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
     # Validate list/tuple structure
     if not isinstance(vlm_point, (list, tuple)):
@@ -166,7 +168,7 @@ def vlm_point_to_detection2d_point(
         x=x,
         y=y,
         name=name,
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
         track_id=track_id,
     )
@@ -198,7 +200,17 @@ class VlModel(Captioner, Resource, Configurable):
         """
         if self.config.auto_resize is not None:
             max_w, max_h = self.config.auto_resize
-            return image.resize_to_fit(max_w, max_h)
+            if max_w <= 0 or max_h <= 0:
+                raise ValueError("auto_resize dimensions must be positive")
+            scale = min(1.0, max_w / image.width, max_h / image.height)
+            if scale == 1.0:
+                return image, scale
+            pixels = cv2.resize(
+                image_view(image),
+                (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+            return image_from_array(pixels, encoding=image.encoding, header=image.header), scale
         return image, 1.0
 
     @abstractmethod
@@ -252,10 +264,13 @@ class VlModel(Captioner, Resource, Configurable):
     def start(self) -> None:
         """Start the model by running a simple query (Resource interface)."""
         try:
-            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
+            pixels = cv2.imread(str(get_data("cafe-smol.jpg")))
+            if pixels is None:
+                raise ValueError("Could not read model warmup image")
+            image = image_from_array(pixels, encoding="bgr8", header=header_now())
             self.query(image, "What is this?")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - optional warmup must not prevent startup.
+            logger.debug("Vision model warmup was unavailable")
 
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[untyped-decorator]
@@ -267,7 +282,6 @@ class VlModel(Captioner, Resource, Configurable):
         self, image: Image, query: str, **kwargs: Any
     ) -> ImageDetections2D[Detection2DBBox]:
         # Here to prevent unwanted imports in the file.
-        from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
@@ -292,7 +306,7 @@ class VlModel(Captioner, Resource, Configurable):
 
         try:
             detection_tuples = self.query_json(scaled_image, full_query)
-        except Exception:
+        except Exception:  # noqa: BLE001 - retain empty-result fallback for model backends.
             return image_detections
 
         for track_id, detection_tuple in enumerate(detection_tuples):
@@ -328,7 +342,6 @@ class VlModel(Captioner, Resource, Configurable):
             ImageDetections2D containing Detection2DPoint instances
         """
         # Here to prevent unwanted imports in the file.
-        from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
         full_query = f"""Show me point coordinates in pixels for this query: `{query}`
 
@@ -351,7 +364,7 @@ class VlModel(Captioner, Resource, Configurable):
 
         try:
             point_tuples = self.query_json(scaled_image, full_query)
-        except Exception:
+        except Exception:  # noqa: BLE001 - retain empty-result fallback for model backends.
             return image_detections
 
         for track_id, point_tuple in enumerate(point_tuples):

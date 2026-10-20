@@ -15,34 +15,48 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from dimos_lcm.sensor_msgs import CameraInfo
+import numpy as np
+import open3d as o3d
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
+from dimos.msgs.geometry import inverse_transform, transform_matrix
+from dimos.msgs.pointcloud import pointcloud_xyz, select_points
 
-# Filters take Detection2DBBox, PointCloud2, CameraInfo, Transform and return filtered PointCloud2 or None
+if TYPE_CHECKING:
+    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+
 PointCloudFilter = Callable[
-    [Detection2DBBox, PointCloud2, CameraInfo, Transform], PointCloud2 | None
+    ["Detection2DBBox", PointCloud2, CameraInfo, TransformStamped], PointCloud2 | None
 ]
 
 
+def _open3d_cloud(pc: PointCloud2) -> o3d.geometry.PointCloud:
+    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud_xyz(pc)))
+
+
+def _selected(pc: PointCloud2, indices: list[int]) -> PointCloud2:
+    keep = np.zeros(pc.width * pc.height, dtype=bool)
+    keep[indices] = True
+    return select_points(pc, keep)
+
+
 def height_filter(height: float = 0.1) -> PointCloudFilter:
-    return lambda det, pc, ci, tf: pc.filter_by_height(height)
+    return lambda det, pc, ci, tf: select_points(pc, pointcloud_xyz(pc)[:, 2] >= height)
 
 
 def statistical(nb_neighbors: int = 40, std_ratio: float = 0.5) -> PointCloudFilter:
     def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: TransformStamped
     ) -> PointCloud2 | None:
         try:
-            statistical, _removed = pc.pointcloud.remove_statistical_outlier(
+            _, indices = _open3d_cloud(pc).remove_statistical_outlier(
                 nb_neighbors=nb_neighbors, std_ratio=std_ratio
             )
-            return PointCloud2(statistical, pc.frame_id, pc.ts)
-        except Exception:
-            # print("statistical filter failed:", e)
+            return _selected(pc, indices)
+        except RuntimeError:
             return None
 
     return filter_func
@@ -55,15 +69,14 @@ def range_cluster(gap: float = 0.3) -> PointCloudFilter:
     points a mask collects across a range discontinuity are background seen
     through or around the object, not the object.
     """
-    import numpy as np
 
     def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: TransformStamped
     ) -> PointCloud2 | None:
-        points, _ = pc.as_numpy()
+        points = pointcloud_xyz(pc)
         if len(points) == 0:
             return None
-        camera = tf.inverse().translation.to_numpy()
+        camera = transform_matrix(inverse_transform(tf).transform)[:3, 3]
         ranges = np.linalg.norm(points - camera, axis=1)
         order = np.argsort(ranges)
         ranges_sorted = ranges[order]
@@ -74,7 +87,7 @@ def range_cluster(gap: float = 0.3) -> PointCloudFilter:
         for start, end in zip(starts, ends, strict=False):
             if start <= median_idx < end:
                 keep = order[start:end]
-                return PointCloud2.from_numpy(points[keep], frame_id=pc.frame_id, timestamp=pc.ts)
+                return _selected(pc, keep.tolist())
         return pc
 
     return filter_func
@@ -82,33 +95,27 @@ def range_cluster(gap: float = 0.3) -> PointCloudFilter:
 
 def raycast() -> PointCloudFilter:
     def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: TransformStamped
     ) -> PointCloud2 | None:
         try:
-            camera_pos = tf.inverse().translation
-            camera_pos_np = camera_pos.to_numpy()
-            _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
-            visible_pcd = pc.pointcloud.select_by_index(visible_indices)
-            return PointCloud2(visible_pcd, pc.frame_id, pc.ts)
-        except Exception:
-            # print("raycast filter failed:", e)
+            camera_pos = inverse_transform(tf).transform.translation
+            _, indices = _open3d_cloud(pc).hidden_point_removal(
+                np.array([camera_pos.x, camera_pos.y, camera_pos.z]), radius=100.0
+            )
+            return _selected(pc, indices)
+        except RuntimeError:
             return None
 
     return filter_func
 
 
 def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> PointCloudFilter:
-    """
-    Remove isolated points: keep only points that have at least `min_neighbors`
-    neighbors within `radius` meters (same units as your point cloud).
-    """
+    """Keep points with at least ``min_neighbors`` within ``radius`` meters."""
 
     def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: TransformStamped
     ) -> PointCloud2 | None:
-        filtered_pcd, _removed = pc.pointcloud.remove_radius_outlier(
-            nb_points=min_neighbors, radius=radius
-        )
-        return PointCloud2(filtered_pcd, pc.frame_id, pc.ts)
+        _, indices = _open3d_cloud(pc).remove_radius_outlier(nb_points=min_neighbors, radius=radius)
+        return _selected(pc, indices)
 
     return filter_func

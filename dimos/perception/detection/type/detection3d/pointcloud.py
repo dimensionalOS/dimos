@@ -18,12 +18,31 @@ from dataclasses import dataclass, field
 import functools
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
+from numpy.typing import NDArray
+import open3d as o3d
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.geometry import inverse_transform, transform_matrix
+from dimos.msgs.image import image_view
+from dimos.msgs.pointcloud import (
+    concatenate_clouds,
+    pointcloud_from_xyz,
+    pointcloud_xyz,
+    select_points,
+)
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,
@@ -33,9 +52,7 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
 )
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
-
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.messages.sensor_msgs.msg import CameraInfo, Image
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
@@ -65,11 +82,24 @@ def lattice_quantum(points: np.ndarray) -> float | None:
 
 @dataclass
 class Detection3DPC(Detection3D):
-    pointcloud: PointCloud2 = field(default_factory=PointCloud2)
+    pointcloud: PointCloud2 = field(
+        default_factory=lambda: PointCloud2(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            fields=[],
+            is_bigendian=False,
+            point_step=0,
+            row_step=0,
+            data=np.array([], dtype=np.uint8),
+            is_dense=False,
+        )
+    )
 
     @functools.cached_property
     def center(self) -> Vector3:
-        return Vector3(*self.pointcloud.center)
+        center = pointcloud_xyz(self.pointcloud).mean(axis=0)
+        return Vector3(x=float(center[0]), y=float(center[1]), z=float(center[2]))
 
     def __add__(self, other: Detection3DPC) -> Detection3DPC:
         """Union of two sightings of one object.
@@ -88,7 +118,7 @@ class Detection3DPC(Detection3D):
             confidence=stronger.confidence,
             name=stronger.name,
             ts=later.ts,
-            pointcloud=self.pointcloud + other.pointcloud,
+            pointcloud=concatenate_clouds(self.pointcloud, other.pointcloud),
             transform=later.transform,
             frame_id=self.frame_id,
         )
@@ -101,36 +131,51 @@ class Detection3DPC(Detection3D):
         The pointcloud is already in world frame.
         """
         return PoseStamped(
-            ts=self.ts,
-            frame_id=self.frame_id,
-            position=self.center,
-            orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
+            header=self.pointcloud.header,
+            pose=Pose(
+                position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         )
 
-    def get_bounding_box(self):  # type: ignore[no-untyped-def]
-        """Get axis-aligned bounding box of the detection's pointcloud."""
-        return self.pointcloud.axis_aligned_bounding_box
+    def _open3d(self) -> o3d.geometry.PointCloud:
+        return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud_xyz(self.pointcloud)))
 
-    def get_oriented_bounding_box(self):  # type: ignore[no-untyped-def]
+    def get_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
+        """Get axis-aligned bounding box of the detection's pointcloud."""
+        return self._open3d().get_axis_aligned_bounding_box()
+
+    def get_oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
         """Get oriented bounding box of the detection's pointcloud."""
-        return self.pointcloud.oriented_bounding_box
+        return self._open3d().get_oriented_bounding_box()
 
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of the detection's bounding box."""
-        return self.pointcloud.bounding_box_dimensions
+        extent = self.get_bounding_box().get_extent()
+        return float(extent[0]), float(extent[1]), float(extent[2])
 
     def bounding_box_intersects(self, other: Detection3DPC) -> bool:
         """Check if this detection's bounding box intersects with another's."""
-        return self.pointcloud.bounding_box_intersects(other.pointcloud)
+        first, second = self.get_bounding_box(), other.get_bounding_box()
+        return bool(
+            np.all(first.get_min_bound() <= second.get_max_bound())
+            and np.all(second.get_min_bound() <= first.get_max_bound())
+        )
 
     def to_repr_dict(self) -> dict[str, Any]:
         # Calculate distance from camera
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
         # Camera position in world frame is the translation part of the transform
-        camera_pos = self.transform.translation
+        camera_pos = inverse_transform(self.transform).transform.translation
         # Use Vector3 subtraction and magnitude
-        distance = (center_world - camera_pos).magnitude()
+        distance = np.linalg.norm(
+            [
+                center_world.x - camera_pos.x,
+                center_world.y - camera_pos.y,
+                center_world.z - camera_pos.z,
+            ]
+        )
 
         parent_dict = super().to_repr_dict()
         # Remove bbox key if present
@@ -139,7 +184,7 @@ class Detection3DPC(Detection3D):
         return {
             **parent_dict,
             "dist": f"{distance:.2f}m",
-            "points": str(len(self.pointcloud)),
+            "points": str(self.pointcloud.width * self.pointcloud.height),
         }
 
     @classmethod
@@ -148,7 +193,7 @@ class Detection3DPC(Detection3D):
         det: Detection2DBBox,
         depth: Image,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
         filters: list[PointCloudFilter] | None = None,
         max_depth: float = 10.0,
         depth_gap: float = 0.1,
@@ -168,8 +213,9 @@ class Detection3DPC(Detection3D):
         if filters is None:
             filters = [statistical()]
 
-        depth_m = np.asarray(depth.data, dtype=np.float32)
-        if depth.data.dtype == np.uint16:
+        pixels = image_view(depth)
+        depth_m = pixels.astype(np.float32)
+        if pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2:
             depth_m *= 0.001
 
         height, width = depth_m.shape[:2]
@@ -177,8 +223,6 @@ class Detection3DPC(Detection3D):
         if seg_mask is not None:
             pixel_mask = seg_mask > 0
             if mask_scale < 1.0:
-                import cv2
-
                 radius = float(np.sqrt(pixel_mask.sum() / np.pi))
                 erode_px = round((1.0 - mask_scale) * radius)
                 if erode_px > 0:
@@ -214,12 +258,16 @@ class Detection3DPC(Detection3D):
                 rows, cols, z = rows[keep], cols[keep], z[keep]
                 break
 
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
+        fx, fy = camera_info.k[0], camera_info.k[4]
+        cx, cy = camera_info.k[2], camera_info.k[5]
         points_optical = np.column_stack(((cols - cx) * z / fx, (rows - cy) * z / fy, z))
 
-        detection_pc = PointCloud2.from_numpy(points_optical, timestamp=det.ts).transform(
-            -world_to_optical_transform
+        optical_to_world = inverse_transform(world_to_optical_transform)
+        matrix = transform_matrix(optical_to_world.transform)
+        points_world = points_optical @ matrix[:3, :3].T + matrix[:3, 3]
+        detection_pc = pointcloud_from_xyz(
+            points_world,
+            header=Header(stamp=depth.header.stamp, frame_id=optical_to_world.header.frame_id),
         )
 
         for filter_func in filters:
@@ -228,7 +276,7 @@ class Detection3DPC(Detection3D):
                 return None
             detection_pc = result
 
-        if len(detection_pc.pointcloud.points) == 0:
+        if detection_pc.width * detection_pc.height == 0:
             return None
 
         return cls(
@@ -241,7 +289,7 @@ class Detection3DPC(Detection3D):
             ts=det.ts,
             pointcloud=detection_pc,
             transform=world_to_optical_transform,
-            frame_id=detection_pc.frame_id,
+            frame_id=detection_pc.header.frame_id,
         )
 
     @staticmethod
@@ -253,16 +301,14 @@ class Detection3DPC(Detection3D):
         an undistorted calibration falls through to the pinhole projection.
         Points beyond the model's monotonic radius get out-of-image pixels.
         """
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
+        fx, fy = camera_info.k[0], camera_info.k[4]
+        cx, cy = camera_info.k[2], camera_info.k[5]
         coefficients = np.asarray(
-            camera_info.D if camera_info.D is not None else (), dtype=np.float64
+            camera_info.d if camera_info.d is not None else (), dtype=np.float64
         )
         xy = points_camera[:, :2] / points_camera[:, 2:3]
         if coefficients.size == 0 or not np.any(coefficients):
             return np.column_stack((xy[:, 0] * fx + cx, xy[:, 1] * fy + cy))
-
-        import cv2
 
         fisheye = camera_info.distortion_model == "equidistant"
         # The polynomial is calibrated only out to the image corner; beyond
@@ -317,28 +363,42 @@ class Detection3DPC(Detection3D):
     def project_cloud(
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Project a frame once for the existing batched detection API."""
+        points, pixels, _ = Detection3DPC._project_cloud_indices(
+            world_pointcloud, camera_info, world_to_optical_transform
+        )
+        return points, pixels
+
+    @staticmethod
+    def _project_cloud_indices(
+        world_pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        world_to_optical_transform: TransformStamped,
+    ) -> tuple[np.ndarray, np.ndarray, NDArray[np.int64]]:
         """Project a world cloud through the camera once.
 
         Returns the world points that land inside the image and their pixel
         coordinates - the detection-independent half of ``from_2d``, shared
         by every detection of one frame via ``from_projection``.
         """
-        world_points, _ = world_pointcloud.as_numpy()
+        world_points = pointcloud_xyz(world_pointcloud)
+        indices = np.arange(len(world_points), dtype=np.int64)
 
         # Project points to camera frame
         points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
-        extrinsics_matrix = world_to_optical_transform.to_matrix()
+        extrinsics_matrix = transform_matrix(world_to_optical_transform.transform)
         points_camera = (extrinsics_matrix @ points_homogeneous.T).T
 
         # Filter out points behind the camera
         valid_mask = points_camera[:, 2] > 0
         points_camera = points_camera[valid_mask]
         world_points = world_points[valid_mask]
+        indices = indices[valid_mask]
 
         if len(world_points) == 0:
-            return world_points, np.empty((0, 2))
+            return world_points, np.empty((0, 2)), indices
 
         points_2d = Detection3DPC.project_pixels(points_camera, camera_info)
 
@@ -349,7 +409,7 @@ class Detection3DPC(Detection3D):
             & (points_2d[:, 1] >= 0)
             & (points_2d[:, 1] < camera_info.height)
         )
-        return world_points[in_image_mask], points_2d[in_image_mask]
+        return world_points[in_image_mask], points_2d[in_image_mask], indices[in_image_mask]
 
     @classmethod
     def from_projection(
@@ -358,11 +418,13 @@ class Detection3DPC(Detection3D):
         world_points: np.ndarray,
         points_2d: np.ndarray,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
         frame_id: str,
         timestamp: float,
         filters: list[PointCloudFilter] | None = None,
         splat_m: float | None = None,
+        *,
+        projected_cloud: PointCloud2 | None = None,
     ) -> Detection3DPC | None:
         """Create a Detection3D by selecting from a shared frame projection.
 
@@ -399,9 +461,11 @@ class Detection3DPC(Detection3D):
 
             in_det_mask = mask_hit(points_2d[:, 0], points_2d[:, 1])
             if splat_m is not None:
-                camera = world_to_optical_transform.inverse().translation.to_numpy()
+                camera = transform_matrix(inverse_transform(world_to_optical_transform).transform)[
+                    :3, 3
+                ]
                 ranges = np.linalg.norm(world_points - camera, axis=1)
-                radius = splat_m * camera_info.K[0] / np.maximum(ranges, 1e-6)
+                radius = splat_m * camera_info.k[0] / np.maximum(ranges, 1e-6)
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     in_det_mask |= mask_hit(
                         points_2d[:, 0] + dx * radius, points_2d[:, 1] + dy * radius
@@ -422,10 +486,13 @@ class Detection3DPC(Detection3D):
             return None
 
         # Create initial pointcloud for this detection
-        initial_pc = PointCloud2.from_numpy(
-            detection_points,
-            frame_id=frame_id,
-            timestamp=timestamp,
+        initial_pc = (
+            select_points(projected_cloud, in_det_mask)
+            if projected_cloud is not None
+            else pointcloud_from_xyz(
+                detection_points,
+                header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp)),
+            )
         )
 
         # Apply filters - each filter gets all arguments
@@ -437,7 +504,7 @@ class Detection3DPC(Detection3D):
             detection_pc = result
 
         # Final check for empty pointcloud
-        if len(detection_pc.pointcloud.points) == 0:
+        if detection_pc.width * detection_pc.height == 0:
             return None
 
         # Create Detection3D with filtered pointcloud
@@ -460,7 +527,7 @@ class Detection3DPC(Detection3D):
         det: Detection2DBBox,
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
         filters: list[PointCloudFilter] | None = None,
@@ -473,9 +540,12 @@ class Detection3DPC(Detection3D):
         radius comes from the cloud's own lattice pitch, so every caller
         samples a grid-quantized source the same way.
         """
-        world_points, points_2d = cls.project_cloud(
+        world_points, points_2d, indices = cls._project_cloud_indices(
             world_pointcloud, camera_info, world_to_optical_transform
         )
+        keep = np.zeros(world_pointcloud.width * world_pointcloud.height, dtype=bool)
+        keep[indices] = True
+        projected_cloud = select_points(world_pointcloud, keep)
         quantum = lattice_quantum(world_points)
         return cls.from_projection(
             det,
@@ -483,8 +553,9 @@ class Detection3DPC(Detection3D):
             points_2d,
             camera_info,
             world_to_optical_transform,
-            world_pointcloud.frame_id,
-            world_pointcloud.ts,
+            world_pointcloud.header.frame_id,
+            to_seconds(world_pointcloud.header.stamp),
             filters,
             splat_m=quantum / 2 if quantum is not None else None,
+            projected_cloud=projected_cloud,
         )

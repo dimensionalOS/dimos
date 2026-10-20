@@ -13,23 +13,25 @@
 # limitations under the License.
 import pytest
 
+from dimos.msgs.image import image_from_file
+from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
+from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+
 
 @pytest.mark.self_hosted
-def test_person_ros_confidence() -> None:
+def test_person_ros_confidence(detection_assets) -> None:
     """Test that Detection2DPerson preserves confidence when converting to ROS format."""
 
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-    from dimos.perception.detection.type.detection2d.person import Detection2DPerson
-    from dimos.utils.data import get_data
-
     # Load test image
-    image_path = get_data("cafe.jpg")
-    image = Image.from_file(image_path)
+    image_path = detection_assets("cafe.jpg")
+    image = image_from_file(image_path)
 
     # Run pose detection
-    detector = YoloPersonDetector(device="cpu")
-    detections = detector.process_image(image)
+    detector = YoloPersonDetector(model_path=str(detection_assets("models_yolo")), device="cpu")
+    try:
+        detections = detector.process_image(image)
+    finally:
+        detector.stop()
 
     # Find a Detection2DPerson (should have at least one person in cafe.jpg)
     person_detections = [d for d in detections.detections if isinstance(d, Detection2DPerson)]
@@ -52,16 +54,9 @@ def test_person_ros_confidence() -> None:
             f"Confidence mismatch: {original_confidence} != {ros_confidence}"
         )
 
-        print("\nSuccessfully preserved confidence in ROS conversion for Detection2DPerson:")
-        print(f"  Original confidence: {original_confidence:.3f}")
-        print(f"  ROS confidence: {ros_confidence:.3f}")
-        print(f"  Track ID: {person_det.track_id}")
-        print(f"  Visible keypoints: {len(person_det.get_visible_keypoints(threshold=0.3))}/17")
-
 
 def test_person_from_ros_raises() -> None:
     """Test that Detection2DPerson.from_ros_detection2d() raises NotImplementedError."""
-    from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
     with pytest.raises(NotImplementedError) as exc_info:
         Detection2DPerson.from_ros_detection2d()

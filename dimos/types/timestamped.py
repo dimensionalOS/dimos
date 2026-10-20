@@ -125,6 +125,17 @@ class Timestamped:
 T = TypeVar("T", bound=Timestamped)
 
 
+VALUE = TypeVar("VALUE")
+
+
+class TimestampedData(Timestamped, Generic[VALUE]):
+    """Local time-series adapter; leave timestamp metadata outside wire values."""
+
+    def __init__(self, value: VALUE, ts: float) -> None:
+        super().__init__(ts)
+        self.value = value
+
+
 PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
 SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 

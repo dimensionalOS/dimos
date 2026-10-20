@@ -22,6 +22,14 @@ on:
       - dimos/protocol/cdr_mcap.py
       - docs/usage/transforms.md
       - dimos/hardware/sensors/camera/**
+      - dimos/perception/detection/**
+      - dimos/perception/experimental/moduleDB.py
+      - dimos/models/vl/base.py
+      - dimos/models/vl/qwen.py
+      - dimos/models/vl/test_base.py
+      - dimos/types/timestamped.py
+      - data/.lfs/unitree_go2_detection_cdr.tar.gz
+      - docs/capabilities/perception/index.md
       - dimos/spec/perception.py
       - dimos/visualization/vis_module.py
       - examples/message-viewer/**
@@ -149,5 +157,13 @@ jobs:
       - name: Verify generated TF buffers and recorded lookups
         if: runner.os == 'Linux'
         run: |
+          .native-review/bin/python -m pip install 'mcap==1.5.0'
           .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o $'markers=self_hosted: optional host dependency case\nskipif_aarch64: optional architecture case' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/protocol/tf/test_tf.py" "$PWD/dimos/protocol/tf/test_static_tf_publisher.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/protocol/test_cdr_mcap.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/protocol/tf/tf.py dimos/protocol/tf/static_tf_publisher.py dimos/memory/tf.py
+      - name: Verify generated detection values and offline VLM image encoding
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'openai==2.21.0'
+          .native-review/bin/python -m pip install 'https://download-r2.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=8f8b3cfc53010a4b4a3c7ecb88c212e9decc4f5eeb6af75c3c803937d2d60947'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional project fixture case' --strict-markers -q "$PWD/dimos/perception/detection/type/detection2d/test_generated_bbox.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_filters.py" "$PWD/dimos/perception/detection/type/detection3d/test_imageDetections3D.py" "$PWD/dimos/perception/detection/type/detection3d/test_marker.py" "$PWD/dimos/models/vl/test_base.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/type dimos/perception/detection/module2D.py dimos/perception/detection/module3D.py dimos/perception/detection/detectors/base.py dimos/perception/detection/detectors/yolo.py dimos/perception/detection/detectors/person/yolo.py dimos/perception/experimental/moduleDB.py dimos/models/vl/base.py dimos/models/vl/qwen.py dimos/types/timestamped.py --exclude '(test_.*|conftest\.py)'

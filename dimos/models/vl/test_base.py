@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
+import base64
+from contextlib import nullcontext
 
+import cv2
+import numpy as np
+from openai.types.chat import ChatCompletion
 import pytest
 
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import header_now
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.data import get_data
-
-pytestmark = pytest.mark.self_hosted
 
 # Captured actual response from Qwen API for cafe.jpg with query "humans"
 # Added garbage around JSON to ensure we are robustly extracting it
@@ -41,14 +43,28 @@ MOCK_QWEN_RESPONSE = """
    """
 
 
-def test_query_detections_mocked() -> None:
+def test_query_detections_mocked(mocker) -> None:
     """Test query_detections with mocked API response (no API key required)."""
-    # Load test image
-    image = Image.from_file(get_data("cafe.jpg"))
+    image = image_from_array(
+        np.zeros((864, 1152, 3), dtype=np.uint8), encoding="rgb8", header=header_now("camera")
+    )
 
     # Create model and mock the query method
-    model = QwenVlModel()
-    model.query = MagicMock(return_value=MOCK_QWEN_RESPONSE)
+    client = mocker.patch("dimos.models.vl.qwen.OpenAI").return_value
+    client.chat.completions.create.return_value = ChatCompletion(
+        id="offline",
+        object="chat.completion",
+        created=0,
+        model="test",
+        choices=[
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": MOCK_QWEN_RESPONSE},
+            }
+        ],
+    )
+    model = QwenVlModel(api_key="offline-test")
 
     # Query for humans in the image
     query = "humans"
@@ -63,7 +79,7 @@ def test_query_detections_mocked() -> None:
     )
 
     # Verify each detection
-    img_height, img_width = image.shape[:2]
+    img_height, img_width = image.height, image.width
 
     for i, detection in enumerate(detections.detections):
         # Verify attributes
@@ -86,4 +102,36 @@ def test_query_detections_mocked() -> None:
         assert 0 <= y1 <= img_height, f"Detection {i}: y1={y1} out of bounds"
         assert 0 <= y2 <= img_height, f"Detection {i}: y2={y2} out of bounds"
 
-    print(f"✓ Successfully processed {len(detections.detections)} mocked detections")
+
+@pytest.mark.parametrize("as_array", [False, True])
+def test_qwen_encodes_source_pixels_and_keeps_numpy_compatibility(mocker, as_array):
+    client = mocker.patch("dimos.models.vl.qwen.OpenAI").return_value
+    client.chat.completions.create.return_value = ChatCompletion(
+        id="offline",
+        object="chat.completion",
+        created=0,
+        model="test",
+        choices=[
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "red"},
+            }
+        ],
+    )
+    pixels = np.full((20, 40, 3), [0, 0, 255], dtype=np.uint8)
+    image = image_from_array(pixels, encoding="bgr8", header=header_now("camera"))
+    model = QwenVlModel(api_key="offline-test", auto_resize=(20, 20))
+    with pytest.warns(DeprecationWarning) if as_array else nullcontext():
+        assert model.query(pixels if as_array else image, "color?") == "red"
+    request = client.chat.completions.create.call_args.kwargs
+    url = request["messages"][0]["content"][0]["image_url"]["url"]
+    prefix, encoded = url.split(",", 1)
+    assert prefix == "data:image/jpeg;base64"
+    decoded = cv2.imdecode(
+        np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+    )
+    assert decoded.shape == (10, 20, 3)
+    np.testing.assert_allclose(decoded[0, 0], [0, 0, 255], atol=2)
+    assert image.header.frame_id == "camera"
+    assert (image.width, image.height) == (40, 20)

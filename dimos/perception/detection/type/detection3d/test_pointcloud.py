@@ -16,10 +16,13 @@ import cv2
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
+from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.geometry import transform_from_matrix
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
@@ -31,15 +34,44 @@ pytestmark = pytest.mark.self_hosted
 
 PITCH = 0.05
 K = [100.0, 0.0, 320.0, 0.0, 100.0, 240.0, 0.0, 0.0, 1.0]
-CAMERA_INFO = CameraInfo(height=480, width=640, K=K)
+
+
+def _camera(distortion=()):
+    return CameraInfo(
+        header=Header(stamp=time_from_seconds(1.0), frame_id="camera_optical"),
+        height=480,
+        width=640,
+        distortion_model="plumb_bob",
+        d=np.asarray(distortion, dtype=np.float64),
+        k=np.asarray(K, dtype=np.float64),
+        r=np.eye(3).reshape(-1),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+
+
+CAMERA_INFO = _camera()
+
+
+def _identity():
+    return TransformStamped(
+        header=Header(stamp=time_from_seconds(1.0), frame_id="camera_optical"),
+        child_frame_id="world",
+        transform=transform_from_matrix(np.eye(4)),
+    )
+
+
+def _cloud(points, ts=1.0):
+    return pointcloud_from_xyz(points, header=Header(stamp=time_from_seconds(ts), frame_id="world"))
 
 
 def _image() -> Image:
-    return Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=1.0,
+    return image_from_array(
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical", stamp=time_from_seconds(1.0)),
     )
 
 
@@ -57,7 +89,7 @@ def _sighting(ts: float, confidence: float, name: str, points: int) -> Detection
         confidence=confidence,
         name=name,
         ts=ts,
-        pointcloud=PointCloud2.from_numpy(np.full((points, 3), ts), frame_id="world", timestamp=ts),
+        pointcloud=_cloud(np.full((points, 3), ts), ts),
         frame_id="world",
     )
 
@@ -103,10 +135,10 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
-    points, _ = detection3dpc.pointcloud.as_numpy()
+    points = pointcloud_xyz(detection3dpc.pointcloud)
     assert len(points) > 60
-    assert detection3dpc.pointcloud.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
+    assert detection3dpc.pointcloud.header.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pointcloud.header.frame_id}'"
     )
 
     min_pt = np.min(points, axis=0)
@@ -128,11 +160,11 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_detection_pose(detection3dpc):
     """Test detection pose and frame information."""
-    assert detection3dpc.pose.x == pytest.approx(-3.327, abs=0.1)
-    assert detection3dpc.pose.y == pytest.approx(-0.202, abs=0.1)
-    assert detection3dpc.pose.z == pytest.approx(0.160, abs=0.1)
-    assert detection3dpc.pose.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3dpc.pose.frame_id}'"
+    assert detection3dpc.pose.pose.position.x == pytest.approx(-3.327, abs=0.1)
+    assert detection3dpc.pose.pose.position.y == pytest.approx(-0.202, abs=0.1)
+    assert detection3dpc.pose.pose.position.z == pytest.approx(0.160, abs=0.1)
+    assert detection3dpc.pose.header.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pose.header.frame_id}'"
     )
 
 
@@ -160,7 +192,7 @@ def test_add() -> None:
 
     merged = strong + later
 
-    assert len(merged.pointcloud.as_numpy()[0]) == 10
+    assert len(pointcloud_xyz(merged.pointcloud)) == 10
     assert (merged.name, merged.confidence) == ("cup", 0.9)
     assert (merged.ts, merged.bbox) == (2.0, later.bbox)
 
@@ -171,7 +203,7 @@ def test_add() -> None:
 def test_project_pixels(D: list[float]) -> None:
     # matches OpenCV with and without distortion
     points = np.array([[0.3, -0.2, 1.0], [-0.6, 0.4, 1.5]])
-    info = CameraInfo(height=480, width=640, distortion_model="plumb_bob", D=D, K=K)
+    info = _camera(D)
     expected, _ = cv2.projectPoints(
         points, np.zeros(3), np.zeros(3), np.reshape(K, (3, 3)), np.array(D)
     )
@@ -181,9 +213,9 @@ def test_project_pixels(D: list[float]) -> None:
 
 def test_project_cloud_empty() -> None:
     # nothing in front of the camera
-    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, -1.0]]), frame_id="world", timestamp=1.0)
+    cloud = _cloud(np.array([[0.0, 0.0, -1.0]]))
 
-    world_points, pixels = Detection3DPC.project_cloud(cloud, CAMERA_INFO, Transform.identity())
+    world_points, pixels = Detection3DPC.project_cloud(cloud, CAMERA_INFO, _identity())
 
     assert len(world_points) == len(pixels) == 0
 
@@ -199,21 +231,21 @@ def test_from_2d_splat() -> None:
         class_id=0,
         confidence=0.9,
         name="stripe",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
         mask=mask,
     )
-    cloud = PointCloud2.from_numpy(_lattice(), frame_id="world", timestamp=1.0)
+    cloud = _cloud(_lattice())
 
     lifted = ImageDetections3DPC.from_2d(
         ImageDetections2D(image=image, detections=[stripe]),
         cloud,
         CAMERA_INFO,
-        Transform.identity(),
+        _identity(),
         [],
     )
 
-    columns = np.unique(np.round(lifted.detections[0].pointcloud.as_numpy()[0][:, 0], 3))
+    columns = np.unique(np.round(pointcloud_xyz(lifted.detections[0].pointcloud)[:, 0], 3))
     np.testing.assert_allclose(columns, [0.0, PITCH])
 
 
@@ -232,10 +264,10 @@ def test_range_cluster() -> None:
     )
 
     def keep(points: np.ndarray) -> PointCloud2 | None:
-        cloud = PointCloud2.from_numpy(points, frame_id="world", timestamp=1.0)
-        return range_cluster()(det, cloud, CAMERA_INFO, Transform.identity())
+        cloud = _cloud(points)
+        return range_cluster()(det, cloud, CAMERA_INFO, _identity())
 
     kept = keep(np.vstack((near, far)))
     assert kept is not None
-    np.testing.assert_allclose(np.sort(kept.as_numpy()[0][:, 2]), near[:, 2], rtol=1e-6)
+    np.testing.assert_allclose(np.sort(pointcloud_xyz(kept)[:, 2]), near[:, 2], rtol=1e-6)
     assert keep(np.empty((0, 3))) is None
