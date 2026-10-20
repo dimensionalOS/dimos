@@ -168,6 +168,15 @@ class GripperContactModel:
         # A sphere, in the tip frame, holding the whole gap.
         self._gap_center = (gap_low + gap_high) / 2.0
         self._gap_radius = float(np.linalg.norm(gap_high - gap_low) / 2.0)
+        # Where each shape's box spans along the tip's z axis at each pose: its
+        # centre's z, half its depth, and how much that half grows per metre the
+        # box grows on every side. (steps, shapes, 3), metres.
+        self._z_spans = np.array(
+            [
+                [_z_span(poses[shape.link], shape.low, shape.high) for shape in self._shapes]
+                for poses in self._tip_from_link
+            ]
+        )
 
     @property
     def links(self) -> list[str]:
@@ -303,15 +312,28 @@ class GripperContactModel:
         owner, local = self._near_points(grasps, points, self._center, self._radius + margin)
         if not len(owner):
             return outside, inside
+        # Sorted along the tip's z axis, so each shape looks only at the slice
+        # of points level with it.
+        order = np.argsort(local[:, 2], kind="stable")
+        owner, local = owner[order], local[order]
+        heights = local[:, 2]
         for step, tip_from_link in enumerate(self._tip_from_link):
-            for shape in self._shapes:
+            for index, shape in enumerate(self._shapes):
+                center, half, growth = self._z_spans[step, index]
+                reach = half + growth * margin
+                start = int(np.searchsorted(heights, center - reach, "left"))
+                stop = int(np.searchsorted(heights, center + reach, "right"))
+                if start >= stop:
+                    continue
                 pose = tip_from_link[shape.link]
                 # Each point in the link's frame: R^T (p - t), written for row vectors.
-                in_link = (local - pose[:3, 3]) @ pose[:3, :3]
-                kept = np.flatnonzero(_in_box(in_link, shape.low - margin, shape.high + margin))
+                in_link = (local[start:stop] - pose[:3, 3]) @ pose[:3, :3]
+                kept = start + np.flatnonzero(
+                    _in_box(in_link, shape.low - margin, shape.high + margin)
+                )
                 if not len(kept):
                     continue
-                in_link = in_link[kept]
+                in_link = in_link[kept - start]
                 distance = _distance(shape, in_link, margin)
                 near = distance < margin
                 if not near.any():
@@ -626,10 +648,33 @@ def _distance(shape: _LinkShape, points: NDArray[np.float64], margin: float) -> 
     return distance
 
 
+def _z_span(
+    pose: NDArray[np.float64], low: NDArray[np.float64], high: NDArray[np.float64]
+) -> tuple[float, float, float]:
+    """Where a box, placed by ``pose`` (4x4), spans along the z axis of the frame it is placed in.
+
+    Args:
+        pose: The box's frame in the outer frame.
+        low: Lower corner of the box in its own frame, metres.
+        high: Upper corner, metres.
+
+    Returns the z of the box's centre and half its depth along z (metres), and
+    how much that half depth grows for each metre the box grows on every side.
+    """
+    row = pose[2, :3]
+    center = float(row @ ((low + high) / 2.0) + pose[2, 3])
+    return center, float(np.abs(row) @ ((high - low) / 2.0)), float(np.abs(row).sum())
+
+
 def _in_box(
     points: NDArray[np.float64], low: NDArray[np.float64], high: NDArray[np.float64]
 ) -> NDArray[np.bool_]:
-    return np.all((points >= low) & (points <= high), axis=1)  # type: ignore[no-any-return]
+    # One axis at a time: several times faster than reducing an (N, 3) mask.
+    inside: NDArray[np.bool_] = (points[:, 0] >= low[0]) & (points[:, 0] <= high[0])
+    for axis in (1, 2):
+        column = points[:, axis]
+        inside &= (column >= low[axis]) & (column <= high[axis])
+    return inside
 
 
 def _box_corners(low: NDArray[np.float64], high: NDArray[np.float64]) -> list[NDArray[np.float64]]:

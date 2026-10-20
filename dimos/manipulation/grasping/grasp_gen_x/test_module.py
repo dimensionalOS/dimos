@@ -115,10 +115,15 @@ def test_gripper_constraints_are_declared_by_fields(field: str, value: Any) -> N
         config(gripper={**gripper, field: value})
 
 
-@pytest.mark.parametrize("value", [0, -1, True])
+@pytest.mark.parametrize("value", [0, -1, True, 2.5, "2.5", "-1"])
 def test_candidate_limit_is_a_strict_positive_integer(value: Any) -> None:
     with pytest.raises(ValueError):
         config(max_candidates=value)
+
+
+def test_counts_read_from_the_environment_are_numbers() -> None:
+    assert config(max_candidates="100", num_samples=" 300 ").max_candidates == 100
+    assert config(num_samples="300").num_samples == 300
 
 
 def test_rigid_transform_relational_validation() -> None:

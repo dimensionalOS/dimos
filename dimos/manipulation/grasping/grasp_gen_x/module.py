@@ -16,10 +16,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 import numpy as np
-from pydantic import Field, FiniteFloat, field_validator
+from pydantic import BeforeValidator, Field, FiniteFloat, field_validator
 
 from dimos.core.core import rpc
 from dimos.experimental.isolated_python.module import (
@@ -37,7 +37,17 @@ GRASPGENX_MODEL_VERSION = "release"
 
 BoundedExtent = Annotated[FiniteFloat, Field(gt=0.0, le=0.5)]
 BoundedOffset = Annotated[FiniteFloat, Field(ge=-0.5, le=0.5)]
-PositiveCount = Annotated[int, Field(gt=0, strict=True)]
+
+
+def _whole_number_text(value: Any) -> Any:
+    """A whole number written as text, as an environment variable gives it, as an int."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return value
+
+
+# A count above zero. Text such as "100" is read as a number; True and 2.5 are refused.
+PositiveCount = Annotated[int, BeforeValidator(_whole_number_text), Field(gt=0, strict=True)]
 SweepExtents: TypeAlias = tuple[BoundedExtent, BoundedExtent, BoundedExtent]
 SweepOffset: TypeAlias = tuple[BoundedOffset, BoundedOffset, BoundedOffset]
 Vector4: TypeAlias = tuple[FiniteFloat, FiniteFloat, FiniteFloat, FiniteFloat]
