@@ -99,9 +99,10 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
 EGO_FORE_AFT_FAMILY = FamilySpec(
     name="ego_fore_aft",
     description=(
-        "Ask whether one localized referent is ahead of or behind the robot body. "
-        "Prefer bare names for unique objects, 'nearest <object>', "
-        "'<object> next to <landmark>', or left/right <object>. "
+        "Ask whether one localized referent is ahead of or behind the robot body "
+        "(ahead/behind cones: |bearing| ≤ 45° / ≥ 135°, range 0.5–5 m; sides rejected). "
+        "Prefer bare names for unique objects, 'nearest <object>', or "
+        "'<object> next to <landmark>'. Do not use left/right <object> referents. "
         "Do not infer fore/aft from the image."
     ),
     requires_localize=True,
@@ -121,18 +122,19 @@ HEIGHT_ORDER_FAMILY = FamilySpec(
 EGO_TURN_FAMILY = FamilySpec(
     name="ego_turn",
     description=(
-        "Ask whether the robot should turn left, turn right, or is already facing one localized "
-        "referent: bare unique name, nearest <object>, or '<object> next to <landmark>'. "
-        "Do not use left/right <object> referents — that leaks the turn answer. "
-        "Do not infer bearing from the image alone."
+        "Ask whether the robot should turn left, turn right, turn around, or is already facing "
+        "one localized referent: bare unique name, nearest <object>, or "
+        "'<object> next to <landmark>'. Ahead means |bearing| ≤ 45° in the robot yaw frame; "
+        "behind is turn around. Do not use left/right <object> referents — that leaks the turn "
+        "answer. Do not infer bearing from the image alone."
     ),
     requires_localize=True,
 )
 EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
     name="ego_any_fore_aft",
     description=(
-        "Ask whether any verified instance of a category lies ahead of the robot. "
-        "Use a bare category name. Do not infer from the image alone."
+        "Ask whether any verified instance of a category lies in the ahead cone "
+        "(|bearing| ≤ 45°, 0.5–5 m). Use a bare category name. Do not infer from the image alone."
     ),
     requires_localize=True,
 )
@@ -479,9 +481,9 @@ def _answer_ego_fore_aft(
     proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
 ) -> FamilyAnswer:
     referent = proposal.object_names[0]
+    parsed = parse_referent(referent)
     answer = fore_aft_of(localize_scene, referent)
     instance = resolve_referent(localize_scene, referent)
-    parsed = parse_referent(referent)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
     evidence: dict[str, JsonValue] = {
         "primitive": "localize_scene",
@@ -493,7 +495,7 @@ def _answer_ego_fore_aft(
         "robot_yaw_rad": localize_scene.robot_yaw_rad,
         "robot_relative_forward_m": forward,
         "robot_relative_left_m": left,
-        "answer_rule": "sign_of_robot_forward_axis",
+        "answer_rule": "ahead_behind_cones_45_135",
     }
     if parsed.landmark is not None:
         evidence["landmark"] = parsed.landmark
@@ -540,10 +542,6 @@ def _answer_ego_turn(
 ) -> FamilyAnswer:
     referent = proposal.object_names[0]
     parsed = parse_referent(referent)
-    if parsed.selector in ("left", "right"):
-        raise InsufficientEvidenceError(
-            "ego_turn rejects left/right referents because the label leaks the turn answer"
-        )
     answer = ego_turn_to(localize_scene, referent)
     instance = resolve_referent(localize_scene, referent)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
@@ -557,16 +555,16 @@ def _answer_ego_turn(
         "robot_yaw_rad": localize_scene.robot_yaw_rad,
         "robot_relative_forward_m": forward,
         "robot_relative_left_m": left,
-        "answer_rule": "bearing_in_robot_yaw_frame",
+        "answer_rule": "bearing_cones_45_with_turn_around",
     }
     if parsed.landmark is not None:
         evidence["landmark"] = parsed.landmark
     return FamilyAnswer(
         question=(
             f"To face the {referent}, should the robot turn left, turn right, "
-            "or is it already ahead?"
+            "turn around, or is it already ahead?"
         ),
-        choices=("left", "right", "ahead"),
+        choices=("left", "right", "turn around", "ahead"),
         answer=answer,
         evidence=evidence,
     )
@@ -592,7 +590,7 @@ def _answer_ego_any_fore_aft(
             "primitive": "localize_scene",
             "object_name": bare,
             "selector": "any_ahead",
-            "answer_rule": "exists_instance_with_forward_above_margin",
+            "answer_rule": "exists_instance_in_ahead_cone_45",
             "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
             "robot_yaw_rad": localize_scene.robot_yaw_rad,
         },

@@ -22,8 +22,10 @@ Referent strings (``object_names`` entries) may be:
 
 - bare category: exactly one verified hit (rare / unique objects)
 - ``nearest <category>``: closest hit to the robot
-- ``left <category>`` / ``right <category>``: lateral extremes with margin
 - ``<anchor> next to <landmark>``: anchor instance nearest a landmark category
+
+``left`` / ``right`` ``<category>`` referents are parsed only so legacy audits can be
+ignored; they are not resolved or proposed.
 """
 
 from __future__ import annotations
@@ -41,19 +43,20 @@ if TYPE_CHECKING:
     from dimos.perception.localize.types import Localization
 
 ForeAft = Literal["ahead", "behind"]
-EgoTurn = Literal["left", "right", "ahead"]
+EgoTurn = Literal["left", "right", "ahead", "turn around"]
 ReferentSelector = Literal["unique", "nearest", "left", "right", "next_to"]
 
-FORE_AFT_MIN_FORWARD_M = 0.30
-TURN_AHEAD_ABS_RAD = math.pi / 6  # 30 degrees
+# Shared ego cones — see experience/ego-spatial-sectors.md
+AHEAD_ABS_DEG = 45.0
+BEHIND_ABS_DEG = 135.0
+RANGE_MIN_M = 0.5
+RANGE_MAX_M = 5.0
 HEIGHT_MARGIN_M = 0.15
-EGO_TURN_MIN_RANGE_M = 0.30
-SPATIAL_LATERAL_MARGIN_M = 0.30
-SPATIAL_SIDE_SEPARATION_M = 0.40
 NEXT_TO_MAX_RANGE_M = 1.50
 NEXT_TO_UNIQUENESS_MARGIN_M = 0.35
 _NEXT_TO_TOKEN = " next to "
 
+# left/right kept for legacy audit parsing only — not proposed or resolved.
 _SELECTOR_PREFIXES: tuple[tuple[ReferentSelector, str], ...] = (
     ("nearest", "nearest "),
     ("left", "left "),
@@ -176,8 +179,12 @@ def require_one_instance(
 
 
 def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeInstanceEvidence:
-    """Resolve a unique / nearest / left / right / next-to referent to one instance."""
+    """Resolve a unique / nearest / next-to referent to one instance."""
     parsed = parse_referent(referent)
+    if parsed.selector in ("left", "right"):
+        raise InsufficientEvidenceError(
+            "left/right category referents are not supported"
+        )
     if parsed.selector == "next_to":
         assert parsed.landmark is not None
         return _resolve_next_to(scene, parsed.category, parsed.landmark, referent=referent)
@@ -190,14 +197,11 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
         return hits[0]
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {parsed.category!r}")
-    if parsed.selector == "nearest":
-        return min(
-            hits,
-            key=lambda inst: math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)),
-        )
-    if parsed.selector == "left":
-        return _extreme_lateral(scene, hits, side="left", referent=referent)
-    return _extreme_lateral(scene, hits, side="right", referent=referent)
+    # nearest
+    return min(
+        hits,
+        key=lambda inst: math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)),
+    )
 
 
 def _horizontal_distance_m(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -286,52 +290,6 @@ def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 8) -> tu
     return tuple(chosen)
 
 
-def _extreme_lateral(
-    scene: LocalizeSceneEvidence,
-    hits: Sequence[LocalizeInstanceEvidence],
-    *,
-    side: Literal["left", "right"],
-    referent: str,
-) -> LocalizeInstanceEvidence:
-    scored: list[tuple[float, LocalizeInstanceEvidence]] = []
-    for inst in hits:
-        _, left = robot_relative_xy(scene, inst.position_world_xyz)
-        if side == "left" and left >= SPATIAL_LATERAL_MARGIN_M:
-            scored.append((left, inst))
-        elif side == "right" and left <= -SPATIAL_LATERAL_MARGIN_M:
-            scored.append((left, inst))
-    if not scored:
-        raise InsufficientEvidenceError(
-            f"{referent!r} has no instance clearly on the {side} of the robot"
-        )
-    scored.sort(key=lambda item: item[0], reverse=(side == "left"))
-    if len(scored) >= 2 and abs(scored[0][0] - scored[1][0]) < SPATIAL_SIDE_SEPARATION_M:
-        raise InsufficientEvidenceError(
-            f"{referent!r} is ambiguous: top lateral candidates are closer than "
-            f"{SPATIAL_SIDE_SEPARATION_M} m"
-        )
-    return scored[0][1]
-
-
-def spatial_side_referents(scene: LocalizeSceneEvidence, category: str) -> tuple[str, str] | None:
-    """Return ``(left <cat>, right <cat>)`` when both sides are unambiguous, else ``None``."""
-    hits = instances_named(scene, category)
-    if len(hits) < 2:
-        return None
-    left_name = format_referent("left", category)
-    right_name = format_referent("right", category)
-    try:
-        left_inst = resolve_referent(scene, left_name)
-        right_inst = resolve_referent(scene, right_name)
-    except InsufficientEvidenceError:
-        return None
-    _, left_l = robot_relative_xy(scene, left_inst.position_world_xyz)
-    _, right_l = robot_relative_xy(scene, right_inst.position_world_xyz)
-    if left_l - right_l < SPATIAL_SIDE_SEPARATION_M:
-        return None
-    return left_name, right_name
-
-
 def robot_relative_xy(
     scene: LocalizeSceneEvidence, world_xyz: tuple[float, float, float]
 ) -> tuple[float, float]:
@@ -344,39 +302,63 @@ def robot_relative_xy(
     return forward, left
 
 
-def fore_aft_of(scene: LocalizeSceneEvidence, referent: str) -> ForeAft:
-    """Whether the resolved referent lies ahead of or behind the robot."""
-    inst = resolve_referent(scene, referent)
-    forward, _ = robot_relative_xy(scene, inst.position_world_xyz)
-    if abs(forward) < FORE_AFT_MIN_FORWARD_M:
+def robot_bearing_deg(
+    scene: LocalizeSceneEvidence, world_xyz: tuple[float, float, float]
+) -> tuple[float, float]:
+    """Bearing ``θ=atan2(left, forward)`` in degrees (left-positive) and range ``r``."""
+    forward, left = robot_relative_xy(scene, world_xyz)
+    range_m = math.hypot(forward, left)
+    return math.degrees(math.atan2(left, forward)), range_m
+
+
+def _require_eligible_range(range_m: float, referent: str) -> None:
+    if range_m < RANGE_MIN_M or range_m > RANGE_MAX_M:
         raise InsufficientEvidenceError(
-            f"{referent!r} is too close to the robot lateral plane for fore/aft"
+            f"{referent!r} is outside the eligible range "
+            f"[{RANGE_MIN_M}, {RANGE_MAX_M}] m (got {range_m:.2f} m)"
         )
-    return "ahead" if forward > 0 else "behind"
+
+
+def _in_ahead_cone(theta_deg: float, range_m: float) -> bool:
+    return RANGE_MIN_M <= range_m <= RANGE_MAX_M and abs(theta_deg) <= AHEAD_ABS_DEG
+
+
+def fore_aft_of(scene: LocalizeSceneEvidence, referent: str) -> ForeAft:
+    """Whether the resolved referent lies in the ahead or behind cone."""
+    inst = resolve_referent(scene, referent)
+    theta_deg, range_m = robot_bearing_deg(scene, inst.position_world_xyz)
+    _require_eligible_range(range_m, referent)
+    abs_theta = abs(theta_deg)
+    if abs_theta <= AHEAD_ABS_DEG:
+        return "ahead"
+    if abs_theta >= BEHIND_ABS_DEG:
+        return "behind"
+    raise InsufficientEvidenceError(
+        f"{referent!r} is off to the side for fore/aft "
+        f"(|θ|={abs_theta:.1f}°, need ≤{AHEAD_ABS_DEG:g}° or ≥{BEHIND_ABS_DEG:g}°)"
+    )
 
 
 def ego_turn_to(scene: LocalizeSceneEvidence, referent: str) -> EgoTurn:
     """Turn needed for the robot yaw to face the resolved referent."""
     inst = resolve_referent(scene, referent)
-    forward, left = robot_relative_xy(scene, inst.position_world_xyz)
-    if math.hypot(forward, left) < EGO_TURN_MIN_RANGE_M:
-        raise InsufficientEvidenceError(
-            f"{referent!r} is too close to the robot for an ego-turn bearing"
-        )
-    bearing = math.atan2(left, forward)
-    if abs(bearing) <= TURN_AHEAD_ABS_RAD:
+    theta_deg, range_m = robot_bearing_deg(scene, inst.position_world_xyz)
+    _require_eligible_range(range_m, referent)
+    abs_theta = abs(theta_deg)
+    if abs_theta <= AHEAD_ABS_DEG:
         return "ahead"
-    return "left" if bearing > 0 else "right"
+    if abs_theta >= BEHIND_ABS_DEG:
+        return "turn around"
+    return "left" if theta_deg > 0 else "right"
 
 
 def any_ahead(scene: LocalizeSceneEvidence, category: str) -> bool:
-    """Whether any verified instance of ``category`` lies clearly ahead of the robot."""
+    """Whether any verified instance of ``category`` lies in the ahead cone."""
     hits = instances_named(scene, category)
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
     return any(
-        robot_relative_xy(scene, inst.position_world_xyz)[0] >= FORE_AFT_MIN_FORWARD_M
-        for inst in hits
+        _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz)) for inst in hits
     )
 
 

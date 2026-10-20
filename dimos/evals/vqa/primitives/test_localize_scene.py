@@ -30,7 +30,6 @@ from dimos.evals.vqa.primitives.localize_scene import (
     parse_referent,
     resolve_referent,
     robot_relative_xy,
-    spatial_side_referents,
 )
 
 
@@ -65,11 +64,19 @@ def test_fore_aft_uses_forward_axis_sign(xyz: tuple[float, float, float], expect
     assert fore_aft_of(scene, "chair") == expected
 
 
-def test_fore_aft_rejects_near_lateral_plane() -> None:
+def test_fore_aft_rejects_side_cone() -> None:
     scene = _scene(
-        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(0.1, 1.0, 0.0))
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(0.5, 1.5, 0.0))
     )
-    with pytest.raises(InsufficientEvidenceError, match="fore/aft"):
+    with pytest.raises(InsufficientEvidenceError, match="off to the side"):
+        fore_aft_of(scene, "chair")
+
+
+def test_fore_aft_rejects_out_of_range() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(6.0, 0.0, 0.0))
+    )
+    with pytest.raises(InsufficientEvidenceError, match="eligible range"):
         fore_aft_of(scene, "chair")
 
 
@@ -77,8 +84,10 @@ def test_fore_aft_rejects_near_lateral_plane() -> None:
     ("xyz", "expected"),
     (
         ((2.0, 0.0, 0.0), "ahead"),
-        ((1.0, 1.0, 0.0), "left"),
-        ((1.0, -1.0, 0.0), "right"),
+        ((1.0, 1.0, 0.0), "ahead"),  # |θ|=45° is still ahead
+        ((1.0, 1.2, 0.0), "left"),
+        ((1.0, -1.2, 0.0), "right"),
+        ((-2.0, 0.0, 0.0), "turn around"),
     ),
 )
 def test_ego_turn_buckets_bearing(xyz: tuple[float, float, float], expected: str) -> None:
@@ -107,7 +116,7 @@ def test_ego_turn_rejects_near_robot() -> None:
     scene = _scene(
         LocalizeInstanceEvidence(object_name="door", position_world_xyz=(0.05, 0.05, 0.0))
     )
-    with pytest.raises(InsufficientEvidenceError, match="ego-turn"):
+    with pytest.raises(InsufficientEvidenceError, match="eligible range"):
         ego_turn_to(scene, "door")
 
 
@@ -121,14 +130,13 @@ def test_resolve_nearest_picks_closest_instance() -> None:
     assert fore_aft_of(scene, "nearest chair") == "ahead"
 
 
-def test_spatial_side_referents_for_left_and_right_instances() -> None:
+def test_resolve_rejects_left_right_referents() -> None:
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 1.2, 0.0)),
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, -1.2, 0.0)),
     )
-    assert spatial_side_referents(scene, "chair") == ("left chair", "right chair")
-    assert resolve_referent(scene, "left chair").position_world_xyz[1] == pytest.approx(1.2)
-    assert resolve_referent(scene, "right chair").position_world_xyz[1] == pytest.approx(-1.2)
+    with pytest.raises(InsufficientEvidenceError, match="not supported"):
+        resolve_referent(scene, "left chair")
 
 
 def test_any_ahead_true_when_one_instance_ahead() -> None:
@@ -143,6 +151,14 @@ def test_any_ahead_false_when_all_behind() -> None:
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-1.0, 0.5, 0.0)),
+    )
+    assert any_ahead(scene, "chair") is False
+
+
+def test_any_ahead_false_when_only_lateral() -> None:
+    # Old half-plane rule would count forward>0; ahead cone rejects |θ|>45°.
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.0)),
     )
     assert any_ahead(scene, "chair") is False
 

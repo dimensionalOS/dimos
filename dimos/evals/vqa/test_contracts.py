@@ -1660,7 +1660,7 @@ def test_ego_turn_answers_from_localize_scene() -> None:
     )
 
     assert answer.answer == "left"
-    assert answer.choices == ("left", "right", "ahead")
+    assert answer.choices == ("left", "right", "turn around", "ahead")
 
 
 def test_ego_any_fore_aft_answers_from_localize_scene() -> None:
@@ -1686,9 +1686,28 @@ def test_ego_turn_rejects_left_right_referents() -> None:
             LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, -1.2, 0.5)),
         ),
     )
-    with pytest.raises(InsufficientEvidenceError, match="leaks the turn answer"):
+    with pytest.raises(InsufficientEvidenceError, match="not supported"):
         answer_question(
             QuestionProposal(family="ego_turn", object_names=("left chair",)),
+            image,
+            _Detector(present=True),
+            localize_scene=scene,
+        )
+
+
+def test_ego_fore_aft_rejects_left_right_referents() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 1.2, 0.5)),
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, -1.2, 0.5)),
+        ),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="not supported"):
+        answer_question(
+            QuestionProposal(family="ego_fore_aft", object_names=("left chair",)),
             image,
             _Detector(present=True),
             localize_scene=scene,

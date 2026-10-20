@@ -38,7 +38,6 @@ from dimos.evals.vqa.primitives.localize_scene import (
     format_referent,
     next_to_referents,
     scene_from_named_hits,
-    spatial_side_referents,
 )
 from dimos.memory.cli.dataset import open_dataset
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
@@ -106,7 +105,7 @@ _MAX_NEXT_TO_PAIRS = 6
 
 
 def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[QuestionProposal, ...]:
-    """Deterministic localize proposals: unique, nearest, relational, sides, any-ahead."""
+    """Deterministic localize proposals: unique, nearest, next-to, any-ahead."""
     by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
     display_name: dict[str, str] = {}
     for instance in scene.instances:
@@ -139,20 +138,14 @@ def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[Questio
         proposals.append(QuestionProposal(family="ego_turn", object_names=(name,)))
         proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
 
-    # 2) Nearest-to-robot + 3) left/right fore-aft only + 4) existential.
+    # 2) Multi-instance: nearest + existential (no left/right — unnatural in question text).
     for name in multi_names:
         nearest = format_referent("nearest", name)
         proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(nearest,)))
         proposals.append(QuestionProposal(family="ego_turn", object_names=(nearest,)))
-        sides = spatial_side_referents(scene, name)
-        if sides is not None:
-            # left/right referents already encode lateral side — ego_turn would be
-            # nearly tautological ("left X" → turn left). Keep only fore/aft.
-            for referent in sides:
-                proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
         proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
 
-    # 5) Relational referents: "<anchor> next to <landmark>" (no leaked turn answer).
+    # 3) Relational referents: "<anchor> next to <landmark>" (no leaked turn answer).
     for referent in next_to_referents(scene, max_pairs=_MAX_NEXT_TO_PAIRS):
         proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
         proposals.append(QuestionProposal(family="ego_turn", object_names=(referent,)))
