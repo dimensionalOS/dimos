@@ -88,10 +88,9 @@ class ConnectedHardware:
 
     @property
     def dispatched_positions(self) -> tuple[float, ...] | None:
-        """Position payload accepted during the latest write_command call, in joint order.
+        """Adapter-accepted positions in joint order, or None on a failed/non-position write.
 
-        Reset on every write_command attempt. This records adapter acceptance, not motor
-        acknowledgment or any transformation performed inside the adapter.
+        Describes the latest write_command call, not motor acknowledgment.
         """
         return self._dispatched_positions
 

@@ -33,6 +33,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 JOINTS = ["arm/joint2", "arm/joint1", "arm/gripper"]
@@ -73,7 +74,7 @@ def loop(hardware_by_id: dict[str, ConnectedHardware], received: list[JointState
         tasks={},
         task_lock=threading.Lock(),
         joint_to_hardware={name: "arm" for name in JOINTS},
-        publish_command_callback=receive,
+        publish_applied_position_callback=receive,
         frame_id="robot",
     )
 
@@ -218,8 +219,61 @@ def test_coordinator_wires_output_to_tick_loop():
         try:
             coordinator.start()
             assert (
-                tick_cls.call_args.kwargs["publish_command_callback"]
+                tick_cls.call_args.kwargs["publish_applied_position_callback"]
                 == coordinator.applied_joint_position_command.publish
             )
         finally:
             coordinator.stop()
+
+
+def test_command_subscriber_failure_preserves_measured_outputs():
+    hw, adapter = hardware()
+    coordinator = ControlCoordinator()
+    measured = MagicMock()
+    per_robot = MagicMock()
+    transforms = MagicMock()
+    task = MagicMock()
+    task.name = "servo"
+    task.is_active.return_value = True
+    task.claim.return_value = ResourceClaim(joints=frozenset(JOINTS))
+    task.compute.return_value = JointCommandOutput(
+        joint_names=["arm/joint1"],
+        positions=[1.5],
+        mode=ControlMode.SERVO_POSITION,
+    )
+    task.measured_frame_poses.return_value = {"tool": PoseStamped(position=(0.1, 0.2, 0.3))}
+
+    def fail(msg: JointState) -> None:
+        assert msg.position == [0.1, 1.5, 0.3]
+        raise RuntimeError("recording subscriber failed")
+
+    unsubscribe = coordinator.applied_joint_position_command.subscribe(fail)
+    tick = TickLoop(
+        tick_rate=100,
+        hardware={"arm": hw},
+        hardware_lock=threading.Lock(),
+        tasks={"servo": task},
+        task_lock=threading.Lock(),
+        joint_to_hardware={name: "arm" for name in JOINTS},
+        publish_callback=measured,
+        publish_robot_callback=per_robot,
+        publish_tf_callback=transforms,
+        publish_applied_position_callback=coordinator.applied_joint_position_command.publish,
+    )
+    try:
+        with patch("dimos.control.tick_loop.logger.exception") as log_error:
+            with patch("dimos.control.tick_loop.time.time", return_value=456.0):
+                tick._tick()
+        assert adapter.write_joint_positions.call_args.args[0] == [0.1, 1.5, 0.3]
+        measured.assert_called_once()
+        assert measured.call_args.args[0].position == [0.1, 0.2, 0.3]
+        assert measured.call_args.args[0].ts == 456.0
+        per_robot.assert_called_once()
+        assert per_robot.call_args.args[0] == "arm"
+        assert per_robot.call_args.args[1].position == [0.1, 0.2, 0.3]
+        transforms.assert_called_once()
+        assert transforms.call_args.args[0].transforms[0].child_frame_id == "tool"
+        log_error.assert_called_once()
+    finally:
+        unsubscribe()
+        coordinator.stop()

@@ -1,13 +1,13 @@
 # Record coordinator position targets
 
 `ControlCoordinator.applied_joint_position_command` publishes `JointState` after
-successful adapter writes, using the interface extracted from learning-stack
-PR #4391. It contains POSITION and SERVO_POSITION targets after task computation,
-IK, task-side limits, arbitration, routing, and wrapper hold-last expansion.
+successful adapter writes. It contains POSITION and SERVO_POSITION targets after
+task computation, IK, task-side limits, arbitration, routing, and wrapper hold-last
+expansion.
 
-Each message contains the full position vector sent to each successful adapter
-in that tick. Names follow `HardwareComponent.joints` order within each hardware
-block. Hardware blocks follow dispatch order; consumers must select joints by
+`coordinator_joint_state` contains measured feedback. This stream instead contains
+the full position vector sent to each successful adapter in that tick. Names
+follow `HardwareComponent.joints` order within each hardware block. Hardware blocks follow dispatch order; consumers must select joints by
 name rather than assume a fixed whole-robot vector. Grippers retain their adapter
 units, as do all other joints. `velocity` and `effort` are empty. Whole-body
 entries contain `MotorCommand.q`, without PD gains or feed-forward torque.
@@ -23,7 +23,8 @@ Hardware without a write in that tick is absent. Failed, rejected, or unready
 hardware is absent, and an empty tick produces no message. If one adapter fails,
 the message can still contain the other successful adapters. A failed adapter
 may already have sent part of its payload; its boolean return cannot describe
-that partial success.
+that partial success. Publication failures are logged and do not suppress measured
+state, per-robot state, or TF output.
 
 Acceptance means the adapter returned `True`. This is not motor acknowledgment
 or proof of motion. The stream records the coordinator-to-adapter payload;
@@ -31,20 +32,6 @@ adapter or driver transformations, internal clamping, asynchronous trajectory
 execution, and physical tracking remain outside this boundary. Both position
 modes share this stream because the existing `JointState` schema has no mode
 field. Use a graph with a known position mode for policy collection.
-
-## Subscribe
-
-For an in-process coordinator, subscribe before starting the mock or simulated
-stack, and unsubscribe during cleanup:
-
-```python skip
-unsubscribe = coordinator.applied_joint_position_command.subscribe(
-    lambda msg: print(msg.ts, dict(zip(msg.name, msg.position, strict=True)))
-)
-# Start and use the coordinator through the existing application lifecycle.
-# On shutdown:
-unsubscribe()
-```
 
 ## Record with the existing SQLite recorder
 

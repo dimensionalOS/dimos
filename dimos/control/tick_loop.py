@@ -84,8 +84,8 @@ class TickLoop:
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
-        publish_callback: Optional callback to publish the merged JointState
-        publish_command_callback: Optional callback for adapter-accepted position targets
+        publish_callback: Measured joint state read at the start of the tick
+        publish_applied_position_callback: Accepted position-target feedback, not command dispatch
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
         publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
         frame_pose_hz: Maximum rate for publish_tf_callback
@@ -107,7 +107,7 @@ class TickLoop:
         frame_pose_hz: float = 30.0,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
-        publish_command_callback: Callable[[JointState], None] | None = None,
+        publish_applied_position_callback: Callable[[JointState], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -116,7 +116,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
-        self._publish_command_callback = publish_command_callback
+        self._publish_applied_position_callback = publish_applied_position_callback
         self._publish_robot_callback = publish_robot_callback
         self._publish_tf_callback = publish_tf_callback
         self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
@@ -454,17 +454,20 @@ class TickLoop:
                                 values.extend(dispatched)
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
-        if names and self._publish_command_callback is not None:
-            self._publish_command_callback(
-                JointState(
-                    ts=timestamp,
-                    frame_id=self._frame_id,
-                    name=names,
-                    position=values,
-                    velocity=[],
-                    effort=[],
+        if names and self._publish_applied_position_callback is not None:
+            try:
+                self._publish_applied_position_callback(
+                    JointState(
+                        ts=timestamp,
+                        frame_id=self._frame_id,
+                        name=names,
+                        position=values,
+                        velocity=[],
+                        effort=[],
+                    )
                 )
-            )
+            except Exception:
+                logger.exception("Failed to publish applied position targets")
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""

@@ -917,7 +917,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
-            publish_command_callback=self.applied_joint_position_command.publish,
+            publish_applied_position_callback=self.applied_joint_position_command.publish,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses
