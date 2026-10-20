@@ -24,8 +24,8 @@ from typing import Any
 import pytest
 
 from dimos.cloud import data as cd
+from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
-from dimos.core.global_config import global_config
 
 
 class FakeTransport:
@@ -141,7 +141,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
-    monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
 
@@ -276,10 +275,9 @@ def test_recordings_discovery(
 
 
 def test_not_logged_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cd, "api_key", lambda: None)
-    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    monkeypatch.setattr(cd, "api_key", lambda config: None)
     with pytest.raises(RuntimeError, match="dimos login"):
-        CloudData()
+        CloudData(config=CloudConfig(api_key=None))
 
 
 def test_pull_with_cross_filesystem_staging(

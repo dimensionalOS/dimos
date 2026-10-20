@@ -30,6 +30,7 @@ from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.simulation.dimsim.config import DIMSIM_PORT
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
 if TYPE_CHECKING:
@@ -94,7 +95,6 @@ def serve_channel() -> Iterator[Callable[..., str]]:
         message: Any,
         robot_id: str,
         serve_dir: str | None = None,
-        rtc_file: str | None = None,
     ) -> str:
         (atom,) = blueprint.blueprints
         module = atom.module(
@@ -102,7 +102,6 @@ def serve_channel() -> Iterator[Callable[..., str]]:
             open_browser=False,
             robot_id=robot_id,
             serve_dir=serve_dir,
-            rtc_file=rtc_file,
             **atom.kwargs,
         )
         bridge_transport = make_transport(topic)
@@ -146,10 +145,17 @@ def lcm_spy() -> Iterator[LcmSpy]:
     lcm_spy.stop()
 
 
+@pytest.fixture(scope="session")
+def dimsim_port() -> int:
+    """One port for the launched DimSim and the test's DimSimClient."""
+    return DIMSIM_PORT
+
+
 @pytest.fixture
-def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
+def start_blueprint(mcp_port: int, dimsim_port: int) -> Iterator[Callable[..., DimosCliCall]]:
     dimos_robot_call = DimosCliCall()
     dimos_robot_call.mcp_port = mcp_port
+    dimos_robot_call.dimsim_port = dimsim_port
 
     def set_name_and_start(
         *demo_args: str,
@@ -202,8 +208,8 @@ def direct_cmd_vel_explorer() -> Generator[DirectCmdVelExplorer, None, None]:
 
 
 @pytest.fixture
-def dim_sim():
-    client = DimSimClient()
+def dim_sim(dimsim_port: int):
+    client = DimSimClient(dimsim_port)
     client.start()
     yield client
     client.stop()

@@ -50,10 +50,9 @@ class RelayBridgeConfig(ModuleConfig):
     """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
     private CA). It replaces the default trust stores for both the /api/info
     fetch and QUIC, so leave it unset for a relay with a public certificate."""
-    relay_key: str | None = None
+    relay_key: str | None = Field(default=None, repr=False)
     """Robot key for a relay_url relay started with --auth-file (bound to
-    robot_id there), sent in hello. Falls back to GlobalConfig.relay_key
-    (RELAY_KEY)."""
+    robot_id there), sent in hello."""
     rtc: bool = True
     """Deliver jpeg.v1 video channels as WebRTC tracks (video.webrtc.v1)
     through the relay's Cloudflare SFU when the relay advertises it and
@@ -76,7 +75,7 @@ class RelayBridgeConfig(ModuleConfig):
     (index.html for /); /api/* and /sdk.js keep precedence over it. Local
     relay only: rejected when relay_url attaches to an existing relay."""
     robot_id: str = ""
-    """Relay identity; empty falls back to g.robot_id, then the hostname."""
+    """Relay identity; empty falls back to the hostname."""
     robot_name: str = ""
     """Display name; empty falls back to robot_id."""
     jpeg_quality: int = Field(default=75, ge=0, le=100)
@@ -153,7 +152,7 @@ def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> d
 
 
 def resolve_robot_info(config: RelayBridgeConfig) -> RobotInfo:
-    robot_id = config.robot_id or config.g.robot_id or socket.gethostname()
+    robot_id = config.robot_id or socket.gethostname()
     return RobotInfo(
         id=robot_id,
         name=config.robot_name or robot_id,

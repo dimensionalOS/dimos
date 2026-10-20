@@ -54,7 +54,12 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
     scheduler = ThreadPoolScheduler(max_workers=2)
     monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
     a = TypeSafeNavigationAgent(
-        max_hz=None, linear_accel=100.0, angular_accel=100.0, stale_s=5.0, give_up_s=0.3
+        api_key="test-typesafe-key",
+        max_hz=None,
+        linear_accel=100.0,
+        angular_accel=100.0,
+        stale_s=5.0,
+        give_up_s=0.3,
     )
     a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
     a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)

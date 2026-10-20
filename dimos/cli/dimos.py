@@ -155,7 +155,9 @@ main.add_typer(evals_app, name="evals")
 
 main.command()(cameracalibrate)
 main.command()(apriltag)
-main.command(name="rerun-bridge")(rerun_bridge_cmd)
+main.command(
+    name="rerun-bridge", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)(rerun_bridge_cmd)
 
 
 if __name__ == "__main__":

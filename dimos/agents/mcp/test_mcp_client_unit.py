@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from queue import Empty
 from threading import RLock
+from types import SimpleNamespace
 from unittest.mock import MagicMock, create_autospec, patch
 
 from langchain_core.messages import HumanMessage
@@ -24,6 +25,7 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL
 from dimos.agents.mcp.mcp_client import McpClient
 
 
@@ -97,6 +99,24 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
     session = create_autospec(requests.Session, instance=True, spec_set=True)
     session.post.side_effect = _post
     return session
+
+
+def test_server_url_is_configured_else_the_blueprints_server_else_the_default() -> None:
+    server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
+    client = McpClient()
+    try:
+        assert client._server_url() == DEFAULT_MCP_URL
+        client._mcp_url = None
+        client._mcp_server = server
+        assert client._server_url() == "http://127.0.0.1:9992/mcp"
+    finally:
+        client.stop()
+    client = McpClient(mcp_server_url="http://configured/mcp")
+    try:
+        client._mcp_server = server
+        assert client._server_url() == "http://configured/mcp"
+    finally:
+        client.stop()
 
 
 @pytest.fixture

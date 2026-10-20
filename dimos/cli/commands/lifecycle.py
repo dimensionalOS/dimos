@@ -44,6 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 logger = setup_logger()
 
@@ -77,6 +78,13 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
+def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None:
+    for atom in blueprint.active_blueprints:
+        if "mcp_url" in atom.module.rpcs:
+            return str(coordinator.get_instance(atom.name).mcp_url())
+    return None
+
+
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -96,11 +104,6 @@ def run(
         "--relay-url",
         help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
         "http://localhost:7780)",
-    ),
-    relay_ca: str | None = typer.Option(
-        None,
-        "--relay-ca",
-        help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -147,7 +150,6 @@ def run(
         for name, value in (
             ("local_relay", local_relay),
             ("relay_url", relay_url),
-            ("relay_ca", relay_ca),
         )
         if value is not None
     }
@@ -293,6 +295,7 @@ def run(
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
                 original_argv=sys.argv,
+                mcp_url=_mcp_url(blueprint, coordinator),
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -331,6 +334,7 @@ def run(
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
             original_argv=sys.argv,
+            mcp_url=_mcp_url(blueprint, coordinator),
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
