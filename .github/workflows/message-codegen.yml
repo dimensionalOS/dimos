@@ -151,6 +151,7 @@ jobs:
         run: |
           LCM_DEFAULT_URL=memq:// .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py" "$PWD/dimos/core/test_transport_factory.py"
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
+          .native-review/bin/python -I -c 'from dimos.memory import module; from dimos.memory.store import mcap; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,mcap)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/test_module.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/store/test_mcap.py"
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
       - name: Verify generated browser schemas, relay encoding and web consumers
         if: runner.os == 'Linux'

@@ -14,23 +14,32 @@
 
 """CDR passes through real mem2 storage and self-describing MCAP replay."""
 
+from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 import subprocess
 import sys
+import threading
 
 from dimos_cdrgen.registry import encode, schema
 from mcap.reader import make_reader
+from mcap.writer import Writer
 import pytest
 
+import dimos.core.cdr_transport as cdr_module
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import make_transport
 from dimos.memory.codecs.base import codec_for, codec_from_id, codec_id
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tap import TransportRecorder
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.cdr_mcap import CdrMcapWriter
+from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.types.timestamped import message_timestamp
 
 
@@ -165,3 +174,88 @@ def test_documented_recording_example_runs_and_refuses_to_overwrite(tmp_path):
     assert repeated.returncode != 0
     assert "FileExistsError" in repeated.stderr
     assert {name: (destination / name).read_bytes() for name in original} == original
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_factory_capture_sqlite_mcap_auto_named_replay(backend, monkeypatch, tmp_path):
+    # Isolate only session configuration; codecs, pub/sub and storage stay real.
+    monkeypatch.setattr(cdr_module, "LCMConfig", partial(LCMConfig, url="memq://"))
+    for key, value in {
+        "transport": backend,
+        "robot_ip": None,
+        "robot_ips": "",
+        "zenoh_connect": "",
+        "zenoh_mode": "peer",
+        "zenoh_multicast": False,
+        "zenoh_gossip": False,
+        "zenoh_scouting": False,
+    }.items():
+        monkeypatch.setattr(global_config, key, value)
+    expected = message()
+    expected.header.stamp.nanosec = 123456789
+    database = tmp_path / "live.db"
+    received = threading.Event()
+    with SqliteStore(path=str(database)) as store, ExitStack() as cleanup:
+        transport = make_transport("sensor/segments", LineSegments3D)
+        cleanup.callback(transport.stop)
+        recorder = TransportRecorder(store)
+        cleanup.callback(recorder.close)
+        unsubscribe = recorder.tap("segments", LineSegments3D, transport)
+        assert unsubscribe is not None
+        cleanup.callback(unsubscribe)
+        live = store.stream("segments", LineSegments3D).live()
+        cleanup.callback(live.stop)
+        cleanup.enter_context(live.subscribe(lambda _: received.set()))
+        transport.publish(expected)
+        assert received.wait(5), "default-factory payload was not recorded"
+        assert recorder.dropped == 0
+    path = tmp_path / "live.mcap"
+    with SqliteStore(path=str(database), must_exist=True) as store, CdrMcapWriter(path) as writer:
+        captured = next(iter(store.streams.segments)).data
+        assert type(captured) is LineSegments3D
+        assert encode(captured) == encode(expected)
+        writer.write(
+            transport.channel,
+            encode(captured),
+            schema_name=LineSegments3D.__msgtype__,
+            schema=schema(LineSegments3D.__msgtype__),
+            log_time_ns=20_000_000_000,
+            publish_time_ns=17_123456789,
+        )
+    with McapStore(path=str(path)) as store:
+        assert store.list_streams() == ["sensor_segments"]
+        values = list(store.replay().streams.sensor_segments.iterate_ts())
+        assert values == [(20.0, expected)]
+        assert values[0][1].header.stamp.nanosec == 123456789
+    with path.open("rb") as raw:
+        definition, channel, recorded = next(make_reader(raw).iter_messages())
+        assert recorded.publish_time == 17_123456789
+        assert recorded.log_time == 20_000_000_000
+        assert "MSG: std_msgs/Header" in definition.data.decode()
+        assert channel.topic == transport.channel
+
+
+def test_canonical_wire_topic_cannot_claim_a_different_schema(tmp_path):
+    path = tmp_path / "wrong-topic.mcap"
+    with CdrMcapWriter(path) as writer:
+        writer.write(
+            "dimos/pose/cdr/std_msgs/msg/Header",
+            encode(message()),
+            schema_name=LineSegments3D.__msgtype__,
+            schema=schema(LineSegments3D.__msgtype__),
+            log_time_ns=1,
+        )
+    with pytest.raises(ValueError, match="topic/schema mismatch"):
+        McapStore(path=str(path))
+
+
+def test_canonical_channel_never_falls_back_to_legacy_encoding(tmp_path):
+    path = tmp_path / "wrong-encoding.mcap"
+    with path.open("wb") as raw:
+        writer = Writer(raw)
+        writer.start()
+        channel = writer.register_channel("dimos/pose/cdr/std_msgs/msg/Header", "lcm", 0)
+        writer.add_message(channel, log_time=1, publish_time=1, data=b"legacy")
+        writer.finish()
+    with pytest.raises(ValueError, match="requires cdr encoding"):
+        McapStore(path=str(path))

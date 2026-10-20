@@ -19,10 +19,10 @@ payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
-Channels published by dimos itself need neither: a dimos topic carries its
-message type in its own name, so it is decoded and named from the wire with no
-registry at all (``_dimos_wire``). An injected codec still wins where both
-apply.
+Canonical CDR channels decode through the installed generated-type registry
+after validating their embedded ros2msg schema. Their wire topic supplies the
+logical stream name; legacy topics keep their separate legacy decoder. An
+injected codec still wins where both apply.
 
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
@@ -85,12 +85,22 @@ class _DimosCodec:
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
     """Split a dimos wire topic into its port name and message type.
 
-    A dimos topic embeds the type in its last segment,
+    Canonical topics use ``[dimos/]<port>/cdr/<package>/msg/<Type>``.
+    The installed registry supplies their exact generated class; MCAP schema
+    validation still happens independently before decoding.
+
+    A legacy dimos topic embeds the type in its last segment,
     ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
     every dimos channel describes itself and no per-topic registry is needed.
     None for anything that is not one, which leaves DDS and app channels to
     the injected codecs.
     """
+    normalized = topic.lstrip("/")
+    base, marker, schema_name = normalized.rpartition("/cdr/")
+    if marker:
+        msg_type = message_types().get(schema_name)
+        port = base.removeprefix("dimos/")
+        return (port, msg_type) if port and msg_type is not None else None
     prefix, _, rest = topic.partition("/")
     port, _, msg_name = rest.rpartition("/")
     if prefix != "dimos" or not port:
@@ -259,6 +269,13 @@ class McapStore(Store):
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
                         )
+                if "/cdr/" in ch.topic:
+                    wire = _dimos_wire(ch.topic)
+                    if wire is not None and ch.message_encoding != "cdr":
+                        raise ValueError(f"CDR topic requires cdr encoding: {ch.topic}")
+                    if wire is not None and declared is not None:
+                        if declared.name != getattr(wire[1], "__msgtype__", None):
+                            raise ValueError(f"CDR topic/schema mismatch: {ch.topic}")
                 if ch.message_encoding == "cdr" and ch.topic not in self._codecs:
                     # Unknown CDR stays raw, even when a legacy topic names a type.
                     self._codecs[ch.topic] = _BYTES_CODEC
