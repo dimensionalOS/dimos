@@ -21,6 +21,8 @@ on:
       - dimos/memory/**
       - dimos/mapping/occupancy/**
       - dimos/mapping/voxels/**
+      - dimos/navigation/go2/replanning_a_star/min_cost_astar.py
+      - dimos/navigation/go2/replanning_a_star/test_generated_astar.py
       - dimos/mapping/pointclouds/occupancy.py
       - dimos/mapping/odometry_hist.py
       - dimos/mapping/test_generated_odometry_hist.py
@@ -255,3 +257,8 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.voxels import grid, module; from dimos.mapping.voxels.impl import packed, o3d; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (grid, module, packed, o3d)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/voxels/test_generated_stream.py" "$PWD/dimos/mapping/voxels/test_stamped.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/voxels/grid.py dimos/mapping/voxels/module.py dimos/mapping/voxels/impl/packed.py dimos/mapping/voxels/impl/o3d.py
+      - name: Verify generated navigation costmaps and Python/C++ A* paths
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_map; from importlib import import_module; astar = import_module("dimos.navigation.go2.replanning_a_star.min_cost_astar"); import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (path_map, astar)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_astar.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_map.py dimos/navigation/go2/replanning_a_star/min_cost_astar.py
