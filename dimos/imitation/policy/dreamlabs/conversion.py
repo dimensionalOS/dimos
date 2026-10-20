@@ -15,7 +15,6 @@
 
 """Explicit YAM observation and action boundaries; no driver or network access."""
 
-import base64
 from typing import Any
 
 import cv2
@@ -60,42 +59,21 @@ def encode_image(image: Image) -> str:
         raise ValueError("Dreamlabs requires uint8 RGB images")
     if image.data.ndim != 3 or image.data.shape[2] != 3 or not image.data.size:
         raise ValueError("invalid RGB image shape")
-    rgb = cv2.resize(image.data, (320, 176), interpolation=cv2.INTER_AREA)
-    ok, jpeg = cv2.imencode(
-        ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 85]
-    )
-    if not ok:
-        raise ValueError("JPEG encoding failed")
-    return base64.b64encode(jpeg).decode("ascii")
-
-
-def validate_times(stamps: list[float], now: float, max_age: float, max_skew: float) -> None:
-    times = np.asarray(stamps)
-    if not np.isfinite(times).all() or np.any(times > now):
-        raise ValueError("non-finite or future observation timestamp")
-    if now - min(stamps) > max_age or max(stamps) - min(stamps) > max_skew:
-        raise ValueError("stale or unsynchronized observations")
+    return image.resize(320, 176, interpolation=cv2.INTER_AREA).to_base64(quality=85)
 
 
 def action_trajectory(
     reply: dict[str, Any],
     start: NDArray[np.float64],
-    lower: NDArray[np.float64],
-    upper: NDArray[np.float64],
-    max_joint_speed: float,
-    max_gripper_speed: float,
 ) -> JointTrajectory:
     left = np.asarray(reply.get("q_l_chunk"), dtype=np.float64)
     right = np.asarray(reply.get("q_r_chunk"), dtype=np.float64)
     if left.shape != (HORIZON, 7) or right.shape != (HORIZON, 7):
         raise ValueError("expected two 48 by 7 YAM action chunks")
     rows = np.column_stack((left[:, :6], right[:, :6], left[:, 6], right[:, 6]))
-    if not np.isfinite(rows).all() or np.any(rows < lower) or np.any(rows > upper):
-        raise ValueError("action outside finite joint or gripper bounds")
+    if not np.isfinite(rows).all() or np.any(rows[:, 12:] < 0) or np.any(rows[:, 12:] > 1):
+        raise ValueError("action contains invalid numbers or non-normalized grippers")
     points = np.vstack((start, rows))
-    speed = np.abs(np.diff(points, axis=0)) * ACTION_HZ
-    if np.any(speed[:, :12] > max_joint_speed) or np.any(speed[:, 12:] > max_gripper_speed):
-        raise ValueError("action exceeds speed bound, including chunk seam")
     return JointTrajectory(
         joint_names=list(DUAL_OPENYAM_JOINTS),
         points=[

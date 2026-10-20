@@ -23,14 +23,4 @@ from dimos.core.module import ModuleConfig
 class DreamlabsConfig(ModuleConfig):
     prompt: str = Field(min_length=1, default="fold the towel")
     checkpoint: str = "dreamlabs/dream-1-beta"
-    allow_remote: bool = False
-    enable_execution: bool = False
-    # Operator confirmation of the physical station, not an automatic model guess.
-    standard_yam_verified: bool = False
-    max_observation_age_s: float = Field(default=0.5, gt=0, allow_inf_nan=False)
-    max_skew_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
-    max_response_age_s: float = Field(default=2.0, gt=0, le=5, allow_inf_nan=False)
     timeout_ms: int = Field(default=1500, gt=0, le=5000)
-    max_joint_speed: float = Field(default=1.0, gt=0, le=2, allow_inf_nan=False)
-    max_gripper_speed: float = Field(default=1.0, gt=0, le=2, allow_inf_nan=False)
-    completion_timeout_s: float = Field(default=1.0, gt=0, allow_inf_nan=False)

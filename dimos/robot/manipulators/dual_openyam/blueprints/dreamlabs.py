@@ -15,17 +15,8 @@
 
 """Dreamlabs rollout using the dual OpenYAM coordinator and existing image ports."""
 
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
-# A single bounded trajectory includes both normalized grippers. Do not add a
-# second coordinator to an already running station; compose this policy instead.
-dreamlabs_dual_openyam = autoconnect(
-    DualOpenYamCoordinator.blueprint(
-        tasks=[joint_trajectory_task(DUAL_OPENYAM_JOINTS)],
-    ),
-    DreamlabsModule.blueprint(),
-)
+# Protocol-only: no camera, driver, coordinator, or action executor is launched.
+dreamlabs_dual_openyam = autoconnect(DreamlabsModule.blueprint())

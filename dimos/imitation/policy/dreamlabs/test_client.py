@@ -21,8 +21,14 @@ from dream.transport import Transport
 import numpy as np
 from pytest_mock import MockerFixture
 
-from dimos.imitation.policy.dreamlabs.conversion import CAMERAS, action_trajectory, policy_config
+from dimos.imitation.policy.dreamlabs.conversion import (
+    CAMERAS,
+    action_trajectory,
+    encode_image,
+    policy_config,
+)
 from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
 def test_real_client_validates_pose_observations_and_preserves_joint_chunks(
@@ -49,7 +55,17 @@ def test_real_client_validates_pose_observations_and_preserves_joint_chunks(
         client.policy(config)
         state = DreamlabsKinematics().observation(vector, "fixture")
         client.set_observation(
-            {f"video.{role}": "synthetic-jpeg" for role in CAMERAS}, state, timestamp=10.0
+            {
+                f"video.{role}": encode_image(
+                    Image(
+                        data=np.full((240, 400, 3), [210, 30, 10], dtype=np.uint8),
+                        format=ImageFormat.RGB,
+                    )
+                )
+                for role in CAMERAS
+            },
+            state,
+            timestamp=10.0,
         )
         reply = client.get_action(
             commanded={"q_l_chunk": [*q_left, 0.2], "q_r_chunk": [*q_right, 0.8]}
@@ -60,7 +76,7 @@ def test_real_client_validates_pose_observations_and_preserves_joint_chunks(
     assert sent["embodiment"] == "yam"
     np.testing.assert_allclose(sent["state.left_eef_xyz"], [0.262523, 0, 0.206904], atol=2e-5)
     np.testing.assert_allclose(reply["q_l_chunk"], [[*q_left, 0.2]] * 48, atol=1e-8)
-    trajectory = action_trajectory(reply, vector, np.full(14, -3.0), np.full(14, 3.0), 1.0, 1.0)
+    trajectory = action_trajectory(reply, vector)
     np.testing.assert_allclose(
         trajectory.points[1].positions, [*q_left, *q_right, 0.2, 0.8], atol=1e-8
     )

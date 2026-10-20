@@ -36,22 +36,22 @@ def main() -> None:
         "--live", action="store_true", help="send one potentially billed inference after approval"
     )
     args = parser.parse_args()
-    if not args.live:
-        parser.error(
-            "--live requires approval to send synthetic images/state to Dreamlabs and incur inference cost"
-        )
     image = encode_image(
         Image(data=np.zeros((176, 320, 3), dtype=np.uint8), format=ImageFormat.RGB)
     )
     joints = [0.0, 0.5, 0.5, -0.35, 0.0, 0.0]
     vector = np.array([*joints, *joints, 0.5, 0.5])
+    frames = {f"video.{role}": image for role in CAMERAS}
+    state = DreamlabsKinematics().observation(vector, "hold position")
+    if not args.live:
+        print(
+            "Prepared three 320 by 176 JPEG/base64 camera frames and YAM state. No API or hardware used."
+        )
+        return
     try:
         with create_client() as client:
             client.policy(policy_config("dreamlabs/dream-1-beta", 1500))
-            client.set_observation(
-                {f"video.{role}": image for role in CAMERAS},
-                DreamlabsKinematics().observation(vector, "hold position"),
-            )
+            client.set_observation(frames, state)
             reply = client.get_action()
             for key in ("q_l_chunk", "q_r_chunk"):
                 rows = np.asarray(reply.get(key), dtype=np.float64)

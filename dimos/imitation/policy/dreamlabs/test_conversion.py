@@ -18,13 +18,13 @@ import base64
 import cv2
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.imitation.policy.dreamlabs.conversion import (
     action_trajectory,
     encode_image,
     observation,
     state_vector,
-    validate_times,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -44,18 +44,8 @@ def test_names_override_message_order_and_preserve_radians_and_gripper_units() -
     np.testing.assert_allclose(obs["state.right_gripper"], [0.8])
 
 
-@pytest.mark.parametrize("stamp", [float("nan"), float("inf"), 101.0, 98.0])
-def test_timestamp_boundary(stamp: float) -> None:
-    with pytest.raises(ValueError):
-        validate_times([stamp, 100.0], 100.0, 0.5, 0.1)
-
-
-def test_camera_state_skew_is_rejected() -> None:
-    with pytest.raises(ValueError, match="unsynchronized"):
-        validate_times([99.8, 100.0], 100.0, 0.5, 0.1)
-
-
-def test_jpeg_contract_and_rgb_channel_order() -> None:
+def test_jpeg_contract_and_rgb_channel_order(mocker: MockerFixture) -> None:
+    encode = mocker.spy(cv2, "imencode")
     rgb = np.zeros((30, 40, 3), dtype=np.uint8)
     rgb[:, :, 0] = 255
     encoded = encode_image(Image(data=rgb, format=ImageFormat.RGB))
@@ -65,12 +55,14 @@ def test_jpeg_contract_and_rgb_channel_order() -> None:
     assert decoded.shape == (176, 320, 3)
     np.testing.assert_allclose(decoded[80, 100], [0, 0, 254], atol=1)
     assert not encoded.startswith("data:")
+    encode.assert_called_once()
+    assert encode.call_args.args[2] == [cv2.IMWRITE_JPEG_QUALITY, 85]
 
 
 def test_action_fixture_order_grippers_timing_and_linear_seam() -> None:
     reply = {"q_l_chunk": [[0.01] * 6 + [0.52]] * 48, "q_r_chunk": [[-0.02] * 6 + [0.48]] * 48}
     start = np.array([0.0] * 12 + [0.5, 0.5])
-    trajectory = action_trajectory(reply, start, np.full(14, -3.0), np.full(14, 3.0), 1.0, 1.0)
+    trajectory = action_trajectory(reply, start)
     assert trajectory.joint_names == DUAL_OPENYAM_JOINTS
     assert trajectory.points[0].positions == [0.0] * 12 + [0.5, 0.5]
     assert trajectory.points[1].positions == [0.01] * 6 + [-0.02] * 6 + [0.52, 0.48]
@@ -81,7 +73,7 @@ def test_action_fixture_order_grippers_timing_and_linear_seam() -> None:
     )
 
 
-@pytest.mark.parametrize("kind", ["missing", "shape", "nan", "limit", "gripper", "seam", "speed"])
+@pytest.mark.parametrize("kind", ["missing", "shape", "nan", "gripper"])
 def test_malformed_or_unbounded_actions_rejected(kind: str) -> None:
     left = np.array([[0.0] * 6 + [0.5]] * 48)
     right = left.copy()
@@ -92,22 +84,12 @@ def test_malformed_or_unbounded_actions_rejected(kind: str) -> None:
         reply["q_l_chunk"] = left[:47]
     elif kind == "nan":
         left[10, 2] = np.nan
-    elif kind == "limit":
-        left[10, 2] = 4.0
     elif kind == "gripper":
         right[10, 6] = 1.1
-    elif kind == "seam":
-        left[:, 0] = 0.1
-    else:
-        left[10, 0] = 0.1
     with pytest.raises(ValueError):
         action_trajectory(
             reply,
             np.array([0.0] * 12 + [0.5, 0.5]),
-            np.array([-3.0] * 12 + [0.0, 0.0]),
-            np.array([3.0] * 12 + [1.0, 1.0]),
-            1.0,
-            1.0,
         )
 
 

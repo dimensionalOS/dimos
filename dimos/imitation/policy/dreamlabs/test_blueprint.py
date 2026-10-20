@@ -13,18 +13,11 @@
 # limitations under the License.
 
 
-from dimos.imitation.policy.dreamlabs.module import DreamlabsControlSpec, DreamlabsModule
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
 from dimos.robot.manipulators.dual_openyam.blueprints.dreamlabs import dreamlabs_dual_openyam
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
-from dimos.spec.utils import spec_annotation_compliance
 
 
-def test_complete_arm_and_gripper_trajectory_uses_one_coordinator() -> None:
-    coordinator, policy = dreamlabs_dual_openyam.blueprints
-    assert coordinator.module is DualOpenYamCoordinator
+def test_protocol_blueprint_has_no_robot_executor() -> None:
+    [policy] = dreamlabs_dual_openyam.blueprints
     assert policy.module is DreamlabsModule
-    [task] = coordinator.kwargs["tasks"]
-    assert task.joint_names == DUAL_OPENYAM_JOINTS
-    assert task.name == "joint_trajectory"
-    assert spec_annotation_compliance(DualOpenYamCoordinator, DreamlabsControlSpec)
+    assert not policy.kwargs

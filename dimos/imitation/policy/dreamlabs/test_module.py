@@ -12,294 +12,180 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import base64
 from collections.abc import Iterator
-from pathlib import Path
-from threading import Event, Thread
-import time
 from typing import Any
 
+import cv2
 import dream
+from dream.transport import Transport
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
-    TrajectoryCancellationResult,
-    TrajectoryCancellationStatus,
-    TrajectoryExecutionResult,
-    TrajectoryExecutionStatus,
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
 )
-from dimos.imitation.policy.dreamlabs.conversion import CAMERAS, policy_config
 from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
-from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
-from dimos.teleop.webxr.controller_types import Buttons
 
-
-class FakeClient:
-    def __init__(self) -> None:
-        self.entered = Event()
-        self.release = Event()
-        self.closed = Event()
-        self.calls: list[dict[str, Any] | None] = []
-        self.ticks: list[tuple[dict[str, str], dict[str, Any], float]] = []
-        self.reply: dict[str, Any] = {
-            "q_l_chunk": [[0.01] * 6 + [0.5]] * 48,
-            "q_r_chunk": [[-0.01] * 6 + [0.5]] * 48,
-        }
-        self.error: Exception | None = None
-        self.config: dict[str, Any] = {}
-
-    def policy(self, config: dict[str, Any]) -> None:
-        self.config = config
-
-    def set_observation(
-        self, frames: dict[str, str], obs: dict[str, Any], *, timestamp: float
-    ) -> None:
-        self.ticks.append((frames, obs, timestamp))
-
-    def get_action(self, *, commanded: dict[str, Any] | None = None) -> dict[str, Any]:
-        self.calls.append(commanded)
-        self.entered.set()
-        assert self.release.wait(2), "test did not release fake inference"
-        if self.error is not None:
-            raise self.error
-        return self.reply
-
-    def close(self) -> None:
-        self.closed.set()
+LEFT = [0.0, 0.5, 0.5, -0.35, 0.0, 0.0]
+RIGHT = [0.2, 0.6, 0.7, -0.1, 0.2, -0.3]
 
 
 @pytest.fixture
-def station(mocker: MockerFixture) -> Iterator[tuple[DreamlabsModule, FakeClient, Any]]:
+def module(mocker: MockerFixture) -> Iterator[tuple[DreamlabsModule, Any]]:
     mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
     for method in ("__init__", "start", "stop", "serve_module_rpc"):
         mocker.patch.object(LCMRPC, method, return_value=None)
-    fake = FakeClient()
-    mocker.patch("dimos.imitation.policy.dreamlabs.module.create_client", return_value=fake)
-    xml = (
-        '<robot name="test"><link name="base"/>'
-        + "".join(
-            f'<joint name="{name}" type="revolute"><limit lower="-3" upper="3"/></joint>'
-            for name in DUAL_OPENYAM_JOINTS[:12]
-        )
-        + "</robot>"
+    request = mocker.patch.object(
+        Transport,
+        "request",
+        return_value={
+            "status": {"code": "DA-0000"},
+            "actions": {
+                "q_l_chunk": [[*LEFT, 0.2]] * 48,
+                "q_r_chunk": [[*RIGHT, 0.8]] * 48,
+                "per_key": {"action.left_arm": [LEFT] * 48, "action.right_arm": [RIGHT] * 48},
+            },
+        },
     )
-    original_load = RobotModel.load
-
-    def load(model: RobotModel) -> LoadedRobotModel:
-        if model is DUAL_OPENYAM_MODEL:
-            return LoadedRobotModel(xml, Path("test.urdf"), {})
-        return original_load(model)
-
-    mocker.patch.object(RobotModel, "load", autospec=True, side_effect=load)
-    module = DreamlabsModule(
-        rpc_transport=LCMRPC,
-        allow_remote=True,
-        enable_execution=True,
-        standard_yam_verified=True,
+    mocker.patch(
+        "dimos.imitation.policy.dreamlabs.module.create_client",
+        side_effect=lambda: dream.DreamClient(api_key="offline-fixture"),
     )
-    control = mocker.MagicMock()
-    control.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.CANCELLED
-    )
-    control.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.ACCEPTED
-    )
-    control.get_trajectory_status.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
-    module._control = control
-    now = time.time()
-    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
-    module._on_overhead(image)
-    module._on_left(image)
-    module._on_right(image)
-    module._on_state(
-        JointState(ts=now, name=list(DUAL_OPENYAM_JOINTS), position=[0.0] * 12 + [0.5, 0.5])
-    )
-    module.preflight_rollout()
+    instance = DreamlabsModule(rpc_transport=LCMRPC)
     try:
-        yield module, fake, control
+        yield instance, request
     finally:
-        fake.release.set()
-        module.stop()
+        instance.stop()
 
 
-def test_preflight_is_offline_and_start_is_explicit(
-    station: tuple[DreamlabsModule, FakeClient, Any],
+def tick(module: DreamlabsModule, timestamp: float, red: int = 210) -> None:
+    overhead = Image(
+        data=np.full((240, 400, 3), [red, 0, 0], dtype=np.uint8), format=ImageFormat.RGB
+    )
+    left = Image(data=np.full((240, 400, 3), [0, 220, 0], dtype=np.uint8), format=ImageFormat.RGB)
+    right = Image(data=np.full((240, 400, 3), [0, 0, 230], dtype=np.uint8), format=ImageFormat.RGB)
+    state = JointState(
+        name=list(reversed(DUAL_OPENYAM_JOINTS)), position=list(reversed([*LEFT, *RIGHT, 0.2, 0.8]))
+    )
+    module.set_observation(overhead, left, right, state, timestamp)
+
+
+def test_real_colored_images_and_state_reach_client_without_execution(
+    module: tuple[DreamlabsModule, Any], mocker: MockerFixture
 ) -> None:
-    module, fake, control = station
-    assert fake.config == {}
-    control.execute_trajectory.assert_not_called()
-    module.config.enable_execution = False
-    with pytest.raises(ValueError, match="opt-in"):
-        module.start_rollout()
+    instance, request = module
+    execute = mocker.patch.object(ControlCoordinator, "execute_trajectory")
+    instance.start()
+    request.assert_not_called()
+    tick(instance, 10.0)
+    request.assert_not_called()
+    preview = instance.get_action()
+    request.assert_called_once()
+    sent = request.call_args.args[0]["observation"]
+    for role, expected in (
+        ("overhead", [0, 0, 210]),
+        ("wrist_l", [0, 220, 0]),
+        ("wrist_r", [230, 0, 0]),
+    ):
+        encoded = sent[f"video.{role}"][0]
+        assert not encoded.startswith("data:")
+        pixels = cv2.imdecode(
+            np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+        )
+        assert pixels.shape == (176, 320, 3)
+        np.testing.assert_allclose(pixels[70, 120], expected, atol=2)
+    np.testing.assert_allclose(sent["state.left_eef_xyz"], [0.262523, 0, 0.206904], atol=2e-5)
+    np.testing.assert_allclose(preview.points[0].positions, [*LEFT, *RIGHT, 0.2, 0.8])
+    assert preview.joint_names == DUAL_OPENYAM_JOINTS
+    assert preview.duration == 2.4
+    execute.assert_not_called()
 
 
-def test_stop_during_request_cancels_before_reply_and_blocks_restart(
-    station: tuple[DreamlabsModule, FakeClient, Any],
+def test_sdk_owns_history_and_reset(module: tuple[DreamlabsModule, Any]) -> None:
+    instance, request = module
+    for index in range(12):
+        tick(instance, 10.0 + index * 0.2, red=index * 10)
+    instance.get_action()
+    history = request.call_args.args[0]["observation"]["video.overhead"]
+    assert len(history) == 9
+    for encoded, expected in zip(history, range(30, 120, 10), strict=True):
+        pixels = cv2.imdecode(
+            np.frombuffer(base64.b64decode(encoded), dtype=np.uint8), cv2.IMREAD_COLOR
+        )
+        np.testing.assert_allclose(pixels[70, 120], [0, 0, expected], atol=2)
+    instance.reset_episode()
+    with pytest.raises(RuntimeError, match="set_observation"):
+        instance.get_action()
+    tick(instance, 20.0)
+    instance.get_action()
+    assert len(request.call_args.args[0]["observation"]["video.overhead"]) == 1
+
+
+def test_timeout_propagates_without_robot_commands(module: tuple[DreamlabsModule, Any]) -> None:
+    instance, request = module
+    tick(instance, 10.0)
+    request.side_effect = dream.DreamTimeout("offline timeout")
+    with pytest.raises(dream.DreamTimeout):
+        instance.get_action()
+
+
+def test_explicit_input_and_normal_client_cleanup(
+    module: tuple[DreamlabsModule, Any], mocker: MockerFixture
 ) -> None:
-    module, fake, control = station
-    module.start_rollout()
-    assert fake.entered.wait(1)
-    cancelled = Event()
-    control.cancel_trajectory.side_effect = lambda: (
-        cancelled.set(),
-        TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED),
-    )[1]
-    stop = Thread(target=module.stop_rollout)
-    stop.start()
+    instance, _ = module
+    client = mocker.MagicMock()
+    factory = mocker.patch(
+        "dimos.imitation.policy.dreamlabs.module.create_client", return_value=client
+    )
+    instance.start()
+    factory.assert_not_called()
+    with pytest.raises(RuntimeError, match="set_observation"):
+        instance.get_action()
+    factory.assert_not_called()
+    tick(instance, 10.0)
+    factory.assert_called_once()
+    assert client.policy.call_args.args[0]["_record"] is False
+    client.get_action.assert_not_called()
+    instance.reset_episode()
+    client.reset_episode.assert_called_once()
+    instance.stop()
+    instance.stop()
+    client.close.assert_called_once()
+
+
+def test_existing_coordinator_apis_execute_status_cancel(
+    module: tuple[DreamlabsModule, Any], mocker: MockerFixture
+) -> None:
+    instance, _ = module
+    tick(instance, 10.0)
+    preview = instance.get_action()
+    coordinator = ControlCoordinator(rpc_transport=LCMRPC)
     try:
-        assert cancelled.wait(1)
-        with pytest.raises(RuntimeError, match="still running"):
-            module.start_rollout()
-        fake.release.set()
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=list(DUAL_OPENYAM_JOINTS)))
+        coordinator.add_task(task, task_type="trajectory")
+        mocker.patch.object(
+            coordinator,
+            "get_joint_positions",
+            return_value=dict(zip(DUAL_OPENYAM_JOINTS, [*LEFT, *RIGHT, 0.2, 0.8], strict=True)),
+        )
+        assert coordinator.execute_trajectory(preview).status.name == "ACCEPTED"
+        assert (
+            coordinator.task_invoke("joint_trajectory", "get_status", {"t_now": None}).state
+            is TrajectoryState.EXECUTING
+        )
+        assert coordinator.cancel_trajectory().safe
+        assert (
+            coordinator.task_invoke("joint_trajectory", "get_status", {"t_now": None}).state
+            is TrajectoryState.ABORTED
+        )
     finally:
-        stop.join(3)
-    assert not stop.is_alive()
-    control.execute_trajectory.assert_not_called()
-    assert fake.closed.is_set()
-    assert module.rollout_status()["active"] is False
-
-
-@pytest.mark.parametrize("failure", ["timeout", "malformed", "stale", "rejected"])
-def test_bad_request_or_response_stops_and_cancels(
-    station: tuple[DreamlabsModule, FakeClient, Any], failure: str
-) -> None:
-    module, fake, control = station
-    if failure == "timeout":
-        fake.error = TimeoutError("secret or payload must not enter status")
-    elif failure == "malformed":
-        fake.reply = {}
-    elif failure == "stale":
-        module.config.max_response_age_s = 1e-9
-    else:
-        control.execute_trajectory.return_value = TrajectoryExecutionResult(
-            TrajectoryExecutionStatus.ALREADY_EXECUTING
-        )
-    fake.release.set()
-    module.start_rollout()
-    assert fake.closed.wait(2)
-    assert module.rollout_status()["active"] is False
-    assert module.rollout_status()["last_error"] in {
-        "rollout stopped: TimeoutError",
-        "rollout stopped: ValueError",
-        "rollout stopped: RuntimeError",
-    }
-    assert module.rollout_status()["chunks_accepted"] == 0
-    control.cancel_trajectory.assert_called()
-
-
-def test_accepted_chunk_uses_coordinator_and_manual_grip_cancels(
-    station: tuple[DreamlabsModule, FakeClient, Any],
-) -> None:
-    module, fake, control = station
-    executed = Event()
-    control.execute_trajectory.side_effect = lambda trajectory: (
-        executed.set(),
-        setattr(
-            control.get_trajectory_status,
-            "return_value",
-            TrajectoryStatus(state=TrajectoryState.EXECUTING),
-        ),
-        TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED),
-    )[2]
-    fake.release.set()
-    module.start_rollout()
-    assert executed.wait(1)
-    buttons = Buttons()
-    buttons.left_grip = True
-    module._on_buttons(buttons)
-    assert fake.closed.wait(2)
-    trajectory = control.execute_trajectory.call_args.args[0]
-    assert trajectory.points[1].positions == [0.01] * 6 + [-0.01] * 6 + [0.5, 0.5]
-    assert fake.config["_record"] is False
-    assert set(fake.ticks[0][0]) == {"video.overhead", "video.wrist_l", "video.wrist_r"}
-    assert fake.ticks[0][2] < time.monotonic()
-    control.cancel_trajectory.assert_called()
-
-
-def test_old_images_and_state_cannot_replace_newer_inputs(
-    station: tuple[DreamlabsModule, FakeClient, Any],
-) -> None:
-    module, _, _ = station
-    old = Image(
-        data=np.ones((10, 10, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=time.time() - 2
-    )
-    module._on_overhead(old)
-    module._on_state(JointState(ts=time.time() - 2, name=["bad"], position=[0.0]))
-    assert module.preflight_rollout()["preflight_passed"] is True
-
-
-def test_next_chunk_is_anchored_on_completed_command(
-    station: tuple[DreamlabsModule, FakeClient, Any], mocker: MockerFixture
-) -> None:
-    module, fake, control = station
-    calls: list[dict[str, Any] | None] = []
-
-    def infer(*, commanded: dict[str, Any] | None = None) -> dict[str, Any]:
-        calls.append(commanded)
-        if len(calls) == 2:
-            raise TimeoutError("end fixture")
-        return fake.reply
-
-    def execute(trajectory: Any) -> TrajectoryExecutionResult:
-        control.get_trajectory_status.return_value = TrajectoryStatus(
-            state=TrajectoryState.COMPLETED
-        )
-        module._on_state(
-            JointState(
-                ts=time.time(),
-                name=list(DUAL_OPENYAM_JOINTS),
-                position=trajectory.points[-1].positions,
-            )
-        )
-        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
-
-    mocker.patch.object(fake, "get_action", side_effect=infer)
-    control.execute_trajectory.side_effect = execute
-    module.start_rollout()
-    assert fake.closed.wait(2)
-    assert calls == [None, {"q_l_chunk": [0.01] * 6 + [0.5], "q_r_chunk": [-0.01] * 6 + [0.5]}]
-    assert module.rollout_status()["chunks_accepted"] == 1
-
-
-def test_uncertain_cancel_blocks_future_rollout(
-    station: tuple[DreamlabsModule, FakeClient, Any],
-) -> None:
-    module, fake, control = station
-    module.start_rollout()
-    assert fake.entered.wait(1)
-    control.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.UNCERTAIN
-    )
-    fake.release.set()
-    module.stop_rollout()
-    assert module.rollout_status()["cancellation_safe"] is False
-    with pytest.raises(ValueError, match="cancellation was uncertain"):
-        module.start_rollout()
-
-
-def test_sdk_history_uses_capture_timestamps_without_background_recording(
-    mocker: MockerFixture,
-) -> None:
-    gateway = mocker.MagicMock()
-    gateway.get_action.return_value = {"fixture": True}
-    opener = mocker.patch.object(dream, "_open_policy", return_value=gateway)
-    recorder = mocker.patch("dream.facade.DreamClient._new_recording")
-    with dream.DreamClient(api_key="offline-fixture") as client:
-        client.policy(policy_config("dreamlabs/dream-1-beta", 1500))
-        for index in range(12):
-            frames = {f"video.{role}": f"frame-{index}" for role in CAMERAS}
-            client.set_observation(frames, {"prompt": "fixture"}, timestamp=10.0 + index * 0.2)
-        assert client.get_action() == {"fixture": True}
-    sent = gateway.get_action.call_args.args[0]
-    assert sent["video.overhead"] == [f"frame-{index}" for index in range(3, 12)]
-    assert sent["video.wrist_l"] == sent["video.overhead"]
-    assert "_record" not in opener.call_args.args[0]
-    recorder.assert_not_called()
+        coordinator.stop()

@@ -24,8 +24,7 @@ def test_probe_requires_explicit_live_flag(
 ) -> None:
     constructor = mocker.patch("dimos.imitation.policy.dreamlabs.probe.create_client")
     monkeypatch.setattr("sys.argv", ["probe"])
-    with pytest.raises(SystemExit):
-        main()
+    main()
     constructor.assert_not_called()
 
 
