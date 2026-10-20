@@ -113,20 +113,28 @@ def policy_config(checkpoint: str, timeout_ms: int) -> dict[str, Any]:
         "right_gripper": [6, 7],
         "left_arm": [7, 13],
         "left_gripper": [13, 14],
+        "right_eef_xyz": [14, 17],
+        "right_eef_rot6": [17, 23],
+        "right_grip": [23, 24],
+        "left_eef_xyz": [24, 27],
+        "left_eef_rot6": [27, 33],
+        "left_grip": [33, 34],
     }
     return {
         "checkpoint": checkpoint,
         "strict": True,
         "timeout_ms": timeout_ms,
         "action_hz": ACTION_HZ,
-        "ik": {"arm": "yam", "head": "joint"},
+        "robot": "yam",
         "obs_window": 9,
         "obs_fps": 5.0,
         # SDK 1.0.1 otherwise sends a second, background recording to the platform.
         "_record": False,
         "embodiment": {
             "state": parts,
-            "action": parts,
+            # Joint chunks already contain the normalized grippers. A YAM model's
+            # per_key uses either grip or gripper; validate both full chunks locally.
+            "action": {"right_arm": [0, 6], "left_arm": [6, 12]},
             "video": {role: f"observation.images.{role}" for role in CAMERAS},
         },
     }

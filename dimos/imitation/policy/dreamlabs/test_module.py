@@ -19,7 +19,6 @@ from threading import Event, Thread
 import time
 from typing import Any
 
-from dimos_dreamlabs.runtime import DreamlabsRuntime
 import dream
 import numpy as np
 import pytest
@@ -32,12 +31,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.imitation.policy.dreamlabs.conversion import CAMERAS, policy_config
+from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
+from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 from dimos.teleop.webxr.controller_types import Buttons
 
 
@@ -76,12 +77,12 @@ class FakeClient:
 
 
 @pytest.fixture
-def station(mocker: MockerFixture) -> Iterator[tuple[DreamlabsRuntime, FakeClient, Any]]:
+def station(mocker: MockerFixture) -> Iterator[tuple[DreamlabsModule, FakeClient, Any]]:
     mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
     for method in ("__init__", "start", "stop", "serve_module_rpc"):
         mocker.patch.object(LCMRPC, method, return_value=None)
     fake = FakeClient()
-    mocker.patch.object(dream, "DreamClient", return_value=fake)
+    mocker.patch("dimos.imitation.policy.dreamlabs.module.create_client", return_value=fake)
     xml = (
         '<robot name="test"><link name="base"/>'
         + "".join(
@@ -90,11 +91,15 @@ def station(mocker: MockerFixture) -> Iterator[tuple[DreamlabsRuntime, FakeClien
         )
         + "</robot>"
     )
-    mocker.patch.object(
-        RobotModel, "load", return_value=LoadedRobotModel(xml, Path("test.urdf"), {})
-    )
-    module = DreamlabsRuntime(
-        _isolated_python_runtime=True,
+    original_load = RobotModel.load
+
+    def load(model: RobotModel) -> LoadedRobotModel:
+        if model is DUAL_OPENYAM_MODEL:
+            return LoadedRobotModel(xml, Path("test.urdf"), {})
+        return original_load(model)
+
+    mocker.patch.object(RobotModel, "load", autospec=True, side_effect=load)
+    module = DreamlabsModule(
         rpc_transport=LCMRPC,
         allow_remote=True,
         enable_execution=True,
@@ -126,7 +131,7 @@ def station(mocker: MockerFixture) -> Iterator[tuple[DreamlabsRuntime, FakeClien
 
 
 def test_preflight_is_offline_and_start_is_explicit(
-    station: tuple[DreamlabsRuntime, FakeClient, Any],
+    station: tuple[DreamlabsModule, FakeClient, Any],
 ) -> None:
     module, fake, control = station
     assert fake.config == {}
@@ -137,7 +142,7 @@ def test_preflight_is_offline_and_start_is_explicit(
 
 
 def test_stop_during_request_cancels_before_reply_and_blocks_restart(
-    station: tuple[DreamlabsRuntime, FakeClient, Any],
+    station: tuple[DreamlabsModule, FakeClient, Any],
 ) -> None:
     module, fake, control = station
     module.start_rollout()
@@ -164,7 +169,7 @@ def test_stop_during_request_cancels_before_reply_and_blocks_restart(
 
 @pytest.mark.parametrize("failure", ["timeout", "malformed", "stale", "rejected"])
 def test_bad_request_or_response_stops_and_cancels(
-    station: tuple[DreamlabsRuntime, FakeClient, Any], failure: str
+    station: tuple[DreamlabsModule, FakeClient, Any], failure: str
 ) -> None:
     module, fake, control = station
     if failure == "timeout":
@@ -191,7 +196,7 @@ def test_bad_request_or_response_stops_and_cancels(
 
 
 def test_accepted_chunk_uses_coordinator_and_manual_grip_cancels(
-    station: tuple[DreamlabsRuntime, FakeClient, Any],
+    station: tuple[DreamlabsModule, FakeClient, Any],
 ) -> None:
     module, fake, control = station
     executed = Event()
@@ -220,7 +225,7 @@ def test_accepted_chunk_uses_coordinator_and_manual_grip_cancels(
 
 
 def test_old_images_and_state_cannot_replace_newer_inputs(
-    station: tuple[DreamlabsRuntime, FakeClient, Any],
+    station: tuple[DreamlabsModule, FakeClient, Any],
 ) -> None:
     module, _, _ = station
     old = Image(
@@ -232,7 +237,7 @@ def test_old_images_and_state_cannot_replace_newer_inputs(
 
 
 def test_next_chunk_is_anchored_on_completed_command(
-    station: tuple[DreamlabsRuntime, FakeClient, Any], mocker: MockerFixture
+    station: tuple[DreamlabsModule, FakeClient, Any], mocker: MockerFixture
 ) -> None:
     module, fake, control = station
     calls: list[dict[str, Any] | None] = []
@@ -265,7 +270,7 @@ def test_next_chunk_is_anchored_on_completed_command(
 
 
 def test_uncertain_cancel_blocks_future_rollout(
-    station: tuple[DreamlabsRuntime, FakeClient, Any],
+    station: tuple[DreamlabsModule, FakeClient, Any],
 ) -> None:
     module, fake, control = station
     module.start_rollout()

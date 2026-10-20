@@ -17,7 +17,7 @@ for an outstanding request. A late reply cannot restart motion.
    timestamped uint8 RGB images. It resizes them to 320 by 176 and encodes JPEG
    at quality 85. Check camera timestamps against the coordinator clock.
 3. Compare the measured tool and camera calibration with the SDK's standard YAM.
-   SDK 1.0.1 uses `joint1` through `joint6` in radians and a TCP 0.1347 m along
+   The reference convention uses `joint1` through `joint6` in radians and a TCP 0.1347 m along
    `link_6` z. The DimOS model's `grasp_frame` is a different frame and is not an
    interchangeable TCP. The SDK FK fixture at `[0, .5, .5, -.35, 0, 0]` gives
    approximately `[.262523, 0, .206904]` m in the arm base frame. This fixture
@@ -32,23 +32,29 @@ for an outstanding request. A late reply cannot restart motion.
 Both adapters use normalized grippers, 0 closed and 1 open. The policy maps
 `q_l_chunk` and `q_r_chunk` into DimOS order: left six joints, right six joints,
 left gripper, right gripper. It never sends raw `per_key`, degrees, motor positions,
-or a different robot's joint profile to the coordinator.
+or a different robot's joint profile to the coordinator. Only YAM joint chunks are
+supported; an EEF-only reply is rejected rather than sent to hardware.
 
 ## Install and compose
 
-From the checkout, install the official, pinned SDK in its separate environment:
+Install the lightweight official client in the normal DimOS environment:
 
 ```bash
-uv sync --frozen --project native/python/dreamlabs
+uv sync --extra dreamlabs --inexact
 ```
 
-The isolated module adds the current DimOS checkout when it launches. Its environment
-keeps the full SDK's NumPy, Click, Portal, and JAX constraints out of the main DimOS
-environment. Reserve disk space for both environments. Follow the provider's
-[Setup API](https://platform.dreamlabs.ai/setup-api) instructions to supply an
-approved credential through `DREAM_API_KEY` or an existing owner-only credentials file.
-The SDK reads provider endpoints from that file. Do not put keys in a blueprint,
-command argument, source file, log, or recording.
+`DreamlabsModule` is a normal module. Its optional `dreamlabs-client==1.0.1`
+dependency adds no full robot SDK, isolated process, JAX solver, or dependency
+downgrades. The client imports only when an episode or live probe is explicitly
+started. Existing Pinocchio FK computes the required EEF observations from a
+kinematic-only copy of the SDK's reference YAM description. That file retains the
+source geometry and MIT notice, and adds no hardware model or physical calibration.
+The coordinator still uses its existing dual OpenYAM model and bounds.
+
+Follow the provider's [Setup API](https://platform.dreamlabs.ai/setup-api) instructions
+to supply an approved credential through `DREAM_API_KEY` or an existing owner-only
+credentials file. The client reads provider endpoints from that file. Do not put
+keys in a blueprint, command argument, source file, log, or recording.
 
 For a new stack, compose `dreamlabs_dual_openyam` with the station's three existing
 camera blueprints. Remap each camera instance's `color_image` output to the role
@@ -78,9 +84,10 @@ app.DreamlabsModule.stop_rollout()
 ```
 
 Preflight checks gates, fresh synchronized observations, and model bounds locally.
-It makes no Dreamlabs call. Starting an episode can also perform the SDK's model
-metadata lookup. The policy requests one chunk at a time, plays all 48 rows at
-20 Hz, waits for coordinator completion, and holds during the next inference.
+It makes no Dreamlabs call. The explicit YAM schema supplies joint, grip, and EEF
+fields without a model metadata lookup or client-side IK. The policy requests one
+chunk at a time, plays all 48 rows at 20 Hz, waits for coordinator completion, and
+holds during the next inference.
 The SDK keeps nine frames per camera at 5 Hz from capture timestamps while fresh
 observations arrive. This synchronous first version does not refill while moving.
 
@@ -95,15 +102,15 @@ categories rather than SDK payloads.
 These commands use no credential, camera, robot driver, or paid inference:
 
 ```bash
-uv run pytest dimos/imitation/policy/dreamlabs
-uv run --project native/python/dreamlabs --group tests --with-editable . pytest native/python/dreamlabs/dimos_dreamlabs -c native/python/dreamlabs/pyproject.toml
+uv run --extra dreamlabs pytest dimos/imitation/policy/dreamlabs
 ```
 
 Tests cover literal left/right action fixtures, gripper units, JPEG color order,
 capture timestamps, SDK history, disabled recording, chunk seams, bounded commands,
-timeout, stop during inference, manual takeover, cancellation uncertainty, and two
-official SDK FK poses. Runtime tests replace the inference client and coordinator;
-the FK tests run the installed official SDK. No live inference or physical rollout
+timeout, stop during inference, manual takeover, cancellation uncertainty, and 38
+fixed SDK reference FK poses, including seeded varied joint configurations. Tests
+also exercise the real lightweight client with its network transport replaced.
+No full SDK is needed to run these checks. No live inference or physical rollout
 has been validated. Real camera placement, calibration, motion tracking, E-stop
 latency, and task success require an approved station session.
 
@@ -111,12 +118,11 @@ After the provider's price and account limit are visible and one call is approve
 run the bounded probe separately from the robot stack:
 
 ```bash
-uv run --project native/python/dreamlabs --with-editable . python -m dimos_dreamlabs.probe --live
+uv run --extra dreamlabs python -m dimos.imitation.policy.dreamlabs.probe --live
 ```
 
 The probe sends exactly one inference request, three generated black JPEGs,
-the synthetic FK fixture state, and `hold position`. SDK model lookup and session
-close may make additional control requests. It uses the existing provider
-credential, disables recording, prints no returned actions, and opens no hardware.
+the synthetic FK fixture state, and `hold position`. Session close may make an
+additional control request. It uses the existing provider credential, disables recording, prints no returned actions, and opens no hardware.
 It validates the API response contract, not task performance. Do not use this
 command before approval of the payload and inference cost.

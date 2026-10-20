@@ -188,6 +188,8 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
+dreamlabs = ["dreamlabs-client==1.0.1"]
+
 misc = [
     "ipykernel",
     # Embedding models and their undeclared runtime imports.
@@ -389,7 +391,7 @@ scene = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,dreamlabs,drone,manipulation,misc,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -456,7 +458,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu,learning]",
+    "dimos[apriltag,mapping,drone,cpu,learning,dreamlabs]",
     # Scene-cooking tests need these two from the `scene` extra. The full
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
@@ -537,7 +539,7 @@ dev = [
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dreamlabs-client = false, dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10

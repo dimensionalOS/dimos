@@ -36,6 +36,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+dreamlabs-client = false
 dimos-viewer = false
 dimos-lcm = false
 eclipse-zenoh = false
@@ -1926,6 +1927,7 @@ all = [
     { name = "dimos-viewer" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
+    { name = "dreamlabs-client" },
     { name = "edgetam-dimos" },
     { name = "einops" },
     { name = "fastapi" },
@@ -2060,6 +2062,9 @@ cuda = [
 ]
 dds = [
     { name = "cyclonedds" },
+]
+dreamlabs = [
+    { name = "dreamlabs-client" },
 ]
 drone = [
     { name = "pymavlink" },
@@ -2399,7 +2404,7 @@ tests = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "dreamlabs", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2456,7 +2461,7 @@ tests-self-hosted = [
     { name = "coacd" },
     { name = "coverage" },
     { name = "dim-odom" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "dreamlabs", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2530,7 +2535,7 @@ requires-dist = [
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
-    { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["apriltag", "cuda", "dreamlabs", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
@@ -2540,6 +2545,7 @@ requires-dist = [
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'planning'", specifier = ">=1.40.0" },
+    { name = "dreamlabs-client", marker = "extra == 'dreamlabs'", specifier = "==1.0.1" },
     { name = "eclipse-zenoh", specifier = ">=1.10.1,<2.0" },
     { name = "edgetam-dimos", marker = "extra == 'perception'", specifier = ">=1.0.1" },
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
@@ -2662,7 +2668,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["dreamlabs", "misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2753,7 +2759,7 @@ tests = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning", "dreamlabs"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
@@ -2811,7 +2817,7 @@ tests-self-hosted = [
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dim-odom", specifier = ">=0.4.1" },
-    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
+    { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning", "dreamlabs"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2988,6 +2994,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/26/2ce3a9caf431f24e39f8b1fc7b3ebba4faafef1d61c849db3194e8d2e21d/drake-1.49.0-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:6c73dbd061fcb442e82b7b5a94dadcfbf4c44949035d03394df29412114647b2", size = 41482505, upload-time = "2026-01-15T19:44:08.313Z" },
     { url = "https://files.pythonhosted.org/packages/a3/2c/b147eaeee97986d970c0618144b28049cf078c20ba73209f4db14cf9a531/drake-1.49.0-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:b897f5f1516d13627ef18a8395b15f56413016d3c91c902cada76860b5cbb12c", size = 41516482, upload-time = "2026-01-15T19:44:11.342Z" },
     { url = "https://files.pythonhosted.org/packages/84/dc/c55dc5678a61e5befd3694b28e0dc5737a8422334b774a4174b517c67c22/drake-1.49.0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:b9a5b528d430764ce1670918b8679cabbb209c8daa2440824ac3a9832c686591", size = 41432263, upload-time = "2026-01-15T19:44:14.486Z" },
+]
+
+[[package]]
+name = "dreamlabs-client"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "websockets" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/23/40f088c54c2a5326b43f51fa93c450f1c6ac8f854d23640d9f05befc1f73/dreamlabs_client-1.0.1-py3-none-any.whl", hash = "sha256:80421eddd44a2068645fb7e15db8b3ae93ce3faa8f07d379fdb918369dc5f1e5", size = 458692, upload-time = "2026-10-19T20:48:58.328Z" },
 ]
 
 [[package]]

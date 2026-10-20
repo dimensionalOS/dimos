@@ -13,16 +13,16 @@
 # limitations under the License.
 
 
-from dimos_dreamlabs.probe import main
-import dream
 import pytest
 from pytest_mock import MockerFixture
+
+from dimos.imitation.policy.dreamlabs.probe import main
 
 
 def test_probe_requires_explicit_live_flag(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    constructor = mocker.patch.object(dream, "DreamClient")
+    constructor = mocker.patch("dimos.imitation.policy.dreamlabs.probe.create_client")
     monkeypatch.setattr("sys.argv", ["probe"])
     with pytest.raises(SystemExit):
         main()
@@ -32,7 +32,7 @@ def test_probe_requires_explicit_live_flag(
 def test_probe_sends_only_one_synthetic_inference(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    constructor = mocker.patch.object(dream, "DreamClient")
+    constructor = mocker.patch("dimos.imitation.policy.dreamlabs.probe.create_client")
     client = constructor.return_value.__enter__.return_value
     client.get_action.return_value = {"q_l_chunk": [[0.0] * 7] * 48, "q_r_chunk": [[0.0] * 7] * 48}
     monkeypatch.setattr("sys.argv", ["probe", "--live"])

@@ -17,16 +17,16 @@
 
 import argparse
 
-import dream
 import numpy as np
 
 from dimos.imitation.policy.dreamlabs.conversion import (
     CAMERAS,
     HORIZON,
     encode_image,
-    observation,
     policy_config,
 )
+from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
+from dimos.imitation.policy.dreamlabs.module import create_client
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
@@ -46,10 +46,11 @@ def main() -> None:
     joints = [0.0, 0.5, 0.5, -0.35, 0.0, 0.0]
     vector = np.array([*joints, *joints, 0.5, 0.5])
     try:
-        with dream.DreamClient() as client:
+        with create_client() as client:
             client.policy(policy_config("dreamlabs/dream-1-beta", 1500))
             client.set_observation(
-                {f"video.{role}": image for role in CAMERAS}, observation(vector, "hold position")
+                {f"video.{role}": image for role in CAMERAS},
+                DreamlabsKinematics().observation(vector, "hold position"),
             )
             reply = client.get_action()
             for key in ("q_l_chunk", "q_r_chunk"):
