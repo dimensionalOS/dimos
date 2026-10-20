@@ -24,6 +24,7 @@ import numpy as np
 
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos.msgs.image import image_from_compressed, image_to_rgb, image_view
 from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
@@ -119,6 +120,24 @@ def entity_points(message: EntityMarkers) -> rr.Points3D:
     )
 
 
+def path_archetype(
+    message: Path,
+    *,
+    color: tuple[int, int, int] = (0, 255, 128),
+    z_offset: float = 0.5,
+    radii: float = 0.05,
+) -> rr.LineStrips3D:
+    import rerun as rr
+
+    if not message.poses:
+        return rr.LineStrips3D([])
+    points = [
+        [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z + z_offset]
+        for pose in message.poses
+    ]
+    return rr.LineStrips3D([points], colors=[color], radii=radii)
+
+
 def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
     """Render stamped geometry and its exact fields; other domains remain explicit."""
     import rerun as rr
@@ -132,7 +151,11 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         if frame:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{frame}")))
         return entries
-    if type(message) is EntityMarkers:
+    if type(message) is Path:
+        entries = [(entity, path_archetype(message))]
+        if message.header.frame_id:
+            entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
+    elif type(message) is EntityMarkers:
         entries = [(entity, entity_points(message))]
         if message.header.frame_id:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
