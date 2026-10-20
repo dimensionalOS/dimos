@@ -267,3 +267,8 @@ jobs:
         run: |
           .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_resampling; import pytest; import sys; assert "site-packages" in str(path_resampling.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_path_resampling.py"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_resampling.py
+      - name: Verify generated occupancy/path rendering and safety masks
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import operations, path_mask, visualizations, visualize_path; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (operations, path_mask, visualizations, visualize_path)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_rendering.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/operations.py dimos/mapping/occupancy/path_mask.py dimos/mapping/occupancy/visualizations.py dimos/mapping/occupancy/visualize_path.py

@@ -19,17 +19,28 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
+from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.occupancy import CostValues, occupancy_view
+from dimos.msgs.occupancy import CostValues, occupancy_view, world_to_grid
 
 _GridT = TypeVar("_GridT", OccupancyGrid, CdrOccupancyGrid)
 
 
-def _grid_values(message: _GridT) -> NDArray[np.int8]:
+def _grid_values(message: OccupancyGrid | CdrOccupancyGrid) -> NDArray[np.int8]:
     if isinstance(message, CdrOccupancyGrid):
         return occupancy_view(message)
     return message.grid
+
+
+def _grid_coordinates(
+    message: OccupancyGrid | CdrOccupancyGrid, point: Point | Vector3
+) -> tuple[float, float]:
+    if isinstance(message, CdrOccupancyGrid):
+        return world_to_grid(message, Point(x=point.x, y=point.y, z=point.z))
+    result = message.world_to_grid((point.x, point.y, point.z))
+    return result.x, result.y
 
 
 def _with_grid(message: _GridT, cells: NDArray[np.int8]) -> _GridT:

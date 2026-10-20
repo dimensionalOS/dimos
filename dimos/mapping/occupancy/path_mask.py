@@ -15,13 +15,16 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
+from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
+from dimos.messages.nav_msgs.msg import Path as CdrPath
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.occupancy import CostValues
 
 
 def make_path_mask(
-    occupancy_grid: OccupancyGrid,
-    path: Path,
+    occupancy_grid: _GridT,
+    path: Path | CdrPath,
     robot_width: float,
     pose_index: int = 0,
     max_length: float = float("inf"),
@@ -44,9 +47,9 @@ def make_path_mask(
     """
     import cv2
 
-    mask = np.zeros((occupancy_grid.height, occupancy_grid.width), dtype=np.uint8)
+    mask = np.zeros((occupancy_grid.info.height, occupancy_grid.info.width), dtype=np.uint8)
 
-    line_width_pixels = max(1, int(robot_width / occupancy_grid.resolution))
+    line_width_pixels = max(1, int(robot_width / occupancy_grid.info.resolution))
 
     poses = path.poses
     if len(poses) < pose_index + 2:
@@ -55,8 +58,9 @@ def make_path_mask(
     # Draw lines between consecutive points
     cumulative_length = 0.0
     for i in range(pose_index, len(poses) - 1):
-        pos1 = poses[i].position
-        pos2 = poses[i + 1].position
+        first, second = poses[i], poses[i + 1]
+        pos1 = first.pose.position if isinstance(first, CdrPoseStamped) else first.position
+        pos2 = second.pose.position if isinstance(second, CdrPoseStamped) else second.position
 
         segment_length = np.sqrt(
             (pos2.x - pos1.x) ** 2 + (pos2.y - pos1.y) ** 2 + (pos2.z - pos1.z) ** 2
@@ -67,11 +71,11 @@ def make_path_mask(
 
         cumulative_length += segment_length
 
-        grid_pt1 = occupancy_grid.world_to_grid(pos1)
-        grid_pt2 = occupancy_grid.world_to_grid(pos2)
+        grid_pt1 = _grid_coordinates(occupancy_grid, pos1)
+        grid_pt2 = _grid_coordinates(occupancy_grid, pos2)
 
-        pt1 = (round(grid_pt1.x), round(grid_pt1.y))
-        pt2 = (round(grid_pt2.x), round(grid_pt2.y))
+        pt1 = (round(grid_pt1[0]), round(grid_pt1[1]))
+        pt2 = (round(grid_pt2[0]), round(grid_pt2[1]))
 
         cv2.line(mask, pt1, pt2, (255.0,), thickness=line_width_pixels)
 
@@ -82,7 +86,7 @@ def make_path_mask(
     if total_points == 0:
         return bool_mask
 
-    occupied_mask = occupancy_grid.grid >= CostValues.OCCUPIED
+    occupied_mask = _grid_values(occupancy_grid) >= CostValues.OCCUPIED
     occupied_in_path = bool_mask & occupied_mask
     occupied_count = np.sum(occupied_in_path)
 
