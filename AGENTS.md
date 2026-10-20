@@ -204,6 +204,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
 - **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
+- **ZMQTransport / pZMQTransport**: ZeroMQ pub/sub through an XSUB/XPUB proxy that the first process to bind the endpoints hosts. `ZMQ_AVAILABLE` reports whether pyzmq is installed, and pyzmq is imported only when a ZMQ transport is constructed. Install with `uv sync --extra zmq --inexact` (`dimos/protocol/pubsub/impl/zmqpubsub.py`).
 
 ---
 

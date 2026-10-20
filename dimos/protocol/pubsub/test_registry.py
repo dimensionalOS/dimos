@@ -52,7 +52,7 @@ def session_pool(monkeypatch):
 
 def test_supported_protos_includes_known_set() -> None:
     """Registry exposes the canonical proto names."""
-    assert supported_protos() == ["jpeg_lcm", "lcm", "plcm", "pzenoh", "zenoh"]
+    assert supported_protos() == ["jpeg_lcm", "lcm", "plcm", "pzenoh", "pzmq", "zenoh", "zmq"]
 
 
 @pytest.mark.parametrize(

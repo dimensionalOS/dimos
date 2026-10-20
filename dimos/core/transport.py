@@ -280,6 +280,102 @@ class DDSTransport(PubSubTransport[T]):
         return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
+# find_spec instead of importing: pyzmq (the optional zmq extra) is only
+# imported when a ZMQTransport is built.
+ZMQ_AVAILABLE = importlib.util.find_spec("zmq") is not None
+
+
+class ZMQTransport(PubSubTransport[T]):
+    """ZeroMQ transport with LCM encoding for typed DimosMsg.
+
+    Connection settings (`pub_endpoint`, `sub_endpoint`, `proxy`, `hwm`,
+    `settle_timeout`) are `ZMQConfig` fields passed as kwargs.
+    """
+
+    def __init__(self, topic: str, type: type, **kwargs: Any) -> None:
+        # pyzmq: see ZMQ_AVAILABLE.
+        from dimos.protocol.pubsub.impl.zmqpubsub import ZMQ
+
+        super().__init__(LCMTopic(topic, type))
+        self.zmq = ZMQ(**kwargs)
+        self._started: bool = False
+        self._start_lock = threading.RLock()
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (
+            partial(ZMQTransport, **self.zmq.config.model_dump()),
+            (self.topic.topic, self.topic.lcm_type),
+        )
+
+    def start(self) -> None:
+        with self._start_lock:
+            if not self._started:
+                self.zmq.start()
+                self._started = True
+
+    def stop(self) -> None:
+        with self._start_lock:
+            if self._started:
+                self.zmq.stop()
+                self._started = False
+
+    def broadcast(self, _: Stream[T] | None, msg: T) -> None:
+        if not self._started:
+            self.start()
+        self.zmq.publish(self.topic, cast("DimosMsg", msg))
+
+    def subscribe(
+        self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.zmq.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
+
+
+class pZMQTransport(PubSubTransport[T]):
+    """ZeroMQ transport with pickle encoding for arbitrary Python objects.
+
+    `self.topic` stays the plain string, as on `pLCMTransport`.
+    """
+
+    def __init__(self, topic: str, **kwargs: Any) -> None:
+        # pyzmq: see ZMQ_AVAILABLE.
+        from dimos.protocol.pubsub.impl.zmqpubsub import PickleZMQ
+
+        super().__init__(topic)
+        self._zmq_topic = LCMTopic(topic)
+        self.zmq = PickleZMQ(**kwargs)
+        self._started: bool = False
+        self._start_lock = threading.RLock()
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (partial(pZMQTransport, **self.zmq.config.model_dump()), (self.topic,))
+
+    def start(self) -> None:
+        with self._start_lock:
+            if not self._started:
+                self.zmq.start()
+                self._started = True
+
+    def stop(self) -> None:
+        with self._start_lock:
+            if self._started:
+                self.zmq.stop()
+                self._started = False
+
+    def broadcast(self, _: Stream[T] | None, msg: T) -> None:
+        if not self._started:
+            self.start()
+        self.zmq.publish(self._zmq_topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.zmq.subscribe(self._zmq_topic, lambda msg, topic: callback(msg))
+
+
 M = TypeVar("M", bound=DimosMsg)
 
 

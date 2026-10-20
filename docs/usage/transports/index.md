@@ -365,6 +365,61 @@ Received velocity: x=1.0, y=0.0, z=0.5
 
 See [Zenoh](#zenoh) for backend selection, connection settings, and per-topic QoS.
 
+### ZeroMQ
+
+[ZeroMQ](https://zeromq.org) pub/sub on the same typed `Topic` as LCM and Zenoh, with LCM
+encoding (`ZMQ`) or pickle (`PickleZMQ`). It needs the `zmq` extra:
+
+```sh skip
+uv sync --extra zmq --inexact
+```
+
+zmq pub/sub is point-to-point, so one side has to bind. To get a bus like the other backends,
+every publisher connects to the XSUB side of one proxy and every subscriber to its XPUB side.
+The first process to bind the two endpoints hosts the proxy; later ones find the ports taken
+and connect to it. The endpoints come from `GlobalConfig` (`--zmq-pub-endpoint`,
+`--zmq-sub-endpoint`, default `tcp://127.0.0.1:7781` and `:7782`), and `ZMQConfig` (see
+[`zmqservice.py`](/dimos/protocol/service/zmqservice.py)) holds the per-bus settings:
+
+* `proxy`: `auto` (host when free, else connect), `host` (bind or fail), `connect` (never bind).
+  Election relies on a second `tcp://` bind failing; with `ipc://` pin one process to `host`.
+* `hwm`: messages zmq queues per peer before dropping.
+* `settle_timeout`: how long `subscribe()` waits for the subscription to reach the publisher.
+
+Messages travel as two frames, `[channel + NUL, payload]`. The NUL turns zmq's prefix filter
+into an exact match, so `/foo` never receives `/foobar`; pattern topics and `subscribe_all`
+match in Python like LCM. `subscribe()` probes itself until the probe comes back, so a message
+published right after it from the same process is not lost to zmq's slow-joiner behaviour.
+Publishers in other processes learn of a new subscription asynchronously, as with any zmq bus.
+
+```python skip
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.pubsub.impl.zmqpubsub import ZMQ, Topic
+
+bus = ZMQ()  # hosts the proxy on the default endpoints, or joins the one already running
+bus.start()
+
+received = []
+topic = Topic("/robot/velocity", Vector3)
+
+bus.subscribe(topic, lambda msg, t: received.append(msg))
+bus.publish(topic, Vector3(1.0, 0.0, 0.5))
+
+import time
+time.sleep(0.1)
+
+print(f"Received velocity: x={received[0].x}, y={received[0].y}, z={received[0].z}")
+bus.stop()
+```
+
+```results
+Received velocity: x=1.0, y=0.0, z=0.5
+```
+
+In a blueprint, pin streams to it with `ZMQTransport` (typed) or `pZMQTransport` (pickled) from
+`dimos.core.transport`, the same way as `ROSTransport` above. The pubsub URI registry knows them
+as `zmq:/topic#pkg.Msg` and `pzmq:/topic`.
+
 ### DDS Transport
 
 For network communication, DDS uses the Data Distribution Service (DDS) protocol:
@@ -501,3 +556,4 @@ python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchma
 | `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |
+| `ZeroMQ`       | Brokered pub/sub over TCP           | Yes           | Yes     | Optional `zmq` extra; first process hosts the XSUB/XPUB proxy |

@@ -22,14 +22,15 @@ URI grammar::
 
     <proto>:<topic>[#<msg_type>]
 
-- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``.
+- ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``,
+  ``zmq``, ``pzmq``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
 - ``<msg_type>``: optional ``module.ClassName`` resolved via
   ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
 
-Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
-the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``)
-don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
+Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``, ``zmq``) require a message type — either
+from the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``,
+``pzmq``) don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
 the typed transport appends the message type to the wire key.
 """
 
@@ -82,12 +83,28 @@ def _make_pzenoh(topic: str, msg_type: type | None) -> Any:
     return pZenohTransport(topic)
 
 
+def _make_zmq(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError("proto 'zmq' requires a message type (URI '#suffix' or msg_type kwarg)")
+    from dimos.core.transport import ZMQTransport
+
+    return ZMQTransport(topic, msg_type)
+
+
+def _make_pzmq(topic: str, msg_type: type | None) -> Any:
+    from dimos.core.transport import pZMQTransport
+
+    return pZMQTransport(topic)
+
+
 _REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
     "lcm": _make_lcm,
     "jpeg_lcm": _make_jpeg_lcm,
     "plcm": _make_plcm,
     "zenoh": _make_zenoh,
     "pzenoh": _make_pzenoh,
+    "zmq": _make_zmq,
+    "pzmq": _make_pzmq,
 }
 
 

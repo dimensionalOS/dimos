@@ -98,6 +98,10 @@ class GlobalConfig(BaseSettings):
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
+    # Where ZeroMQ publishers and subscribers connect: the XSUB and XPUB sides
+    # of one proxy, hosted by the first process that binds them.
+    zmq_pub_endpoint: str = "tcp://127.0.0.1:7781"
+    zmq_sub_endpoint: str = "tcp://127.0.0.1:7782"
     # Off: share a zenoh bus with a stack that already owns the Coordinator name.
     serve_coordinator_rpc: bool = True
     viewer: ViewerBackend = "rerun"

@@ -102,6 +102,8 @@ Config(
         zenoh_scout_addr='',
         zenoh_gossip=True,
         zenoh_connect_timeout=1.0,
+        zmq_pub_endpoint='tcp://127.0.0.1:7781',
+        zmq_sub_endpoint='tcp://127.0.0.1:7782',
         viewer='rerun',
         rerun_open='native',
         rerun_web=False,

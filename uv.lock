@@ -1968,6 +1968,7 @@ all = [
     { name = "python-multipart" },
     { name = "python-socketio" },
     { name = "pyyaml" },
+    { name = "pyzmq" },
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "roboplan" },
@@ -2302,6 +2303,9 @@ webrtc = [
     { name = "aiortc" },
     { name = "av" },
 ]
+zmq = [
+    { name = "pyzmq" },
+]
 
 [package.dev-dependencies]
 autofix = [
@@ -2325,7 +2329,7 @@ lint = [
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "deptry" },
-    { name = "dimos", extra = ["visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["visualization", "web", "webrtc", "zmq"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2369,7 +2373,7 @@ lint = [
 project-deps = [
     { name = "can-motor-control" },
     { name = "chromadb" },
-    { name = "dimos", extra = ["visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["visualization", "web", "webrtc", "zmq"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2399,7 +2403,7 @@ tests = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc", "zmq"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2456,7 +2460,7 @@ tests-self-hosted = [
     { name = "coacd" },
     { name = "coverage" },
     { name = "dim-odom" },
-    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
+    { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc", "zmq"] },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2530,7 +2534,7 @@ requires-dist = [
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
-    { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc", "zmq"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
@@ -2615,6 +2619,7 @@ requires-dist = [
     { name = "python-socketio", marker = "extra == 'web'", specifier = ">=5.16.1" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'planning'", specifier = ">=6.0" },
+    { name = "pyzmq", marker = "extra == 'zmq'", specifier = ">=26.0" },
     { name = "qpsolvers", extras = ["proxqp"], specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
@@ -2662,7 +2667,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "zmq", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2680,7 +2685,7 @@ lint = [
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
-    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc", "zmq"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2723,7 +2728,7 @@ lint = [
 project-deps = [
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
-    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc", "zmq"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2754,7 +2759,7 @@ tests = [
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
-    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc", "zmq"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2813,7 +2818,7 @@ tests-self-hosted = [
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
-    { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos", extras = ["web", "visualization", "webrtc", "zmq"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },

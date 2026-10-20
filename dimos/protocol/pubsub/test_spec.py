@@ -170,6 +170,54 @@ testdata.append(
 )
 
 
+try:
+    import zmq as _zmq  # noqa: F401
+
+    from dimos.protocol.pubsub.impl.zmqpubsub import ZMQ, PickleZMQ
+    from dimos.protocol.service.zmqservice import close_proxies
+    from dimos.utils.testing.ports import free_zmq_endpoints
+
+    @contextmanager
+    def zmq_lcm_context() -> Generator[ZMQ, None, None]:
+        zmq_pubsub = ZMQ(**free_zmq_endpoints())
+        zmq_pubsub.start()
+        try:
+            yield zmq_pubsub
+        finally:
+            zmq_pubsub.stop()
+            close_proxies()
+
+    testdata.append(
+        (
+            zmq_lcm_context,
+            Topic(topic="/test/spec/zmq", lcm_type=Vector3),
+            [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],
+        )
+    )
+
+    @contextmanager
+    def zmq_pickle_context() -> Generator[PickleZMQ, None, None]:
+        zmq_pubsub = PickleZMQ(**free_zmq_endpoints())
+        zmq_pubsub.start()
+        try:
+            yield zmq_pubsub
+        finally:
+            zmq_pubsub.stop()
+            close_proxies()
+
+    testdata.append(
+        (
+            zmq_pickle_context,
+            Topic("/test/spec/zmq/pickle"),
+            [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}],
+        )
+    )
+
+except ImportError:
+    # pyzmq (the zmq extra) not installed
+    print("ZeroMQ not available")
+
+
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     with pubsub_context() as x:

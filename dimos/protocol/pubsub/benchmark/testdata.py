@@ -260,6 +260,39 @@ testcases.append(
 )
 
 
+from dimos.protocol.service.zmqservice import ZMQ_AVAILABLE
+
+if ZMQ_AVAILABLE:
+    from dimos.protocol.pubsub.impl.zmqpubsub import ZMQ
+    from dimos.protocol.service.zmqservice import close_proxies
+    from dimos.utils.testing.ports import free_zmq_endpoints
+
+    @contextmanager
+    def zmq_pubsub_channel() -> Generator[ZMQ, None, None]:
+        """Publisher and subscriber through one XSUB/XPUB proxy over loopback TCP.
+
+        The proxy hop is the same whether the two sides share a process or not,
+        so this is the cross-process wire path as well.
+        """
+        zmq_pubsub = ZMQ(**free_zmq_endpoints())
+        zmq_pubsub.start()
+        try:
+            yield zmq_pubsub
+        finally:
+            zmq_pubsub.stop()
+            close_proxies()
+
+    def zmq_msggen(size: int) -> tuple[LCMTopic, Image]:
+        return (LCMTopic("/benchmark/zmq", Image), make_data_image(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=zmq_pubsub_channel,
+            msg_gen=zmq_msggen,
+        )
+    )
+
+
 from dimos.protocol.pubsub.impl.rospubsub import (
     ROS_AVAILABLE,
     DimosROS,
