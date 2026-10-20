@@ -149,13 +149,19 @@ Three families, one adapter, strong distinction from the existing seven.
 ### Implemented (this branch)
 
 - Adapter: `dimos/evals/vqa/primitives/localize_scene.py`
-- Families: `ego_fore_aft`, `height_order`, `ego_turn` (additive only)
+- Families: `ego_fore_aft`, `height_order`, `ego_turn`, `ego_any_fore_aft` (additive only)
+- Multi-instance referents: `nearest`, `next_to`, bare unique, any-ahead
+  (no `left`/`right` `<category>` in published questions — awkward English)
 - Author helper: `FixedQuestionAuthor` for fixture / offline proposals
 - Generation: `GenerationFrame.localize_scene` + `requires_localize` filter
 - Optional CLI: `--with-localize` + `--localize-query` (default off) via
   `dimos/evals/vqa/localize_recording.py`
-- Coverage budget: `dimos/evals/vqa/localize_coverage.py` keeps ≤K published cases per
-  `(family, selector)` (default K=5 with `--with-localize`; `--localize-coverage-k 0` disables)
+- Coverage budget: `dimos/evals/vqa/localize_coverage.py` keeps ≤K published localize
+  cases **per frame** (default K=5; `--localize-coverage-k 0` disables), round-robining
+  `(family, selector)` types across frames and balancing categories within the target type
+- Agreed ego cones / turn answers (shared ahead ±45°; ego_turn includes
+  **turn around** behind): [`ego-spatial-sectors.md`](ego-spatial-sectors.md) +
+  [`assets/ego_spatial_sectors_reference.png`](assets/ego_spatial_sectors_reference.png)
 
 ---
 

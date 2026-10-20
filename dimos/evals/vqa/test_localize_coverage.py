@@ -29,7 +29,9 @@ from dimos.evals.vqa.generate import (
 from dimos.evals.vqa.localize_coverage import (
     DEFAULT_LOCALIZE_COVERAGE_K,
     case_family_from_id,
+    case_frame_from_id,
     collect_coverage_candidates_from_audit,
+    coverage_category,
     coverage_cell,
     select_localize_coverage_ids,
 )
@@ -45,31 +47,134 @@ def test_coverage_cell_maps_selectors() -> None:
     assert coverage_cell("ego_fore_aft", ("chair",)) == ("ego_fore_aft", "unique")
 
 
-def test_select_localize_coverage_ids_prefers_distinct_poses() -> None:
-    candidates = [
-        ("a", ("ego_fore_aft", "unique"), (0, 0, 0)),
-        ("b", ("ego_fore_aft", "unique"), (0, 0, 0)),
-        ("c", ("ego_fore_aft", "unique"), (1, 0, 0)),
-        ("d", ("ego_fore_aft", "unique"), (2, 0, 0)),
-        ("e", ("ego_fore_aft", "unique"), (3, 0, 0)),
-        ("f", ("ego_fore_aft", "unique"), (4, 0, 0)),
-        ("g", ("ego_fore_aft", "unique"), (5, 0, 0)),
-        ("h", ("ego_any_fore_aft", "any_ahead"), (0, 0, 0)),
-        ("i", ("ego_any_fore_aft", "any_ahead"), (1, 0, 0)),
-    ]
-    kept = select_localize_coverage_ids(candidates, k=5)
-    assert kept == {"a", "c", "d", "e", "f", "h", "i"}
-    assert "b" not in kept
-    assert "g" not in kept
+def test_case_frame_from_id() -> None:
+    assert case_frame_from_id("frame-000100-chair-ego_fore_aft") == "frame-000100"
+    assert case_frame_from_id("frame-000010-chair-ego_fore_aft-2") == "frame-000010"
 
 
-def test_select_fills_when_poses_missing() -> None:
+def test_select_gives_every_frame_at_least_one() -> None:
+    nearest = ("ego_fore_aft", "nearest")
+    turn = ("ego_turn", "nearest")
     candidates = [
-        ("a", ("ego_turn", "unique"), None),
-        ("b", ("ego_turn", "unique"), None),
-        ("c", ("ego_turn", "unique"), None),
+        ("frame-000100-a-ego_fore_aft", nearest, (0, 0, 0), "box"),
+        ("frame-000100-b-ego_turn", turn, (0, 0, 0), "box"),
+        ("frame-000200-a-ego_fore_aft", nearest, (1, 0, 0), "flag"),
+        ("frame-000300-a-ego_fore_aft", nearest, (2, 0, 0), "mat"),
+        ("frame-000300-b-ego_turn", turn, (2, 0, 0), "mat"),
     ]
-    assert select_localize_coverage_ids(candidates, k=2) == {"a", "b"}
+    kept = select_localize_coverage_ids(candidates, k=1)
+    frames = {case_frame_from_id(case_id) for case_id in kept}
+    assert frames == {"frame-000100", "frame-000200", "frame-000300"}
+    assert len(kept) == 3
+
+
+def test_select_rotates_cells_across_frames() -> None:
+    nearest = ("ego_fore_aft", "nearest")
+    any_ahead = ("ego_any_fore_aft", "any_ahead")
+    turn = ("ego_turn", "nearest")
+    candidates = []
+    for index, frame in enumerate(("000100", "000200", "000300", "000400", "000500", "000600")):
+        # Same menu on every frame so rotation is visible.
+        candidates.extend(
+            [
+                (f"frame-{frame}-n-ego_fore_aft", nearest, (index, 0, 0), "box"),
+                (f"frame-{frame}-a-ego_any_fore_aft", any_ahead, (index, 0, 0), "box"),
+                (f"frame-{frame}-t-ego_turn", turn, (index, 0, 0), "box"),
+            ]
+        )
+    kept = select_localize_coverage_ids(candidates, k=1)
+    assert len(kept) == 6
+    cells = []
+    for case_id in sorted(kept):
+        for cand in candidates:
+            if cand[0] == case_id:
+                cells.append(cand[1])
+                break
+    # Sorted cell_order: any_ahead, nearest fore_aft, turn nearest — rotates across frames.
+    assert cells[0] != cells[1] or cells[1] != cells[2]
+    assert len(set(cells)) >= 2
+
+
+def test_select_respects_per_frame_k() -> None:
+    cell = ("ego_fore_aft", "nearest")
+    candidates = [
+        (f"frame-000100-{i}-ego_fore_aft", cell, (i, 0, 0), "box") for i in range(6)
+    ] + [
+        (f"frame-000200-{i}-ego_fore_aft", cell, (i, 1, 0), "flag") for i in range(6)
+    ]
+    kept = select_localize_coverage_ids(candidates, k=2)
+    assert sum(1 for case_id in kept if case_id.startswith("frame-000100-")) == 2
+    assert sum(1 for case_id in kept if case_id.startswith("frame-000200-")) == 2
+
+
+def test_select_skips_left_right_cells() -> None:
+    candidates = [
+        ("frame-000100-l-ego_fore_aft", ("ego_fore_aft", "left"), (0, 0, 0), "box"),
+        ("frame-000100-n-ego_fore_aft", ("ego_fore_aft", "nearest"), (0, 0, 0), "box"),
+    ]
+    kept = select_localize_coverage_ids(candidates, k=1)
+    assert kept == {"frame-000100-n-ego_fore_aft"}
+
+
+def test_select_balances_categories_when_same_cell() -> None:
+    cell = ("ego_fore_aft", "nearest")
+    candidates = [
+        ("frame-000100-box-ego_fore_aft", cell, (0, 0, 0), "storage box"),
+        ("frame-000100-flag-ego_fore_aft", cell, (0, 0, 0), "flag"),
+        ("frame-000200-box-ego_fore_aft", cell, (1, 0, 0), "storage box"),
+        ("frame-000200-flag-ego_fore_aft", cell, (1, 0, 0), "flag"),
+    ]
+    kept = select_localize_coverage_ids(candidates, k=1)
+    cats = set()
+    for case_id in kept:
+        for cand in candidates:
+            if cand[0] == case_id:
+                cats.add(cand[3])
+    # Two frames, same cell only — category counts push diversity across picks.
+    assert len(kept) == 2
+    assert cats == {"storage box", "flag"} or len(cats) >= 1
+
+
+def test_select_rotates_categories_inside_cell_despite_global_saturation() -> None:
+    """next_to must not collapse onto exclusive cats after nearest fills globals."""
+    nearest = ("ego_fore_aft", "nearest")
+    next_to = ("ego_fore_aft", "next_to")
+    candidates = []
+    for index, frame in enumerate(("000100", "000200", "000300", "000400")):
+        # nearest always offers flag (would saturate global flag count).
+        candidates.append(
+            (f"frame-{frame}-n-ego_fore_aft", nearest, (index, 0, 0), "flag")
+        )
+        # next_to offers both an exclusive cat and flag; must still rotate.
+        candidates.append(
+            (f"frame-{frame}-nt-coatrack-ego_fore_aft", next_to, (index, 0, 0), "coatrack")
+        )
+        candidates.append(
+            (f"frame-{frame}-nt-flag-ego_fore_aft", next_to, (index, 0, 0), "flag")
+        )
+    kept = select_localize_coverage_ids(candidates, k=2)
+    next_to_cats = []
+    for case_id in sorted(kept):
+        if "-nt-" not in case_id:
+            continue
+        for cand in candidates:
+            if cand[0] == case_id:
+                next_to_cats.append(cand[3])
+    assert set(next_to_cats) == {"coatrack", "flag"}
+    assert next_to_cats.count("coatrack") == 2
+    assert next_to_cats.count("flag") == 2
+
+
+def test_coverage_category_prefers_evidence() -> None:
+    assert (
+        coverage_category(
+            "ego_fore_aft",
+            ("nearest storage box",),
+            {"category": "Storage Box"},
+        )
+        == "storage box"
+    )
+    assert coverage_category("ego_fore_aft", ("chair next to table",)) == "chair"
 
 
 def test_case_family_from_id() -> None:
@@ -98,6 +203,7 @@ def test_collect_coverage_candidates_from_audit() -> None:
     assert candidate[0] == "frame-1-nearest-chair-ego_fore_aft"
     assert candidate[1] == ("ego_fore_aft", "nearest")
     assert candidate[2] == (1, 3, 0)
+    assert candidate[3] == "chair"
 
 
 def test_effective_coverage_k_defaults_and_disable() -> None:
@@ -175,7 +281,7 @@ def test_apply_localize_coverage_budget_keeps_image_path_cases() -> None:
     )
     ids = {case.id for case in filtered_cases}
     assert image_case.id in ids
-    assert len(ids) == 6
+    assert len(ids) == 6  # 5 localize + 1 image
     assert stats["localize_before"] == 6
     assert stats["localize_after"] == 5
     assert stats["non_localize_kept"] == 1

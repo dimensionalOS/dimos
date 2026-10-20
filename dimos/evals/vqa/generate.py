@@ -45,7 +45,9 @@ from dimos.evals.vqa.families import (
 )
 from dimos.evals.vqa.localize_coverage import (
     DEFAULT_LOCALIZE_COVERAGE_K,
+    CoverageCandidate,
     case_family_from_id,
+    case_frame_from_id,
     collect_coverage_candidates_from_audit,
     select_localize_coverage_ids,
 )
@@ -473,8 +475,8 @@ def _apply_localize_coverage_budget(
     *,
     k: int,
 ) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
-    """Keep image-path cases; budget localize cases to ``K`` per (family, selector)."""
-    candidates: list[tuple[str, tuple[str, str], tuple[object, ...] | None]] = []
+    """Keep image-path cases; budget up to ``K`` localize cases per frame."""
+    candidates: list[CoverageCandidate] = []
     localize_ids: set[str] = set()
     for frame in frames:
         for case in frame.cases:
@@ -495,19 +497,28 @@ def _apply_localize_coverage_budget(
     filtered_cases = [case for case in cases if case.id in kept_ids]
     filtered_labels = [label for label in labels if label.id in kept_ids]
     by_cell: dict[str, int] = {}
-    for case_id, cell, _pose in candidates:
+    by_category: dict[str, int] = {}
+    by_frame: dict[str, int] = {}
+    for case_id, cell, _pose, category in candidates:
         if case_id not in kept_localize:
             continue
         key = f"{cell[0]}|{cell[1]}"
         by_cell[key] = by_cell.get(key, 0) + 1
+        by_category[category] = by_category.get(category, 0) + 1
+        frame_key = case_frame_from_id(case_id)
+        by_frame[frame_key] = by_frame.get(frame_key, 0) + 1
     stats: dict[str, object] = {
         "k": k,
+        "k_meaning": "max_localize_cases_per_frame",
         "localize_before": len(localize_ids),
         "localize_after": len(kept_localize),
         "non_localize_kept": len(kept_ids) - len(kept_localize),
         "total_before": len(cases),
         "total_after": len(filtered_cases),
+        "frames_with_localize": len(by_frame),
         "kept_per_cell": dict(sorted(by_cell.items())),
+        "kept_per_category": dict(sorted(by_category.items())),
+        "kept_per_frame": dict(sorted(by_frame.items())),
     }
     return filtered_cases, filtered_labels, stats
 

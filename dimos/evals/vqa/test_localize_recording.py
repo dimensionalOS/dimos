@@ -94,12 +94,11 @@ def test_proposals_from_localize_scene_cover_singles_and_pairs() -> None:
     assert ("ego_fore_aft", ("table",)) in families
     assert ("ego_any_fore_aft", ("door",)) in families
     assert ("height_order", ("door", "table")) in families
-    # multi-instance chair → nearest / sides / any-ahead, not bare unique
+    # multi-instance chair → nearest / any-ahead only (no left/right wording)
     assert ("ego_fore_aft", ("nearest chair",)) in families
     assert ("ego_turn", ("nearest chair",)) in families
-    assert ("ego_fore_aft", ("left chair",)) in families
-    assert ("ego_fore_aft", ("right chair",)) in families
-    # left/right already name the lateral side — do not also ask ego_turn
+    assert ("ego_fore_aft", ("left chair",)) not in families
+    assert ("ego_fore_aft", ("right chair",)) not in families
     assert ("ego_turn", ("left chair",)) not in families
     assert ("ego_turn", ("right chair",)) not in families
     assert ("ego_any_fore_aft", ("chair",)) in families

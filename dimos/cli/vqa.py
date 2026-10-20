@@ -55,7 +55,7 @@ def generate(
         "--with-localize/--no-with-localize",
         help=(
             "Optionally discover objects (YOLO-E), verify them with Dan localize over a "
-            "padded window, then add localize families (unique / nearest / left-right / "
+            "padded window, then add localize families (unique / nearest / next-to / "
             "any-ahead) from verified hits (off by default)"
         ),
     ),
@@ -79,8 +79,9 @@ def generate(
         "--localize-coverage-k",
         min=0,
         help=(
-            "With --with-localize, keep at most K published localize cases per "
-            "(family, selector) cell (default 5). Use 0 to publish every answered localize case"
+            "With --with-localize, keep at most K published localize cases per frame "
+            "(default 5), round-robining ego question types across frames. "
+            "Use 0 to publish every answered localize case"
         ),
     ),
 ) -> None:

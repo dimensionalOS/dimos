@@ -97,17 +97,24 @@ default**. Enable them with `--with-localize`. Generation then:
 4. Adds deterministic localize proposals for case diversity:
    - **unique** bare names when a category has exactly one verified hit
    - **nearest** `<category>` when multiple hits exist (closest to the robot)
-   - **left/right** `<category>` for `ego_fore_aft` only when both sides are laterally
-     unambiguous (not paired with `ego_turn` — the side label would leak the turn answer)
    - **`<anchor> next to <landmark>`** relational referents for `ego_fore_aft` / `ego_turn`
      when a unique nearby pair exists (disambiguates without leaking turn direction)
    - **any-ahead** yes/no for each selected category (`ego_any_fore_aft`)
    - **height_order** pairs among unique categories only
 
-Published localize cases are then budgeted to at most **K=5** per `(family, selector)`
-cell (preferring distinct pose buckets) so a long trajectory does not flood the eval with
-near-duplicate capability probes. Override with `--localize-coverage-k`, or pass `0` to
-publish every answered localize case. Image-path families are never budgeted.
+Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m): ahead
+`|θ| ≤ 45°`, behind `|θ| ≥ 135°`, sides rejected for fore/aft; `ego_turn` answers
+left / right / ahead / **turn around**. See `experience/ego-spatial-sectors.md`.
+
+Left/right ``<category>`` referents are not proposed (awkward English in the question text;
+multi-instance disambiguation uses nearest / next-to instead).
+
+Published localize cases are budgeted to at most **K=5 per frame**. Selection
+round-robins `(family, selector)` types across frames so every frame with ego
+candidates keeps at least one localize question and later frames are not starved.
+Within the target type, under-represented categories win. Override with
+`--localize-coverage-k`, or pass `0` to publish every answered localize case.
+Image-path families are never budgeted.
 
 Without `--with-localize`, those families are not offered.
 
