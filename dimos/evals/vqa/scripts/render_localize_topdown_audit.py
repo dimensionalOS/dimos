@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections import defaultdict
 import html
 import io
 import json
 import math
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -79,9 +79,7 @@ def _collect_objects(full_audit: Path) -> list[dict[str, object]]:
     return sorted(objs.values(), key=lambda row: (str(row["name"]).casefold(), row["x"], row["y"]))
 
 
-def _evidence_for_question(
-    full_audit: Path, frame: str, question: str
-) -> dict[str, object] | None:
+def _evidence_for_question(full_audit: Path, frame: str, question: str) -> dict[str, object] | None:
     gt_path = full_audit / frame / "ground_truth.json"
     if not gt_path.exists():
         return None
@@ -298,9 +296,7 @@ def render(
     for index, obj in enumerate(objects, start=1):
         px, py = _world_to_px(float(obj["x"]), float(obj["y"]), grid_msg)
         color = cat_color[str(obj["name"]).casefold()]
-        title = html.escape(
-            f"{obj['name']}  ({float(obj['x']):.2f}, {float(obj['y']):.2f})"
-        )
+        title = html.escape(f"{obj['name']}  ({float(obj['x']):.2f}, {float(obj['y']):.2f})")
         obj_marks.append(
             f'<g class="mark obj-g" data-i="{index}">'
             f'<circle class="obj-dot" cx="{px:.1f}" cy="{py:.1f}" r="3.2" fill="{color}" '
