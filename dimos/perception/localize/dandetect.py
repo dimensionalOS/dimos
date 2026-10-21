@@ -163,9 +163,9 @@ class DanDetector(Resource):
     def shifted(self, base: LocalizeParams, fields: dict[str, Any] | None = None) -> LocalizeParams:
         """``base`` shifted onto these models' score scales, then ``fields``.
 
-        Each model's shift is a delta relative to the OWLv2 baseline that all
-        presets in ``localize_params`` were fit on; explicit overrides in
-        ``fields`` take precedence.
+        Each model's shift is a delta relative to the OWLv2 baseline that
+        ``LocalizeParams`` was fit on; explicit overrides in ``fields`` take
+        precedence.
         """
         shifts = {
             key: round(getattr(base, key) + delta, 6)

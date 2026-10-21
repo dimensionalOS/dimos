@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import replace
+import json
 import threading
 import time
 from typing import Any, Literal
@@ -61,7 +62,6 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize_params import MANIPULATION_PARAMS, parse_params
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
@@ -95,8 +95,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     embedder: str = "siglip"
     detector: str = "owlv2"
     segmenter: str = "edgetam"
-    # the rig's params, a localize_params preset or built from one; localize() can change them
-    params: LocalizeParams = MANIPULATION_PARAMS
+    # the rig's params, set on the blueprint; localize() can override fields per call
+    params: LocalizeParams = LocalizeParams()
 
 
 class PerceptionLocalize(Module):
@@ -253,11 +253,9 @@ class PerceptionLocalize(Module):
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``params`` changes the module's params for this call only: a preset,
-        ``manipulation`` / ``xarm`` or ``dual_yam`` (desk) or ``navigation`` /
-        ``go2`` / ``g1`` (room), switches to it; a JSON object sets
-        LocalizeParams fields on the module's params, or on the preset its
-        "base" key names, e.g. '{"accept_score": 0.45}'.
+        ``params`` is a JSON object of LocalizeParams field overrides for this
+        call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.
+        The next call without ``params`` is back on the module's params.
 
         Usage guide: dimos/perception/localize/SKILL.md.
         """
@@ -271,7 +269,8 @@ class PerceptionLocalize(Module):
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        call_params = self.detector.shifted(*parse_params(params, self.config.params))
+        overrides = json.loads(params) if params.strip() else None
+        call_params = self.detector.shifted(self.config.params, overrides)
         results = self.detector.localize(
             queries, index=index, rig=rig, params=call_params, groups=self._groups
         )

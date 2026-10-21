@@ -117,33 +117,26 @@ At a table, a walking robot's room-scale params are coarse for small objects:
 | `min_camera_range_m`: closer sightings are dropped | 0.5 | 0.28 | 0.07 |
 | `surface_patch_max_rise_m`: a sighting this flat on the support is surface | 0.08 | 0.003 | 0.003 |
 
-Pass `"params": "xarm"` on every call for that label while working at the
+Pass desk-scale field overrides on every call for that label while working at the
 table. Objects the label already has from room-scale calls keep how they were
 built; a label first asked at the table is built at desk scale.
 
 ## Changing params per call
 
-The presets are defined in `localize_params.py`, and its `PRESETS` maps their
-names:
+Each blueprint sets its rig's `LocalizeParams` (`types.py`) at construction
+(desk-scale defaults in `LocalizeParams()`, room-scale `GO2_PARAMS` in
+`go2_localize.py`).
 
-| `params` | constant | rig |
-|---|---|---|
-| `"manipulation"` / `"xarm"` | `MANIPULATION_PARAMS` / `XARM_PARAMS` | desk: a wrist camera over a tabletop |
-| `"dual_yam"` | `DUAL_YAM_PARAMS` | desk: dual OpenYAM arms whose D405 wrist cameras see objects from 7 cm |
-| `"navigation"` / `"go2"` | `NAVIGATION_PARAMS` / `GO2_PARAMS` | room: a walking robot, furniture-sized objects, a 5 cm lidar map |
-| `"g1"` | `G1_PARAMS` | room: a walking robot with dense depth (`min_points=30`) |
-
-`params` changes the module's params for that call only. The next call without
-it is back on the module's, the ones its blueprint set.
+`params` is a JSON object of `LocalizeParams` field overrides for that call
+only. The next call without it is back on the module's params, the ones its
+blueprint set.
 
 | `params` value | meaning |
 |---|---|
 | `""` | the module's params |
-| a preset name | that preset |
 | `'{"accept_score": 0.45}'` | these fields on the module's params |
-| `'{"base": "xarm", "accept_score": 0.45}'` | these fields on a preset |
 
-    uv run dimos mcp call localize -j '{"objects": "apple", "params": "xarm"}' --timeout 300
+    uv run dimos mcp call localize -j '{"objects": "apple", "params": "{\"accept_score\": 0.45}"}' --timeout 300
     uv run dimos mcp call localize -j '{"objects": "apple", "params": "{\"min_views\": 3}"}' --timeout 300
 
 | field | acts on | what it gates |
@@ -161,10 +154,9 @@ it is back on the module's, the ones its blueprint set.
   the label. Try them first.
 - The other fields shape only what happens from now on. Objects already built
   keep how they were built.
-- A misspelled field fails the call with `unexpected keyword argument`, an
-  unknown preset with `unknown preset`.
-- Every field is defined on `LocalizeParams` in `types.py`, and each preset's
-  values are in `localize_params.py`.
+- A misspelled field fails the call with `unexpected keyword argument`.
+- Every field and its desk-scale default is defined on `LocalizeParams` in
+  `types.py`.
 
 ## Labels and GPU
 
@@ -209,11 +201,11 @@ not from the image models.
 - **Light and environment.** Every rig depends heavily on them. Tune params on
   the fly with the call's `params`, the score fields `candidate_floor` and
   `accept_score` first.
-- **Clouds for grasping.** `fuse_voxel_m` is 0.01 in the desk presets and 0.03
+- **Clouds for grasping.** `fuse_voxel_m` is 0.01 in `LocalizeParams()` and 0.03
   in `go2`. For GraspGenX, go as low as 0.003, because it can reject clouds
   fused at larger voxels. The voxel applies every time a sighting joins an
   object, so pass it on every call for that label, for example
-  `'{"base": "xarm", "fuse_voxel_m": 0.003}'`. A cloud already fused coarser
+  `'{"fuse_voxel_m": 0.003}'`. A cloud already fused coarser
   does not regain detail.
 - **Simulation.** Sim images and MuJoCo workflows need their own params; the
   presets were fit on images from real rigs.

@@ -17,44 +17,40 @@ from __future__ import annotations
 from dataclasses import replace
 
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize_params import (
+from dimos.perception.localize.tools.tool_localize import (
     DUAL_YAM_PARAMS,
     G1_PARAMS,
     GO2_PARAMS,
-    MANIPULATION_PARAMS,
-    NAVIGATION_PARAMS,
     PRESETS,
     XARM_PARAMS,
     parse_params,
 )
+from dimos.perception.localize.types import LocalizeParams
 
 
 def test_presets_and_detector_score_shifts() -> None:
-    assert XARM_PARAMS == MANIPULATION_PARAMS
-    assert GO2_PARAMS == NAVIGATION_PARAMS
-    assert DUAL_YAM_PARAMS == replace(MANIPULATION_PARAMS, min_camera_range_m=0.07)
-    assert G1_PARAMS == replace(NAVIGATION_PARAMS, min_points=30)
-    for name in ("manipulation", "navigation", "xarm", "dual_yam", "go2", "g1"):
+    assert XARM_PARAMS == LocalizeParams()
+    assert DUAL_YAM_PARAMS == replace(LocalizeParams(), min_camera_range_m=0.07)
+    assert G1_PARAMS == replace(GO2_PARAMS, min_points=30)
+    for name in ("xarm", "dual_yam", "go2", "g1"):
         assert name in PRESETS
 
     gdino = DanDetector(detector="gdino")
     omdet = DanDetector(detector="omdet")
 
-    # Both manipulation and navigation presets shift proportionally for gdino and omdet.
-    manip_gdino = gdino.shifted(*parse_params("manipulation", MANIPULATION_PARAMS))
-    assert (manip_gdino.candidate_floor, manip_gdino.accept_score) == (0.35, 0.55)
+    # Both desk and walking-robot params shift proportionally for gdino and omdet.
+    xarm_gdino = gdino.shifted(*parse_params("xarm", XARM_PARAMS))
+    assert (xarm_gdino.candidate_floor, xarm_gdino.accept_score) == (0.35, 0.55)
 
-    nav_gdino = gdino.shifted(*parse_params("navigation", MANIPULATION_PARAMS))
-    assert (nav_gdino.candidate_floor, nav_gdino.accept_score) == (0.28, 0.47)
+    go2_gdino = gdino.shifted(*parse_params("go2", XARM_PARAMS))
+    assert (go2_gdino.candidate_floor, go2_gdino.accept_score) == (0.28, 0.47)
 
-    manip_omdet = omdet.shifted(*parse_params("xarm", MANIPULATION_PARAMS))
-    assert (manip_omdet.candidate_floor, manip_omdet.accept_score) == (0.15, 0.30)
+    xarm_omdet = omdet.shifted(*parse_params("xarm", XARM_PARAMS))
+    assert (xarm_omdet.candidate_floor, xarm_omdet.accept_score) == (0.15, 0.30)
 
-    nav_omdet = omdet.shifted(*parse_params("go2", MANIPULATION_PARAMS))
-    assert (nav_omdet.candidate_floor, nav_omdet.accept_score) == (0.08, 0.22)
+    go2_omdet = omdet.shifted(*parse_params("go2", XARM_PARAMS))
+    assert (go2_omdet.candidate_floor, go2_omdet.accept_score) == (0.08, 0.22)
 
     # Explicit field overrides win over model shifts.
-    overridden = gdino.shifted(
-        *parse_params('{"base": "navigation", "accept_score": 0.50}', MANIPULATION_PARAMS)
-    )
+    overridden = gdino.shifted(*parse_params('{"base": "go2", "accept_score": 0.50}', XARM_PARAMS))
     assert (overridden.candidate_floor, overridden.accept_score) == (0.28, 0.50)

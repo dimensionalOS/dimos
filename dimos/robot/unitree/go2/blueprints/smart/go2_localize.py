@@ -22,9 +22,24 @@ and starts an MCP server so you can ask where things are.
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.perception.localize.localize_params import GO2_PARAMS
 from dimos.perception.localize.module import PerceptionLocalize
+from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+
+# room scale: a walking robot, furniture-sized objects, viewpoints meters apart,
+# the lidar a 5 cm voxel map
+GO2_PARAMS = LocalizeParams(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=13,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+)
 
 go2_localize = autoconnect(
     unitree_go2,

@@ -20,7 +20,7 @@ Run: uv run python -m dimos.perception.localize.tools.tool_localize
 
 The offline bench for a stage combination: try it on a recording and find
 its params before deploying. Each stage takes a dandetect registry name or
-a module:attr path. --params names a preset of localize_params, xarm when
+a module:attr path. --params names a bench preset from PRESETS, xarm when
 omitted, or sets fields as JSON on xarm or on the preset its "base" key
 names; the chosen models' shifts apply as in DanDetector.shifted.
 
@@ -35,9 +35,10 @@ with "no verified detection of ..." per miss. An ambiguous instance
 """
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import heapq
 from itertools import combinations
+import json
 from pathlib import Path
 import sys
 from typing import Any
@@ -51,15 +52,60 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
-from dimos.perception.localize.localize_params import MANIPULATION_PARAMS, PRESETS, parse_params
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
-from dimos.perception.localize.types import Localization
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.data import get_data
 
 XARM_DATASET = (
     "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
     "xarm6_worldbelief_20260729_203624_161992.db"
 )
+# offline bench presets, fit with SigLIP + OWLv2 + EdgeTAM on each rig's recordings
+XARM_PARAMS = LocalizeParams()
+DUAL_YAM_PARAMS = replace(XARM_PARAMS, min_camera_range_m=0.07)
+GO2_PARAMS = LocalizeParams(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=13,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+)
+G1_PARAMS = replace(GO2_PARAMS, min_points=30)
+
+PRESETS: dict[str, LocalizeParams] = {
+    "xarm": XARM_PARAMS,
+    "dual_yam": DUAL_YAM_PARAMS,
+    "go2": GO2_PARAMS,
+    "g1": G1_PARAMS,
+}
+
+
+def parse_params(
+    spec: str, current: LocalizeParams = XARM_PARAMS
+) -> tuple[LocalizeParams, dict[str, Any]]:
+    """The params ``spec`` starts from, and the fields it sets on them.
+
+    ``""`` keeps ``current``, a preset name switches to that preset, and a JSON
+    object sets its fields on ``current``, or on the preset its ``"base"`` key names.
+    """
+    spec = spec.strip()
+    fields: dict[str, Any] = {}
+    name: str | None = spec or None
+    if spec.startswith("{"):
+        fields = json.loads(spec)
+        name = fields.pop("base", None)
+    if name is None:
+        return current, fields
+    if name not in PRESETS:
+        raise ValueError(f"unknown preset {name!r}: one of {', '.join(PRESETS)}")
+    return PRESETS[name], fields
+
+
 REFUSAL_MARGIN = 0.15
 POINT_SIZE = 0.005  # m, depth camera point spacing
 LIDAR_POINT_SIZE = 0.03  # m, a lidar cloud that carries no lattice pitch
@@ -466,10 +512,9 @@ def main() -> int:
     if rig.lidar is not None:
         rig.lidar = rig.lidar.after(after).before(before)
     detector = DanDetector(args.embedder, args.detector, args.segmenter)
-    base, fields = parse_params(args.params, MANIPULATION_PARAMS)
+    base, fields = parse_params(args.params, XARM_PARAMS)
     params = detector.shifted(base, fields)
-    spec = args.params.strip()
-    name = spec if spec in PRESETS else next(n for n, p in PRESETS.items() if p == base)
+    name = next(n for n, p in PRESETS.items() if p == base)
     changed = {k: v for k, v in asdict(params).items() if v != getattr(base, k)}
     print(f"stages: {' + '.join(detector.names)}; params: {name} {changed or ''}".rstrip())
 

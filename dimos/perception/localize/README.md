@@ -49,30 +49,31 @@ To register it by name, add an `Option` to `EMBEDDERS`, `DETECTORS` or `SEGMENTE
 
 ## Parameters
 
-`LocalizeParams` (`types.py`) names every threshold and what it gates. The values are per rig,
-presets in `localize_params.py`, each fit with SigLIP + OWLv2 + EdgeTAM on that rig's recordings:
+`LocalizeParams` (`types.py`) names every threshold and what it gates. Its defaults are
+desk scale, fit with SigLIP + OWLv2 + EdgeTAM on the xArm recordings; each robot
+blueprint sets its own `LocalizeParams` on `PerceptionLocalize.blueprint(params=...)`
+(such as `GO2_PARAMS` in `dimos/robot/unitree/go2/blueprints/smart/go2_localize.py`).
 
-| preset | constant | rig | differs from `manipulation` |
+For offline benchmarking on recordings, `tools/tool_localize.py` defines `PRESETS`:
+
+| preset | constant | rig | differs from `LocalizeParams()` (`xarm`) |
 |---|---|---|---|
-| `manipulation` | `MANIPULATION_PARAMS` | tabletop manipulation baseline | |
-| `navigation` | `NAVIGATION_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
-| `xarm` | `XARM_PARAMS` | wrist camera over a desk (`MANIPULATION_PARAMS`) | |
+| `xarm` | `XARM_PARAMS` | wrist camera over a desk (`LocalizeParams()`) | |
 | `dual_yam` | `DUAL_YAM_PARAMS` | dual OpenYAM, D405 wrist cameras | `min_camera_range_m` 0.07: the D405s see objects from 7 cm |
-| `go2` | `GO2_PARAMS` | Unitree Go2 (`NAVIGATION_PARAMS`) | same as `navigation` |
-| `g1` | `G1_PARAMS` | walking robot with dense depth instead of a 5 cm lidar map | `navigation` with `min_points` 30 |
+| `go2` | `GO2_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
+| `g1` | `G1_PARAMS` | walking robot with dense depth instead of a 5 cm lidar map | `go2` with `min_points` 30 |
 
-Params are set once and changed per call:
+Params originate on the blueprint and can be overridden per call:
 
-- `PerceptionLocalize` takes its rig's params at construction, `MANIPULATION_PARAMS` when not given:
-  `PerceptionLocalize.blueprint(params=GO2_PARAMS)`. A rig without a preset of its own builds
-  its params from the closest: the G1 and Alfred recordings run `G1_PARAMS`
-  (`replace(NAVIGATION_PARAMS, min_points=30)`), room scale with a cloud floor for dense depth instead
-  of a 5 cm lidar map.
-- A `localize` call's `params` argument changes them for that call only. A preset name
-  switches to that preset; a JSON object sets fields on the module's params, or on the preset
-  its `"base"` key names: `'{"base": "xarm", "accept_score": 0.45}'`. The next call without
+- `PerceptionLocalize` takes its rig's `LocalizeParams` at construction on the blueprint,
+  defaulting to `LocalizeParams()` when not given:
+  `PerceptionLocalize.blueprint(geometry="lidar", mobile=True, params=GO2_PARAMS)`.
+- A live `localize` call's `params` argument overrides fields on the module's params for
+  that call only via a JSON object: `'{"accept_score": 0.45}'`. The next call without
   one is back on the module's params.
-- `tools/tool_localize --params` takes the same string, on `xarm` when omitted.
+- `tools/tool_localize --params` takes a preset name from `PRESETS` (`xarm` when omitted),
+  or a JSON object of fields set on `xarm` or on the preset its `"base"` key names:
+  `'{"base": "go2", "min_points": 30}'`.
 
 The score fields are in the models' own units:
 
@@ -83,7 +84,7 @@ The score fields are in the models' own units:
 
 `DanDetector.shifted(base, fields)` applies each chosen model's registered score delta
 (`Option.shift` in `dandetect.py`) relative to OWLv2 on `base`, then `fields`.
-A shift puts any preset's scores on the chosen model's scale; explicit overrides in `fields`
+A shift puts any rig's scores on the chosen model's scale; explicit overrides in `fields`
 take precedence.
 
 | model | shift (delta vs OWLv2) | from the xArm and YAM recordings |
@@ -100,10 +101,10 @@ Every combination needs its own params, tuned on the target scene before deployi
    `--params` preset, adjusting fields with `--params '{"base": ..., ...}'`. Every
    `verification` log line lists each group's best score, distinct views and sightings; the
    `.rrd` shows what was answered and from where.
-2. Deploy the combination and the params that answered right, a new preset in
-   `localize_params.py` for a new rig, or built from an existing one:
-   `PerceptionLocalize.blueprint(detector="gdino", params=replace(XARM_PARAMS, accept_score=0.6))`.
-   The `localize` skill's `params` argument still changes them per call.
+2. Deploy the combination and the `LocalizeParams` that answered right on the robot's
+   blueprint:
+   `PerceptionLocalize.blueprint(detector="gdino", params=LocalizeParams(accept_score=0.6))`.
+   The `localize` skill's `params` argument still overrides fields per call.
 
 ## Tools
 
