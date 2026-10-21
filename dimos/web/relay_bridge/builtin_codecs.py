@@ -116,7 +116,7 @@ def decode_bool(msg: bool) -> Bool:
 _ZLIB_LEVEL = 1
 
 
-def _zlib_rle(data: bytes) -> bytes:
+def _zlib_rle(data: bytes | memoryview) -> bytes:
     compressor = zlib.compressobj(
         _ZLIB_LEVEL, zlib.DEFLATED, zlib.MAX_WBITS, zlib.DEF_MEM_LEVEL, zlib.Z_RLE
     )
@@ -154,7 +154,7 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
         "res": res,
         "origin": [origin.position.x, origin.position.y, origin.yaw],
     }
-    return EncodedPayload(_zlib_rle(cells.tobytes()), meta)
+    return EncodedPayload(_zlib_rle(memoryview(cells)), meta)
 
 
 # voxels.zlib.v1: a PointCloud2 as voxel occupancy bits. Points are quantized

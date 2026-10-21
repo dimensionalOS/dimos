@@ -212,11 +212,16 @@ class SessionProtocol(QuicConnectionProtocol):
         self._wake_delivery_waiters()
 
     def error_received(self, exc: Exception) -> None:
-        """The connected UDP socket surfaced an ICMP error (port unreachable:
-        the relay process is gone). Fail at once instead of waiting out the
-        idle timeout. Guarded against re-entry: the close's own transmit
-        fails on the same socket and lands back here."""
+        """Fail immediately on connection refusal from the connected UDP socket.
+
+        Other socket errors can be transient; keepalive and the idle timeout
+        decide whether the relay is still reachable. Guard against re-entry
+        when transmitting the close reports another socket error.
+        """
         if self.closed.is_set():
+            return
+        if not isinstance(exc, ConnectionRefusedError):
+            logger.warning("relay UDP socket error", error=str(exc))
             return
         self.fail_session(f"socket error: {exc}")
         self.transmit()  # emits the close and arms the drain timer
@@ -422,7 +427,8 @@ class SessionProtocol(QuicConnectionProtocol):
 
         No transmit() here: the enclosing datagram_received transmits after
         event processing (the pattern aioquic's own H3 layer uses for
-        ProtocolError closes), and unit tests drive this without a transport.
+        ProtocolError closes). Callers outside that path must transmit the
+        close themselves to arm the drain timer.
         Consumers gated on wait_closed() exit when ConnectionTerminated lands
         (<= ~3x PTO after a local close); the public `closed` event stops
         producers immediately.

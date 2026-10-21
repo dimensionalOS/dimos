@@ -126,6 +126,9 @@ class StubSession:
         self.failed = reason
         self.closed.set()
 
+    def transmit(self) -> None:
+        pass
+
 
 def _client(session: StubSession) -> RelayClient:
     return RelayClient("https://127.0.0.1:1", "robot", session, ctx=None)
@@ -288,24 +291,43 @@ async def test_stopping_sender_cancels_delivery_waiter(
 
 
 async def test_keepalive_fails_the_session_after_unanswered_pings(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
     monkeypatch.setattr(wt_client, "KEEPALIVE_INTERVAL_S", 0.02)
     session = StubSession()
+    transmit = mocker.patch.object(session, "transmit")
+    sent_pings: asyncio.Queue[Ping] = asyncio.Queue()
+    real_send = session.send_msg
+
+    def send_msg(msg: Msg) -> None:
+        real_send(msg)
+        if isinstance(msg, Ping):
+            sent_pings.put_nowait(msg)
+
+    mocker.patch.object(session, "send_msg", side_effect=send_msg)
     client = _client(session)
     client.start_keepalive()
     client.start_keepalive()  # idempotent
-    await asyncio.sleep(0.15)
-    pings = [m for m in session.sent_msgs if isinstance(m, Ping)]
-    assert len(pings) >= 3 and session.failed is None  # answered: the session lives
-    assert len({p.n for p in pings}) == len(pings)
+    task = client._keepalive_task
+    assert task is not None
+    try:
+        pings = [
+            await asyncio.wait_for(sent_pings.get(), timeout=1.0)
+            for _ in range(wt_client.KEEPALIVE_MISSES)
+        ]
+        assert session.failed is None  # answered: the session lives
+        assert len({p.n for p in pings}) == len(pings)
 
-    session.answer_pings = False
-    await asyncio.wait_for(session.closed.wait(), timeout=2.0)
-    assert session.failed == f"{wt_client.KEEPALIVE_MISSES} keepalive pings unanswered"
-    assert client._keepalive_task is not None
-    await asyncio.wait_for(client._keepalive_task, timeout=1.0)
-    assert session.pong_waiters == {}  # timed-out waiters are discarded
+        session.answer_pings = False
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert session.closed.is_set()
+        assert session.failed == f"{wt_client.KEEPALIVE_MISSES} keepalive pings unanswered"
+        assert session.pong_waiters == {}  # timed-out waiters are discarded
+        transmit.assert_called_once_with()  # flush the close without an incoming datagram
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_keepalive_tolerates_a_lone_missed_pong(monkeypatch: pytest.MonkeyPatch) -> None:

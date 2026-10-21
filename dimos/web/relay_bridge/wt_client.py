@@ -304,6 +304,7 @@ class RelayClient:
                 misses += 1
                 if misses >= KEEPALIVE_MISSES:
                     self._session.fail_session(f"{misses} keepalive pings unanswered")
+                    self._session.transmit()
                     return
             await asyncio.sleep(max(0.0, started + KEEPALIVE_INTERVAL_S - loop.time()))
 
