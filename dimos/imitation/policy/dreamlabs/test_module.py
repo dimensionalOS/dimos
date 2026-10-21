@@ -91,6 +91,10 @@ def test_real_colored_images_and_state_reach_client_without_execution(
     request.assert_not_called()
     preview = instance.get_action()
     request.assert_called_once()
+    raw = instance.get_last_action_response()
+    np.testing.assert_allclose(raw["q_l_chunk"][0], [*LEFT_ACTION, 0.25])
+    raw["q_l_chunk"][0][-1] = 99.0
+    assert instance.get_last_action_response()["q_l_chunk"][0][-1] == pytest.approx(0.25)
     sent = request.call_args.args[0]["observation"]
     for role, expected in (
         ("overhead", [0, 0, 210]),
@@ -168,3 +172,20 @@ main()
     )
     assert result.returncode == 0, result.stderr
     assert "No API or hardware used" in result.stdout
+
+
+def test_raw_rejected_response_survives_episode_reset(
+    module: tuple[DreamlabsModule, Any],
+    mocker: MockerFixture,
+) -> None:
+    instance, _ = module
+    client = mocker.MagicMock()
+    client.get_action.return_value = {"q_l_chunk": [[0.0] * 7] * 47, "q_r_chunk": [[0.0] * 7] * 48}
+    mocker.patch("dimos.imitation.policy.dreamlabs.module.create_client", return_value=client)
+    tick(instance)
+    with pytest.raises(ValueError, match="48 by 7"):
+        instance.get_action()
+    instance.reset_episode()
+    raw = instance.get_last_action_response()
+    assert len(raw["q_l_chunk"]) == 47
+    assert len(raw["q_r_chunk"]) == 48

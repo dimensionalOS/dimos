@@ -26,6 +26,9 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 ACTION_HZ = 20.0
 HORIZON = 48
@@ -71,8 +74,26 @@ def action_trajectory(
     if left.shape != (HORIZON, 7) or right.shape != (HORIZON, 7):
         raise ValueError("expected two 48 by 7 YAM action chunks")
     rows = np.column_stack((left[:, :6], right[:, :6], left[:, 6], right[:, 6]))
-    if not np.isfinite(rows).all() or np.any(rows[:, 12:] < 0) or np.any(rows[:, 12:] > 1):
-        raise ValueError("action contains invalid numbers or non-normalized grippers")
+    for label, values in (("arm", rows[:, :12]), ("gripper", rows[:, 12:])):
+        invalid = np.argwhere(~np.isfinite(values))
+        if invalid.size:
+            raise ValueError(f"action contains non-finite {label} targets at {invalid.tolist()}")
+    for side, column in (("left", 12), ("right", 13)):
+        opening = rows[:, column]
+        indices = np.flatnonzero((opening < 0) | (opening > 1))
+        if indices.size:
+            logger.warning(
+                "Clipping finite Dreamlabs gripper output to [0, 1]",
+                arm=side,
+                count=int(indices.size),
+                raw_min=float(opening.min()),
+                raw_max=float(opening.max()),
+                indices=indices.tolist(),
+                raw_values=opening[indices].tolist(),
+            )
+        rows[:, column] = np.clip(opening, 0.0, 1.0)
+    if np.any(rows[:, 12:] < 0) or np.any(rows[:, 12:] > 1):
+        raise ValueError("action contains non-normalized grippers after conversion")
     points = np.vstack((start, rows))
     return JointTrajectory(
         joint_names=list(DUAL_OPENYAM_JOINTS),

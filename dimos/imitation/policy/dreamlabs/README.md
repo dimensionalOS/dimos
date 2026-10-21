@@ -169,9 +169,14 @@ coordinator owns trajectory interpolation, completion, start-state mismatch
 checks and cancellation; its existing velocity limiting remains in effect.
 No automatic API retries occur. Errors stop the trial and remain visible in
 `rollout_status()`. Validated trajectories are published on `policy_preview` in
-both modes. Gripper/shape/finite errors reject the response; dispatch additionally
-rejects arm targets outside the coordinator model's position bounds, without
-clipping. Preview mode does not certify physical limits.
+both modes. Shape and nonfinite arm/gripper values reject the response. Finite
+model-output gripper openings are clamped to `[0,1]` (0 closed, 1 open); warning
+logs record raw extrema, clipped indices/values and counts. Inputs remain strict.
+`get_last_action_response()` returns the last SDK action dict before conversion,
+even after conversion rejection or episode reset, so raw diagnostics remain
+available in memory. No request images or credentials are retained by that RPC.
+Dispatch still rejects arm targets outside the coordinator model's position bounds;
+arm joints are never clamped by this adapter. Preview does not certify physical limits.
 
 
 ### View the robot with Viser
@@ -214,8 +219,9 @@ through its existing 14-joint trajectory.
 The retained live fake-rollout run02 at `59c3239b1` executed no policy actions.
 Its right-gripper output reached `1.0061448679` (21/48 rows above one); left/right
 J2 targets reached `-0.0174917514` / `-0.0034554977` rad although measured J2 was
-inside the model bounds. Those requests are rejected by the manual adapter,
-not silently clamped. SDK-reference J2 lower bounds and coordinator-model lower
+inside the model bounds. The original strict prototype rejected this response.
+With the later explicitly requested gripper-output clamp, the right-gripper
+outliers become 1.0; the J2 arm-limit violations still reject physical dispatch. SDK-reference J2 lower bounds and coordinator-model lower
 bounds were both effectively zero, but physical encoder/calibration agreement
 has not been independently verified. Equal before/after cached SDK readings did
 not prove fresh per-motor CAN feedback; a recent host message timestamp still

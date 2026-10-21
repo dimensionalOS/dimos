@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -64,6 +65,7 @@ class DreamlabsModule(Module):
         self._client: DreamClient | None = None
         self._fk: DreamlabsKinematics | None = None
         self._latest: NDArray[np.float64] | None = None
+        self._last_action_response: dict[str, Any] | None = None
 
     @rpc
     def set_observation(
@@ -115,8 +117,19 @@ class DreamlabsModule(Module):
                 client = self._client
             response = client.get_action()
             with self._lock:
+                self._last_action_response = deepcopy(response)
                 assert self._latest is not None
                 return action_trajectory(response, self._latest.copy())
+
+    @rpc
+    def get_last_action_response(self) -> dict[str, Any] | None:
+        """Return the last SDK action dict before conversion, including rejected values.
+
+        Retained in memory across episode resets for diagnostics; no request payload
+        or credentials are captured. This never requests inference or executes actions.
+        """
+        with self._lock:
+            return deepcopy(self._last_action_response)
 
     @rpc
     def reset_episode(self) -> None:

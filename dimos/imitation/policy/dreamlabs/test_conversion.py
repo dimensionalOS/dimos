@@ -29,7 +29,7 @@ VALID = [[0.0] * 6 + [0.5]] * 48
         {"q_r_chunk": VALID},
         {"q_l_chunk": VALID[:47], "q_r_chunk": VALID},
         {"q_l_chunk": [[float("nan")] * 6 + [0.5]] * 48, "q_r_chunk": VALID},
-        {"q_l_chunk": VALID, "q_r_chunk": [[0.0] * 6 + [1.1]] * 48},
+        {"q_l_chunk": VALID, "q_r_chunk": [[0.0] * 6 + [float("inf")]] * 48},
     ],
 )
 def test_invalid_action_contract(reply: dict) -> None:
@@ -41,3 +41,27 @@ def test_invalid_action_contract(reply: dict) -> None:
 def test_invalid_state_contract(positions: list[float]) -> None:
     with pytest.raises(ValueError):
         state_vector(JointState(name=list(DUAL_OPENYAM_JOINTS), position=positions))
+
+
+@pytest.mark.parametrize("opening, expected", [(-0.001, 0.0), (1.006, 1.0), (0.0, 0.0), (1.0, 1.0)])
+def test_finite_output_grippers_are_clamped_without_changing_arms_or_raw_reply(
+    opening: float,
+    expected: float,
+) -> None:
+    left = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6]
+    right = [-0.7, 0.8, -0.9, 1.0, -1.1, 1.2]
+    reply = {"q_l_chunk": [[*left, opening]] * 48, "q_r_chunk": [[*right, opening]] * 48}
+    trajectory = action_trajectory(reply, np.array([0.0] * 12 + [0.5, 0.5]))
+    assert trajectory.points[1].positions == [*left, *right, expected, expected]
+    assert trajectory.points[-1].positions == [*left, *right, expected, expected]
+    assert reply["q_l_chunk"][0][-1] == opening
+    assert reply["q_r_chunk"][0][-1] == opening
+
+
+@pytest.mark.parametrize("opening", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_output_gripper_is_rejected(opening: float) -> None:
+    with pytest.raises(ValueError, match="non-finite gripper"):
+        action_trajectory(
+            {"q_l_chunk": VALID, "q_r_chunk": [[0.0] * 6 + [opening]] * 48},
+            np.array([0.0] * 12 + [0.5, 0.5]),
+        )
