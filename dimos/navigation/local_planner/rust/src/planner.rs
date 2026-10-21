@@ -601,7 +601,14 @@ impl World {
 
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
-    build_world_explored(points, &Terrain::default(), 0.0, pose, goal, cap)
+    build_world_explored(
+        points,
+        &Terrain::default(),
+        0.0,
+        pose,
+        &[[goal.0, goal.1]],
+        cap,
+    )
 }
 
 /// `build_world` with `terrain` priced, a soft point reaching the cells within `reach` of it.
@@ -610,17 +617,18 @@ fn build_world_explored(
     terrain: &Terrain,
     reach: f64,
     pose: (f64, f64, f64),
-    goal: (f64, f64),
+    approach: &[[f64; 2]],
     cap: f64,
 ) -> World {
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
-    // Working area over {pose, goal, cloud} padded by `PAD`, low corner snapped
+    // Working area over {pose, approach, cloud} padded by PAD, low corner snapped
     // onto the absolute lattice.
-    let mut x0 = goal.0.min(pose.0);
-    let mut y0 = goal.1.min(pose.1);
-    let mut x1 = goal.0.max(pose.0);
-    let mut y1 = goal.1.max(pose.1);
-    for &(x, y) in &band {
+    let (mut x0, mut y0, mut x1, mut y1) = (pose.0, pose.1, pose.0, pose.1);
+    for (x, y) in approach
+        .iter()
+        .map(|p| (p[0], p[1]))
+        .chain(band.iter().copied())
+    {
         x0 = x0.min(x);
         y0 = y0.min(y);
         x1 = x1.max(x);
@@ -963,6 +971,14 @@ impl<'a> Clear<'a> {
         m
     }
 
+    /// The cell holding `(x, y)`, clamped to the world.
+    fn cell_of(&self, x: f64, y: f64) -> (usize, usize) {
+        (
+            ((x / CELL).round_even_i64() - self.w.kx).clamp(0, self.nx as i64 - 1) as usize,
+            ((y / CELL).round_even_i64() - self.w.ky).clamp(0, self.ny as i64 - 1) as usize,
+        )
+    }
+
     /// Does swept box `fp` clear `thresh` at (bin, cell)? Union first; every
     /// row is nested in it.
     #[inline]
@@ -1054,6 +1070,34 @@ fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
     )
 }
 
+/// The last point of `approach` the body fits on walking forward in some heading,
+/// or its end when none fits.
+fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Option<(f64, f64)> {
+    let end = *approach.last()?;
+    let walk = fps.id(emb, Some(0.0));
+    let margin = cl.margin;
+    let fits = |cl: &mut Clear, x: f64, y: f64| {
+        let (i, j) = cl.cell_of(x, y);
+        (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
+    };
+    if fits(cl, end[0], end[1]) {
+        return Some((end[0], end[1]));
+    }
+    for pair in approach.windows(2).rev() {
+        let (a, b) = (pair[0], pair[1]);
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let n = ((len / (0.5 * CELL)).ceil() as usize).max(1);
+        for q in (0..n).rev() {
+            let t = q as f64 / n as f64;
+            let (x, y) = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
+            if fits(cl, x, y) {
+                return Some((x, y));
+            }
+        }
+    }
+    Some((end[0], end[1]))
+}
+
 /// `se2_search` on a clearance table the caller owns (a pure memo, so shareable).
 fn se2_search_in(
     cl: &mut Clear,
@@ -1065,16 +1109,9 @@ fn se2_search_in(
 ) -> Option<Vec<[f64; 3]>> {
     let offs = fps.union().to_vec();
     let stand_offs = fps.stand().to_vec();
-    let (kx, ky) = (cl.w.kx, cl.w.ky);
     let (nx, ny) = (cl.nx, cl.ny);
     let thetas = yaw_bins();
 
-    let cell_of = |px: f64, py: f64| -> (usize, usize) {
-        (
-            ((px / CELL).round_even_i64() - kx).clamp(0, nx as i64 - 1) as usize,
-            ((py / CELL).round_even_i64() - ky).clamp(0, ny as i64 - 1) as usize,
-        )
-    };
     let mut sb = 0;
     let mut sbest = f64::INFINITY;
     for (k, &th) in thetas.iter().enumerate() {
@@ -1084,8 +1121,8 @@ fn se2_search_in(
             sb = k;
         }
     }
-    let (si, sj) = cell_of(start.0, start.1);
-    let (gi, gj) = cell_of(goal.0, goal.1);
+    let (si, sj) = cl.cell_of(start.0, start.1);
+    let (gi, gj) = cl.cell_of(goal.0, goal.1);
     // The seed is witnessed at the true start pose on the standing box (nested
     // in every row, so a replan from a published route cannot refuse); below
     // the witness, the nearest standing-fit lattice state with a clear segment.
@@ -1808,7 +1845,7 @@ pub fn plan(
         points,
         &Terrain::default(),
         pose,
-        goal,
+        &[[goal.0, goal.1]],
         emb,
         resolution,
         incumbent,
@@ -1842,12 +1879,14 @@ pub fn step_reach(emb: &Emb) -> f64 {
 }
 
 /// `plan` with `terrain` priced. The heuristic never sees the price, so the search stays exact.
+/// The goal is pulled back along `approach`, the route from the robot to the carrot, to where
+/// the body fits.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
     terrain: &Terrain,
     pose: (f64, f64, f64),
-    goal: (f64, f64),
+    approach: &[[f64; 2]],
     emb: &Emb,
     resolution: f64,
     incumbent: Option<&[[f64; 3]]>,
@@ -1858,12 +1897,13 @@ pub fn plan_explored(
     let reach = reach_of(&offs);
     // Covers the certificate (`speed_clearance`) and the smoothing floor (`comfort`).
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world_explored(points, terrain, step_reach(emb), pose, goal, cap);
+    let mut w = build_world_explored(points, terrain, step_reach(emb), pose, approach, cap);
     let margin = emb.precision;
-    // World from {pose, goal, cloud}, never the incumbent; one clearance table for both.
+    // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
+        let goal = pull_back(&mut cl, &fps, emb, approach)?;
         let fresh = se2_search_in(&mut cl, &fps, pose, goal, emb, margin);
         let held = match incumbent {
             None => None,
@@ -1930,7 +1970,7 @@ mod tests {
                 &[],
                 &terrain,
                 (0.0, 0.0, 0.0),
-                (4.0, 0.0),
+                &[[4.0, 0.0]],
                 &emb,
                 0.1,
                 None,
@@ -1951,7 +1991,7 @@ mod tests {
             &[],
             &dark,
             (0.0, 0.0, 0.0),
-            (4.0, 0.0),
+            &[[4.0, 0.0]],
             &emb,
             0.1,
             None,
@@ -1987,7 +2027,7 @@ mod tests {
                 points,
                 &terrain,
                 (0.0, 0.0, 0.0),
-                (4.0, 0.0),
+                &[[4.0, 0.0]],
                 &emb,
                 0.1,
                 None,
@@ -2258,6 +2298,97 @@ mod tests {
             COMMIT_MARGIN
         )
         .is_none());
+    }
+
+    fn wall_x(x: f64, gap: Option<(f64, f64)>) -> Vec<[f64; 2]> {
+        let mut pts = Vec::new();
+        let mut y = -4.0;
+        while y <= 4.0 {
+            if gap.is_none_or(|(lo, hi)| y < lo || y > hi) {
+                pts.push([x, y]);
+            }
+            y += 0.02;
+        }
+        pts
+    }
+
+    fn plan_along(pts: &[[f64; 2]], approach: &[[f64; 2]]) -> Option<Vec<[f64; 3]>> {
+        plan_explored(
+            pts,
+            &Terrain::default(),
+            (0.0, 0.0, 0.0),
+            approach,
+            &Emb::fixture(),
+            0.1,
+            None,
+            COMMIT_MARGIN,
+        )
+    }
+
+    fn slot_x(lo: f64, hi: f64, from_y: f64) -> Vec<[f64; 2]> {
+        let mut pts = Vec::new();
+        let mut y = from_y;
+        while y <= 3.0 {
+            pts.extend([[lo, y], [hi, y]]);
+            y += 0.02;
+        }
+        pts
+    }
+
+    fn end_xy(states: &[[f64; 3]]) -> [f64; 2] {
+        let end = states.last().unwrap();
+        [end[0], end[1]]
+    }
+
+    fn assert_near(got: [f64; 2], want: [f64; 2]) {
+        assert!(
+            (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+            "{got:?} != {want:?}"
+        );
+    }
+
+    #[test]
+    fn a_goal_against_a_wall_is_pulled_back_along_the_approach() {
+        let pts = wall_x(2.0, None);
+        let goal = [1.85, 0.0];
+        assert!(
+            plan_along(&pts, &[goal]).is_none(),
+            "the body cannot stand at the goal"
+        );
+        let states = plan_along(&pts, &[[0.0, 0.0], goal]).expect("pulled back, not refused");
+        assert_near(end_xy(&states), [1.68, 0.0]);
+    }
+
+    #[test]
+    fn a_carrot_in_a_narrow_door_is_pulled_back_short_of_it() {
+        let pts = wall_x(2.0, Some((-0.2, 0.2)));
+        assert!(
+            plan_along(&pts, &[[2.0, 0.0]]).is_none(),
+            "the body cannot stand in the door"
+        );
+        let states = plan_along(&pts, &[[0.0, 0.0], [2.0, 0.0]]).expect("pulled back");
+        assert_near(end_xy(&states), [1.68, 0.0]);
+    }
+
+    #[test]
+    fn a_carrot_the_body_fits_is_not_moved() {
+        let pts = wall_x(3.0, None);
+        let alone = plan_along(&pts, &[[2.0, 0.0]]).expect("a plan");
+        let states = plan_along(&pts, &[[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]]).expect("a plan");
+        assert_near(end_xy(&states), end_xy(&alone));
+    }
+
+    #[test]
+    fn a_blocked_last_leg_pulls_back_onto_the_leg_before() {
+        let pts = slot_x(1.3, 1.7, -0.25);
+        let states = plan_along(&pts, &[[0.0, 0.0], [1.5, 0.0], [1.5, 1.5]]).expect("pulled back");
+        assert_near(end_xy(&states), [0.96, 0.0]);
+    }
+
+    #[test]
+    fn an_approach_the_body_fits_nowhere_on_is_refused() {
+        let pts = slot_x(1.3, 1.7, -0.25);
+        assert!(plan_along(&pts, &[[1.5, 0.5], [1.5, 1.0], [1.5, 1.5]]).is_none());
     }
 
     /// The governor price stays in [1.0, max_speed / min_speed].
