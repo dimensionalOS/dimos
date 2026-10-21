@@ -29,6 +29,7 @@ import numpy as np
 
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
@@ -198,6 +199,11 @@ class ROSTransport(PubSubTransport[DimosMsg]):
     _ros: DimosROS | None = None
 
     def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
+        # TODO: Revisit generated-message adapters; ROS also uses CDR encoding.
+        if hasattr(msg_type, "__msgtype__") and describe_message(msg_type).encoding == "cdr":
+            raise TypeError(
+                "Generated messages require a ROS type adapter; raw CDR is not a ROS message"
+            )
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
@@ -241,6 +247,11 @@ DDS_AVAILABLE = importlib.util.find_spec("cyclonedds") is not None
 
 class DDSTransport(PubSubTransport[T]):
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        # TODO: Revisit generated-message adapters; DDS also uses CDR encoding.
+        if hasattr(type, "__msgtype__") and describe_message(type).encoding == "cdr":
+            raise TypeError(
+                "Generated messages require a DDS type adapter; raw CDR is not a DDS type"
+            )
         # cyclonedds: see DDS_AVAILABLE.
         from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
 
@@ -280,7 +291,7 @@ class DDSTransport(PubSubTransport[T]):
         return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
-M = TypeVar("M", bound=DimosMsg)
+M = TypeVar("M")
 
 
 def _rebuild_webrtc_transport(
@@ -296,10 +307,9 @@ class WebRTCTransport(PubSubTransport[M]):
     also be used directly with an explicit ``config``. Two modes:
 
     * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
-    * **Typed LCM** (``msg_type=SomeMsg``): LCM-encoded on ``broadcast()``,
-      LCM-decoded on ``subscribe()`` (foreign types on the shared channel are skipped) — so multiple
-      transports sharing one multiplexed DataChannel each receive only
-      their own message type.
+    * **Typed messages**: bind a shared codec from ``msg_type``. Generated
+      messages use raw CDR; legacy messages keep their LCM wire format.
+      Peers must agree on the schema; remote schema validation is deferred.
 
     The transport itself holds no connection: the picklable ``config``
     resolves to a per-process singleton provider on first use, so transports
@@ -322,6 +332,7 @@ class WebRTCTransport(PubSubTransport[M]):
     ) -> None:
         super().__init__(topic)
         self._msg_type = msg_type
+        self._message = describe_message(msg_type) if msg_type is not None else None
         self._config = config or self._config_cls(**config_kwargs)
         self._pubsub: WebRTCPubSub | None = None
         # Guards first-use init: concurrent subscribe()/broadcast() must not
@@ -337,7 +348,7 @@ class WebRTCTransport(PubSubTransport[M]):
         if not self._started:
             self.start()
         assert self._pubsub is not None
-        data = msg.lcm_encode() if self._msg_type is not None else msg
+        data = self._message.codec.encode(msg) if self._message is not None else cast("bytes", msg)
         self._pubsub.publish(self.topic, data)  # type: ignore[arg-type]
 
     def subscribe(
@@ -347,18 +358,15 @@ class WebRTCTransport(PubSubTransport[M]):
             self.start()
         assert self._pubsub is not None
 
-        if self._msg_type is not None:
-            msg_type = self._msg_type
+        if self._message is not None:
+            descriptor = self._message
 
             def _typed_cb(data: bytes, _topic: str) -> None:
-                # The channel is multiplexed (e.g. the browser sends Twists and
-                # Poses on cmd_unreliable); lcm_decode verifies the wire
-                # fingerprint and raises on other types — skip those.
                 try:
-                    msg = msg_type.lcm_decode(data)
+                    msg = descriptor.codec.decode(data)
                 except ValueError:
                     return
-                callback(msg)  # type: ignore[arg-type]
+                callback(msg)
 
             return self._pubsub.subscribe(self.topic, _typed_cb)
         return self._pubsub.subscribe(self.topic, lambda msg, _topic: callback(msg))  # type: ignore[arg-type]
@@ -503,7 +511,7 @@ class CloudflareAudioTransport(WebRTCAudioTransport):
 
 
 class ZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with LCM encoding for typed DimosMsg.
+    """Zenoh transport with a codec bound to the declared message type.
 
     Accepts either a plain topic string plus message type, or a full
     `ZenohTopic` carrying per-topic settings: `ZenohTransport(ZenohTopic("bla",
@@ -546,7 +554,7 @@ class ZenohTransport(PubSubTransport[T]):
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
             self.start()
-        self.zenoh.publish(self.topic, cast("DimosMsg", msg))
+        self.zenoh.publish(self.topic, msg)
 
     def subscribe(
         self, callback: Callable[[T], None], selfstream: Stream[T] | None = None

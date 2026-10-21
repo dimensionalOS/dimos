@@ -18,12 +18,13 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 import threading
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.codec import describe_message
+from dimos.protocol.pubsub.encoders import MessageEncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
@@ -91,8 +92,8 @@ class Topic(LCMTopic):
             Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
             Topic("dimos/data")           -> "dimos/data"
         """
-        if self.lcm_type is not None:
-            return f"{self.pattern}/{self.lcm_type.msg_name}"
+        if self.message is not None and self.message.encoding == "lcm":
+            return f"{self.pattern}/{self.message.name}"
         return self.pattern
 
 
@@ -118,6 +119,8 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
         "dimos/data"                        -> Topic("dimos/data", default_lcm_type)
         "dimos/data/unknown.Foo"            -> Topic("dimos/data/unknown.Foo", default_lcm_type)
     """
+    if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
+        return Topic(key_expr, message_type=default_lcm_type)
     # Try to resolve the last segment as a message type
     parts = key_expr.rsplit("/", 1)
     if len(parts) == 2:
@@ -195,7 +198,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 publisher = self._get_publisher(key_expr, qos)
                 publisher.put(message)
         except Exception:
-            logger.error(f"Error publishing to {key_expr}", exc_info=True)
+            logger.exception(f"Error publishing to {key_expr}")
 
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
@@ -207,7 +210,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             try:
                 data = sample.payload.to_bytes()
             except Exception:
-                logger.error(f"Error reading payload from {key_expr}", exc_info=True)
+                logger.exception(f"Error reading payload from {key_expr}")
                 return
             # Concrete subscriptions only ever receive their own key, so the
             # subscribed topic can be passed through without re-parsing.
@@ -215,7 +218,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             if sample_key == key_expr:
                 recv_topic = topic
             else:
-                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
+                recv_topic = _key_expr_to_topic(sample_key, cast("Hashable", topic.lcm_type))
             callback(data, recv_topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
@@ -279,7 +282,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                     try:
                         callback(msg, topic)
                     except Exception:
-                        logger.error("Error in subscribe_all callback", exc_info=True)
+                        logger.exception("Error in subscribe_all callback")
 
         thread = threading.Thread(target=drain, name="zenoh-subscribe-all", daemon=True)
 
@@ -329,12 +332,10 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
 
 class Zenoh(  # type: ignore[misc]
-    LCMEncoderMixin,
+    MessageEncoderMixin,
     ZenohPubSubBase,
 ):
     """Zenoh pub/sub with LCM encoding for typed DimosMsg."""
-
-    ...
 
 
 class PickleZenoh(
@@ -342,5 +343,3 @@ class PickleZenoh(
     ZenohPubSubBase,
 ):
     """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
-
-    ...

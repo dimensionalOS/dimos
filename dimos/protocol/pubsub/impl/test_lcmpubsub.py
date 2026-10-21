@@ -18,6 +18,8 @@ from typing import Any
 
 import pytest
 
+from dimos.core.transport import LCMTransport
+from dimos.messages.std_msgs.msg import Int32
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -184,3 +186,28 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
+
+
+def test_generated_message_transport_and_unsubscribe():
+    transport = LCMTransport("codec-check", Int32, url="memq://")
+    received = []
+    delivered = threading.Event()
+
+    def receive(value):
+        received.append(value)
+        delivered.set()
+
+    try:
+        unsubscribe = transport.subscribe(receive)
+        LCMPubSubBase.publish(transport.lcm, transport.topic, b"broken")
+        transport.broadcast(None, Int32(42))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+        unsubscribe()
+        delivered.clear()
+        transport.subscribe(lambda value: delivered.set())
+        transport.broadcast(None, Int32(43))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+    finally:
+        transport.stop()

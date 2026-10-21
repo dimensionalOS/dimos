@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import json
 from typing import Any
 
+from dimos_cdrgen.registry import encode as encode_cdr
+import pytest
+
+from dimos.messages.std_msgs.msg import Int32, String
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
+from dimos.protocol.pubsub.encoders import MessageEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory, MemoryWithJSONEncoder
 
 
@@ -169,3 +175,58 @@ def test_data_actually_encoded_in_transit() -> None:
     # Verify it's actually JSON
     decoded_raw = json.loads(raw_message.decode("utf-8"))
     assert decoded_raw == original_message
+
+
+@dataclass(frozen=True)
+class _TypedTopic:
+    name: str
+    message: MessageDescriptor
+
+
+class _EncodedMemory(MessageEncoderMixin, Memory):
+    pass
+
+
+@pytest.mark.parametrize("message", [Vector3(1, 2, 3), Int32(42), String("hello")])
+def test_message_encoder_publish_subscribe_and_unsubscribe(message):
+    pubsub = _EncodedMemory()
+    topic = _TypedTopic("messages", describe_message(type(message)))
+    received = []
+    wire = []
+    remove_raw = Memory.subscribe(pubsub, topic, lambda data, topic: wire.append(data))
+    unsubscribe = pubsub.subscribe(topic, lambda value, topic: received.append(value))
+    try:
+        pubsub.publish(topic, message)
+        expected = message.lcm_encode() if isinstance(message, Vector3) else encode_cdr(message)
+        assert wire == [expected]
+        assert received == [message]
+        assert type(received[0]) is type(message)
+        unsubscribe()
+        pubsub.publish(topic, message)
+        assert received == [message]
+        assert wire == [expected, expected]
+    finally:
+        unsubscribe()
+        remove_raw()
+
+
+def test_message_encoder_keeps_legacy_and_cdr_subscriptions_separate():
+    pubsub = _EncodedMemory()
+    legacy = _TypedTopic("legacy", describe_message(Vector3))
+    cdr = _TypedTopic("cdr", describe_message(Int32))
+    received_legacy = []
+    received_cdr = []
+    stop_legacy = pubsub.subscribe(legacy, lambda value, topic: received_legacy.append(value))
+    stop_cdr = pubsub.subscribe(cdr, lambda value, topic: received_cdr.append(value))
+    try:
+        pubsub.publish(legacy, Vector3(1, 2, 3))
+        Memory.publish(pubsub, cdr, b"broken")
+        assert received_cdr == []
+        with pytest.raises(TypeError, match="declared type"):
+            pubsub.publish(cdr, Vector3(1, 2, 3))
+        pubsub.publish(cdr, Int32(7))
+        assert received_legacy == [Vector3(1, 2, 3)]
+        assert received_cdr == [Int32(7)]
+    finally:
+        stop_legacy()
+        stop_cdr()

@@ -15,14 +15,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 import threading
 from typing import Any
 
 from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 from dimos.protocol.pubsub.encoders import (
-    LCMEncoderMixin,
+    MessageEncoderMixin,
     PickleEncoderMixin,
 )
 from dimos.protocol.pubsub.patterns import Glob
@@ -36,7 +37,21 @@ logger = setup_logger()
 @dataclass
 class Topic:
     topic: str | re.Pattern[str] | Glob
-    lcm_type: type[DimosMsg] | None = None
+    lcm_type: type[Any] | None = None
+    message_type: type[Any] | None = field(default=None, kw_only=True)
+    message: MessageDescriptor[Any] | None = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            self.lcm_type is not None
+            and self.message_type is not None
+            and self.lcm_type is not self.message_type
+        ):
+            raise TypeError("Conflicting declared message types")
+        declared = self.message_type if self.message_type is not None else self.lcm_type
+        self.message = describe_message(declared) if declared is not None else None
+        self.message_type = declared
+        self.lcm_type = declared
 
     @property
     def is_pattern(self) -> bool:
@@ -51,9 +66,10 @@ class Topic:
         return self.topic
 
     def __str__(self) -> str:
-        if self.lcm_type is None:
+        if self.message is None or self.message.encoding == "cdr":
             return self.pattern
-        return f"{self.pattern}#{self.lcm_type.msg_name}"
+        assert self.message is not None
+        return f"{self.pattern}#{self.message.name}"
 
     @staticmethod
     def from_channel_str(channel: str, default_lcm_type: type[DimosMsg] | None = None) -> Topic:
@@ -63,6 +79,9 @@ class Topic:
         Falls back to default_lcm_type if type cannot be parsed.
         """
         from dimos.msgs.helpers import resolve_msg_type
+
+        if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
+            return Topic(channel, message_type=default_lcm_type)
 
         if "#" not in channel:
             return Topic(topic=channel, lcm_type=default_lcm_type)
@@ -149,7 +168,7 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
 
 class LCM(  # type: ignore[misc]
-    LCMEncoderMixin,
+    MessageEncoderMixin,
     LCMPubSubBase,
 ): ...
 

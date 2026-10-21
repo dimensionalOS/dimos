@@ -27,6 +27,7 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -91,7 +92,10 @@ def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
     """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    return default_zenoh_qos_for(name, getattr(msg_type, "msg_name", ""))
+    type_name = getattr(msg_type, "msg_name", "")
+    if msg_type is not None and hasattr(msg_type, "__msgtype__"):
+        type_name = describe_message(msg_type).name.replace("/msg/", ".")
+    return default_zenoh_qos_for(name, type_name)
 
 
 def make_transport(
@@ -99,8 +103,8 @@ def make_transport(
 ) -> PubSubTransport[Any]:
     """Construct the active-backend pub/sub transport for a logical channel.
 
-    A pickled (self-describing) transport is used when no `msg_type` is given or
-    the type has no `lcm_encode`. Otherwise a typed transport is used.
+    Generated messages use CDR and legacy messages keep LCM encoding.
+    Other Python types and undeclared types preserve the existing pickle transport.
 
     A channel name alone doesn't fully define a topic: backends have per-topic
     settings (Zenoh publisher QoS, for one) that live on their Topic objects.
@@ -110,7 +114,11 @@ def make_transport(
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
-    use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
+    use_pickled = msg_type is None or (
+        not hasattr(msg_type, "__msgtype__") and getattr(msg_type, "lcm_encode", None) is None
+    )
+    if msg_type is not None and not use_pickled:
+        describe_message(msg_type)
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
         ztopic = ZenohTopic(

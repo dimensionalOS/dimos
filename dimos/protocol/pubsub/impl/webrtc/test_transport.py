@@ -28,7 +28,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
+from dimos.messages.std_msgs.msg import Int32
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
@@ -512,3 +514,24 @@ def test_subscribe_all_fires_once_per_message() -> None:
     ps.subscribe("u", lambda data, t: None)
     ps.publish("u", b"y")
     assert seen == [(b"x", "t"), (b"y", "u")]
+
+
+def test_cdr_transport_raw_payload_errors_and_unsubscribe():
+    config = MockConfig(name="cdr-raw")
+    transport = MockTransport("messages", Int32, config=config)
+    received = []
+    wire = []
+    try:
+        config.provider().subscribe("messages", lambda data, topic: wire.append(data))
+        unsubscribe = transport.subscribe(received.append)
+        config.provider().publish("messages", b"\x00\x01\x00\x00")
+        assert received == []
+        transport.broadcast(None, Int32(7))
+        assert received == [Int32(7)]
+        assert wire[-1] == describe_message(Int32).codec.encode(Int32(7))
+        unsubscribe()
+        transport.broadcast(None, Int32(8))
+        assert received == [Int32(7)]
+    finally:
+        transport.stop()
+        config.provider().stop()

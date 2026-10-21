@@ -38,7 +38,7 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import pLCMTransport
 from dimos.spec.utils import Spec
 
 
@@ -139,7 +139,7 @@ def test_config_rejects_unknown_fields_and_sections() -> None:
 
 
 def test_transports() -> None:
-    custom_transport = LCMTransport("/custom_topic", Data1)
+    custom_transport = pLCMTransport("/custom_topic")
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).transports(
         {("data1", Data1): custom_transport}
     )
@@ -414,12 +414,12 @@ def test_explicit_instance_name_sets_blueprint_identity() -> None:
 def test_namespace_prefixes_pinned_transports() -> None:
     blueprint = (
         autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
-        .transports({("data1", Data1): LCMTransport("/custom_topic", Data1)})
+        .transports({("data1", Data1): pLCMTransport("/custom_topic")})
         .namespace("robot0")
     )
 
     transport = blueprint.transport_map[("robot0/data1", Data1)]
-    assert transport.topic.pattern == "/robot0/custom_topic"
+    assert transport.topic == "/robot0/custom_topic"
     assert ("data1", Data1) not in blueprint.transport_map
 
 
