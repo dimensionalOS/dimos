@@ -189,9 +189,7 @@ def _pick_same_pairs(
         key_l, key_r = left.timestamp, right.timestamp
         if key_l in used and key_r in used and len(pairs) > 0:
             continue
-        pairs.append(
-            IdentityPair(query=left.query, left=left, right=right, same_object=True)
-        )
+        pairs.append(IdentityPair(query=left.query, left=left, right=right, same_object=True))
         used.add(key_l)
         used.add(key_r)
     return pairs
@@ -219,9 +217,7 @@ def _pick_diff_pairs(
         # Order by time for stable ids.
         if left.timestamp > right.timestamp:
             left, right = right, left
-        pairs.append(
-            IdentityPair(query=left.query, left=left, right=right, same_object=False)
-        )
+        pairs.append(IdentityPair(query=left.query, left=left, right=right, same_object=False))
     return pairs
 
 
@@ -326,7 +322,4 @@ def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
 def pair_case_id(pair: IdentityPair, index: int) -> str:
     kind = "same" if pair.same_object else "diff"
     q = pair.query.replace(" ", "-")
-    return (
-        f"xview-{q}-{kind}-{index:04d}-"
-        f"{pair.left.instance_id[:8]}-{pair.right.instance_id[:8]}"
-    )
+    return f"xview-{q}-{kind}-{index:04d}-{pair.left.instance_id[:8]}-{pair.right.instance_id[:8]}"

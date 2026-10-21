@@ -33,9 +33,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 def _image(width: int = 200, height: int = 200, ts: float = 1.0) -> Image:
     rgb = np.zeros((height, width, 3), dtype=np.uint8)
     rgb[:, :] = (40, 40, 40)
-    return Image.from_numpy(
-        rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts
-    )
+    return Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts)
 
 
 def _view(
@@ -67,18 +65,10 @@ def test_bbox_framing_rejects_corner_and_tiny() -> None:
 
 
 def test_instance_pool_requires_views_score_and_min_conf() -> None:
-    assert instance_pool_ok(
-        n_views=3, semantic_score=0.55, sighting_confidences=(0.3, 0.4, 0.5)
-    )
-    assert not instance_pool_ok(
-        n_views=2, semantic_score=0.9, sighting_confidences=(0.9, 0.9)
-    )
-    assert not instance_pool_ok(
-        n_views=5, semantic_score=0.4, sighting_confidences=(0.9, 0.9)
-    )
-    assert not instance_pool_ok(
-        n_views=5, semantic_score=0.7, sighting_confidences=(0.1, 0.8)
-    )
+    assert instance_pool_ok(n_views=3, semantic_score=0.55, sighting_confidences=(0.3, 0.4, 0.5))
+    assert not instance_pool_ok(n_views=2, semantic_score=0.9, sighting_confidences=(0.9, 0.9))
+    assert not instance_pool_ok(n_views=5, semantic_score=0.4, sighting_confidences=(0.9, 0.9))
+    assert not instance_pool_ok(n_views=5, semantic_score=0.7, sighting_confidences=(0.1, 0.8))
 
 
 def test_filter_and_propose_same_and_diff_pairs() -> None:
@@ -98,9 +88,7 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
     pairs = propose_identity_pairs({"a": a, "b": b, "c": corner})
     assert any(p.same_object and p.left.instance_id == "a" for p in pairs)
     assert any(not p.same_object for p in pairs)
-    assert all(
-        {p.left.instance_id, p.right.instance_id} != {"c"} or True for p in pairs
-    )
+    assert all({p.left.instance_id, p.right.instance_id} != {"c"} or True for p in pairs)
     # No same-pair for c (only one bad view → filtered empty or single).
     assert not any(p.same_object and p.left.instance_id == "c" for p in pairs)
 

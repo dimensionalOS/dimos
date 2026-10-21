@@ -136,9 +136,7 @@ def generate_cross_view_dataset(request: CrossViewGenerationRequest) -> CrossVie
         traces = [LocalizeTrace() for _ in queries]
         with DanDetector("siglip", "owlv2", "edgetam") as dan:
             index = embed_index(rig, dan.embedder, after, before)
-            results = dan.localize(
-                queries, index=index, rig=rig, params=params, traces=traces
-            )
+            results = dan.localize(queries, index=index, rig=rig, params=params, traces=traces)
 
         all_pairs: list[IdentityPair] = []
         n_instances = 0
