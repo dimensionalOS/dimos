@@ -58,7 +58,7 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # (test_follower.py asserts it).
     control_frequency: float = _default("control_frequency")
     goal_tolerance: float = _default("goal_tolerance")
-    embodiment: Embodiment = _default("embodiment")
+    embodiment: Embodiment
     base_frame: str = _default("base_frame")
     max_path_age_s: float = _default("max_path_age_s")
 

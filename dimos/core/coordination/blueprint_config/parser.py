@@ -30,12 +30,14 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticUndefined
 
+from dimos.core.config_secrets import SECRET_CONFIG_FIELDS
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
     format_validation_error,
 )
 from dimos.core.coordination.blueprint_config.fields import (
     display_annotation,
+    field_descriptions,
     field_has_required_parent,
     field_is_required,
     leaf_fields,
@@ -271,6 +273,12 @@ class BlueprintConfigParser:
 
             annotation = display_annotation(target.annotations)
             default = self._help_default(target, schema)
+            if (
+                target.path[-1] in SECRET_CONFIG_FIELDS
+                and default is not PydanticUndefined
+                and default is not None
+            ):
+                default = "***"
             parent_required = self._target_has_required_parent(target, schema)
             suffix = ""
             if default is not PydanticUndefined:
@@ -284,6 +292,8 @@ class BlueprintConfigParser:
             if len(aliases) > 1:
                 option_names = [f"--{target.qualified_name}"]
             lines.append(f"  {', '.join(option_names)} <{annotation}>{suffix}")
+            for description in field_descriptions(self._target_model(target, schema), target.path):
+                lines.extend(f"    {line}" for line in description.splitlines())
 
         return "\n".join(lines)
 

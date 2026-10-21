@@ -35,49 +35,51 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_overrides,
     go2_nav_static,
 )
-from dimos.robot.unitree.go2.dds.module import GO2DDS
+from dimos.robot.unitree.go2.dds.module import GO2DDS, GO2L1Lidar
 from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # The Host daemon on the Jetson is the robot's zenoh router (the Go2 forwards 7447 to it,
 # so a viewer dials go22); every process here, GO2DDS included, dials it on loopback.
-GO2_ROUTER = "tcp/127.0.0.1:7447"
+HOST_ROUTER = "tcp/127.0.0.1:7447"
 
 
 def host_router() -> str | None:
-    """Fail fast when nothing serves GO2_ROUTER; zenoh would only warn and run deaf."""
+    """Fail fast when nothing serves HOST_ROUTER; zenoh would only warn and run deaf."""
     from dimos.hosted.machine import local_host
 
     local = local_host()
     if local is None:
         return "no Host router on this machine: `dimos host start`"
-    if local.client_endpoint != GO2_ROUTER:
-        return f"the Host router listens on {local.client_endpoint}, not {GO2_ROUTER}"
+    if local.client_endpoint != HOST_ROUTER:
+        return f"the Host router listens on {local.client_endpoint}, not {HOST_ROUTER}"
     return None
 
 
+JETSON: dict[str, Any] = {"iface": "enP8p1s0"}
+
 go2_dds = (
-    GO2DDS.blueprint(iface="enP8p1s0")
-    .global_config(transport="zenoh", zenoh_connect=GO2_ROUTER, robot_model="unitree_go2")
+    GO2DDS.blueprint(**JETSON)
+    .global_config(transport="zenoh", zenoh_connect=HOST_ROUTER, robot_model="unitree_go2")
     .requirements(host_router)
 )
 
-# GO2DDS beside a MID-360: the head L1 off, Point-LIO owning odom, so it publishes no
-# lidar, odometry or odom tf edge; its raw L1 cloud and body IMU move aside.
-go2_dds_mid360 = GO2DDS.blueprint(
-    iface="enP8p1s0", lidar_on=False, tf_root="mid360_link"
-).remappings(
-    [
-        (GO2DDS, "odometry", "go2_odometry_unused"),
-        (GO2DDS, "lidar", "go2_lidar_unused"),
-        (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
-        (GO2DDS, "imu", "body_imu"),
-    ]
-)
+# The head L1 stays off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or
+# odom tf edge. Its raw L1 cloud and body IMU move aside so only the MID-360 reaches
+# Point-LIO's inputs.
+_MID360_KWARGS: dict[str, Any] = {**JETSON, "lidar_on": False, "tf_root": "mid360_link"}
+_MID360_REMAPPINGS = [
+    (GO2DDS, "odometry", "go2_odometry_unused"),
+    (GO2DDS, "lidar", "go2_lidar_unused"),
+    (GO2DDS, "lidar_raw", "l1_lidar_raw"),
+    (GO2DDS, "lidar_imu", "l1_lidar_imu"),
+    (GO2DDS, "imu", "go2_imu"),
+]
+go2_dds_mid360 = GO2DDS.blueprint(**_MID360_KWARGS).remappings(_MID360_REMAPPINGS)
 
-# The robot-side nav modules.
+# The robot-side nav modules. The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
 _go2_nav_stack = autoconnect(
-    go2_dds_mid360,
+    GO2DDS.blueprint(**_MID360_KWARGS, obstacle_avoidance=False).remappings(_MID360_REMAPPINGS),
     mid360_for_pointlio(),
     _go2_nav,
     relocalization(republish_loaded_map=0.0),
@@ -85,12 +87,20 @@ _go2_nav_stack = autoconnect(
 )
 
 # Headless: go2-dds-mid360-viewer on another machine is the screen.
-go2_dds_nav = _go2_nav_stack.global_config(
+go2_nav = _go2_nav_stack.global_config(
     transport="zenoh",
-    zenoh_connect=GO2_ROUTER,
+    zenoh_connect=HOST_ROUTER,
     n_workers=11,
     robot_model="unitree_go2",
 ).requirements(host_router)
+
+# go2-nav plus the head L1's deskewed scans on l1_lidar, in Point-LIO's odom. The later
+# GO2DDS atom wins and spins the L1 up. go2-nav's remappings still apply.
+go2_nav_l1 = autoconnect(
+    go2_nav,
+    GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link", obstacle_avoidance=False),
+    GO2L1Lidar.blueprint(),
+).global_config(n_workers=12)
 
 # h264 lands here off `video`; jpeg is redirected onto it, whichever the robot serves
 CAMERA_ENTITY = "world/video"
@@ -219,4 +229,4 @@ VIEWER_GLOBAL_CONFIG = {
     "robot_model": "unitree_go2",
 }
 
-go2_dds_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
+go2_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)

@@ -43,6 +43,7 @@ from typing import (
 from urllib.parse import urlparse
 
 import numpy as np
+from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
@@ -67,9 +68,11 @@ from dimos.visualization.rerun.constants import (
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
     RERUN_WEB_VIEWER_PORT,
+    RERUN_WEBSOCKET_URL,
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -290,6 +293,9 @@ class Config(ModuleConfig):
     tf_axes: float = 0.0
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    # None: the RerunWebSocketServer in this blueprint, or the default without one.
+    websocket_url: str | None = None
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
@@ -317,6 +323,10 @@ class RerunBridgeModule(Module):
     config: Config
     dedicated_worker = True
     _last_log: dict[str, float]
+    _websocket_url: str
+
+    # Injected when the blueprint has a RerunWebSocketServer.
+    _websocket_server: RerunWebSocketServerSpec | None = None
 
     # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
     GRAPH_VIZ_SCALE = 100.0
@@ -348,7 +358,19 @@ class RerunBridgeModule(Module):
 
     @property
     def host(self) -> str:
-        return self.config.g.rerun_host or self.config.g.listen_host
+        return self.config.host
+
+    @rpc
+    def opens_web_viewer(self) -> bool:
+        """Whether this session requests a browser viewer."""
+        return self.config.rerun_open in ("web", "both")
+
+    def _resolve_websocket_url(self) -> str:
+        if self.config.websocket_url is not None:
+            return self.config.websocket_url
+        if self._websocket_server is not None:
+            return str(self._websocket_server.websocket_url())
+        return RERUN_WEBSOCKET_URL
 
     def _visual_override_for_entity_path(
         self, entity_path: str
@@ -534,11 +556,12 @@ class RerunBridgeModule(Module):
                 f"{get_args(RerunOpenOption)}"
             )
 
+        self._websocket_url = self._resolve_websocket_url()
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            spawned = spawn_viewer(server_uri, self.config.memory_limit)
+            spawned = spawn_viewer(server_uri, self.config.memory_limit, self._websocket_url)
 
-        open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
+        open_web = self.opens_web_viewer()
         if open_web or self.config.rerun_web:
             rr.serve_web_viewer(
                 connect_to=server_uri,
@@ -609,7 +632,7 @@ class RerunBridgeModule(Module):
         """Log CLI commands for connecting a viewer to this bridge."""
         local_ips = get_local_ips()
         local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
-        local_ws = f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"
+        local_ws = self._websocket_url
         hostname = socket.gethostname()
 
         columns = 60
@@ -623,7 +646,12 @@ class RerunBridgeModule(Module):
         ]
         for ip, iface in local_ips:
             remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
-            remote_ws = f"ws://{ip}:{self.config.g.rerun_websocket_server_port}/ws"
+            remote_ws = self._websocket_url
+            ws = urlparse(remote_ws)
+            if ws.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::", "::1"):
+                host = f"[{ip}]" if ":" in ip else ip
+                netloc = f"{host}:{ws.port}" if ws.port is not None else host
+                remote_ws = ws._replace(netloc=netloc).geturl()
             lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
         lines.append("")
         lines.append(f"  hostname: {hostname}")
@@ -791,19 +819,11 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     )
 
 
-def run_bridge(
-    memory_limit: str = "25%",
-    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT,
-    rerun_web: bool = RERUN_ENABLE_WEB,
-) -> None:
-    """Start a RerunBridgeModule with default LCM config and block until interrupted."""
+def run_bridge(**config: Any) -> None:
+    """Start a RerunBridgeModule in this process and block until interrupted."""
     autoconf(check_only=True)
 
-    bridge = RerunBridgeModule(
-        memory_limit=memory_limit,
-        rerun_open=rerun_open,
-        rerun_web=rerun_web,
-    )
+    bridge = RerunBridgeModule(**config)
     bridge.start()
 
     def _shutdown(*_: object) -> None:

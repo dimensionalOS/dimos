@@ -29,7 +29,6 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
@@ -44,8 +43,11 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
+from dimos.simulation.dimsim.config import DimSimConfig
+from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
@@ -71,8 +73,12 @@ class ConnectionConfig(ModuleConfig):
     velocity_api: bool = False
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
-    # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
-    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    # Per-device AES-128 key (Go2 fw >=1.1.15).
+    aes_128_key: str | None = Field(default=None, repr=False)
+    obstacle_avoidance: bool = True
+    replay_exit: bool = False
+    mujoco: MujocoConfig = Field(default_factory=MujocoConfig)
+    dimsim: DimSimConfig = Field(default_factory=DimSimConfig)
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
@@ -137,23 +143,23 @@ BASE_TO_OPTICAL: Transform = Transform(
 
 def make_connection(
     ip: str | None,
-    cfg: GlobalConfig,
+    cfg: ConnectionConfig,
     aes_128_key: str | None = None,
     velocity_api: bool = False,
 ) -> Go2ConnectionProtocol:
-    connection_type = cfg.unitree_connection_type.lower()
+    mode = connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation).lower()
 
-    if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
-    elif ip == "mujoco" or connection_type in ("mujoco", "true"):
+    if ip in ("fake", "mock", "replay") or mode == "replay":
+        return ReplayConnection(dataset=cfg.g.replay_db, exit_on_complete=cfg.replay_exit)
+    elif ip == "mujoco" or mode in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
-        return MujocoConnection(cfg)
-    elif connection_type == "dimsim":
+        return MujocoConnection(cfg.mujoco, robot_model=cfg.g.robot_model)
+    elif mode == "dimsim":
         from dimos.robot.unitree.dimsim_connection import DimSimConnection
 
-        return DimSimConnection(cfg)
-    elif connection_type == "webrtc":
+        return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
+    elif mode == "webrtc":
         assert ip is not None, "IP address must be provided"
         return UnitreeWebRTCConnection(
             ip,
@@ -161,7 +167,7 @@ def make_connection(
             velocity_api=velocity_api,
         )
     else:
-        raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
+        raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
 
 
 _T = TypeVar("_T")
@@ -372,7 +378,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         super().__init__(**kwargs)
         self.connection = make_connection(
             self.config.ip,
-            self.config.g,
+            self.config,
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
         )
@@ -414,7 +420,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if isinstance(self.connection, ReplayConnection):
             # Every stream this module will subscribe is wired; a finished
-            # replay may now shut the run down (--replay-exit).
+            # replay may now shut the run down (--go2connection.replay-exit).
             self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
@@ -429,7 +435,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.config.mode == Go2Mode.RAGE:
             self.connection.set_rage_mode(True)
 
-        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+        self.connection.set_obstacle_avoidance(self.config.obstacle_avoidance)
 
     @rpc
     def stop(self) -> None:

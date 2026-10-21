@@ -25,21 +25,21 @@ from dimos.robot.unitree.go2.dds.blueprints import (
 )
 from dimos.robot.unitree.go2.nav_3d_config import voxel_size
 
-# go2-dds-nav-viewer meshing map_regions on this machine's GPU; the mesh stands in for
+# go2-nav-viewer meshing map_regions on this machine's GPU; the mesh stands in for
 # the region cloud and surface map, which stay tickable.
 _viewer = nav_viewer(
     extra_topics=("mesh",),
-    visual_override={MESH_ENTITY: MeshColours(alpha=0.4)},
+    visual_override={MESH_ENTITY: MeshColours(alpha=1.0)},
     hidden=(MAP_REGIONS_ENTITY, SURFACE_MAP_ENTITY),
 )
-go2_dds_nav_viewer_mesh = autoconnect(
+go2_nav_viewer_mesh = autoconnect(
     _viewer, MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND)
 ).global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
 
-# go2-dds-nav on the go2 Host, the mesher on the GPU Host with the most memory, the
-# viewer here. Run with `dimos run go2-dds-nav-hosted`. This machine's Host reaches the
+# go2-nav on the go2 Host, the mesher on the GPU Host with the most memory, the
+# viewer here. Run with `dimos run go2-nav-hosted`. This machine's Host reaches the
 # robot's by HOST__CONNECT=tcp/<robot-ip>:7447, or by scouting where the LAN carries multicast.
-go2_dds_nav_hosted = autoconnect(
+go2_nav_hosted = autoconnect(
     _go2_nav_stack.hosted(tags={"go2"}),
     MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
         tags={"gpu"}, prefer=GPU_MEM_GB

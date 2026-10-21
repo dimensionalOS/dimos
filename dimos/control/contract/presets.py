@@ -100,13 +100,13 @@ _IMU_UNITS: Mapping[str, Unit] = {
 }
 
 #: What a base is told: how fast to drive forwards, sideways, and turn.
-_BASE_TWIST: Mapping[str, Unit] = {
+BASE_TWIST_UNITS: Mapping[str, Unit] = {
     Interface.VX: Unit.M_PER_S,
     Interface.VY: Unit.M_PER_S,
     Interface.WZ: Unit.RAD_PER_S,
 }
 #: Where a base reports itself as being, and which way it is facing.
-_BASE_POSE: Mapping[str, Unit] = {
+BASE_POSE_UNITS: Mapping[str, Unit] = {
     Interface.X: Unit.M,
     Interface.Y: Unit.M,
     Interface.YAW: Unit.RAD,
@@ -183,7 +183,7 @@ def _model_limit(joint: JointDescription, interface: Interface) -> Limits | None
     return Limits(-bound, bound)
 
 
-def _joints(
+def model_joints(
     source: str,
     model: RobotModel,
     joints: Sequence[str] | None,
@@ -300,7 +300,7 @@ def manipulator_description(
     if not command:
         raise ValueError(f"manipulator {source!r} declares nothing to command")
 
-    resources, limits = _joints(source, model, joints, state, command)
+    resources, limits = model_joints(source, model, joints, state, command)
     if gripper is not None:
         resources.append(
             Resource(
@@ -366,7 +366,7 @@ def pd_joint_description(
         DescriptionError: If the finished description breaks a rule, such as
             an override for a name the body is not told.
     """
-    resources, limits = _joints(source, model, joints, _PD_STATE, _PD_COMMAND)
+    resources, limits = model_joints(source, model, joints, _PD_STATE, _PD_COMMAND)
     description = ControlDescription(
         source=source,
         resources=(*resources, *sensors),
@@ -423,16 +423,16 @@ def twist_base_description(
         DescriptionError: If the finished description breaks a rule, such as
             a limit missing one of its bounds.
     """
-    pose = _BASE_POSE if odometry else {}
+    pose = BASE_POSE_UNITS if odometry else {}
     description = ControlDescription(
         source=source,
         resources=(
             Resource(
                 name="base",
                 kind=ResourceKind.BASE,
-                state_interfaces=(*(_BASE_TWIST if measured_velocity else ()), *pose),
-                command_interfaces=tuple(_BASE_TWIST),
-                units={**_BASE_TWIST, **pose},
+                state_interfaces=(*(BASE_TWIST_UNITS if measured_velocity else ()), *pose),
+                command_interfaces=tuple(BASE_TWIST_UNITS),
+                units={**BASE_TWIST_UNITS, **pose},
             ),
             *sensors,
         ),

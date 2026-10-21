@@ -30,6 +30,7 @@ import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import (
+    DAEMON_STATUS_FD_ENV,
     fork_daemon,
     read_daemon_status,
     redirect_stdio_to_devnull,
@@ -77,6 +78,7 @@ def _run_registered(
     """run_coordinator with ``entry`` in the registry from readiness until exit."""
 
     def ready(coordinator: ModuleCoordinator) -> None:
+        entry.mcp_url = _mcp_url(blueprint, coordinator)
         entry.save()
         if on_ready is not None:
             on_ready(coordinator)
@@ -164,6 +166,13 @@ def _run_hosted(
         entry.remove()
 
 
+def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None:
+    for atom in blueprint.active_blueprints:
+        if "mcp_url" in atom.module.rpcs:
+            return str(coordinator.get_instance(atom.name).mcp_url())
+    return None
+
+
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -184,11 +193,6 @@ def run(
         help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
         "http://localhost:7780)",
     ),
-    relay_ca: str | None = typer.Option(
-        None,
-        "--relay-ca",
-        help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
-    ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
@@ -205,6 +209,7 @@ def run(
     )
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import stream_name_types
+    from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
     from dimos.core.run_registry import RunEntry, cleanup_stale, generate_run_id
     from dimos.memory.tap import check_topics
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
@@ -226,7 +231,6 @@ def run(
         for name, value in (
             ("local_relay", local_relay),
             ("relay_url", relay_url),
-            ("relay_ca", relay_ca),
         )
         if value is not None
     }
@@ -300,8 +304,17 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
+    # A macOS daemon re-execs this command. Preserve the launcher's run/log
+    # identity rather than generating a second one in the fresh interpreter.
+    inherited_run_id = (
+        os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
+    )
+    run_id = inherited_run_id or generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
+
+    # Tag every descendant with the run id so the watchdog and stale-run
+    # cleanup can identify them via os.environ after main dies.
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
 
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.

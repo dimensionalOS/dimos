@@ -15,8 +15,12 @@
 """Ingress-bound tests for the session's frame and control queues (no
 network: frames are fed straight into the protocol callbacks)."""
 
+import errno
+
 from aioquic.quic.connection import QuicConnection
 from aioquic.quic.events import StreamReset
+import pytest
+from pytest_mock import MockerFixture
 
 from dimos.web.relay_bridge._wt_session import (
     _CONTROL_QUEUE_MAX,
@@ -53,6 +57,35 @@ def _frame_bytes(ch: str, seq: int, size: int) -> bytes:
 def _control_bytes(payload: bytes, seq: int = 1) -> bytes:
     header = FrameHeader(ch=CONTROL_CHANNEL, seq=seq, ts=0.5, delivery="reliable")
     return encode_data_frame(header, payload)
+
+
+@pytest.mark.parametrize("error_number", [errno.ENOBUFS, errno.EMSGSIZE, errno.ENETUNREACH])
+async def test_socket_error_without_refusal_keeps_session_open(
+    error_number: int, mocker: MockerFixture
+) -> None:
+    session = _session()
+    transmit = mocker.patch.object(session, "transmit")
+
+    session.error_received(OSError(error_number, "UDP socket error"))
+
+    assert not session.closed.is_set()
+    transmit.assert_not_called()
+
+
+async def test_socket_refusal_closes_session_without_reentrant_transmit(
+    mocker: MockerFixture,
+) -> None:
+    session = _session()
+    exc = ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+    # Sending the close can report the same error synchronously.
+    transmit = mocker.patch.object(
+        session, "transmit", side_effect=lambda: session.error_received(exc)
+    )
+
+    session.error_received(exc)
+
+    assert session.closed.is_set()
+    transmit.assert_called_once_with()
 
 
 async def test_frame_queue_bounded_by_total_bytes():

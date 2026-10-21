@@ -34,7 +34,7 @@ _go2_joints = make_twist_base_joints("go2")
 
 unitree_go2_coordinator = (
     autoconnect(
-        GO2Connection.blueprint(),
+        GO2Connection.blueprint(obstacle_avoidance=False),
         ControlCoordinator.blueprint(
             hardware=[
                 HardwareComponent(
@@ -68,5 +68,4 @@ unitree_go2_coordinator = (
             ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
         }
     )
-    .global_config(obstacle_avoidance=False)
 )

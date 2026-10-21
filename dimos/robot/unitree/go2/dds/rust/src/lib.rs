@@ -16,6 +16,7 @@
 //! topics, the sport verb table, the videohub RTP -> H.264 reassembly, and the module
 //! that puts them on the dimos graph.
 
+pub mod clock;
 pub mod dds;
 pub mod h264;
 pub mod module;

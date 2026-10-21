@@ -19,7 +19,6 @@ from __future__ import annotations
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
@@ -42,9 +41,9 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _piper_keyboard_hw = make_piper_hardware(
     "arm",
-    adapter_type="piper" if global_config.can_port else "mock",
-    address=global_config.can_port or "can0",
+    adapter_type="piper",
     gripper=True,
+    mock_without_address=True,
 )
 _piper_model = make_piper_model_config()
 
@@ -133,7 +132,7 @@ coordinator_teleop_piper = autoconnect(
 _piper_cartesian_hw = make_piper_hardware(
     "arm",
     adapter_type="piper",
-    address=global_config.can_port or "can0",
+    address="can0",
     gripper=True,
 )
 

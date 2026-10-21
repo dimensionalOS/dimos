@@ -256,6 +256,79 @@ impl Default for LowState {
     }
 }
 
+/// One joint's target: `q` rad, `dq` rad/s, feedforward `tau` Nm, PD gains `kp`/`kd`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct MotorCmd {
+    pub mode: u8,
+    pub q: f32,
+    pub dq: f32,
+    pub tau: f32,
+    pub kp: f32,
+    pub kd: f32,
+    pub reserve: [u32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct BmsCmd {
+    pub off: u8,
+    pub reserve: [u8; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LowCmd {
+    pub head: [u8; 2],
+    pub level_flag: u8,
+    pub frame_reserve: u8,
+    pub sn: [u32; 2],
+    pub version: [u32; 2],
+    pub bandwidth: u16,
+    pub motor_cmd: [MotorCmd; 20],
+    pub bms_cmd: BmsCmd,
+    #[serde(with = "BigArray")]
+    pub wireless_remote: [u8; 40],
+    pub led: [u8; 12],
+    pub fan: [u8; 2],
+    pub gpio: u8,
+    pub reserve: u32,
+    pub crc: u32,
+}
+ros2_topic_type!(LowCmd, "unitree_go::msg::dds_::LowCmd_");
+
+impl Default for LowCmd {
+    fn default() -> Self {
+        Self {
+            head: [0; 2],
+            level_flag: 0,
+            frame_reserve: 0,
+            sn: [0; 2],
+            version: [0; 2],
+            bandwidth: 0,
+            motor_cmd: Default::default(),
+            bms_cmd: BmsCmd::default(),
+            wireless_remote: [0; 40],
+            led: [0; 12],
+            fan: [0; 2],
+            gpio: 0,
+            reserve: 0,
+            crc: 0,
+        }
+    }
+}
+
+/// The L1's local elevation grid: `data[row * width + col]` is the height in metres of
+/// the cell at `origin + (col, row) * resolution` in `frame_id`; ~1e9 marks no data.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct HeightMap {
+    pub stamp: f64,
+    pub frame_id: String,
+    pub resolution: f32,
+    pub width: u32,
+    pub height: u32,
+    pub origin: [f32; 2],
+    pub data: Vec<f32>,
+}
+ros2_topic_type!(HeightMap, "unitree_go::msg::dds_::HeightMap_");
+
 /// The remote's sticks in [-1, 1] and a 16-bit button mask.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct WirelessController {
@@ -369,5 +442,43 @@ mod tests {
             is_dense: true,
             ..Default::default()
         });
+        roundtrip(&LowCmd::default());
+        roundtrip(&HeightMap::default());
+    }
+
+    /// A real sample re-encodes byte for byte: every field and pad lands where the robot
+    /// put it (a struct padded to its widest member would shift the u8-first records).
+    fn decode_exact<T: Serialize + serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
+        let v: T = cdr::deserialize(bytes).expect("deserialize");
+        let again = cdr::serialize::<_, _, CdrLe>(&v, Infinite).expect("serialize");
+        assert_eq!(again, bytes, "re-encoded sample differs");
+        v
+    }
+
+    /// rt/lowstate off athens_outdoors_4.mcap, the dog standing under the policy.
+    #[test]
+    fn real_lowstate_decodes() {
+        let s: LowState = decode_exact(include_bytes!("../../tests/lowstate.cdr"));
+        let legs = &s.motor_state[..12];
+        assert!(legs.iter().all(|m| m.mode == 1), "{legs:?}");
+        assert!((20.0..35.0).contains(&s.power_v), "{}", s.power_v);
+        for leg in legs.chunks(3) {
+            assert!((0.1..2.4).contains(&leg[1].q), "thigh {}", leg[1].q);
+            assert!((-2.7..-0.8).contains(&leg[2].q), "calf {}", leg[2].q);
+        }
+        let q = s.imu_state.quaternion;
+        assert!((q.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() < 1e-2);
+        assert_ne!(s.crc, 0);
+    }
+
+    /// rt/lowcmd from the same recording: the policy's PD targets.
+    #[test]
+    fn real_lowcmd_decodes() {
+        let c: LowCmd = decode_exact(include_bytes!("../../tests/lowcmd.cdr"));
+        for m in &c.motor_cmd[..12] {
+            assert_eq!((m.mode, m.kp, m.kd), (1, 40.0, 1.0), "{m:?}");
+        }
+        assert!((-2.7..-0.8).contains(&c.motor_cmd[2].q));
+        assert_ne!(c.crc, 0);
     }
 }

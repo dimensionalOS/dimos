@@ -45,6 +45,10 @@ MID360_PITCH_DOWN = math.radians(60.0)
 # Mount geometry shared by every go2 + mid360 rig (metres).
 CAMERA_XYZ = (0.32715, -0.00003, 0.04297)  # base_link -> front_camera
 MID360_XYZ = (-0.032, 0.0, 0.12)  # front_camera -> mid360_link: 3.2cm back, 12cm up
+# base_link -> utlidar_lidar (head L1), fitted on recordings (gyro Kabsch + map fit); the
+# go2_description radar_joint is ~120 deg off. Fixed-axis rpy in degrees.
+L1_XYZ = (0.226, 0.025, 0.089)
+L1_MOUNT = (-167.877, -7.907, -59.588)
 
 # rpy that maps a sensor frame to its optical frame (z-forward, x-right, y-down)
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)

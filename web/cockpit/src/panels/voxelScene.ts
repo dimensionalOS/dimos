@@ -166,6 +166,10 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
       (marker.material as Material).dispose();
       grid.geometry.dispose();
       (grid.material as Material).dispose();
+      // The sink owns this canvas and retires it with the scene. Losing
+      // the context frees its drawing buffer immediately; a replacement
+      // scene must get a fresh canvas.
+      renderer.forceContextLoss();
       renderer.dispose();
     },
   };

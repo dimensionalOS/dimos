@@ -74,6 +74,39 @@ class TestRunEntryCRUD:
         entry.remove()
         assert not entry.registry_path.exists()
 
+    def test_scoped_secrets_are_not_persisted(self, tmp_registry: Path) -> None:
+        entry = _make_entry(
+            config_overrides={
+                "go2connection": {"aes_128_key": "private-aes", "replay_exit": True},
+                "typesafenavigationagent.api-key": "private-api",
+                "relaybridgemodule": {"relay_key": "private-relay", "robot_id": "test-robot"},
+            },
+            original_argv=[
+                "dimos",
+                "run",
+                "unitree-go2",
+                "--go2connection.aes-128-key",
+                "private-aes",
+                "--typesafenavigationagent.api-key=private-api",
+                "--relaybridgemodule.relay-key=private-relay",
+                "--go2connection.replay-exit",
+            ],
+        )
+        entry.save()
+        loaded = RunEntry.load(entry.registry_path)
+
+        assert loaded.config_overrides == {
+            "go2connection": {"replay_exit": True},
+            "relaybridgemodule": {"robot_id": "test-robot"},
+        }
+        assert loaded.original_argv == [
+            "dimos",
+            "run",
+            "unitree-go2",
+            "--go2connection.replay-exit",
+        ]
+        assert "private-" not in entry.registry_path.read_text()
+
     def test_save_creates_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         nested = tmp_path / "a" / "b" / "c"
         monkeypatch.setattr("dimos.core.run_registry.REGISTRY_DIR", nested)

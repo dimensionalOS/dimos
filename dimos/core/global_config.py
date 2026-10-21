@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Stack composition, process management, and shared transport settings.
+
+Module and subsystem settings belong to their owners' configuration classes.
+"""
+
 import os
-from pathlib import Path
-import re
 from typing import Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
-from dimos.models.vl.types import VlModelName
-from dimos.visualization.rerun.constants import (
-    RERUN_ENABLE_WEB,
-    RERUN_OPEN_DEFAULT,
-    RerunOpenOption,
-    ViewerBackend,
-)
+from dimos.visualization.rerun.constants import ViewerBackend
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
 # How one zenoh session joins the network.
@@ -41,37 +38,17 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 # LLM API keys itself.
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
-# Never expose these in config dumps or persist their CLI values in run metadata.
-SECRET_CONFIG_FIELDS = frozenset(
-    {"dimos_api_key", "relay_key", "unitree_aes_128_key", "typesafe_api_key"}
-)
-
-
-def _get_all_numbers(s: str) -> list[float]:
-    return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
-
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
-    # Per-device AES-128 key for new Unitree firmware (G1 >=1.5.1, Go2 >=1.1.15, data2=3
-    # handshake). Fetch: unitree-fetch-aes-key --email YOU --sn <serial>
-    unitree_aes_128_key: str | None = None
-    xarm7_ip: str | None = None
-    xarm6_ip: str | None = None
-    lite6_ip: str | None = None
-    can_port: str | None = None
-    device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
-    # Exit once every subscribed replay stream finishes (with --replay).
-    replay_exit: bool = False
     record: Literal["", "sqlite", "mcap"] = ""
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
-    new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
@@ -103,35 +80,13 @@ class GlobalConfig(BaseSettings):
     # Isolates this run's zenoh streams under dimos/domains/<name>/; a hosted run pins its run id.
     zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
     viewer: ViewerBackend = "rerun"
-    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
-    rerun_web: bool = RERUN_ENABLE_WEB
-    rerun_save: bool = False  # also write the stream to recordings/<run-id>/rerun.rrd
-    rerun_host: str | None = None
-    rerun_websocket_server_port: int = 3030
     n_workers: int = 2
-    memory_limit: str = "auto"
-    mujoco_camera_position: str | None = None
-    mujoco_room: str | None = None
-    mujoco_room_from_occupancy: str | None = None
-    mujoco_global_costmap_from_occupancy: str | None = None
-    mujoco_global_map_from_pointcloud: str | None = None
-    mujoco_start_pos: str = "-1.0, 1.0"
-    mujoco_steps_per_frame: int = 7
-    # Shadow-mapping the office scene costs ~4x per offscreen render on
-    # integrated GPUs (e.g. Apple Silicon), dropping the sim below realtime.
-    # "auto" keeps shadows and turns them off if the sim falls behind realtime.
-    mujoco_shadows: Literal["auto", "on", "off"] = "auto"
     scene_package: str | None = None
     robot_model: str | None = None
-    robot_id: str | None = None
+    # Robot geometry shared by every navigation and patrol module in a stack;
+    # a module config may still override it for itself.
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
-    nerf_speed: float = 1.0
-    mcp_port: int = 9990
-    # Seconds an MCP client waits for a tool to answer. A skill that thinks
-    # for longer than this is cut off at the client, not the server, so the
-    # caller owns the number.
-    mcp_timeout: int = 30
     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
@@ -141,41 +96,11 @@ class GlobalConfig(BaseSettings):
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
-    obstacle_avoidance: bool = True
-    detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
-    dimsim_scene: str = "apartment"
-    dimsim_port: int = 8090
-    dimsim_headless: bool = True
-    # Seconds a headless DimSim gets to report server physics live (frontend
-    # built, Chromium up, scene snapshot delivered) before startup fails. A
-    # cold checkout also builds the frontend inside this window; CI avoids
-    # that with bin/dimsim-prepare.
-    dimsim_ready_timeout: float = 300.0
-    mujoco_scene: str | None = None
     local_relay: bool = False
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
     bridge discovers its WebTransport endpoint through /api/info."""
-    relay_ca: str | None = None
-    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
-    private CA); replaces the default trust stores. Unset for a relay with a
-    public certificate."""
-    relay_key: str | None = None
-    """Key that identifies this robot to a relay started with --auth-file
-    (bound to its robot id there). Prefer RELAY_KEY in the environment or
-    .env over the --relay-key flag, which shows in the process list."""
-    dimos_cloud_url: str = "https://api.dimensional.org"
-    dimos_api_key: str | None = None
-    typesafe_api_key: str | None = Field(
-        default=None, validation_alias=AliasChoices("TYPESAFE_API_KEY", "typesafe_api_key")
-    )
-    dimos_upload_codec: str = "lz4"
-    dimos_upload_retries: int = 2
-    dimos_upload_chunk_mb: int | None = None
-    dimos_upload_quiet_s: float = 30.0
-    dimos_http_timeout: float = 60.0
-    dimos_staging_dir: Path | None = None
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
@@ -206,25 +131,6 @@ class GlobalConfig(BaseSettings):
             if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
-
-    @property
-    def unitree_connection_type(self) -> str:
-        if self.replay:
-            return "replay"
-        if self.simulation:
-            return self.simulation
-        return "webrtc"
-
-    @property
-    def mujoco_start_pos_float(self) -> tuple[float, float]:
-        x, y = _get_all_numbers(self.mujoco_start_pos)
-        return (x, y)
-
-    @property
-    def mujoco_camera_position_float(self) -> tuple[float, ...]:
-        if self.mujoco_camera_position is None:
-            return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
-        return tuple(_get_all_numbers(self.mujoco_camera_position))
 
     @property
     def processed_robot_ips(self) -> tuple[str, ...]:

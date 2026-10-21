@@ -80,5 +80,5 @@ unitree_go2_rpp_benchmark = (
     # operator's teleop nudges.
     .remappings([(Benchmarker, "cmd_vel", "go2_cmd_vel")])
     .transports(_BENCHMARK_TRANSPORTS)
-    .global_config(obstacle_avoidance=False, n_workers=6)
+    .global_config(n_workers=6)
 )

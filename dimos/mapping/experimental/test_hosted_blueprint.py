@@ -15,7 +15,7 @@
 
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor
-from dimos.mapping.experimental.blueprints import go2_dds_nav_hosted
+from dimos.mapping.experimental.blueprints import go2_nav_hosted
 
 
 def test_go2_hosted_splits_robot_mesher_and_viewer() -> None:
@@ -23,9 +23,9 @@ def test_go2_hosted_splits_robot_mesher_and_viewer() -> None:
     gpu = HostDescriptor("gpu-id", "compute", {"gpu": "RTX 5080", "gpu_mem_gb": "16"}, "rev", ())
     laptop = HostDescriptor("laptop", "laptop", {}, "rev", ())
     assignments = resolve_hosted_assignments(
-        go2_dds_nav_hosted, [go2, gpu, laptop], local_host_id="laptop", revision="rev"
+        go2_nav_hosted, [go2, gpu, laptop], local_host_id="laptop", revision="rev"
     )
-    fragments = compile_fragments(go2_dds_nav_hosted, assignments, run_id="run", revision="rev")
+    fragments = compile_fragments(go2_nav_hosted, assignments, run_id="run", revision="rev")
 
     robot = fragments["go2-id"].load_payload()
     viewer = fragments["laptop"].load_payload()
