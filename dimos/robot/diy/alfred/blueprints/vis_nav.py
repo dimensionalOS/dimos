@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred's vision-only navigation fragment: odometry through to wheel commands.
+"""Alfred's vision navigation fragment: dimSLAM odometry through to wheel commands.
 
-Carries no image or odometry source, so it is composed into a blueprint that supplies
-one rather than run on its own.
+Carries no image source, so it is composed into a blueprint that supplies one rather
+than run on its own.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.dim_slam.dim_slam import (
     CameraConfig,
@@ -33,28 +33,19 @@ from dimos.mapping.dim_slam.dim_slam import (
     ImuConfig,
     SourceConfig,
 )
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
-from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
-from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
+from dimos.robot.diy.alfred.blueprints.alfred_nav import _alfred_nav, _alfred_rerun_config
 from dimos.visualization.vis_module import vis_module
 
-ALFRED_RERUN_ROOT = "world/alfred"
 CAMERA_RERUN_ROOT = "world/camera"
 
 IR_ENTITY_BY_FRAME = {
-    "d455_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
-    "d455_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
+    "camera_front_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
+    "camera_front_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
 }
 """The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
 from the message, and cuVSLAM's rig has to be told the order."""
 
-DEPTH_FRAME = "d455_depth_optical_frame"
+DEPTH_FRAME = "camera_front_depth_optical_frame"
 """Colour is off, so depth is unaligned and arrives in its own frame."""
 
 
@@ -74,10 +65,6 @@ def _ir_image(msg: Any) -> list[tuple[str, Any]] | None:
 def _ir_pinhole(msg: Any) -> Any:
     entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
     return _pinhole_at(msg, entity_path) if entity_path else None
-
-
-def _path_colored(msg: Any, color: tuple[int, int, int]) -> Any:
-    return msg.to_rerun(color=color)
 
 
 def _rerun_blueprint() -> Any:
@@ -103,17 +90,6 @@ def _rerun_blueprint() -> Any:
     )
 
 
-def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
-    return [
-        *factory(rr),
-        (ALFRED_RERUN_ROOT, rr.Transform3D(parent_frame="tf#/base_link")),
-    ]
-
-
-VOXEL_SIZE_METERS = 0.05
-WALL_CLEARANCE_M = 0.2
-PLANNER_VIZ_HZ = 2.0
 DEPTH_MAX_RANGE_METERS = 4.0
 """4 m won the mapping grid against 6 m (top-down F1 .570 vs .506 against a
 lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
@@ -167,58 +143,33 @@ def vis_nav(
             # keeps a bias pair per entry, so an unlisted frame is dropped rather than fused.
             imus=list(imus),
         ),
-        RayTracingVoxelMap.blueprint(
-            voxel_size=VOXEL_SIZE_METERS,
-            max_range=map_max_range,
-        ).remappings([(RayTracingVoxelMap, "lidar", map_cloud_topic)]),
-        MLSPlannerNative.blueprint(
-            voxel_size=VOXEL_SIZE_METERS,
-            robot_height=ALFRED.body_height,
-            wall_clearance_m=WALL_CLEARANCE_M,
-            step_penalty_weight=1.0,
-            viz_publish_hz=PLANNER_VIZ_HZ,
-        ).remappings([(MLSPlannerNative, "path", "planner_path")]),
-        # Solely the tf-driven start_pose source for the dannav odom remaps below.
-        StartRelay.blueprint(),
-        DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
-            [(DanLocalPlanner, "odom", "start_pose")]
-        ),
-        DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
-        MovementManager.blueprint(),
-        vis_module(
-            global_config.viewer,
-            rerun_config={
-                "blueprint": _rerun_blueprint,
-                "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
-                # Keyed by the topic's entity path, before any visual_override renames it.
-                # Everything is held to 1 Hz: the viewer rides a wifi link, and the
-                # uncapped clouds put it seconds behind live. tf is capped too, so the
-                # whole scene ticks once a second rather than re-posing per odom update.
-                "max_hz": {
-                    "world/tf": 1.0,
-                    "world/depth_image": 1.0,
-                    "world/image": 1.0,
-                    "world/depth_cloud": 1.0,
-                    "world/lidar": 1.0,
-                    "world/global_map": 1.0,
-                    "world/local_map": 1.0,
-                    "world/nodes": 1.0,
-                },
-                # An image only renders if it shares an entity with its Pinhole.
-                "visual_override": {
-                    # The MLS planner path; the local planner's path keeps the stock green.
-                    "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
-                    "world/depth_image": partial(
-                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
-                    ),
-                    "world/depth_camera_info": partial(
-                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
-                    ),
-                    "world/image": _ir_image,
-                    "world/camera_info": _ir_pinhole,
-                    # The planner publishes its surface and edges by cell.
-                    **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
-                },
+        _alfred_nav(map_cloud_topic=map_cloud_topic, map_max_range=map_max_range),
+        _d455_viewer(),
+    )
+
+
+def _d455_viewer() -> Blueprint:
+    shared = _alfred_rerun_config()
+    return vis_module(
+        global_config.viewer,
+        rerun_config={
+            **shared,
+            "blueprint": _rerun_blueprint,
+            "max_hz": {
+                **shared["max_hz"],
+                "world/depth_image": 1.0,
+                "world/image": 1.0,
+                "world/depth_cloud": 1.0,
             },
-        ),
+            # An image only renders if it shares an entity with its Pinhole.
+            "visual_override": {
+                **shared["visual_override"],
+                "world/depth_image": partial(_image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"),
+                "world/depth_camera_info": partial(
+                    _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
+                ),
+                "world/image": _ir_image,
+                "world/camera_info": _ir_pinhole,
+            },
+        },
     )

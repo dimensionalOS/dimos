@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred's physical layer: the mast D455, the mount transforms, and the base controller.
+"""Alfred's physical layer: mount transforms and base controller, with or without the mast D455.
 
-Every Alfred blueprint composes this and then adds what it does with the sensors. Private, so
-it stays out of the runnable blueprint registry: sensors with nothing consuming them.
+Every Alfred blueprint composes one of these and then adds what it does with the sensors. Private,
+so they stay out of the runnable blueprint registry: sensors with nothing consuming them.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ _alfred_hardware = autoconnect(
         # native now. Depth is unaligned without colour, so it lands in its own frame.
         enable_color=False,
         align_depth_to_color=False,
-        frame_id="d455_link",
+        frame_id="camera_front_link",
         serial_number=ALFRED.d455_serial,
     ).remappings(
         [
@@ -55,4 +55,9 @@ _alfred_hardware = autoconnect(
     ),
     AlfredMountTf.blueprint(),
     AlfredHighLevel.blueprint().remappings([(AlfredHighLevel, "wheel_odometry", "odom_sources")]),
+).global_config(robot_model="alfred")
+
+_alfred_lidar_hardware = autoconnect(
+    AlfredMountTf.blueprint(root_frame="mid360_link"),
+    AlfredHighLevel.blueprint(),
 ).global_config(robot_model="alfred")

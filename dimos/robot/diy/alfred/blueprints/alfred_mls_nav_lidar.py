@@ -29,6 +29,7 @@ from dimos.hardware.sensors.camera.realsense.constants import IMU_BMI055
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.mapping.dim_slam.dim_slam import ImuConfig
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import alfred_mls_nav
+from dimos.robot.diy.alfred.blueprints.alfred_nav import MID360_MAX_RANGE_METERS
 from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
 from dimos.robot.diy.alfred.config import ALFRED
 
@@ -48,7 +49,7 @@ alfred_mls_nav_lidar = autoconnect(
             # Gyro yaw halved final drift on drive_2026-08-18_23-05-04.db, 2.66 m out to 1.33 m
             # against a 0.59 m floor on the lidar reference's own heading. Datasheet-class
             # figures for the part, not an Allan variance of this particular camera.
-            ImuConfig(frame_id="d455_accel_optical_frame", **IMU_BMI055),
+            ImuConfig(frame_id="camera_front_accel_optical_frame", **IMU_BMI055),
             # The Mid-360's built-in IMU, an order of magnitude quieter than the D455's BMI055, which is
             # the point of the pairing: the filter keeps a bias pair per IMU, so the good gyro keeps its
             # say instead of being averaged into the cheap one.
@@ -61,8 +62,6 @@ alfred_mls_nav_lidar = autoconnect(
             ),
         ],
         map_cloud_topic="lidar",
-        # The Mid-360 reaches far past this, but the voxel map raytraces every point from the
-        # sensor origin, so the far returns cost the most and carve the least reliable space.
-        map_max_range=15.0,
+        map_max_range=MID360_MAX_RANGE_METERS,
     ),
 ).global_config(n_workers=12, robot_model="alfred")
