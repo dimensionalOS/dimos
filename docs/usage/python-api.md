@@ -191,7 +191,7 @@ not require a CLI run-registry entry, so it also attaches to
 supports one coordinator per bus; configure the transport bus consistently to
 connect across processes or hosts.
 
-`run()` and `restart()` also work against a daemon:
+`run()`, `restart()` and `unload()` also work against a daemon:
 
 ```python skip
 app = Dimos.connect()
@@ -199,6 +199,7 @@ app = Dimos.connect()
 app.run("keyboard-teleop")       # add a module by registry name
 app.run(SomeModule)               # or by Module class
 app.restart(SomeModule)           # hot-restart it on the daemon
+app.unload(SomeModule)            # stop and remove it; the rest keeps running
 ```
 
 Strings and registered Module classes take a name-based fast path. Other
@@ -237,3 +238,13 @@ If you find yourself needing data from an existing module that isn't on its `Out
 - `--daemon` does not detach right away. Background it with `&` or `nohup` if you want the terminal back.
 - `dimos stop` reads its target from a registry under `$XDG_STATE_HOME/dimos/runs`. If the registry file is removed but the process is alive, `dimos stop` won't see it. Kill the PID directly (find it with `ps aux | grep "dimos.*--daemon"`).
 - `load_blueprint` over LCM has a 120s RPC timeout. If it raises `TimeoutError` after that long, the module may still have been deployed and started. Check the daemon log for the `Deployed module` entry before assuming failure.
+
+## Unloading modules
+
+`unload()` stops one module and removes it from the running system. Like `restart()`, it takes the module class and raises if more than one instance of that class is running.
+
+```python skip
+app.unload(KeyboardTeleop)
+```
+
+The module's `stop()` runs, and its worker process exits if no other module runs in it. Modules that track the system, such as `McpServer`, receive the remaining module list, so the unloaded module's skills disappear. Stream transports stay in place: other modules that read the unloaded module's streams stop receiving messages, and modules that held a reference to it keep a reference that no longer answers.

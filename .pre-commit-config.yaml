@@ -149,12 +149,15 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      - id: native-module-lint
-        name: lint (nix)
-        entry: python3 bin/native-modules --lint
-        language: system
-        types: [rust]
-        pass_filenames: false
+      # Off for now: it builds checks.lint for every native-module flake on any .rs change,
+      # which on a store without the Cachix substituter compiles each module's whole
+      # dependency tree (~20+ min). CI still runs `bin/native-modules --lint`.
+      # - id: native-module-lint
+      #   name: lint (nix)
+      #   entry: python3 bin/native-modules --lint
+      #   language: system
+      #   types: [rust]
+      #   pass_filenames: false
 
       - id: deno-fmt
         name: deno fmt (web/)

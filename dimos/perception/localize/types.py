@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The localize answer type and the thresholds a caller tunes per call."""
+"""The localize answer type and its per-call thresholds."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,12 +38,11 @@ class Localization:
 
 
 @dataclass(frozen=True)
-class LocalizePolicy:
-    """Per-call thresholds. The funnel generalizes; these numbers do not.
+class LocalizeParams:
+    """The thresholds of one localize call. The funnel generalizes; these numbers do not.
 
-    Each was fit to one measured scene, so a different rig, object scale or
-    detector vocabulary passes its own instance instead of the defaults.
-    The scores are on the models' scales, the defaults on SigLIP and OWLv2's.
+    Each rig passes its own instance on the blueprint; the defaults are desk
+    scale, fit on the xArm recordings with SigLIP + OWLv2 + EdgeTAM.
     """
 
     candidate_floor: float = 0.25  # detector score at which a box is formed
@@ -65,3 +64,8 @@ class LocalizePolicy:
     fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
     plane_keyframes: int = 5
     plane_cell_m: float = 2.0  # XY cell of the support-plane cache
+
+    def read_key(self) -> LocalizeParams:
+        """What a frame counts as read under: these params without the answer gates,
+        which act only once the answer is built, so changing them reads no frame again."""
+        return replace(self, accept_score=0.0, min_views=0)

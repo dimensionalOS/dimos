@@ -313,14 +313,6 @@ class ZenohSessionPool:
         # Completion must not take the pool lock: close_all may hold it while waiting.
         if created:
             try:
-                logger.info(
-                    "Zenoh session opened",
-                    mode=config.mode,
-                    connect=config.connect,
-                    listen=config.listen_endpoints,
-                    multicast_interface=config.multicast_interface,
-                    gossip=config.gossip_enabled,
-                )
                 _await_connect(entry.session, config)
             except BaseException as e:
                 # Release every waiter even if initialization is interrupted.

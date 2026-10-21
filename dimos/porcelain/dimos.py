@@ -124,6 +124,22 @@ class Dimos:
             self._source.invalidate(module_class.__name__)
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
+    def unload(self, module_class: type[ModuleBase]) -> None:
+        """Stop and remove a running module.
+
+        Args:
+            module_class: The module class to unload.
+        """
+        with self._lock:
+            if self._source is None:
+                raise RuntimeError("No modules are running")
+            if self._source.is_remote:
+                assert isinstance(self._source, RemoteModuleSource)
+                self._source.unload_module_by_class_name(module_class.__name__)
+                return
+            assert self._coordinator is not None
+            self._coordinator.unload_module(module_class)
+
     @classmethod
     def connect(cls, *, timeout: float = 5.0) -> Dimos:
         """Connect to the running DimOS coordinator on the current transport bus.

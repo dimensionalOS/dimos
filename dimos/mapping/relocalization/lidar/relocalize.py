@@ -144,12 +144,12 @@ MID360 = RelocalizeConfig(
     max_frames=7,
 )
 
-# The mid360 scales with the go2 nav_3d accept policy, from the sf office replays.
-GO2_NAV = MID360.model_copy(update={"fitness_threshold": 0.8, "ransac_restarts": 3})
+# The mid360 scales with the nav stack accept policy, from the go2 sf office replays.
+MID360_NAV = MID360.model_copy(update={"fitness_threshold": 0.8, "ransac_restarts": 3})
 
 # A rig's name to its measured settings. Add an entry by running a study for
 # that rig (tune.md); do not retune an existing one for a new sensor.
-PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "go2-nav": GO2_NAV}
+PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "mid360-nav": MID360_NAV}
 DEFAULT_PRESET = "mid360"
 
 

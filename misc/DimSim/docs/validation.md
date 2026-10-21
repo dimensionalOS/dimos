@@ -10,10 +10,10 @@ drop any `.glb` it loads into the same folder. Then run:
 
 ```bash
 export OPENAI_API_KEY=sk-...    # the agentic blueprint needs it
-uv run dimos --simulation dimsim --dimsim-scene=<name> run unitree-go2-agentic
+uv run dimos --simulation dimsim run unitree-go2-agentic --go2connection.dimsim.scene=<name>
 ```
 
-Headless by default. Add `--no-dimsim-headless` to watch at localhost:8090 (free-orbit
+Headless by default. Add `--go2connection.dimsim.headless false` to watch at localhost:8090 (free-orbit
 camera). To reload after an edit, hard-refresh the tab (headed) or restart the command
 (headless). No rebuild needed.
 
@@ -68,7 +68,7 @@ Observe: the robot is blocked by the car, and LiDAR registers it.
 
 ## 3. Editing loop
 
-Run headed (`--no-dimsim-headless`), then edit `index.js`. Move the car
+Run headed (`--go2connection.dimsim.headless false`), then edit `index.js`. Move the car
 (`car.position.set(2, 0, 0)`) or add a light (`scene.add(new THREE.PointLight(0xff0000, 5, 10))`),
 then hard-refresh the tab. Changes appear immediately, no rebuild.
 

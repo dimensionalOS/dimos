@@ -30,6 +30,7 @@ import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import (
+    DAEMON_STATUS_FD_ENV,
     fork_daemon,
     install_signal_handlers,
     read_daemon_status,
@@ -43,6 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 logger = setup_logger()
 
@@ -76,6 +78,13 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
+def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None:
+    for atom in blueprint.active_blueprints:
+        if "mcp_url" in atom.module.rpcs:
+            return str(coordinator.get_instance(atom.name).mcp_url())
+    return None
+
+
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -95,11 +104,6 @@ def run(
         "--relay-url",
         help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
         "http://localhost:7780)",
-    ),
-    relay_ca: str | None = typer.Option(
-        None,
-        "--relay-ca",
-        help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -146,7 +150,6 @@ def run(
         for name, value in (
             ("local_relay", local_relay),
             ("relay_url", relay_url),
-            ("relay_ca", relay_ca),
         )
         if value is not None
     }
@@ -220,7 +223,12 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
+    # A macOS daemon re-execs this command. Preserve the launcher's run/log
+    # identity rather than generating a second one in the fresh interpreter.
+    inherited_run_id = (
+        os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
+    )
+    run_id = inherited_run_id or generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run
@@ -287,6 +295,7 @@ def run(
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
                 original_argv=sys.argv,
+                mcp_url=_mcp_url(blueprint, coordinator),
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -309,7 +318,7 @@ def run(
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
         try:
-            with cache_usage_guard(), recording(coordinator.transports):
+            with cache_usage_guard(), recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()
@@ -325,6 +334,7 @@ def run(
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
             original_argv=sys.argv,
+            mcp_url=_mcp_url(blueprint, coordinator),
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
@@ -333,7 +343,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            with recording(coordinator.transports):
+            with recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()

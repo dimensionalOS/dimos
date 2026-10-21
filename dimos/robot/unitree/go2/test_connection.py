@@ -19,20 +19,23 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
+import json
+from pathlib import Path
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
+from dimos.simulation.mujoco.config import MujocoConfig
 
 
 @pytest.fixture
@@ -46,7 +49,7 @@ def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:
     """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
-    cfg = SimpleNamespace(unitree_connection_type="webrtc")
+    cfg = ConnectionConfig(g=GlobalConfig())
     go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
     stub_webrtc.assert_called_once_with(
         "192.168.123.161",
@@ -55,12 +58,41 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
     )
 
 
+def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "robot.json"
+    path.write_text(
+        json.dumps({"go2connection": {"mujoco": {"room": "custom", "steps_per_frame": 4}}})
+    )
+    parsed = BlueprintConfigParser(
+        GO2Connection.blueprint(obstacle_avoidance=False, mujoco={"shadows": "off"})
+    ).parse(
+        ["--go2connection.mujoco.steps-per-frame", "9", "--go2connection.dimsim.headless=false"],
+        config_path=path,
+        environ={
+            "GO2CONNECTION__AES_128_KEY": "test-aes-key",
+            "GO2CONNECTION__MUJOCO__STEPS_PER_FRAME": "6",
+            "GO2CONNECTION__MUJOCO__START_POS": "[2.5, -3]",
+        },
+    )
+    config = ConnectionConfig(**parsed.module_kwargs("go2connection"))
+
+    assert config.mujoco == MujocoConfig(
+        room="custom", steps_per_frame=9, start_pos=(2.5, -3), shadows="off"
+    )
+    assert config.dimsim.headless is False
+    assert config.aes_128_key == "test-aes-key"
+    assert config.obstacle_avoidance is False
+    assert "obstacle_avoidance" not in parsed.global_config_values()
+
+
 def test_make_connection_replay_forwards_exit_on_complete() -> None:
-    """--replay-exit reaches ReplayConnection (the lazy `replay` opens no DB)."""
-    conn = go2_conn.make_connection(None, GlobalConfig(replay=True, replay_exit=True))
+    """--go2connection.replay-exit reaches ReplayConnection (the lazy `replay` opens no DB)."""
+    conn = go2_conn.make_connection(
+        None, ConnectionConfig(g=GlobalConfig(replay=True), replay_exit=True)
+    )
     assert isinstance(conn, go2_conn.ReplayConnection)
     assert conn._exit_on_complete is True
-    conn = go2_conn.make_connection("replay", GlobalConfig(replay=True))
+    conn = go2_conn.make_connection("replay", ConnectionConfig(g=GlobalConfig(replay=True)))
     assert isinstance(conn, go2_conn.ReplayConnection)
     assert conn._exit_on_complete is False
 
@@ -128,12 +160,6 @@ def test_replay_exit_off_leaves_streams_untouched() -> None:
     source: Subject[int] = Subject()
     conn = go2_conn.ReplayConnection()
     assert conn._tracked(source) is source
-
-
-def test_connection_config_aes_key_defaults_from_global_config() -> None:
-    """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
-    g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
-    assert ConnectionConfig(g=g).aes_128_key == "dd" * 16
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:

@@ -26,7 +26,8 @@ This extends `unitree-go2`, including its mapping, navigation, teleop through
 `MovementManager` and viewer controls. Drive around using the Go2 controls while localization collects the
 camera and lidar streams. `PerceptionLocalize` takes Go2's `lidar` and lifts
 each call through that window's scans merged; Go2 supplies `camera_info` and
-the camera TF chain in `world`. The blueprint passes a room-scale `policy`.
+the camera TF chain in `world`. The blueprint passes `params=GO2_PARAMS` and
+`mobile=True`.
 `uv run dimos --replay run go2-localize` runs the same stack on a recording.
 
 Terminal 2, attach to that same stack:
@@ -85,12 +86,16 @@ Configuration of `PerceptionLocalize`, set on the blueprint:
 - `world_frame`: the tf root the camera frame is resolved against.
 - `geometry`: `"depth"` (default) or `"lidar"`. Only the selected input is
   subscribed; the other sensor is not required.
+- `mobile`: `True` when the camera rides a walking base. The index then runs
+  at 3 Hz instead of 1 Hz. `go2-localize` sets it.
 - `horizon_s`: how far back `localize` can look. Sets the tf buffer and the
   memory windows.
 - `feed_frames`: raw frames kept for the embed tail and the pairing.
 - `embedder`, `detector`, `segmenter`: each a dandetect registry name or a
   `module:attr` path, see `../README.md`.
-- `policy`: `LocalizePolicy` overrides, tuned offline with `tools/tool_localize`.
+- `params`: the rig's `LocalizeParams` (`../types.py`), set on the blueprint;
+  defaults to `LocalizeParams()` (desk scale) when not given. A call's `params`
+  overrides fields on it for that call, see below and `../README.md`.
 
 Memory: the raw feeds are kept raw for `feed_frames`. What `localize` reads is
 at index rate: the embedded frames as JPEG, and the depth frame or lidar scan
@@ -103,23 +108,33 @@ The module uses the incoming calibration and TF frame names. Select one
 colour camera, its calibration and its aligned depth. For a G1 depth rig using
 the topic names in `unitree-g1-record`, compose:
 
-    from dimos.perception.localize.module import PerceptionLocalize
+    from dataclasses import replace
 
-    localize = PerceptionLocalize.blueprint(policy={...}).remappings([
+    from dimos.perception.localize.module import PerceptionLocalize
+    from dimos.robot.unitree.go2.blueprints.smart.go2_localize import GO2_PARAMS
+
+    localize = PerceptionLocalize.blueprint(
+        mobile=True, params=replace(GO2_PARAMS, min_points=30)
+    ).remappings([
         (PerceptionLocalize, "depth_image", "realsense_depth_image"),
         (PerceptionLocalize, "camera_info", "realsense_camera_info"),
     ])
 
-The default policy was fit on the xArm's desk; a walking rig takes a
-room-scale one, found on its recordings with `tools/tool_localize`. This is a
-composition example; the folder adds a runnable blueprint only for the xArm.
+A G1 walks, so `mobile=True`, and sees a room. `replace(GO2_PARAMS,
+min_points=30)` are the params `tools/tool_localize` runs `g1_sf_office.db`
+with (`--params g1`): room scale, with a cloud floor for depth denser than a
+5 cm lidar map. This is a composition example; the folder adds a runnable
+blueprint only for the xArm.
 
 ## The two skills
+
+Agents calling them over MCP: [`../SKILL.md`](../SKILL.md) covers windows,
+watching labels on a schedule, narrowing a position and per-call params.
 
 `state()` says ready or not, and what the module is doing if not. Until it
 says ready, `localize` tells you which stage it is in instead of answering.
 
-`localize(objects, start, duration, policy)`.
+`localize(objects, start, duration, params)`.
 
 `objects` is one label, or several split by commas. Several labels share one
 detection pass.
@@ -139,8 +154,9 @@ does not. A wide window over time you have never asked about is the expensive
 case: every frame in it needs a detector pass. The same window asked twice is
 nearly free.
 
-`policy` is a JSON object. It overrides any field of `LocalizePolicy` for this
-one call, on top of the blueprint's `policy`:
+`params` is a JSON object that overrides fields of `LocalizeParams` on the
+module's params for this one call. The next call without `params` is back on
+the module's:
 
     app.PerceptionLocalize.localize("book", -10.0, 10.0,
                                     '{"accept_score": 0.45, "verify_radius_m": 2.0}')
@@ -168,6 +184,7 @@ reach the two skills over MCP while either runs:
     uv run dimos mcp call state
     uv run dimos mcp call localize -a 'objects=book,pen'
     uv run dimos mcp call localize -j '{"objects": "book", "start": -30, "duration": 30}'
+    uv run dimos mcp call localize -j '{"objects": "apple", "params": "{\"accept_score\": 0.45}"}'
 
 ### GPU limits for agents
 
@@ -194,12 +211,9 @@ On an unmeasured hardware stack:
    stack operator.
 
 The client waits 30 seconds for an answer and then gives up. A wide window can
-take longer than that. The wait belongs to the caller, so raise it there. Per
-call, or for every call you make:
+take longer than that. Raise the caller's timeout for each call that needs it:
 
     uv run dimos mcp call localize -a 'objects=chair' --timeout 300
-    uv run dimos --mcp-timeout 300 mcp call localize -a 'objects=chair'
-    MCP_TIMEOUT=300 uv run dimos mcp call localize -a 'objects=chair'
 
 Setting it on the blueprint does nothing. The timeout is on the side that
 waits, not the side that answers.

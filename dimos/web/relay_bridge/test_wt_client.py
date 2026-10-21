@@ -19,15 +19,20 @@ failure path directly.
 """
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any
 
+from aioquic.quic.connection import QuicConnection
+from aioquic.quic.packet_builder import QuicDeliveryState
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.web.relay_bridge import wt_client
+from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -38,6 +43,8 @@ from dimos.web.relay_bridge.protocol import (
     FrameHeader,
     Hello,
     Msg,
+    Ping,
+    Pong,
     ProtocolError,
     Pub,
     PubAck,
@@ -52,6 +59,7 @@ from dimos.web.relay_bridge.protocol import (
     encode_datagram,
 )
 from dimos.web.relay_bridge.wt_client import (
+    LatestChannelWriter,
     RelayClient,
     RelayInfo,
     RelayRejectedError,
@@ -76,6 +84,9 @@ class StubSession:
         self.frames_dropped = 0
         self.control_dropped = 0
         self._next_id = 100
+        self.answer_pings = True
+        self.pong_waiters: dict[int, asyncio.Future[Pong]] = {}
+        self.failed: str | None = None
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         # Real encode so a non-serializable meta raises here, exactly as the
@@ -98,6 +109,25 @@ class StubSession:
 
     def send_msg(self, msg: Msg) -> None:
         self.sent_msgs.append(msg)
+        if self.answer_pings and isinstance(msg, Ping):
+            waiter = self.pong_waiters.get(msg.n)
+            if waiter is not None:
+                waiter.set_result(Pong(n=msg.n, ts=msg.ts))
+
+    def register_pong_waiter(self, n: int) -> asyncio.Future[Pong]:
+        waiter: asyncio.Future[Pong] = asyncio.get_running_loop().create_future()
+        self.pong_waiters[n] = waiter
+        return waiter
+
+    def discard_pong_waiter(self, n: int) -> None:
+        self.pong_waiters.pop(n, None)
+
+    def fail_session(self, reason: str) -> None:
+        self.failed = reason
+        self.closed.set()
+
+    def transmit(self) -> None:
+        pass
 
 
 def _client(session: StubSession) -> RelayClient:
@@ -146,51 +176,183 @@ async def test_offer_survives_delivery_and_keeps_sending() -> None:
         writer.stop()
 
 
-async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
-    # A wedged transport must never queue stale frames: the 1-slot mailbox
-    # sheds everything but the newest, which is what goes out on unwedge.
-    session = StubSession()
-    payloads: list[bytes] = []
-    polls = 0
+@pytest.fixture
+async def delivery_session(mocker: MockerFixture) -> SessionProtocol:
+    session = SessionProtocol(QuicConnection(configuration=make_quic_configuration(insecure=True)))
+    # Keep real stream buffers and delivery notifications; only omit UDP I/O.
+    mocker.patch.object(session, "transmit")
+    session.open_session("relay.test", "/robot")
+    return session
 
-    real_send = session.send_frame
+
+@pytest.fixture
+async def delivery_writer(
+    delivery_session: SessionProtocol, mocker: MockerFixture
+) -> AsyncIterator[
+    tuple[LatestChannelWriter, asyncio.Queue[tuple[int, bytes]], asyncio.Queue[None]]
+]:
+    sent: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue()
+    waiting: asyncio.Queue[None] = asyncio.Queue()
+    real_send = delivery_session.send_frame
+    real_wait = delivery_session.wait_delivery_progress
 
     def send_frame(header: FrameHeader, payload: bytes) -> int:
-        payloads.append(payload)
-        return real_send(header, payload)
+        stream_id = real_send(header, payload)
+        sent.put_nowait((stream_id, payload))
+        return stream_id
 
-    def stream_in_flight(stream_id: int) -> bool:
-        nonlocal polls
-        polls += 1
-        return polls < 20  # first send stays in flight for ~20 pump polls
+    async def wait_progress(timeout: float | None) -> None:
+        waiting.put_nowait(None)
+        await real_wait(timeout)
 
-    session.send_frame = send_frame  # type: ignore[method-assign]
-    session.stream_in_flight = stream_in_flight  # type: ignore[method-assign]
-
-    # stale_after high enough that the wedge never triggers the reset path:
-    # this test pins the mailbox semantics alone.
-    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    mocker.patch.object(delivery_session, "send_frame", side_effect=send_frame)
+    mocker.patch.object(delivery_session, "wait_delivery_progress", side_effect=wait_progress)
+    client = RelayClient("https://relay.test", "robot", delivery_session, ctx=None)
+    writer = client.latest_writer("cam", stale_after=10.0)
     try:
-        writer.offer(b"f0")
-        # Wait until the pump provably took f0 (send_frame ran): it is wedged
-        # in its in-flight poll, so the offers below only touch the mailbox.
-        for _ in range(500):
-            if payloads:
-                break
-            await asyncio.sleep(0.005)
-        assert payloads, "pump did not send f0 within 2.5 s"
-        for i in range(1, 6):
-            writer.offer(b"f%d" % i)
-        assert writer.dropped == 4  # f1..f4 displaced by their successors
-
-        for _ in range(500):
-            if writer.sent == 2:
-                break
-            await asyncio.sleep(0.005)
-        assert payloads == [b"f0", b"f5"]  # only the newest frame followed the wedge
-        assert writer.sent == 2
+        yield writer, sent, waiting
     finally:
         writer.stop()
+        await asyncio.gather(writer._task, return_exceptions=True)
+
+
+async def test_mailbox_sends_only_newest_frame_on_delivery_notification(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.offer(b"f0")
+    stream_id, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"f0"
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    for i in range(1, 6):
+        writer.offer(b"f%d" % i)
+
+    sender = delivery_session._quic._streams[stream_id].sender
+    sender.on_data_delivery(QuicDeliveryState.ACKED, 0, sender._buffer_stop, fin=True)
+    delivery_session._wake_delivery_waiters()
+    _, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"f5"
+    assert writer.sent == 2
+    assert writer.dropped == 4
+    assert writer.resets == 0
+
+
+@pytest.mark.parametrize("stale_after", [0.0, 0.02])
+async def test_replacement_wakes_stalled_sender_and_preserves_deadline(
+    delivery_writer, stale_after: float
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.stale_after = stale_after
+    started = time.monotonic()
+    writer.offer(b"old")
+    await asyncio.wait_for(sent.get(), timeout=1)
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    # Even an expired frame stays in flight until there is a replacement.
+    assert writer.resets == 0
+    writer.offer(b"new")
+    _, payload = await asyncio.wait_for(sent.get(), timeout=1)
+    assert payload == b"new"
+    assert writer.resets == 1
+    assert time.monotonic() - started >= stale_after
+
+
+async def test_session_failure_wakes_delivery_waiters_and_stops_sender(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, sent, waiting = delivery_writer
+    writer.offer(b"old")
+    stream_id, _ = await asyncio.wait_for(sent.get(), timeout=1)
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    waiter = asyncio.create_task(delivery_session.wait_delivered(stream_id, timeout=None))
+    try:
+        await asyncio.wait_for(waiting.get(), timeout=1)
+        writer.offer(b"new")
+        delivery_session.fail_session("test close")
+        assert await asyncio.wait_for(waiter, timeout=1) is False
+        await asyncio.wait_for(writer._task, timeout=1)
+        assert writer.sent == 1
+        assert writer.resets == 0
+        assert delivery_session._delivery_waiters == []
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+
+
+async def test_stopping_sender_cancels_delivery_waiter(
+    delivery_session: SessionProtocol, delivery_writer
+) -> None:
+    writer, _, waiting = delivery_writer
+    writer.offer(b"pending")
+    await asyncio.wait_for(waiting.get(), timeout=1)
+    writer.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(writer._task, timeout=1)
+    assert delivery_session._delivery_waiters == []
+
+
+async def test_keepalive_fails_the_session_after_unanswered_pings(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.setattr(wt_client, "KEEPALIVE_INTERVAL_S", 0.02)
+    session = StubSession()
+    transmit = mocker.patch.object(session, "transmit")
+    sent_pings: asyncio.Queue[Ping] = asyncio.Queue()
+    real_send = session.send_msg
+
+    def send_msg(msg: Msg) -> None:
+        real_send(msg)
+        if isinstance(msg, Ping):
+            sent_pings.put_nowait(msg)
+
+    mocker.patch.object(session, "send_msg", side_effect=send_msg)
+    client = _client(session)
+    client.start_keepalive()
+    client.start_keepalive()  # idempotent
+    task = client._keepalive_task
+    assert task is not None
+    try:
+        pings = [
+            await asyncio.wait_for(sent_pings.get(), timeout=1.0)
+            for _ in range(wt_client.KEEPALIVE_MISSES)
+        ]
+        assert session.failed is None  # answered: the session lives
+        assert len({p.n for p in pings}) == len(pings)
+
+        session.answer_pings = False
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert session.closed.is_set()
+        assert session.failed == f"{wt_client.KEEPALIVE_MISSES} keepalive pings unanswered"
+        assert session.pong_waiters == {}  # timed-out waiters are discarded
+        transmit.assert_called_once_with()  # flush the close without an incoming datagram
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_keepalive_tolerates_a_lone_missed_pong(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(wt_client, "KEEPALIVE_INTERVAL_S", 0.02)
+    session = StubSession()
+    answered = 0
+
+    real_send = session.send_msg
+
+    def send_msg(msg: Msg) -> None:
+        nonlocal answered
+        if isinstance(msg, Ping):
+            answered += 1
+            if answered == 2:
+                session.sent_msgs.append(msg)
+                return  # one lost pong
+        real_send(msg)
+
+    session.send_msg = send_msg  # type: ignore[method-assign]
+    client = _client(session)
+    client.start_keepalive()
+    await asyncio.sleep(0.2)
+    assert session.failed is None
+    assert answered >= 4
+    client._keepalive_task.cancel()  # type: ignore[union-attr]
 
 
 async def test_frames_cancel_does_not_steal_next_frame() -> None:

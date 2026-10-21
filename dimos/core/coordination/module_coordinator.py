@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
 import inspect
@@ -87,6 +87,7 @@ class ModuleCoordinator(Resource):
         self._deployed_atoms: dict[str, BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[str, str], str] = {}
         self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
+        self._transport_observers: list[Callable[[str, type, Transport[Any]], None]] = []
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
         self._remote_module_ref_clients: list[RPCClient] = []
@@ -155,6 +156,7 @@ class ModuleCoordinator(Resource):
             "load_blueprint": self.load_blueprint,
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
+            "unload_module_by_class_name": self.unload_module_by_class_name,
             "shutdown": self.shutdown,
         }
 
@@ -343,6 +345,25 @@ class ModuleCoordinator(Resource):
         """Every wired stream ``(name, type)`` and the transport carrying it."""
         return MappingProxyType(self._transport_registry)
 
+    @contextmanager
+    def observe_transports(
+        self, callback: Callable[[str, type, Transport[Any]], None]
+    ) -> Iterator[None]:
+        """Visit existing transports and new ones before their modules build/start.
+
+        Registration and removal are serialized with runtime blueprint loads.
+        Reused transports are reported only once per observer.
+        """
+        with self._modules_lock:
+            for (name, stream_type), transport in self._transport_registry.items():
+                callback(name, stream_type, transport)
+            self._transport_observers.append(callback)
+        try:
+            yield
+        finally:
+            with self._modules_lock:
+                self._transport_observers.remove(callback)
+
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
@@ -368,7 +389,9 @@ class ModuleCoordinator(Resource):
                 transport = transports.get(key) or _get_transport_for(
                     blueprint, remapped_name, stream_type
                 )
-            self._transport_registry[key] = transport
+                self._transport_registry[key] = transport
+                for callback in self._transport_observers:
+                    callback(remapped_name, stream_type, transport)
             for instance_key, original_name in streams[key]:
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
@@ -550,10 +573,26 @@ class ModuleCoordinator(Resource):
         worker-side instance, and shuts down the worker process if it becomes
         empty. Stream transports and other modules' references are left
         intact — callers that expect the module to come back (e.g.
-        ``restart_module``) are responsible for rewiring.
+        ``restart_module``) are responsible for rewiring. Modules that track
+        the system (e.g. ``McpServer``) receive the remaining module list.
         """
         with self._modules_lock:
             self._unload_module(module)
+            self._send_on_system_modules()
+
+    def unload_module_by_class_name(self, class_name: str) -> None:
+        with self._modules_lock:
+            self.unload_module(self._instance_key_of_class_name(class_name))
+
+    def _instance_key_of_class_name(self, class_name: str) -> str:
+        names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
+        if len(names) > 1:
+            raise ValueError(
+                f"Multiple instances of {class_name!r} are deployed ({', '.join(sorted(names))})"
+            )
+        if not names:
+            raise ValueError(f"No deployed module with class name {class_name!r}")
+        return names[0]
 
     def _unload_module(self, module: type[ModuleBase] | str) -> None:
         name = self._resolve_instance_key(module)
@@ -605,16 +644,9 @@ class ModuleCoordinator(Resource):
         reload_source: bool = True,
     ) -> None:
         with self._modules_lock:
-            names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
-            if len(names) > 1:
-                raise ValueError(
-                    f"Multiple instances of {class_name!r} are deployed "
-                    f"({', '.join(sorted(names))}); use restart_module_by_name."
-                )
-            if names:
-                self._restart_module(names[0], reload_source=reload_source)
-                return
-        raise ValueError(f"No deployed module with class name {class_name!r}")
+            self._restart_module(
+                self._instance_key_of_class_name(class_name), reload_source=reload_source
+            )
 
     def restart_module_by_name(
         self,
@@ -670,7 +702,7 @@ class ModuleCoordinator(Resource):
             if consumer == name
         ]
 
-        self.unload_module(name)
+        self._unload_module(name)
 
         if reload_source:
             source_mod = sys.modules.get(module_class.__module__)

@@ -1263,7 +1263,10 @@ Deno.test({
     assertEquals(relay.quicPort, relay.httpPort);
     const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
     const info = await res.json();
-    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+    assertEquals(info, {
+      wtUrl: `https://127.0.0.1:${relay.httpPort}`,
+      v: PROTOCOL_VERSION,
+    });
 
     // The QUIC listener serves the given certificate: pin its locally
     // computed hash (the relay never advertised one) and complete a hello.

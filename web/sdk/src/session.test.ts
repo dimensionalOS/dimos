@@ -14,6 +14,7 @@ import {
   type ConnectOptions,
   manifestsEqual,
   pickAutoWatch,
+  PING_MISSES,
   type Session,
 } from "./session.ts";
 import { PublishError } from "./errors.ts";
@@ -229,6 +230,28 @@ describe("Session over a fake WebTransport", () => {
     await settle();
     expect(handle.status.get().transport.phase).toBe("failed");
     expect(relays.length).toBe(1);
+  });
+
+  it("pings on the control stream and reconnects after two unanswered pings", async () => {
+    const relays: FakeRelayEnd[] = [];
+    const handle = connect({ pingIntervalMs: 20 }, {
+      fetchInfo: () => Promise.resolve(INFO),
+      createWebTransport: () => {
+        const relay = new FakeRelayEnd();
+        relays.push(relay);
+        return relay.wt;
+      },
+    });
+    handles.push(handle);
+    await until(() => relays.length === 1 && relays[0].pings >= 3, "pings");
+    expect(relays.length).toBe(1); // answered pings: the connection lives
+    expect(relays[0].sent.some((m) => m.t === "ping")).toBe(false); // (harness bookkeeping)
+
+    relays[0].answerPings = false;
+    const pingsBefore = relays[0].pings;
+    await until(() => relays.length === 2, "reconnect");
+    expect(relays[0].pings - pingsBefore).toBe(PING_MISSES); // closed at the second miss
+    expect(handle.status.get().transport.phase).not.toBe("failed");
   });
 
   it("publishes connected only after the relay's welcome", async () => {
