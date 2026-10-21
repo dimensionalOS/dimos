@@ -43,8 +43,7 @@ dreamlabs_dual_openyam_manual = (
         DreamlabsRolloutModule.blueprint(),
         ManipulationModule.blueprint(
             model=dual_openyam_model_config(),
-            # View actual state without a second interactive execution surface.
-            visualization=ViserVisualizationConfig(panel_enabled=False),
+            visualization=ViserVisualizationConfig(),
         ),
     )
     .remappings(

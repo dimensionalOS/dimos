@@ -218,7 +218,7 @@ def test_manual_blueprint_and_deployment_arguments() -> None:
     assert sum(atom.module is DualOpenYamCoordinator for atom in blueprint.blueprints) == 1
     [manipulation] = [atom for atom in blueprint.blueprints if atom.module is ManipulationModule]
     assert manipulation.kwargs["model"] == dual_openyam_model_config()
-    assert manipulation.kwargs["visualization"] == ViserVisualizationConfig(panel_enabled=False)
+    assert manipulation.kwargs["visualization"] == ViserVisualizationConfig()
     assert any(port.name == "coordinator_joint_state" for port in manipulation.streams)
     assert manipulation.module_refs[0].name == "_control_coordinator"
     assert blueprint.remapping_map[("OverheadCamera", "color_image")] == "overhead_image"

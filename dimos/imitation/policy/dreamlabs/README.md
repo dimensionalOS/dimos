@@ -192,14 +192,13 @@ port can be changed with `--manipulationmodule.visualization.port 8096` (adjust
 the SSH forward too). The existing manipulation/Viser extra is required; this
 change does not install it on the station.
 
-Viser's operator panel is disabled by default to avoid its execution buttons
-replacing a policy trajectory. Manipulation planning/RPCs remain available. For
-manual manipulation execution, first call `stop_rollout()`, wait for
+Viser's existing planning/operator panel is visible by default. Before executing
+from the panel or manipulation RPCs, first call `stop_rollout()`, wait for
 `busy=False`, and finish/cancel that execution before starting policy again.
 Both use the coordinator's same canonical trajectory task: it can replace an
-existing trajectory, so it is not a cross-client ownership lock. If you explicitly
-turn on `--manipulationmodule.visualization.panel-enabled true`, the same ordering
-applies to its buttons. Neither planner nor policy runs automatically at startup.
+existing trajectory, so it is not a cross-client ownership lock. For a view-only
+session, use `--manipulationmodule.visualization.panel-enabled false`. Neither
+planner nor policy runs automatically at startup.
 
 The viewer currently shows measured state, not automatic Dreamlabs target ghosts
 or measured-commanded error. Existing Viser ghosts are used by manipulation's
