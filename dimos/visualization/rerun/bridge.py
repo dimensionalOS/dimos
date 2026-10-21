@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import field
 import functools
 from operator import attrgetter
@@ -52,6 +53,16 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport import PubSubTransport
+from dimos.messages.sensor_msgs.msg import (
+    CameraInfo as CdrCameraInfo,
+    CompressedImage as CdrCompressedImage,
+    Image as CdrImage,
+)
+from dimos.messages.tf2_msgs.msg import TFMessage as CdrTFMessage
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
@@ -62,6 +73,7 @@ from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.cdr import camera_pinhole, generated_archetypes, message_frame_id
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
@@ -278,7 +290,12 @@ class Config(ModuleConfig):
     honored.
     """
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    # Construct the selected backend only when the bridge starts. Creating a
+    # blueprint or importing a camera module must not open multicast sockets.
+    pubsubs: list[SubscribeAllCapable[Any, Any]] | None = None
+    # Explicit subscriptions for the proposal's generated CDR channels. Each
+    # transport belongs to this bridge; legacy discovery/defaults stay intact.
+    cdr_transports: dict[str, PubSubTransport[Any]] = field(default_factory=dict)
 
     visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
@@ -342,7 +359,7 @@ class RerunBridgeModule(Module):
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
         self._frame_attached: dict[str, str] = {}
-        self._camera_infos: dict[str, CameraInfo] = {}
+        self._camera_infos: dict[str, CameraInfo | CdrCameraInfo] = {}
         self._image_entities: set[str] = set()
         self._min_intervals: dict[str, float] = {}
         self._tf_lock = threading.Lock()
@@ -409,7 +426,7 @@ class RerunBridgeModule(Module):
                 return msg
             if isinstance(msg, RerunConvertible):
                 return msg.to_rerun()
-            return None
+            return generated_archetypes(msg, entity_path)
 
         # compose all converters
         def composed(msg: Any) -> RerunData | None:
@@ -456,13 +473,43 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
+        if self._tf_tree is not None and isinstance(msg, CdrTFMessage):
+            # The existing frame-tree layout helper consumes local numerical values.
+            transforms = [
+                Transform(
+                    translation=Vector3(
+                        t.transform.translation.x,
+                        t.transform.translation.y,
+                        t.transform.translation.z,
+                    ),
+                    rotation=Quaternion(
+                        t.transform.rotation.x,
+                        t.transform.rotation.y,
+                        t.transform.rotation.z,
+                        t.transform.rotation.w,
+                    ),
+                    frame_id=t.header.frame_id,
+                    child_frame_id=t.child_frame_id,
+                    ts=t.header.stamp.sec + t.header.stamp.nanosec / 1_000_000_000,
+                )
+                for t in msg.transforms
+            ]
+            with self._tf_lock:
+                for entry in generated_archetypes(msg, entity_path) or []:
+                    rr.log(entry[0], entry[1])
+                self._tf_tree.update(transforms)
+            return
+
         if self._tf_tree is not None and isinstance(msg, TFMessage):
             with self._tf_lock:
                 for path, archetype in msg.to_rerun(self._tf_tree):
                     rr.log(path, archetype)
             return
 
-        if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
+        if (
+            isinstance(msg, (CameraInfo, CdrCameraInfo))
+            and entity_path not in self.config.visual_override
+        ):
             self._log_camera_info(entity_path, msg)
             return
 
@@ -471,16 +518,26 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
+        is_image = isinstance(msg, (Image, CdrImage, CdrCompressedImage))
+        if is_image:
+            self._image_entities.add(entity_path)
+
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for entry in rerun_data:
                 rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
+            frame_id = message_frame_id(msg)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                if not any(
+                    entry[0] == entity_path and isinstance(entry[1], rr.Transform3D)
+                    for entry in rerun_data
+                ):
+                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                 self._frame_attached[entity_path] = frame_id
+                if is_image and frame_id in self._camera_infos:
+                    rr.log(entity_path, self._camera_pinhole(self._camera_infos[frame_id]))
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
             if isinstance(msg, Image):
@@ -488,14 +545,18 @@ class RerunBridgeModule(Module):
             # if source msg carries a frame_id, attach the entity to that TF frame
             # should skip if archetype is a Transform3D
             if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
+                frame_id = message_frame_id(msg)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                     self._frame_attached[entity_path] = frame_id
-                    if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+                    if is_image and frame_id in self._camera_infos:
+                        rr.log(entity_path, self._camera_pinhole(self._camera_infos[frame_id]))
 
-    def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
+    @staticmethod
+    def _camera_pinhole(info: CameraInfo | CdrCameraInfo) -> Archetype:
+        return camera_pinhole(info) if isinstance(info, CdrCameraInfo) else info.to_rerun_pinhole()
+
+    def _log_camera_info(self, entity_path: str, info: CameraInfo | CdrCameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
 
         Rerun draws the frustum only when the Pinhole sits on the image entity,
@@ -504,13 +565,14 @@ class RerunBridgeModule(Module):
         """
         import rerun as rr
 
-        if not info.frame_id:
-            rr.log(entity_path, info.to_rerun_pinhole())
+        frame = message_frame_id(info)
+        if not frame:
+            rr.log(entity_path, self._camera_pinhole(info))
             return
-        self._camera_infos[info.frame_id] = info
+        self._camera_infos[frame] = info
         for image_path, frame_id in self._frame_attached.items():
-            if frame_id == info.frame_id and image_path in self._image_entities:
-                rr.log(image_path, info.to_rerun_pinhole())
+            if frame_id == frame and image_path in self._image_entities:
+                rr.log(image_path, self._camera_pinhole(info))
 
     @rpc
     def start(self) -> None:
@@ -596,6 +658,32 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+        for topic, transport in self.config.cdr_transports.items():
+            self._subscribe_cdr(topic, transport)
+
+    def _subscribe_cdr(self, topic: str, transport: PubSubTransport[Any]) -> None:
+        cleanup = ExitStack()
+        cleanup.callback(transport.stop)
+        try:
+            unsubscribe = transport.subscribe(functools.partial(self._on_cdr_message, topic=topic))
+            cleanup.callback(unsubscribe)
+        except BaseException:
+            cleanup.close()
+            raise
+        self.register_disposable(Disposable(cleanup.close))
+
+    def _on_cdr_message(self, msg: Any, *, topic: str) -> None:
+        import rerun as rr
+
+        stamp = getattr(getattr(msg, "header", None), "stamp", None)
+        if stamp is not None:
+            nanos = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+            rr.set_time("source", timestamp=np.datetime64(nanos, "ns"))
+        try:
+            self._on_message(msg, "/" + topic.strip("/"))
+        finally:
+            if stamp is not None:
+                rr.disable_timeline("source")
 
     def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
         """Subscribe to the named topics, or to everything when none are named.

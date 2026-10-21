@@ -147,3 +147,57 @@ When a `RerunBridgeModule` is already part of your blueprint, you typically don'
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
 
 To use a custom websocket port, set `--rerunwebsocketserver.port`; the bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. Set `host` on each module to override its bind address; both default to the shared `listen_host`.
+
+## Generated CDR viewer demo (WIP)
+
+The CDR viewer is under development. This example runs the real Rerun bridge
+with local Zenoh transports. It needs no robot or ROS installation.
+
+From the repository root:
+
+```sh skip
+DIMOS_ALLOW_MISSING_COCKPIT=1 uv sync --locked --extra visualization --extra web
+uv run --extra visualization --extra web python -I examples/message-viewer/demo_cdr_rerun.py cdr-viewer.rrd
+uv run --extra visualization rerun cdr-viewer.rrd
+uv run --extra visualization rerun cdr-viewer.mcap
+```
+
+Use a new output filename for each run. The example creates the live RRD and
+`cdr-viewer.mcap`. Both destinations must be new. The build flag permits
+installation without prebuilt browser assets; message generation still runs.
+
+The live recording uses `RerunBridgeModule.start()`, its typed subscriptions and
+rendering callbacks. A receipt signal waits for each message before shutdown.
+The MCAP contains the source scene encoded as CDR with complete ROS2 schemas.
+It is example input for playback, not a capture by the native recorder.
+
+Open the MCAP directly with Rerun's native importer. To save its imported data:
+
+```sh skip
+uv run --extra visualization rerun mcap convert cdr-viewer.mcap -o cdr-viewer-native.rrd
+```
+
+Rerun 0.32 converts supported standard ROS2 types into visualizations. Other
+messages, including this scene's Path and custom EntityMarkers, are available
+as reflected fields; they do not automatically acquire the live bridge's path
+or labeled-entity display. No dimOS Python renderer is used for this import.
+Existing `dimos mem rerun` behavior for legacy stores, including `--seconds`
+and `--root`, is unchanged. Use the native Rerun command for CDR MCAP files.
+
+| PR capability | Demo scene | What to check |
+| --- | --- | --- |
+| TF and source metadata | `tf`, `pose` | Map/camera frames, pose axes at `[1.5, -2.5, 0.25]`, `nanosec: 123456789` in the text tab |
+| Geometry adapters | `point`, `odometry`, `path`, `entities` | Point, three-waypoint path, odometry axes, labeled person and object |
+| Camera calibration | `image`, `late_image` | Pinhole on each image, whether calibration arrives first or last |
+| Sensor buffers | `image`, `depth`, `compressed`, `compressed_depth` | Four RGB pixels, big-endian uint16 depth, PNG image and JXL depth in the sensor tab |
+| Cloud rendering | `cloud`, `cloud_boxes`, `cloud_height` | RGB points, boxes and height-colored spheres |
+| Legacy rendering | `legacy_pose` | Existing pose rendering alongside generated messages |
+| Native MCAP import | `cdr-viewer.mcap` | Standard images, points, calibration and TF; reflected fields for types without a native visualization |
+
+The example anchors its `world` TF frame to the viewer root. Business producers
+must supply their own TF tree. It does not demonstrate robot graph migration or
+automatic CDR type discovery. The existing integration test runs this example,
+checks the live RRD, then converts the MCAP with the official CLI and checks its imported components.
+
+For the live browser SDK and manifest path, run the
+[Web bridge demo](/docs/web/bridge.md#generated-cdr-messages-wip).

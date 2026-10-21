@@ -51,7 +51,8 @@ from dimos_lcm.std_msgs import Bool
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.web.codecs import is_generic_lcm_encoding
+from dimos.web.cdr_codec import export_schema as export_cdr_schema
+from dimos.web.codecs import is_generic_cdr_encoding, is_generic_lcm_encoding
 from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
@@ -168,7 +169,8 @@ class Channel:
     JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
     (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
     dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
-    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    params["lcm"]), or explicit `<package>/msg/<Type>.cdr.v1` for installed
+    generated values (complete ROS2 schemas ride params["cdr"]). None picks the default: `<msg_name>.lcm.v1` for rx
     DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare
@@ -278,6 +280,10 @@ def _request_of(channel: Channel) -> ChannelRequest:
     # Deep plain copy: the manifest and specs must not alias the (frozen)
     # authoring record's nested values.
     params = _thaw_params(channel.params or {})
+    if is_generic_cdr_encoding(channel.encoding):
+        if "cdr" in params:
+            raise ValueError("params key 'cdr' is reserved for the CDR schema")
+        params["cdr"] = export_cdr_schema(channel.message_type)
     if is_generic_lcm_encoding(channel.encoding):
         if "lcm" in params:
             raise ValueError("params key 'lcm' is reserved for the LCM schema")

@@ -40,6 +40,83 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 
 ## Channels
 
+### Generated CDR messages (WIP)
+
+An installed generated type can be sent as CDR with its complete ROS2 definition
+in the manifest. Declare the encoding explicitly in this proposal:
+
+```python
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.web.cockpit import Channel, cockpit
+
+viewer = cockpit(channels=[Channel(
+    "measured_pose", PoseStamped,
+    encoding="geometry_msgs/msg/PoseStamped.cdr.v1",
+)])
+```
+
+Compose `viewer` with the module producing `measured_pose: Out[PoseStamped]`.
+Generated ports use the shared CDR codec on the selected LCM or Zenoh transport. The manifest embeds PoseStamped, Header and Time definitions from
+the installed message owner; the browser needs neither ROS nor another generated
+message package. Registered custom web encoders continue to take precedence.
+Existing LCM/JSON channels and default transport selection are unchanged here.
+
+The SDK registry resolves the channel schema once and decodes its CDR frames:
+
+```ts
+import { createDecoderRegistry } from "@dimos/sdk";
+
+const decode = createDecoderRegistry().resolve(channel);
+const value = decode?.(payload, frameHeader).value;
+```
+
+`channel` is the adopted manifest record, `payload` the frame's `Uint8Array` and
+`frameHeader` its SDK header. Invalid schemas are unsupported; malformed CDR
+frames fail decoding. The raw cockpit table previews small messages. Messages
+with variable-length arrays require a visible panel subscription so a preview
+does not pull a large image/cloud buffer. A decoder alone does not add a typed
+camera, map or control panel.
+
+To run a real generated-message source, cockpit bridge and local relay, from
+the repository root in terminal 1:
+
+```sh skip
+DIMOS_ALLOW_MISSING_COCKPIT=1 uv sync --locked --extra visualization --extra web
+uv run --extra web python -I examples/message-viewer/demo_cdr_browser.py
+```
+
+In terminal 2:
+
+```sh skip
+cd web/sdk
+deno task fixture --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5174/demo_cdr.html?live=1`. Wait for `connected`,
+`Received 8/8 channels`, increasing frame counts and zero decode errors.
+Select each channel. Check its fields and expand its embedded ROS2 definition:
+
+- `pose_stamped`: position `[1.5, -2.5, 0.25]` and `nanosec: 500000123`.
+- `custom_segments`: custom nested message fields.
+- `image`: two near-black/near-white pixels, with bytes `[0, 1, 2, 253, 254, 255]`.
+- `imu`, `joints`: fixed and variable arrays.
+- `int64`: `-9007199254740993n`, with no JavaScript number rounding.
+- `empty`, `string`: an empty message and Unicode text.
+
+This path uses actual generated Python messages, typed Zenoh transport,
+`cockpit()` manifest creation, relay framing, SDK subscriptions and CDR decoding.
+The page explicitly subscribes to all demo channels, including arrays. It does
+not add domain-specific cockpit panels or browser-to-robot CDR publishing.
+Stop terminal 1 with Ctrl-C. Use `--port` to select a different relay port and
+open the exact URL printed by the program.
+
+Without `?live=1`, the same page uses fixed packets to inspect little- and
+big-endian decoding. Generate `web/sdk/tests/fixtures/cdr_frames.json` with
+`python -m dimos.web.relay_bridge.tests.cdr_fixtures`. SDK tests check both byte
+orders; the fixture does not validate a live connection.
+
+### Existing channels
+
 A channel is one stream crossing the wire in one direction with one encoding. `rx` channels flow from the robot to the browser, `tx` channels from the browser to the robot. The bridge has four built-in ports:
 
 | Channel | Type | Encoding | Delivery |
