@@ -77,7 +77,7 @@ class GlobalConfig(BaseSettings):
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
     # Off: share a zenoh bus with a stack that already owns the Coordinator name.
     serve_coordinator_rpc: bool = True
-    # Isolates this run's zenoh streams under dimos/domains/<name>/; a hosted run pins its run id.
+    # Isolates this run's zenoh streams under dimos-domains/<name>/; a hosted run pins its run id.
     zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2

@@ -186,30 +186,30 @@ def hosts(tmp_path: Path) -> Iterator[tuple[ZenohRPC, ZenohRPC, ZenohRPC]]:
         base_rpc = stack.enter_context(base.serve())
         pool = ZenohSessionPool()
         stack.callback(pool.close_all)
-        controller = ZenohRPC(
+        root = ZenohRPC(
             session_pool=pool, mode="client", connect=[base.client_endpoint], multicast=False
         )
-        controller.start()
-        stack.callback(controller.stop)
-        yield edge_rpc, base_rpc, controller
+        root.start()
+        stack.callback(root.stop)
+        yield edge_rpc, base_rpc, root
 
 
 @pytest.mark.skipif(shutil.which("ss") is None, reason="needs iproute2 ss for link byte counts")
 def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
     hosts: tuple[ZenohRPC, ZenohRPC, ZenohRPC], tmp_path: Path
 ) -> None:
-    edge_rpc, base_rpc, controller = hosts
+    edge_rpc, base_rpc, root = hosts
     result = tmp_path / "result.json"
     app = autoconnect(
         autoconnect(Source.blueprint(), Relay.blueprint()).hosted(host="edge"),
         Sink.blueprint(result_path=str(result)),
     ).global_config(n_workers=1)
 
-    descriptors = wait_for_hosts(controller, {"edge", "base"}, timeout=20.0)
+    descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     logs: list[tuple[str, str]] = []
     with deployed(
         app,
-        controller,
+        root,
         run_id="routing-1",
         local_host_id="base-id",
         descriptors=descriptors,
@@ -238,7 +238,7 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
         time.sleep(2.0)
         bytes_after, local_after = _received_on(src, dst), _local_bytes(result, 1.0)
 
-    # The edge fragment's worker output reached the controller, tagged with its Host.
+    # The edge fragment's worker output reached the blueprint root, tagged with its Host.
     assert any(host == "edge" and "Deployed module" in line for host, line in logs), logs[:20]
     carried_locally = local_after - local_before
     crossed = bytes_after - bytes_before
@@ -249,7 +249,7 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
 def test_a_module_ref_calls_its_provider_on_another_host(
     hosts: tuple[ZenohRPC, ZenohRPC, ZenohRPC], tmp_path: Path
 ) -> None:
-    _edge_rpc, _base_rpc, controller = hosts
+    _edge_rpc, _base_rpc, root = hosts
     result = tmp_path / "answer.txt"
     # Pinned apart on purpose: a chatty pair is kept together by pinning both sides alike.
     app = autoconnect(
@@ -257,9 +257,9 @@ def test_a_module_ref_calls_its_provider_on_another_host(
         Consumer.blueprint(result_path=str(result)).hosted(host="base"),
     ).global_config(n_workers=1)
 
-    descriptors = wait_for_hosts(controller, {"edge", "base"}, timeout=20.0)
+    descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     with deployed(
-        app, controller, run_id="refs-1", local_host_id="base-id", descriptors=descriptors
+        app, root, run_id="refs-1", local_host_id="base-id", descriptors=descriptors
     ) as placement:
         assert placement == {"provider": "edge", "consumer": "base"}
         deadline = time.monotonic() + 30.0

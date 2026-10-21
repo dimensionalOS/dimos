@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import sys
 
 try:
     # Not a dependency, just the best way to get config path if available.
@@ -29,13 +30,14 @@ else:
 
 # Per-boot files of running daemons; a plain `ssh host cmd` has no XDG_RUNTIME_DIR.
 _USER_RUN = Path(f"/run/user/{os.getuid()}") if hasattr(os, "getuid") else None
-RUNTIME_DIR = (
-    Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
-    if os.environ.get("XDG_RUNTIME_DIR")
-    else _USER_RUN / "dimos"
-    if _USER_RUN is not None and _USER_RUN.is_dir()
-    else STATE_DIR
-)
+if os.environ.get("XDG_RUNTIME_DIR"):
+    RUNTIME_DIR = Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
+elif sys.platform == "darwin":
+    RUNTIME_DIR = Path(os.confstr("CS_DARWIN_USER_TEMP_DIR")) / "dimos"
+elif _USER_RUN is not None and _USER_RUN.is_dir():
+    RUNTIME_DIR = _USER_RUN / "dimos"
+else:
+    RUNTIME_DIR = STATE_DIR
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 

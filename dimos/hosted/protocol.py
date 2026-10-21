@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The wire contract between a Host and its controllers: keys, states, descriptors."""
+"""The wire contract between a Host and the blueprint roots using it: keys, states, descriptors."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ DeploymentState = Literal["absent", "starting", "running", "stopping", "failed"]
 
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
 HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
-# Held by a run's controller; a Host stops the run's fragment once it is gone.
+# Held by a run's blueprint root; a Host stops the run's fragment once it is gone.
 RUN_LIVELINESS_KEY = "dimos/runs/{run_id}/live"
-# Every output line of a fragment, published while its run's controller listens.
+# Every output line of a fragment, published while its run's blueprint root listens.
 RUN_LOG_KEY = "dimos/runs/{run_id}/logs/{host}"
 RUN_MODULE_RPC_NAME = "runs/{run_id}/hosts/{host_id}/modules/{module}"
 RUN_COORDINATOR_RPC_NAME = "runs/{run_id}/hosts/{host_id}/coordinator"

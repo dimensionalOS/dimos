@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hosted.tags import GPU_MEM_GB
+from dimos.hosted.tags import Tag
 from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours, MeshModule
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY
 from dimos.navigation.global_planner.mls_planner.viz import SURFACE_MAP_ENTITY
@@ -40,9 +40,9 @@ go2_nav_viewer_mesh = autoconnect(
 # viewer here. Run with `dimos run go2-nav-hosted`. This machine's Host reaches the
 # robot's by HOST__CONNECT=tcp/<robot-ip>:7447, or by scouting where the LAN carries multicast.
 go2_nav_hosted = autoconnect(
-    _go2_nav_stack.hosted(tags={"go2"}),
+    _go2_nav_stack.hosted(tags={"go2": True}),
     MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
-        tags={"gpu"}, prefer=GPU_MEM_GB
+        tags={"gpu": True}, prefer=Tag.gpu_mem
     ),
     _viewer,
 ).global_config(transport="zenoh", robot_model="unitree_go2")

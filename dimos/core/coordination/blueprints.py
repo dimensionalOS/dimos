@@ -85,11 +85,14 @@ class HostedPlacement:
     module_names: tuple[str, ...]
     # An exact Host name or ID; None takes any Host that matches the tags.
     host: str | None = None
-    tags: frozenset[str] = frozenset()
-    # The controller's own Host.
+    # Tag name to its exact value, or True for any value.
+    tags: Mapping[str, str | bool] = field(default_factory=dict)
+    # The blueprint root's own Host.
     local: bool = False
     # Among matching Hosts, the one with the highest value of this numeric tag.
     prefer: str | None = None
+    # Numeric tag to the least value a Host must advertise.
+    minimum: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.module_names:
@@ -266,16 +269,18 @@ class Blueprint:
         self,
         *,
         host: str | None = None,
-        tags: Iterable[str] = (),
+        tags: Mapping[str, str | bool] | None = None,
         prefer: str | None = None,
         local: bool = False,
+        minimum: Mapping[str, float] | None = None,
     ) -> "Blueprint":
         """Schedule this Blueprint fragment as one placement unit.
 
         With no selector, ``hosted()`` chooses any available Host. An exact Host
         name/ID and required Host tags (``key`` or ``key=value``) may narrow the
         candidates; ``prefer`` picks the one with the highest value of that numeric
-        tag, e.g. ``prefer="gpu_mem_gb"``. ``local`` keeps the fragment on the
+        tag, e.g. ``prefer=Tag.gpu_mem``; ``minimum`` rejects Hosts below a numeric
+        tag, e.g. ``minimum={Tag.gpu_mem: 11}``. ``local`` keeps the fragment on the
         controlling machine. Globals reach every Host; per-machine ones like
         ``n_workers`` belong in each Host's env.
         """
@@ -284,20 +289,35 @@ class Blueprint:
         if host is not None and (not isinstance(host, str) or not host.strip()):
             raise ValueError("host must be a non-empty string")
 
-        if isinstance(tags, str):
-            raise ValueError("tags must be an iterable of strings, not a string")
-        tag_set = frozenset(tags)
-        if any(not isinstance(tag, str) or not tag.strip() for tag in tag_set):
-            raise ValueError("tags must contain non-empty strings")
-        if local and (tag_set or host is not None):
+        tags = tags or {}
+        if not isinstance(tags, Mapping) or any(
+            not isinstance(k, str) or not k.strip() or not (v is True or isinstance(v, str))
+            for k, v in tags.items()
+        ):
+            raise TypeError(
+                "tags maps tag names to True or a value, e.g. {'gpu': True, 'site': 'athens'}"
+            )
+        tags = dict(tags)
+        minimum = minimum or {}
+        if not isinstance(minimum, Mapping) or any(
+            not isinstance(k, str)
+            or not k.strip()
+            or isinstance(v, bool)
+            or not isinstance(v, int | float)
+            for k, v in minimum.items()
+        ):
+            raise TypeError("minimum maps numeric tag names to a number, e.g. {Tag.gpu_mem: 11}")
+        minimum = {str(k): v for k, v in minimum.items()}
+        if local and (tags or minimum or host is not None):
             raise ValueError("local=True cannot be combined with host or tags")
 
         placement = HostedPlacement(
             module_names=tuple(atom.name for atom in self.blueprints),
             host=host,
-            tags=tag_set,
+            tags=tags,
             local=local,
             prefer=prefer,
+            minimum=minimum,
         )
         return replace(self, hosted_placements=(*self.hosted_placements, placement))
 

@@ -120,7 +120,7 @@ def _run_hosted(
     """Place the Blueprint on the live Hosts and stream their logs until Ctrl-C or SIGTERM."""
     import threading
 
-    from dimos.hosted.client import controller_rpc
+    from dimos.hosted.client import root_rpc
     from dimos.hosted.deploy import deployed, log_printer, wait_for_hosts
     from dimos.hosted.machine import local_host
     from dimos.protocol.service.zenohservice import split_csv
@@ -139,7 +139,7 @@ def _run_hosted(
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
-        with controller_rpc(connect) as rpc:
+        with root_rpc(connect) as rpc:
             descriptors = wait_for_hosts(rpc, named, tag_sets=tag_sets)
             with deployed(
                 blueprint,

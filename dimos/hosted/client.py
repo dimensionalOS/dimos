@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Controller-side discovery and lifecycle calls for DimOS Hosts."""
+"""Discovery and lifecycle calls a blueprint root makes to DimOS Hosts."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ ResponseT = TypeVar("ResponseT")
 
 
 @contextmanager
-def controller_rpc(connect: list[str]) -> Iterator[ZenohRPC]:
+def root_rpc(connect: list[str]) -> Iterator[ZenohRPC]:
     """An RPC client of the router at ``connect``, on its own session, for the block."""
     pool = ZenohSessionPool()
     rpc = ZenohRPC(session_pool=pool, mode="client", connect=connect, multicast=False)
@@ -102,6 +102,9 @@ class HostClient:
 
     def stop(self, run_id: str) -> DeploymentStatus:
         return self._call("stop", ([run_id], {}), DeploymentStatus)
+
+    def sync(self, branch: str, commit: str) -> str:
+        return self._call("sync", ([branch, commit], {}), str)
 
     def _call(self, operation: str, arguments: Args, response_type: type[ResponseT]) -> ResponseT:
         result, unsubscribe = self._rpc.call_sync(

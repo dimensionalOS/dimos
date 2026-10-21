@@ -51,7 +51,7 @@ def compile_fragments(
 ) -> dict[str, HostFragment]:
     """One immutable fragment per Host in ``assignments`` (module name -> Host ID).
 
-    ``overrides`` is the controller's explicit configuration by section; each fragment
+    ``overrides`` is the blueprint root's explicit configuration by section; each fragment
     gets its own modules' sections plus the shared ones.
     """
     if not run_id:
@@ -212,11 +212,11 @@ def _local_host(
     local_host_id: str | None,
     revision: str,
 ) -> str:
-    """The local Host's ID for a unit that stays with the controller, if it can take it."""
+    """The local Host's ID for a unit that stays with the blueprint root, if it can take it."""
     local = next((d for d in descriptors if d.host_id == local_host_id), None)
     if local is None:
         raise ValueError(f"Placement unit {unit_label} needs a live local Host, found none")
-    if reasons := _host_rejection_reasons(local, frozenset(), revision):
+    if reasons := _host_rejection_reasons(local, {}, revision):
         raise ValueError(f"Local Host {local.name} cannot take {unit_label}: {', '.join(reasons)}")
     return local.host_id
 
@@ -237,7 +237,11 @@ def _select_host_for_unit(
     local = any(constraint.local for constraint in constraints)
     remote = any(not constraint.local for constraint in constraints)
     exact_hosts = {constraint.host for constraint in constraints if constraint.host}
-    required_tags = frozenset(tag for constraint in constraints for tag in constraint.tags)
+    required_tags = {k: v for constraint in constraints for k, v in constraint.tags.items()}
+    minimum: dict[str, float] = {}
+    for constraint in constraints:
+        for key, floor in constraint.minimum.items():
+            minimum[key] = max(floor, minimum.get(key, floor))
 
     if local and remote:
         raise ValueError(
@@ -270,14 +274,15 @@ def _select_host_for_unit(
     accepted = tuple(
         descriptor
         for descriptor in candidates
-        if not _host_rejection_reasons(descriptor, required_tags, revision)
+        if not _host_rejection_reasons(descriptor, required_tags, revision, minimum)
     )
     if not accepted:
         selector = f"host={exact_host!r}" if exact_host is not None else "any Host"
-        tags = f", tags={sorted(required_tags)}" if required_tags else ""
+        tags = f", tags={missing({}, required_tags)}" if required_tags else ""
+        tags += f", minimum={minimum}" if minimum else ""
         discovered = "; ".join(
             f"{host.name} ({host.host_id}): "
-            f"{', '.join(_host_rejection_reasons(host, required_tags, revision)) or 'selector mismatch'}"
+            f"{', '.join(_host_rejection_reasons(host, required_tags, revision, minimum)) or 'selector mismatch'}"
             for host in descriptors
         )
         raise ValueError(
@@ -308,12 +313,16 @@ def _numeric_tag(host: HostDescriptor, key: str | None) -> float:
 
 def _host_rejection_reasons(
     descriptor: HostDescriptor,
-    required_tags: frozenset[str],
+    required_tags: Mapping[str, str | bool],
     revision: str,
+    minimum: Mapping[str, float] | None = None,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     if missing_tags := missing(descriptor.tags, required_tags):
         reasons.append(f"missing tags {missing_tags}")
+    for key, floor in (minimum or {}).items():
+        if _numeric_tag(descriptor, key) < floor:
+            reasons.append(f"{key} is {descriptor.tags.get(key, 'missing')}, needs >= {floor:g}")
     if descriptor.revision != revision:
         reasons.append(f"revision is {descriptor.revision}, expected {revision}")
     return tuple(reasons)

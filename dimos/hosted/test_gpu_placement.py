@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module
 from dimos.hosted import tags
@@ -35,7 +37,7 @@ def _host(host_id: str, tags: dict[str, str], runs: int = 0) -> HostDescriptor:
 
 
 def _place(prefer: str, hosts: list[HostDescriptor]) -> str:
-    blueprint = autoconnect(GpuWorkload.blueprint().hosted(tags={"gpu"}, prefer=prefer))
+    blueprint = autoconnect(GpuWorkload.blueprint().hosted(tags={"gpu": True}, prefer=prefer))
     return resolve_hosted_assignments(blueprint, hosts, local_host_id="local", revision="r")[
         "gpuworkload"
     ]
@@ -50,3 +52,19 @@ def test_prefer_picks_the_highest_value_then_least_busy() -> None:
     assert _place("gpu_mem_gb", [compute, twin]) == "twin"
     # A Jetson has no GPU memory of its own and ranks last.
     assert _place("gpu_mem_gb", [jetson, laptop]) == "laptop"
+
+
+def _place_minimum(minimum: dict[str, float], hosts: list[HostDescriptor]) -> str:
+    blueprint = autoconnect(GpuWorkload.blueprint().hosted(minimum=minimum))
+    return resolve_hosted_assignments(blueprint, hosts, local_host_id="local", revision="r")[
+        "gpuworkload"
+    ]
+
+
+def test_minimum_rejects_hosts_below_a_numeric_tag_including_arbitrary_ones() -> None:
+    small = _host("small", {"gpu_mem_gb": "8", "bla": "30"})
+    big = _host("big", {"gpu_mem_gb": "16"}, runs=5)
+    assert _place_minimum({tags.Tag.gpu_mem: 11}, [small, big]) == "big"
+    assert _place_minimum({"bla": 22}, [small, big]) == "small"
+    with pytest.raises(ValueError, match=r"gpu_mem_gb is 8, needs >= 32.*gpu_mem_gb is 16"):
+        _place_minimum({tags.Tag.gpu_mem: 32}, [small, big])

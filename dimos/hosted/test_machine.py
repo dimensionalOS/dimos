@@ -146,3 +146,53 @@ def test_restart_uses_the_unit_when_installed() -> None:
     calls: list[list[str]] = []
     machine.restart(run=lambda a: (calls.append(a), _ok(a))[1])
     assert calls == [["restart", machine.UNIT_NAME]]
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, list[bool]]:
+    """An origin, a working clone of it standing in for this checkout, and the restarts asked for."""
+    origin, work = tmp_path / "origin", tmp_path / "work"
+    _git(tmp_path, "init", "-q", "-b", "main", str(origin))
+    for args in (("config", "user.email", "t@t"), ("config", "user.name", "t")):
+        _git(origin, *args)
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "one")
+    _git(tmp_path, "clone", "-q", str(origin), str(work))
+    restarts: list[bool] = []
+    monkeypatch.setattr(machine, "DIMOS_PROJECT_ROOT", work)
+    monkeypatch.setattr(machine, "_restart_detached", lambda: restarts.append(True))
+    monkeypatch.setattr(machine.threading, "Timer", lambda _delay, fn: SimpleNamespace(start=fn))
+    return origin, work, restarts
+
+
+def test_sync_checkout_fast_forwards_to_the_commit_and_restarts(
+    clone: tuple[Path, Path, list[bool]],
+) -> None:
+    origin, work, restarts = clone
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "two")
+    commit = _git(origin, "rev-parse", "HEAD")
+
+    machine.sync_checkout("main", commit)
+
+    assert _git(work, "rev-parse", "HEAD") == commit
+    assert _git(work, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert restarts == [True]
+
+
+def test_sync_checkout_refuses_what_is_not_a_fast_forward(
+    clone: tuple[Path, Path, list[bool]],
+) -> None:
+    origin, work, restarts = clone
+    for args in (("config", "user.email", "t@t"), ("config", "user.name", "t")):
+        _git(work, *args)
+    _git(work, "commit", "-q", "--allow-empty", "-m", "local only")
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "two")
+
+    with pytest.raises(RuntimeError, match="git merge --ff-only"):
+        machine.sync_checkout("main", _git(origin, "rev-parse", "HEAD"))
+    assert restarts == []

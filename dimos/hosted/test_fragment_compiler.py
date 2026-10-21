@@ -212,14 +212,14 @@ def test_compiler_keeps_same_host_module_reference_local_with_hosted_rpc_names()
 
 def test_compiler_automatically_assigns_hosted_and_local_modules() -> None:
     blueprint = autoconnect(
-        SourceModule.blueprint().hosted(tags={"gpu"}),
+        SourceModule.blueprint().hosted(tags={"gpu": True}),
         SinkModule.blueprint(),
     )
 
     assignments = resolve_hosted_assignments(
         blueprint,
-        (_host("gpu-1", tags=frozenset({"gpu"})), _host("controller")),
-        local_host_id="controller",
+        (_host("gpu-1", tags=frozenset({"gpu"})), _host("root")),
+        local_host_id="root",
         revision="revision-1",
     )
     fragments = compile_fragments(
@@ -231,21 +231,23 @@ def test_compiler_automatically_assigns_hosted_and_local_modules() -> None:
         global_overrides={"viewer": "none"},
     )
 
-    assert set(fragments) == {"controller", "gpu-1"}
+    assert set(fragments) == {"root", "gpu-1"}
     gpu_payload = fragments["gpu-1"].load_payload()
     # Each fragment carries its own modules' sections and the shared ones.
     assert gpu_payload.overrides == {"sourcemodule": {"a": 1}, "g": {"n_workers": 1}}
     assert gpu_payload.global_overrides == {"viewer": "none"}
-    assert {
-        atom.name for atom in fragments["controller"].load_payload().blueprint.active_blueprints
-    } == {"sinkmodule"}
+    assert {atom.name for atom in fragments["root"].load_payload().blueprint.active_blueprints} == {
+        "sinkmodule"
+    }
     assert {
         atom.name for atom in fragments["gpu-1"].load_payload().blueprint.active_blueprints
     } == {"sourcemodule"}
 
 
 def test_hosted_fragment_is_co_located_on_least_committed_matching_host() -> None:
-    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).hosted(tags={"gpu"})
+    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).hosted(
+        tags={"gpu": True}
+    )
 
     assignments = resolve_hosted_assignments(
         blueprint,
@@ -253,7 +255,7 @@ def test_hosted_fragment_is_co_located_on_least_committed_matching_host() -> Non
             _host("host-a", tags=frozenset({"gpu"}), active_run_ids=("other-run",)),
             _host("host-b", tags=frozenset({"gpu"})),
         ),
-        local_host_id="controller",
+        local_host_id="root",
         revision="revision-1",
     )
 
@@ -264,13 +266,13 @@ def test_hosted_fragment_is_co_located_on_least_committed_matching_host() -> Non
 
 
 def test_nested_hosted_placements_combine_constraints() -> None:
-    source = SourceModule.blueprint().hosted(tags={"gpu"})
+    source = SourceModule.blueprint().hosted(tags={"gpu": True})
     blueprint = autoconnect(source, SinkModule.blueprint()).hosted(host="compute")
 
     assignments = resolve_hosted_assignments(
         blueprint,
         (_host("host-compute", name="compute", tags=frozenset({"gpu"})),),
-        local_host_id="controller",
+        local_host_id="root",
         revision="revision-1",
     )
 
@@ -289,7 +291,7 @@ def test_independent_hosted_units_are_spread_deterministically() -> None:
     assignments = resolve_hosted_assignments(
         blueprint,
         (_host("host-a"), _host("host-b")),
-        local_host_id="controller",
+        local_host_id="root",
         revision="revision-1",
     )
 
@@ -307,14 +309,14 @@ def test_module_references_place_each_side_by_its_own_constraints() -> None:
 
     assignments = resolve_hosted_assignments(
         blueprint,
-        (_host("host-compute", name="compute"), _host("controller")),
-        local_host_id="controller",
+        (_host("host-compute", name="compute"), _host("root")),
+        local_host_id="root",
         revision="revision-1",
     )
 
     assert assignments == {
         "consumermodule": "host-compute",
-        "providermodule": "controller",
+        "providermodule": "root",
     }
 
 
@@ -337,19 +339,19 @@ def test_a_provider_and_consumer_pinned_apart_compile_into_a_remote_reference() 
     )
 
 
-def test_host_none_keeps_the_whole_hosted_fragment_on_controller() -> None:
+def test_host_none_keeps_the_whole_hosted_fragment_on_the_root() -> None:
     blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).hosted(local=True)
 
     assignments = resolve_hosted_assignments(
         blueprint,
-        (_host("remote"), _host("controller")),
-        local_host_id="controller",
+        (_host("remote"), _host("root")),
+        local_host_id="root",
         revision="revision-1",
     )
 
     assert assignments == {
-        "sinkmodule": "controller",
-        "sourcemodule": "controller",
+        "sinkmodule": "root",
+        "sourcemodule": "root",
     }
 
 
@@ -362,20 +364,20 @@ def test_a_local_unit_needs_a_live_local_host_on_this_revision() -> None:
     with pytest.raises(ValueError, match="cannot take sourcemodule: revision is old"):
         resolve_hosted_assignments(
             blueprint,
-            (_host("controller", revision="old"),),
-            local_host_id="controller",
+            (_host("root", revision="old"),),
+            local_host_id="root",
             revision="revision-1",
         )
 
 
 def test_automatic_placement_reports_unsatisfied_constraints() -> None:
-    blueprint = SourceModule.blueprint().hosted(tags={"gpu"})
+    blueprint = SourceModule.blueprint().hosted(tags={"gpu": True})
 
     with pytest.raises(ValueError, match=r"No Host satisfies placement.*missing tags"):
         resolve_hosted_assignments(
             blueprint,
             (_host("cpu-1", tags=frozenset({"cpu"})),),
-            local_host_id="controller",
+            local_host_id="root",
             revision="revision-1",
         )
 
@@ -387,7 +389,7 @@ def test_automatic_placement_rejects_ambiguous_exact_host_name() -> None:
         resolve_hosted_assignments(
             blueprint,
             (_host("robot-a", name="robot"), _host("robot-b", name="robot")),
-            local_host_id="controller",
+            local_host_id="root",
             revision="revision-1",
         )
 
@@ -400,7 +402,7 @@ class MountedModule(Module):
     config: MountedConfig
 
 
-def test_the_controllers_explicit_config_survives_the_trip_to_a_host() -> None:
+def test_the_roots_explicit_config_survives_the_trip_to_a_host() -> None:
     blueprint = MountedModule.blueprint().hosted(host="host-a")
     parsed = BlueprintConfigParser(blueprint).parse(
         ["--mountedmodule.mount", "ATHENS", "--viewer=none"], environ={}

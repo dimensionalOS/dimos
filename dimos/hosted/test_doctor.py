@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.hosted.doctor import CHECKS, Check, run
 
 
@@ -58,3 +60,15 @@ def test_fixes_install_before_they_start_or_restart() -> None:
     assert order.index("The local Host is running and answers on its router") < order.index(
         "The running Host serves this checkout's code revision"
     )
+
+
+def test_a_loopback_only_host_is_flagged_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.hosted import doctor
+    from dimos.hosted.config import HostConfig
+
+    monkeypatch.setattr(doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447"))
+    assert "Only this machine" in (doctor._reachable() or "")
+    monkeypatch.setattr(
+        doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447,iface/eth0")
+    )
+    assert doctor._reachable() is None

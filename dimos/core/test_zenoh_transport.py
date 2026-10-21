@@ -261,7 +261,7 @@ def test_coerce_rescopes_a_plain_zenoh_transport_into_the_run(use_zenoh, mocker)
     mocker.patch.object(global_config, "zenoh_domain", "r1")
     t = _coerce_transport_to_backend(ZenohTransport("dimos/cmd_vel", Image))
     assert type(t) is ZenohTransport
-    assert t.topic.topic == "dimos/domains/r1/cmd_vel"
+    assert t.topic.topic == "dimos-domains/r1/cmd_vel"
     assert _coerce_transport_to_backend(t) is t
     jpeg = JpegLcmTransport("/color_image", Image)
     assert _coerce_transport_to_backend(jpeg) is jpeg

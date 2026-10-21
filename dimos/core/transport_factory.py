@@ -45,8 +45,8 @@ if TYPE_CHECKING:
 
 
 def zenoh_prefix(g: GlobalConfig = global_config) -> str:
-    """The zenoh key prefix of every stream: ``dimos/``, or the run's domain under it."""
-    return f"dimos/domains/{g.zenoh_domain}/" if g.zenoh_domain else "dimos/"
+    """The zenoh key prefix of every stream: ``dimos/``, or ``dimos-domains/<domain>/``."""
+    return f"dimos-domains/{g.zenoh_domain}/" if g.zenoh_domain else "dimos/"
 
 
 def transport_topic(name: str, g: GlobalConfig = global_config) -> str:

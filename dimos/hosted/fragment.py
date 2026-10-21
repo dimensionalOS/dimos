@@ -38,9 +38,9 @@ class RemoteModuleReference:
 
 @dataclass(frozen=True, slots=True)
 class PythonFragmentPayload:
-    """The local Blueprint and the controller's explicit configuration for it.
+    """The local Blueprint and the blueprint root's explicit configuration for it.
 
-    ``overrides`` is what the controller's config file and CLI set, by section;
+    ``overrides`` is what the blueprint root's config file and CLI set, by section;
     ``global_overrides`` its global flags. The Host parses them on top of its own
     environment, so each machine's .env configures its own fragment.
     """

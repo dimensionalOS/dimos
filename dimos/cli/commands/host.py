@@ -22,6 +22,7 @@ from dataclasses import asdict
 import json
 import signal
 import threading
+import time
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
@@ -59,9 +60,9 @@ def _connect(connect: list[str] | None) -> list[str]:
 
 @contextmanager
 def _host_rpc(connect: list[str] | None) -> Iterator[ZenohRPC]:
-    from dimos.hosted.client import controller_rpc
+    from dimos.hosted.client import root_rpc
 
-    with controller_rpc(_connect(connect)) as rpc:
+    with root_rpc(_connect(connect)) as rpc:
         yield rpc
 
 
@@ -81,13 +82,6 @@ def host_id() -> None:
         typer.echo(load_host_id())
     except (OSError, ValueError) as exc:
         _fail(str(exc))
-
-
-def _quiet_logs() -> None:
-    """Keep zenoh's session chatter out of a command whose stdout is a table."""
-    import logging
-
-    logging.getLogger("dimos/protocol/service/zenohservice.py").setLevel(logging.WARNING)
 
 
 def _tags_text(tags: dict[str, str]) -> Any:
@@ -139,7 +133,6 @@ def ls(
     from dimos.hosted.machine import code_revision, local_host
     from dimos.protocol.service.zenohservice import split_csv
 
-    _quiet_logs()
     config = HostConfig()
     local = local_host()
     endpoints = [*([local.client_endpoint] if local else []), *probe, *split_csv(config.connect)]
@@ -173,7 +166,6 @@ def describe(
     connect: list[str] = ConnectOption,
 ) -> None:
     """Describe one online Host by ID or unique exact name."""
-    _quiet_logs()
     from dimos.hosted.client import describe_all
 
     try:
@@ -201,7 +193,6 @@ def describe(
 @host_app.command()
 def doctor(fix: bool = typer.Option(False, "--fix", help="Fix failing checks that can be")) -> None:
     """Check this machine's Host setup, one line per check."""
-    _quiet_logs()
     import sys
 
     from dimos.hosted.doctor import run as run_checks
@@ -243,7 +234,11 @@ def start(
     from dimos.hosted.tags import auto_tags
 
     daemon = HostDaemon(
-        HostConfig(), host_id=load_host_id(), revision=machine.code_revision(), tags=auto_tags()
+        HostConfig(),
+        host_id=load_host_id(),
+        revision=machine.code_revision(),
+        tags=auto_tags(),
+        sync_checkout=machine.sync_checkout,
     )
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -255,12 +250,95 @@ def start(
 
 
 @host_app.command()
-def install() -> None:
+def sync(
+    timeout: float = typer.Option(
+        120.0, "--timeout", min=1.0, help="Seconds to wait for every Host to come back"
+    ),
+    connect: list[str] = ConnectOption,
+) -> None:
+    """Check out this machine's commit on every other Host and restart them into it."""
+    from dimos.hosted import machine
+    from dimos.hosted.client import describe_all, discover
+
+    if machine._git("status", "--porcelain", "--untracked-files=no").strip():
+        _fail("Commit your changes first: Hosts sync to a commit")
+    commit = machine._git("rev-parse", "HEAD").strip()
+    branch = machine._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    branch = "" if branch == "HEAD" else branch
+    if not machine._git("branch", "-r", "--contains", commit).strip():
+        _fail(f"Push first: {commit[:10]} is not on origin")
+
+    local = machine.local_host()
+    pending: dict[str, str] = {}
+    with _host_rpc(connect) as rpc:
+        for client in discover(rpc, DEFAULT_DISCOVERY_TIMEOUT, rpc_timeout=30.0):
+            if local is not None and client.host_id == local.host_id:
+                continue
+            descriptor = client.describe()
+            name = descriptor.name
+            if descriptor.revision == commit:
+                typer.echo(f"{name}: already on {commit[:10]}")
+                continue
+            try:
+                client.sync(branch, commit)
+            except Exception as exc:
+                typer.echo(f"{name}: {exc}")
+                continue
+            typer.echo(f"{name}: syncing to {branch or commit[:10]}")
+            pending[client.host_id] = name
+        deadline = time.monotonic() + timeout
+        while pending and time.monotonic() < deadline:
+            time.sleep(2.0)
+            for descriptor in describe_all(rpc, DEFAULT_DISCOVERY_TIMEOUT):
+                if descriptor.host_id in pending and descriptor.revision == commit:
+                    typer.echo(f"{pending.pop(descriptor.host_id)}: on {commit[:10]}")
+    if pending:
+        _fail(
+            f"Not back on {commit[:10]} after {timeout:g}s: {', '.join(sorted(pending.values()))}"
+        )
+
+
+def _write_settings(settings: list[str]) -> None:
+    from dimos.hosted.config import HOST_ENV_FILE, write_settings
+
+    if bad := [s for s in settings if "=" not in s]:
+        _fail(f"Expected key=value, got {bad}")
+    try:
+        write_settings(dict(s.partition("=")[::2] for s in settings))
+    except ValueError as exc:
+        _fail(str(exc))
+    typer.echo(f"Wrote {', '.join(settings)} to {HOST_ENV_FILE}")
+
+
+@host_app.command("config")
+def config_command(
+    settings: list[str] = typer.Argument(None, help="key=value to set, key= to remove"),
+) -> None:
+    """Show this Host's settings, or set them in the checkout's .env."""
+    from dimos.hosted.config import HostConfig
+
+    if settings:
+        _write_settings(settings)
+        typer.echo("Apply with `dimos host restart`")
+    for name, value in HostConfig().model_dump().items():
+        typer.echo(f"{name:<20} {value}")
+
+
+@host_app.command()
+def install(
+    config: list[str] = typer.Option(
+        [], "--config", help="key=value to set first, as `dimos host config` does; repeatable"
+    ),
+    start: bool = typer.Option(False, "--start", help="Start the Host once installed"),
+) -> None:
     """Install and enable the dimos-host systemd user unit for this checkout."""
     from dimos.hosted import machine
 
+    if config:
+        _write_settings(config)
     path = machine.install()
-    typer.echo(f"Installed {path}; start it with `dimos host start`")
+    typer.echo(f"Installed {path}")
+    typer.echo(machine.start() if start else "Start it with `dimos host start`")
     typer.echo("To start at boot without a login: sudo loginctl enable-linger $USER")
 
 
@@ -282,12 +360,19 @@ def stop() -> None:
 
 
 @host_app.command()
+def restart() -> None:
+    """Restart the local Host, e.g. after changing its HOST__* settings."""
+    from dimos.hosted import machine
+
+    typer.echo(machine.restart())
+
+
+@host_app.command()
 def status() -> None:
     """Whether the local Host runs, and what it advertises when reachable."""
     from dimos.hosted import machine
     from dimos.hosted.discovery import merge, probe
 
-    _quiet_logs()
     typer.echo(machine.status())
     local = machine.local_host()
     if local is None:

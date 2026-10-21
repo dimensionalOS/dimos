@@ -147,8 +147,10 @@ class ZenohConfig(SessionConfig):
     # Serve zenoh's read-only admin space (@/<zid>/...), e.g. a router's routing tables.
     # Python sessions only, native modules never see it.
     adminspace: bool = False
-    # A router links to the routers it scouts or hears of by gossip. Python sessions only.
-    router_autoconnect: bool = False
+    # A router links to the routers it scouts. Python sessions only.
+    multicast_autoconnect: bool = False
+    # A router links to the routers a linked one tells it of. Python sessions only.
+    gossip_autoconnect: bool = False
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -198,7 +200,8 @@ class ZenohConfig(SessionConfig):
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen_endpoints))}|{self.multicast_interface}"
             f"|{self.multicast}|{self.scout_addr}|{self.gossip_enabled}"
-            f"|{self.connect_timeout}|{self.adminspace}|{self.router_autoconnect}"
+            f"|{self.connect_timeout}|{self.adminspace}"
+            f"|{self.multicast_autoconnect}|{self.gossip_autoconnect}"
         )
 
     def to_wire(self) -> dict[str, Any]:
@@ -254,9 +257,14 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     zconfig.insert_json5("transport/shared_memory/enabled", "false")
     if config.adminspace:
         zconfig.insert_json5("adminspace/enabled", "true")
-    if config.router_autoconnect:
-        for key in ("scouting/multicast/autoconnect", "scouting/gossip/autoconnect"):
-            zconfig.insert_json5(key, '{router: ["router"], peer: ["router", "peer"]}')
+    for source, on in (
+        ("multicast", config.multicast_autoconnect),
+        ("gossip", config.gossip_autoconnect),
+    ):
+        if on:
+            zconfig.insert_json5(
+                f"scouting/{source}/autoconnect", '{router: ["router"], peer: ["router", "peer"]}'
+            )
     return zconfig
 
 

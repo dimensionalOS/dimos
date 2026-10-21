@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 import contextlib
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -25,6 +25,7 @@ from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 import os
 from pathlib import Path
+import socket
 import sys
 import threading
 import time
@@ -47,7 +48,7 @@ from dimos.hosted.protocol import (
     HostDescriptor,
     run_coordinator_rpc_name,
 )
-from dimos.hosted.tags import as_tags
+from dimos.hosted.tags import as_tags, live_tags
 from dimos.protocol.service.zenohservice import ZenohSessionPool, split_csv
 from dimos.utils.logging_config import set_run_log_dir, setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -79,13 +80,15 @@ class HostDaemon:
         revision: str,
         tags: Mapping[str, str] | None = None,
         log_root: Path = LOG_DIR,
+        sync_checkout: Callable[[str, str], None] | None = None,
     ) -> None:
-        if not split_csv(config.listen):
+        if not config.listen_endpoints:
             raise ValueError("HostDaemon is a zenoh router and needs a listen endpoint")
         self.config = config
+        self._sync_checkout = sync_checkout
         self.host_id = host_id
         self.revision = revision
-        self.listen = split_csv(config.listen)
+        self.listen = config.listen_endpoints
         self.connect = split_csv(config.connect)
         self.router_zid = ""
         self.tags = {**(tags or {}), **as_tags(split_csv(config.tags))}
@@ -101,13 +104,15 @@ class HostDaemon:
 
     @property
     def client_endpoint(self) -> str:
-        """The locator this daemon's fragments dial, its first listener on loopback."""
-        protocol, _, address = self.listen[0].partition("/")
+        """The locator this daemon's fragments dial: its first listener, on loopback or its interface."""
+        endpoint, _, options = self.listen[0].partition("#")
+        protocol, _, address = endpoint.partition("/")
         host, _, port = address.rpartition(":")
         if not port or port == "0":
             raise ValueError(f"Listen endpoint {self.listen[0]!r} needs a fixed port")
         if host in ("0.0.0.0", "[::]", ""):
-            host = "127.0.0.1"
+            iface = dict(o.partition("=")[::2] for o in options.split(";") if o).get("iface")
+            host = _ipv4(iface) if iface else "127.0.0.1"
         return f"{protocol}/{host}:{port}"
 
     @contextmanager
@@ -125,7 +130,8 @@ class HostDaemon:
             scouting=self.config.autodiscovery,
             scouting_interface=self.config.scout_interface,
             scout_addr=self.config.scout_addr,
-            router_autoconnect=self.config.autodiscovery,
+            multicast_autoconnect=self.config.autodiscovery,
+            gossip_autoconnect=self.config.gossip,
             connect_timeout=0,
             # The routing test reads this router's subscriber table through it.
             adminspace=True,
@@ -143,6 +149,7 @@ class HostDaemon:
             rpc.serve_rpc(self.start, f"{control_name}/start")
             rpc.serve_rpc(self.status, f"{control_name}/status")
             rpc.serve_rpc(self.stop, f"{control_name}/stop")
+            rpc.serve_rpc(self.sync, f"{control_name}/sync")
             self._liveliness = rpc.session.liveliness()
             token = self._liveliness.declare_token(HOST_LIVELINESS_KEY.format(host_id=self.host_id))
             cleanup.callback(token.undeclare)
@@ -157,23 +164,23 @@ class HostDaemon:
             self._watch_tick(lost)
 
     def _watch_tick(self, lost: dict[str, float]) -> None:
-        """Reap exited fragments; stop a run whose controller has been gone for the grace period."""
+        """Reap exited fragments; stop a run whose blueprint root has been gone for the grace period."""
         with self._lock:
             self._refresh_locked()
             run_ids = [r for r, d in self._deployments.items() if d.state == "running"]
         for run_id in run_ids:
-            if self._controller_alive(run_id):
+            if self._root_alive(run_id):
                 lost.pop(run_id, None)
             elif (
                 time.monotonic() - lost.setdefault(run_id, time.monotonic())
                 >= self.config.run_loss_grace
             ):
-                logger.warning("Controller gone, stopping its run", run_id=run_id)
+                logger.warning("Blueprint root gone, stopping its run", run_id=run_id)
                 lost.pop(run_id)
                 self._stop_run(run_id)
 
-    def _controller_alive(self, run_id: str) -> bool:
-        """Whether the run's controller still holds its token; a failed query counts as alive."""
+    def _root_alive(self, run_id: str) -> bool:
+        """Whether the run's blueprint root still holds its token; a failed query counts as alive."""
         try:
             assert self._liveliness is not None
             replies = self._liveliness.get(RUN_LIVELINESS_KEY.format(run_id=run_id), timeout=2.0)
@@ -195,12 +202,13 @@ class HostDaemon:
             stop.wait()
 
     def describe(self) -> HostDescriptor:
+        live = live_tags()
         with self._lock:
             self._refresh_locked()
             return HostDescriptor(
                 host_id=self.host_id,
                 name=self.config.name,
-                tags=dict(self.tags),
+                tags={**self.tags, **live},
                 revision=self.revision,
                 active_run_ids=tuple(sorted(self._deployments)),
                 router_zid=self.router_zid,
@@ -272,6 +280,17 @@ class HostDaemon:
     def stop(self, run_id: str) -> DeploymentStatus:
         return self._stop_run(run_id)
 
+    def sync(self, branch: str, commit: str) -> str:
+        """Check out ``commit`` and restart into it; refused while fragments run."""
+        if self._sync_checkout is None:
+            raise RuntimeError("This Host cannot sync its checkout")
+        with self._lock:
+            self._refresh_locked()
+            if self._deployments:
+                raise RuntimeError(f"Busy with runs {', '.join(sorted(self._deployments))}")
+        self._sync_checkout(branch, commit)
+        return commit
+
     def _stop_run(self, run_id: str) -> DeploymentStatus:
         with self._lock:
             deployment = self._deployments.get(run_id)
@@ -341,6 +360,14 @@ class HostDaemon:
         )
 
 
+def _ipv4(iface: str) -> str:
+    """An interface's IPv4 address; a listener bound to it answers nowhere else."""
+    for address in psutil.net_if_addrs().get(iface, ()):
+        if address.family == socket.AF_INET:
+            return str(address.address)
+    raise ValueError(f"Interface {iface!r} has no IPv4 address to reach this Host on")
+
+
 def _terminate(process: BaseProcess, timeout: float) -> None:
     """Stop a fragment process and every process under it."""
     if process.pid is None:
@@ -387,7 +414,7 @@ def _run_fragment(
             )
             for reference in payload.remote_module_references
         }
-        # This Host's own environment, the controller's explicit values on top, the run's pins last.
+        # This Host's own environment, the blueprint root's explicit values on top, the run's pins last.
         config = BlueprintConfigParser(payload.blueprint).parse(
             overrides=payload.overrides,
             global_overrides={**(payload.global_overrides or {}), **_pins(fragment.run_id, router)},

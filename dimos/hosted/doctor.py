@@ -27,7 +27,6 @@ import time
 from dimos.hosted import machine
 from dimos.hosted.config import HostConfig
 from dimos.hosted.discovery import probe
-from dimos.protocol.service.zenohservice import split_csv
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +71,10 @@ def port_free(host: str, port: int) -> bool:
 
 def _port() -> str | None:
     """The daemon is the machine's router on its port; anything else there blocks it."""
-    host, _, port = split_csv(HostConfig().listen)[0].partition("/")[2].rpartition(":")
+    first = HostConfig().listen_endpoints[0].partition("#")[0]
+    host, _, port = first.partition("/")[2].rpartition(":")
     local = machine.local_host()
-    if local is not None and any(e.endswith(f":{port}") for e in local.listen):
+    if local is not None and any(e.partition("#")[0].endswith(f":{port}") for e in local.listen):
         return None
     if port_free(host, int(port)):
         return None
@@ -155,10 +155,19 @@ def _restart() -> None:
     _wait(_running_revision)
 
 
+def _reachable() -> str | None:
+    """Other machines can only link to a Host that listens beyond loopback."""
+    endpoints = [e.partition("#")[0] for e in HostConfig().listen_endpoints]
+    if all("/127." in e or "/[::1]" in e for e in endpoints):
+        return "Only this machine can reach it: dimos host config listen=iface/<name>"
+    return None
+
+
 CHECKS: tuple[Check, ...] = (
     Check("Host config (HOST__* in the environment or .env) is valid", _config),
     Check("Host identity is readable", _identity),
     Check("The configured Host port is free or held by this Host", _port),
+    Check("Other machines can reach this Host", _reachable, warning=True),
     Check("Code revision is a clean git commit, so Hosts can match on it", _revision, warning=True),
     Check("The dimos-host systemd user unit is installed and enabled", _unit_installed, _install),
     Check("The installed systemd unit matches this checkout", _unit_current, _install),

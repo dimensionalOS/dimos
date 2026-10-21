@@ -90,8 +90,8 @@ def test_a_hosted_run_subscribes_its_scoped_keys_onto_the_plain_entity(
     pubsub = FakeZenoh()
     bridge = make_bridge(topics=["tf"], g=GlobalConfig(zenoh_domain="r1"))
     bridge._subscribe(pubsub)
-    assert pubsub.keys == ["dimos/domains/r1/tf/*"]
-    topic = ZenohTopic(topic="dimos/domains/r1/map_regions", lcm_type=PointCloud2)
+    assert pubsub.keys == ["dimos-domains/r1/tf/*"]
+    topic = ZenohTopic(topic="dimos-domains/r1/map_regions", lcm_type=PointCloud2)
     assert bridge._get_entity_path(topic) == "world/map_regions"
 
 

@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-import fcntl
 from functools import lru_cache
 import hashlib
 from importlib.metadata import version as package_version
@@ -34,7 +33,10 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
+from filelock import FileLock, Timeout
+
 from dimos.constants import DIMOS_PROJECT_ROOT, RUNTIME_DIR, STATE_DIR
+from dimos.core.run_registry import is_pid_alive
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -97,42 +99,63 @@ def code_revision() -> str:
     return f"{commit}+{hashlib.sha256(diff.encode()).hexdigest()[:8]}" if diff else commit
 
 
+def sync_checkout(branch: str, commit: str) -> None:
+    """Fetch, check out ``branch`` and fast-forward it to ``commit``, then restart into it."""
+    try:
+        _git("fetch", "origin")
+        if branch:
+            _git("checkout", branch)
+            _git("merge", "--ff-only", commit)
+        else:
+            _git("checkout", "--detach", commit)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"git {' '.join(exc.cmd[3:])}: {exc.stderr.strip()}") from None
+    # Give the RPC reply time to leave before this daemon goes down.
+    threading.Timer(1.0, _restart_detached).start()
+
+
+def _restart_detached() -> None:
+    """Restart this Host from outside it: through its unit, or a fresh `dimos host restart`."""
+    if installed():
+        subprocess.Popen(["systemctl", "--user", "--no-block", "restart", UNIT_NAME])
+    else:
+        subprocess.Popen(
+            [dimos_executable(), "host", "restart"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def unit_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 @contextmanager
 def host_lock() -> Iterator[None]:
     """Be this machine's one Host daemon for the block, or raise if another is."""
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK_FILE.open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError("A Host daemon is already running on this machine") from None
+    lock = FileLock(LOCK_FILE, timeout=0)
+    try:
+        lock.acquire()
+    except Timeout:
+        raise RuntimeError("A Host daemon is already running on this machine") from None
+    try:
         yield
+    finally:
+        lock.release()
 
 
 def _locked() -> bool:
     """Whether some process holds the Host lock."""
-    try:
-        with LOCK_FILE.open("r") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except FileNotFoundError:
+    if not LOCK_FILE.exists():
         return False
-    except BlockingIOError:
+    try:
+        with FileLock(LOCK_FILE, timeout=0):
+            return False
+    except Timeout:
         return True
-    return False
 
 
 def write_host_file(record: HostRecord) -> None:
@@ -265,9 +288,9 @@ def stop(run: Run = _systemctl, timeout: float = STOP_TIMEOUT) -> str:
         return "not running"
     os.kill(record.pid, signal.SIGINT)
     deadline = time.monotonic() + timeout
-    while _alive(record.pid) and time.monotonic() < deadline:
+    while is_pid_alive(record.pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    if _alive(record.pid):
+    if is_pid_alive(record.pid):
         os.kill(record.pid, signal.SIGKILL)
     HOST_FILE.unlink(missing_ok=True)
     return f"stopped (pid {record.pid})"

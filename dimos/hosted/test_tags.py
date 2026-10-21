@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from dimos.hosted import tags
-from dimos.hosted.tags import as_tags, auto_tags, format_tags, missing
+from dimos.hosted.tags import as_tags, auto_tags, format_tags, live_tags, missing
 
 
 def test_auto_tags_merges_and_skips_a_failing_tagger() -> None:
@@ -31,8 +31,8 @@ def test_auto_tags_merges_and_skips_a_failing_tagger() -> None:
 def test_tag_requirements_match_keys_or_exact_values() -> None:
     tags = as_tags(["lab", "gpu=rtx", "site=athens"])
     assert tags == {"lab": "", "gpu": "rtx", "site": "athens"}
-    assert missing(tags, ["lab", "gpu", "site=athens"]) == []
-    assert missing(tags, ["site=sf", "jetson"]) == ["jetson", "site=sf"]
+    assert missing(tags, {"lab": True, "gpu": True, "site": "athens"}) == []
+    assert missing(tags, {"site": "sf", "jetson": True}) == ["jetson", "site=sf"]
     assert format_tags(tags) == "gpu=rtx,lab,site=athens"
 
 
@@ -47,3 +47,9 @@ def test_gpu_tagger_reads_device_nodes(node: str, monkeypatch: pytest.MonkeyPatc
     assert tags.gpu_tags() == {"gpu": "", "gpu_count": "1"}
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert tags.gpu_tags() == {}
+
+
+def test_live_tags_say_what_is_free_now() -> None:
+    live = live_tags()
+    assert int(live["free_cpus"]) >= 0
+    assert int(live["free_ram_gb"]) >= 0

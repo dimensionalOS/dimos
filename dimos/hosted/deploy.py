@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Controller: place a hosted Blueprint on live HostDaemons and run it until exit."""
+"""Blueprint root: place a hosted Blueprint on live HostDaemons and run it until exit."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def wait_for_hosts(
     rpc: ZenohRPC,
     names: set[str],
     timeout: float = DEFAULT_HOST_TIMEOUT,
-    tag_sets: Iterable[frozenset[str]] = (),
+    tag_sets: Iterable[Mapping[str, str | bool]] = (),
     poll: float = 0.2,
 ) -> tuple[HostDescriptor, ...]:
     """Discover until every named Host and some Host per tag set is live, or raise."""
@@ -66,7 +66,7 @@ def wait_for_hosts(
             return descriptors
         time.sleep(poll)
     found = ", ".join(sorted(f"{d.name}[{format_tags(d.tags)}]" for d in descriptors)) or "none"
-    wanted = [*sorted(names), *(sorted(tags) for tags in tag_sets)]
+    wanted = [*sorted(names), *(missing({}, tags) for tags in tag_sets)]
     raise TimeoutError(f"Hosts {wanted} not all live; found: {found}")
 
 
@@ -103,7 +103,7 @@ def deployed(
     """Start one fragment per placed Host; yield module -> Host name; stop them on exit.
 
     Unplaced modules go to ``local_host_id``, the daemon serving this machine. ``overrides``
-    and ``global_overrides`` are the controller's explicit configuration (see
+    and ``global_overrides`` are the blueprint root's explicit configuration (see
     ``ParsedBlueprintConfig.file_and_cli``); each Host parses them over its own
     environment. ``on_log`` gets (host name, line) for every output line of this run's
     fragments. The run's liveliness token is held for the block: a Host stops the run

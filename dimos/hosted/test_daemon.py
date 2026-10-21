@@ -102,9 +102,61 @@ def test_describe_reports_available_host(host_setup: dict[str, Any]) -> None:
     descriptor = host_setup["daemon"].describe()
 
     assert descriptor.host_id == "host-1"
-    assert descriptor.tags == {"gpu": ""}
+    assert descriptor.tags["gpu"] == ""
+    assert {"free_cpus", "free_ram_gb"} <= descriptor.tags.keys()
     assert descriptor.revision == "revision-1"
     assert descriptor.active_run_ids == ()
+
+
+def test_sync_checks_out_when_idle_and_refuses_while_busy(host_setup: dict[str, Any]) -> None:
+    daemon = host_setup["daemon"]
+    synced: list[tuple[str, str]] = []
+    with pytest.raises(RuntimeError, match="cannot sync"):
+        daemon.sync("main", "abc")
+    daemon._sync_checkout = lambda branch, commit: synced.append((branch, commit))
+
+    assert daemon.sync("main", "abc") == "abc"
+    assert synced == [("main", "abc")]
+    daemon.start(host_setup["fragment"])
+    with pytest.raises(RuntimeError, match="Busy with runs run-1"):
+        daemon.sync("main", "def")
+    assert synced == [("main", "abc")]
+
+
+@pytest.mark.parametrize(
+    ("listen", "dialed"),
+    (
+        ("tcp/0.0.0.0:7447", "tcp/127.0.0.1:7447"),
+        ("tcp/10.0.0.5:7447", "tcp/10.0.0.5:7447"),
+        ("tcp/0.0.0.0:7447#iface=lo", "tcp/127.0.0.1:7447"),
+        ("iface/lo", "tcp/127.0.0.1:7447"),
+        ("iface/lo:7450", "tcp/127.0.0.1:7450"),
+        ("tcp/127.0.0.1:7447,tcp/0.0.0.0:7448#iface=nope", "tcp/127.0.0.1:7447"),
+    ),
+)
+def test_fragments_dial_the_first_listener_where_it_answers(listen: str, dialed: str) -> None:
+    daemon = HostDaemon(HostConfig(listen=listen), host_id="host-1", revision="r")
+    assert daemon.client_endpoint == dialed
+
+
+def test_iface_shorthand_becomes_a_zenoh_endpoint() -> None:
+    config = HostConfig(
+        listen="iface/wlan0, iface/eth0:7450, tcp/127.0.0.1:7447, tcp/0.0.0.0, tcp/[::], tcp/[::1]:7450"
+    )
+    assert config.listen_endpoints == [
+        "tcp/0.0.0.0:7447#iface=wlan0",
+        "tcp/0.0.0.0:7450#iface=eth0",
+        "tcp/127.0.0.1:7447",
+        "tcp/0.0.0.0:7447",
+        "tcp/[::]:7447",
+        "tcp/[::1]:7450",
+    ]
+
+
+def test_a_listener_on_an_interface_without_ipv4_is_refused() -> None:
+    daemon = HostDaemon(HostConfig(listen="tcp/0.0.0.0:7447#iface=nope"), host_id="h", revision="r")
+    with pytest.raises(ValueError, match="'nope' has no IPv4"):
+        _ = daemon.client_endpoint
 
 
 def test_start_is_idempotent(host_setup: dict[str, Any]) -> None:
@@ -335,7 +387,7 @@ class HostConfiguredConfig(ModuleConfig):
     iface: str = "eth0"
 
 
-def test_fragment_config_is_host_env_then_controller_values_then_pins(
+def test_fragment_config_is_host_env_then_root_values_then_pins(
     tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOSTCONFIGURED__MOUNT", "ATHENS")
@@ -370,9 +422,7 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def test_a_run_stops_once_its_controller_is_gone(
-    host_setup: dict[str, Any], tmp_path: Path
-) -> None:
+def test_a_run_stops_once_its_root_is_gone(host_setup: dict[str, Any], tmp_path: Path) -> None:
     from dimos.hosted.protocol import RUN_LIVELINESS_KEY
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -392,23 +442,21 @@ def test_a_run_stops_once_its_controller_is_gone(
     process = host_setup["process"]
     with daemon.serve():
         pool = ZenohSessionPool()
-        controller = ZenohRPC(
+        root = ZenohRPC(
             session_pool=pool, mode="client", connect=[daemon.client_endpoint], multicast=False
         )
-        controller.start()
+        root.start()
         # Held for the block: a dropped token is undeclared at once.
-        token = controller.session.liveliness().declare_token(
-            RUN_LIVELINESS_KEY.format(run_id="run-1")
-        )
+        token = root.session.liveliness().declare_token(RUN_LIVELINESS_KEY.format(run_id="run-1"))
         assert daemon.start(fragment).state == "running"
         time.sleep(0.5)
-        assert daemon._controller_alive("run-1")
+        assert daemon._root_alive("run-1")
         assert daemon.describe().active_run_ids == ("run-1",)
         process.is_alive.side_effect = [True, False]
 
-        # The controller dies without stopping anything.
+        # The blueprint root dies without stopping anything.
         del token
-        controller.stop()
+        root.stop()
         pool.close_all()
 
         deadline = time.monotonic() + 10
@@ -470,7 +518,7 @@ def test_a_watch_tick_reaps_an_exited_fragment(host_setup: dict[str, Any]) -> No
     assert daemon.status(fragment.run_id).error == "Deployment process exited with code 3"
 
 
-def test_a_run_stops_once_its_controller_is_gone_across_linked_routers(
+def test_a_run_stops_once_its_root_is_gone_across_linked_routers(
     host_setup: dict[str, Any], tmp_path: Path
 ) -> None:
     from dimos.hosted.protocol import RUN_LIVELINESS_KEY
@@ -504,25 +552,23 @@ def test_a_run_stops_once_its_controller_is_gone_across_linked_routers(
     process = host_setup["process"]
     with edge.serve(), base.serve():
         pool = ZenohSessionPool()
-        controller = ZenohRPC(
+        root = ZenohRPC(
             session_pool=pool, mode="client", connect=[base.client_endpoint], multicast=False
         )
-        controller.start()
-        token = controller.session.liveliness().declare_token(
-            RUN_LIVELINESS_KEY.format(run_id="run-1")
-        )
-        # The edge Host sees the controller's token through the base router.
+        root.start()
+        token = root.session.liveliness().declare_token(RUN_LIVELINESS_KEY.format(run_id="run-1"))
+        # The edge Host sees the blueprint root's token through the base router.
         deadline = time.monotonic() + 10
-        while not edge._controller_alive("run-1") and time.monotonic() < deadline:
+        while not edge._root_alive("run-1") and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert edge._controller_alive("run-1")
+        assert edge._root_alive("run-1")
         assert edge.start(fragment).state == "running"
         time.sleep(0.5)
         assert edge.describe().active_run_ids == ("run-1",)
         process.is_alive.side_effect = [True, False]
 
         del token
-        controller.stop()
+        root.stop()
         pool.close_all()
 
         deadline = time.monotonic() + 10
@@ -571,11 +617,11 @@ def test_a_shutdown_during_a_start_in_flight_is_prompt_and_leaves_no_fragment(
     outcome: dict[str, Any] = {}
     pool = ZenohSessionPool()
     with daemon.serve():
-        controller = ZenohRPC(
+        root = ZenohRPC(
             session_pool=pool, mode="client", connect=[daemon.client_endpoint], multicast=False
         )
-        controller.start()
-        client = HostClient(controller, "host-1", timeout=60.0)
+        root.start()
+        client = HostClient(root, "host-1", timeout=60.0)
         starter = threading.Thread(target=lambda: outcome.update(status=client.start(fragment)))
         starter.start()
         deadline = time.monotonic() + 10
@@ -590,5 +636,5 @@ def test_a_shutdown_during_a_start_in_flight_is_prompt_and_leaves_no_fragment(
     assert daemon.describe().active_run_ids == ()
     starter.join(15.0)
     assert outcome["status"].state == "absent"
-    controller.stop()
+    root.stop()
     pool.close_all()

@@ -28,7 +28,7 @@ class PayloadModule(Module):
     config: PayloadConfig
 
 
-def test_fragment_round_trips_the_blueprint_and_the_controllers_values() -> None:
+def test_fragment_round_trips_the_blueprint_and_the_roots_values() -> None:
     blueprint = PayloadModule.blueprint()
     fragment = HostFragment.create(
         run_id="run-1",
