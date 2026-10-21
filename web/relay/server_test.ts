@@ -1284,6 +1284,60 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "a relay with --cert/--key retries when an ephemeral TCP port is occupied on UDP",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  const serve = Deno.serve;
+  let occupied: Deno.DatagramConn | undefined;
+  let bindCount = 0;
+  let firstPort: number | undefined;
+  Deno.serve = new Proxy(serve, {
+    apply(target, thisArg, args) {
+      const server = Reflect.apply(target, thisArg, args) as Deno.HttpServer<Deno.NetAddr>;
+      bindCount++;
+      if (bindCount === 1) {
+        firstPort = server.addr.port;
+        // A TCP port picked by the OS may already be in use on UDP.
+        try {
+          occupied = Deno.listenDatagram({
+            hostname: "127.0.0.1",
+            port: server.addr.port,
+            transport: "udp",
+          });
+        } catch (e) {
+          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+        }
+      }
+      return server;
+    },
+  });
+  let relay: Awaited<ReturnType<typeof startRelay>> | undefined;
+  try {
+    relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+    assert(bindCount >= 2);
+    assert(firstPort !== undefined);
+    assert(relay.httpPort !== firstPort);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: firstPort });
+    probe.close();
+    const client = Deno.createHttpClient({ caCerts: [cert.certPem] });
+    try {
+      const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+    } finally {
+      client.close();
+    }
+  } finally {
+    Deno.serve = serve;
+    occupied?.close();
+    await relay?.shutdown();
+  }
+});
+
 // Auth (T12d): --auth-file gates both hellos and /api/stats.
 const ROBOT_KEY = "robot-key-0123456789abcdef";
 const VIEWER_TOKEN = "viewer-token-0123456789abcdef";
