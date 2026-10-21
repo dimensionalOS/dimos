@@ -29,7 +29,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import GO2_NAV
+from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
@@ -130,6 +130,6 @@ alfred_nav = autoconnect(
     mid360_for_pointlio(lidar_ip=ALFRED_CONFIG.mid360_ip),
     PointLio.blueprint(blind=LIO_BLIND_M),
     _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
-    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=GO2_NAV),
+    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
     vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
 ).global_config(n_workers=12, robot_model="alfred")
