@@ -141,6 +141,7 @@ def _go2_rerun_blueprint() -> Blueprint:
                 ),
                 overrides={
                     "world/lidar": rrb.EntityBehavior(visible=False),
+                    "world/pgo": rrb.EntityBehavior(visible=False),
                 },
             ),
             column_shares=[1, 2],
