@@ -21,11 +21,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 ## 2. Creating the release
 
-1. Run the full test suite locally on the release branch.
-
-   ```bash
-   uv run pytest -m '' --error-for-skips
-   ```
+1. Complete the [release testing plan](/release/testing/README.md) on `release/X.Y.Z`. Record the tested SHA, run the full local suite without skips, and complete the required manual checks and selected platform checks. If a backport changes the branch, rerun automation and the affected manual checks on the new SHA before publishing.
 
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.

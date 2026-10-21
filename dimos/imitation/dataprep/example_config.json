@@ -28,13 +28,13 @@
         8
       ],
       "names": [
-        "arm/joint1",
-        "arm/joint2",
-        "arm/joint3",
-        "arm/joint4",
-        "arm/joint5",
-        "arm/joint6",
-        "arm/joint7",
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6",
+        "joint7",
         "arm/gripper"
       ]
     }
@@ -48,13 +48,13 @@
         8
       ],
       "names": [
-        "arm/joint1",
-        "arm/joint2",
-        "arm/joint3",
-        "arm/joint4",
-        "arm/joint5",
-        "arm/joint6",
-        "arm/joint7",
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6",
+        "joint7",
         "arm/gripper"
       ]
     }
