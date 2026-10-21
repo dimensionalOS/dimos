@@ -28,14 +28,13 @@ from dimos.navigation.go2.loop_closure.pgo import (
     PGO,
     Keyframe,
     PGOConfig,
+    PGOState,
     PoseGraph,
     _obs_to_pose3,
-    _PGOState,
     _pose3_to_transform,
 )
 
-# TODO(PY311): drop — the mapping extra excludes gtsam-extended where it has no
-# wheels (py3.10 Linux), see pyproject.
+# TODO(PY311): drop; the mapping extra has no gtsam-extended wheels on py3.10 Linux.
 pytest.importorskip("gtsam")
 
 
@@ -53,7 +52,7 @@ class TestPGOConfig:
         assert cfg.max_icp_iterations == 42
 
     def test_rejects_unknown_fields(self) -> None:
-        # The plan deleted these; BaseConfig has extra="forbid" so they raise.
+        # BaseConfig has extra="forbid".
         for dead in (
             "world_frame",
             "publish_global_map",
@@ -136,16 +135,10 @@ class TestTransformHelpers:
 
 
 def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Stream[PointCloud2]:
-    """Straight-line trajectory along +x with small yaw, random body points.
-
-    Note: `pgo_keyframes` skips poses with zero translation OR identity
-    rotation as placeholders, so we use a constant non-identity yaw.
-    """
+    """Straight-line trajectory along +x with a constant small yaw, random body points."""
     rng = np.random.default_rng(0)
     mem = MemoryStore()
     lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
-    # Small yaw (~6 deg) -> non-identity quaternion that survives the
-    # placeholder filter.
     q = Rotation.from_euler("z", 0.1).as_quat()  # xyzw
     qx, qy, qz, qw = float(q[0]), float(q[1]), float(q[2]), float(q[3])
     R_world = Rotation.from_euler("z", 0.1).as_matrix()
@@ -161,7 +154,7 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
 
 
 def test_state_reports_keyframes_anchored_at_the_latest() -> None:
-    state = _PGOState(PGOConfig())
+    state = PGOState(PGOConfig())
     for obs in _make_lidar_stream(n_frames=12):
         state.process(_obs_to_pose3(obs), obs.ts, obs.data)
 
@@ -181,14 +174,12 @@ class TestPipelineEndToEnd:
     def test_straight_line_produces_keyframes(self) -> None:
         lidar = _make_lidar_stream(n_frames=12)
         graph = lidar.transform(PGO()).last().data
-        # 12 frames spaced 1m apart with key_pose_delta_trans=0.5 -> every frame
-        # after the first triggers a keyframe; some may dedupe but ~11 emitted.
+        # 1 m spacing > key_pose_delta_trans=0.5, so nearly every frame is a keyframe.
         n = len(graph.keyframes)
         assert 10 <= n <= 12
 
     def test_apply_identity_corrections_preserves_poses(self) -> None:
-        # With no loop closures the optimization is a no-op -> drift = identity ->
-        # stream.transform(graph) is a no-op on input poses.
+        # No loop closures, so the correction is identity.
         lidar = _make_lidar_stream(n_frames=12)
         graph = lidar.transform(PGO()).last().data
         corrected = lidar.transform(graph)
@@ -203,7 +194,7 @@ class TestPipelineEndToEnd:
 def _graph_with_drift_at(drifts: list[Transform]) -> PoseGraph:
     """PoseGraph whose drift correction equals each ``drifts[i]`` at ``drifts[i].ts``.
 
-    Trick: drift = optimized + local^-1. With local=identity, drift==optimized.
+    drift = optimized + local^-1, so local=identity makes drift == optimized.
     """
     identity = Vector3(0.0, 0.0, 0.0)
     identity_rot = Quaternion(0.0, 0.0, 0.0, 1.0)
@@ -292,9 +283,7 @@ class TestPlace:
 
 class TestApplyAsTransformer:
     def test_pure_translation_shifts_poses(self) -> None:
-        # Build a stream of 3 frames at the origin (identity pose) with a known
-        # correction that shifts everything by +5 in x. Expected: corrected
-        # poses sit at x=5.
+        # 3 frames at the origin, correction +5 x: corrected poses sit at x=5.
         mem = MemoryStore()
         lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
         for i in range(3):
