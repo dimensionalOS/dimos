@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+import re
 import threading
 from typing import Any, Literal
 
@@ -30,6 +31,9 @@ from dimos.protocol.service.zenohservice import ZenohService
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Every stream lives under `dimos/`, or under `dimos-domains/<domain>/` for a domain-scoped run.
+KEY_PREFIX = re.compile(r"^(?:dimos|dimos-domains/[^/]+)/")
 
 _RELIABILITY = {
     "reliable": zenoh.Reliability.RELIABLE,
@@ -239,7 +243,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         callback: Callable[[bytes, Topic], Any],
         keyed: Mapping[str, Callable[[bytes], Hashable]] | None = None,
     ) -> Callable[[], None]:
-        """Subscribe to all dimos topics, delivering only the latest per topic.
+        """Subscribe to all dimos topics of every domain, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
         A channel in `keyed` delivers the latest message per key instead, in the order
@@ -256,7 +260,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
             # or per key on a keyed channel.
             name = topic.topic
-            key = key_of.get(name.removeprefix("dimos/")) if isinstance(name, str) else None
+            key = key_of.get(KEY_PREFIX.sub("", name)) if isinstance(name, str) else None
             with lock:
                 if key is None:
                     latest[str(topic)] = (msg, topic)
@@ -298,14 +302,17 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             self._drain_stops.append(stop_drain)
             thread.start()
 
-        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
+        inner_unsubs = [
+            self.subscribe(Topic(key), collect) for key in ("dimos/**", "dimos-domains/**")
+        ]
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
                 if stop_drain not in self._drain_stops:
                     return  # Already removed by stop() or a concurrent unsubscribe
                 self._drain_stops.remove(stop_drain)
-            inner_unsub()
+            for inner_unsub in inner_unsubs:
+                inner_unsub()
             stop_drain()
 
         return unsubscribe

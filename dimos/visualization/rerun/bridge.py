@@ -57,7 +57,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -438,11 +438,8 @@ class RerunBridgeModule(Module):
         if isinstance(raw, str):
             topic_str = raw
         topic_str = topic_str.split("#")[0]
-        # Strip the zenoh key prefix (dimos/ or the run's scope) to match LCM entity paths
-        for prefix in (transport_topic("", self.config.g), "dimos/"):
-            if topic_str.startswith(prefix):
-                topic_str = "/" + topic_str.removeprefix(prefix)
-                break
+        # Strip the zenoh key prefix (dimos/ or dimos-domains/<domain>/) to match LCM entity paths
+        topic_str = KEY_PREFIX.sub("/", topic_str)
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:

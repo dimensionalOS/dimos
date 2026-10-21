@@ -95,6 +95,13 @@ def test_a_hosted_run_subscribes_its_scoped_keys_onto_the_plain_entity(
     assert bridge._get_entity_path(topic) == "world/map_regions"
 
 
+def test_another_domains_keys_land_on_the_plain_entity(
+    make_bridge: Callable[..., RerunBridgeModule],
+) -> None:
+    topic = ZenohTopic(topic="dimos-domains/r2/map_regions", lcm_type=PointCloud2)
+    assert make_bridge()._get_entity_path(topic) == "world/map_regions"
+
+
 def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModule]) -> None:
     pubsub = FakeZenoh()
     make_bridge()._subscribe(pubsub)
