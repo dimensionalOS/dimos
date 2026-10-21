@@ -524,7 +524,9 @@ def main() -> int:
         index = embed_index(rig, dan.embedder, after, before)
         for batch in [queries] if args.multi else [[query] for query in queries]:
             batch_traces = [LocalizeTrace() for _ in batch]
-            results = dan.localize(batch, index=index, rig=rig, params=params, traces=batch_traces)
+            results = dan.localize(
+                batch, index=index, rig=rig, params=base, fields=fields, traces=batch_traces
+            )
             for query, trace, hits in zip(batch, batch_traces, results, strict=True):
                 if report(query, hits, trace, rig, lo) and backdrop_ts is None:
                     backdrop_ts = hits[0].last_seen_timestamp

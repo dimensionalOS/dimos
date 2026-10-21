@@ -270,9 +270,13 @@ class PerceptionLocalize(Module):
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
         overrides = json.loads(params) if params.strip() else None
-        call_params = self.detector.shifted(self.config.params, overrides)
         results = self.detector.localize(
-            queries, index=index, rig=rig, params=call_params, groups=self._groups
+            queries,
+            index=index,
+            rig=rig,
+            params=self.config.params,
+            fields=overrides,
+            groups=self._groups,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
 

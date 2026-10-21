@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
 from dimos.perception.localize.localize import index_frames, localize
+from dimos.perception.localize.types import Localization, LocalizeParams
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
     from dimos.perception.localize.association import Groups
     from dimos.perception.localize.localize import LocalizeTrace
     from dimos.perception.localize.rig import Rig
-    from dimos.perception.localize.types import Localization, LocalizeParams
 
 
 class Detector(Protocol):
@@ -189,11 +189,12 @@ class DanDetector(Resource):
         *,
         index: Stream[Any, Any],
         rig: Rig,
-        params: LocalizeParams,
+        params: LocalizeParams = LocalizeParams(),
+        fields: dict[str, Any] | None = None,
         traces: list[LocalizeTrace] | None = None,
         groups: dict[str, Groups] | None = None,
     ) -> list[list[Localization]]:
-        """:func:`localize` on this resource's models."""
+        """:func:`localize` on this resource's models, with ``params`` shifted onto their scales."""
         return localize(
             queries,
             index=index,
@@ -201,7 +202,7 @@ class DanDetector(Resource):
             embedder=self.embedder,
             detector=self.detector,
             segmenter=self.segmenter,
-            params=params,
+            params=self.shifted(params, fields),
             traces=traces,
             groups=groups,
         )
