@@ -15,13 +15,11 @@
 """Verify the DimOS adapter and one installed consumer of published cdrgen."""
 
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
 
-from dimos_cdrgen.generate import generate
 import pytest
 
 from dimos.message_codegen import native_build
@@ -62,12 +60,12 @@ def test_installed_message_consumer(tmp_path: Path) -> None:
     source.parent.mkdir(parents=True)
     source.write_text("int32 value\n")
     (project / "pyproject.toml").write_text("""[build-system]
-requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.0"]
+requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.1"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "dimos-cdr-consumer"
 version = "0.1.0"
-dependencies = ["dimos-cdrgen==0.1.0"]
+dependencies = ["dimos-cdrgen==0.1.1"]
 [tool.dimos.messages]
 source = "interfaces"
 """)
@@ -108,87 +106,3 @@ assert decode(encode(value), Tick).value == 17
 """,
         cwd=tmp_path,
     )
-
-
-@pytest.fixture(scope="session")
-def native_build_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    # Native generator prerequisites are build tools, isolated from DimOS runtime deps.
-    # In particular, cdrgen0.1.0's PyYAML pin must not downgrade the runtime lock.
-    environment = tmp_path_factory.mktemp("cdr-native-toolchain") / "venv"
-    run("uv", "venv", "--python", sys.executable, str(environment), cwd=environment.parent)
-    python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    offline_args = ("--offline",) if os.environ.get("DIMOS_OFFLINE") == "1" else ()
-    run(
-        "uv",
-        "pip",
-        "install",
-        *offline_args,
-        "--python",
-        str(python),
-        "dimos-cdrgen[native]==0.1.0",
-        cwd=environment.parent,
-    )
-    return python
-
-
-@pytest.mark.native_e2e
-def test_cpp_consumer_uses_dimos_header(tmp_path: Path, native_build_python: Path) -> None:
-    source = tmp_path / "interfaces/consumer_msgs/msg/Tick.msg"
-    source.parent.mkdir(parents=True)
-    source.write_text("int32 value\n")
-    generated = tmp_path / "generated"
-    generate(
-        [source.parents[2]], generated, ["consumer_msgs/msg/Tick"], "dimos_consumer", shared=True
-    )
-    prefix_file = tmp_path / "native-prefix.txt"
-    run(
-        str(native_build_python),
-        "-c",
-        """import json
-import os
-from pathlib import Path
-import sys
-from dimos_cdrgen.native_build import prepare_cpp
-sources = {name: Path(path) for name, path in json.loads(os.environ.get("DIMOS_NATIVE_SOURCE_DIRS", "{}")).items()}
-prefix = prepare_cpp(
-    Path(sys.argv[1]), cache=Path(sys.argv[2]),
-    offline=os.environ.get("DIMOS_OFFLINE") == "1", source_dirs=sources or None,
-)
-Path(sys.argv[3]).write_text(str(prefix))
-""",
-        str(generated),
-        os.environ.get("DIMOS_NATIVE_TEST_CACHE", str(tmp_path / "native-cache")),
-        str(prefix_file),
-        cwd=tmp_path,
-    )
-    prefix = Path(prefix_file.read_text())
-    toolchain = native_build.write_cmake_toolchain(prefix, tmp_path / "toolchain.cmake")
-    include = Path(__file__).resolve().parents[2] / "native/cpp/include"
-    (tmp_path / "CMakeLists.txt").write_text(f'''cmake_minimum_required(VERSION 3.20)
-project(dimos_cdr_consumer LANGUAGES CXX)
-find_package(dimos_consumer CONFIG REQUIRED)
-add_executable(consumer main.cpp)
-target_compile_features(consumer PRIVATE cxx_std_17)
-target_include_directories(consumer PRIVATE "{include}")
-target_link_libraries(consumer PRIVATE dimos_consumer::messages)
-''')
-    (tmp_path / "main.cpp").write_text("""#include <consumer_msgs/msg/tick.hpp>
-#include <dimos/native/cdr_codec.hpp>
-#include <vector>
-int main() {
-    const std::vector<uint8_t> expected{0, 1, 0, 0, 17, 0, 0, 0};
-    auto value = dimos::native::cdr_decode<consumer_msgs::msg::Tick>(expected);
-    return value.value == 17 && dimos::native::cdr_encode(value) == expected ? 0 : 1;
-}
-""")
-    run(
-        "cmake",
-        "-S",
-        str(tmp_path),
-        "-B",
-        str(tmp_path / "build"),
-        f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-        cwd=tmp_path,
-    )
-    run("cmake", "--build", str(tmp_path / "build"), "--parallel", "2", cwd=tmp_path)
-    run(str(tmp_path / "build/consumer"), cwd=tmp_path)

@@ -25,7 +25,7 @@ import time
 
 from pydantic import Field
 
-from dimos.perception.visual_servoing import (  # type: ignore[import-untyped]
+from dimos.perception.visual_servoing import (  # type: ignore[import-not-found]
     VisualServoing,
 )
 from dimos.skills.skills import AbstractRobotSkill

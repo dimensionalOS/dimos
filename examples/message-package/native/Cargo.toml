@@ -1,0 +1,15 @@
+[package]
+name = "builtin-message-example"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+dimos-generated-messages = "=0.0.14"
+re_cdr = "=0.1.0"
+
+[[example]]
+name = "relay"
+path = "relay.rs"

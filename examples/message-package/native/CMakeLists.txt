@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(builtin_message_example LANGUAGES CXX)
+find_package(dimos_generated CONFIG REQUIRED)
+add_executable(header_relay relay.cpp)
+target_link_libraries(header_relay PRIVATE dimos_generated::messages)

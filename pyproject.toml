@@ -2,6 +2,8 @@
 requires = [
     "setuptools>=70",
     "wheel",
+    "dimos-cdrgen[prepare]==0.1.1",
+    "pydantic>=2,<3",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -19,9 +21,13 @@ build-backend = "setuptools.build_meta"
 # the sdist; keep its recursive-include extension list in sync with the globs
 # here.
 include-package-data = false
+license-files = [
+    "LICENSE*", "COPYING*", "NOTICE*", "AUTHORS*",
+    "packages/dimos-generated/interfaces/licenses/*",
+]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".", "build/message-source/python"]
 include = ["dimos*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
@@ -35,6 +41,8 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+"dimos.messages" = ["py.typed", "*.pyi", "**/*.pyi"]
+"dimos.messages_schemas" = ["schemas.json", "schemas/**/*", "package/**/*"]
 # Recursive: matches the extension anywhere under dimos/. Add a line when code
 # starts loading a new data type. NOTE: ".txt" is intentionally scoped (a bare
 # "**/*.txt" would grab CMakeLists.txt from native build dirs).
@@ -100,6 +108,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-cdrgen==0.1.1",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",
@@ -426,7 +435,7 @@ project-deps = [
 ]
 
 tests = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.1",
     "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
@@ -485,7 +494,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.1",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -874,3 +883,12 @@ ignore = [
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
 ]
+
+[tool.dimos.messages]
+source = "packages/dimos-generated/interfaces"
+module = "dimos_generated"
+python-module = "dimos.messages"
+resources = ["packages/dimos-generated/schema-sources.json"]
+
+[project.entry-points."dimos.messages"]
+dimos = "dimos.messages_schemas.provider"
