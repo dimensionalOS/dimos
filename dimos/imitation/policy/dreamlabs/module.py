@@ -119,7 +119,8 @@ class DreamlabsModule(Module):
             with self._lock:
                 self._last_action_response = deepcopy(response)
                 assert self._latest is not None
-                return action_trajectory(response, self._latest.copy())
+                assert self._fk is not None
+                return action_trajectory(response, self._latest.copy(), self._fk.joint_bounds)
 
     @rpc
     def get_last_action_response(self) -> dict[str, Any] | None:

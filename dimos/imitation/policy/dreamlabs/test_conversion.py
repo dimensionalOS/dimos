@@ -21,6 +21,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 VALID = [[0.0] * 6 + [0.5]] * 48
+BOUNDS = {name: (-np.pi, np.pi) for name in DUAL_OPENYAM_JOINTS[:12]}
 
 
 @pytest.mark.parametrize(
@@ -34,7 +35,7 @@ VALID = [[0.0] * 6 + [0.5]] * 48
 )
 def test_invalid_action_contract(reply: dict) -> None:
     with pytest.raises(ValueError):
-        action_trajectory(reply, np.array([0.0] * 12 + [0.5, 0.5]))
+        action_trajectory(reply, np.array([0.0] * 12 + [0.5, 0.5]), BOUNDS)
 
 
 @pytest.mark.parametrize("positions", [[0.0] * 13, [0.0] * 12 + [-0.1, 0.0], [float("nan")] * 14])
@@ -51,7 +52,7 @@ def test_finite_output_grippers_are_clamped_without_changing_arms_or_raw_reply(
     left = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6]
     right = [-0.7, 0.8, -0.9, 1.0, -1.1, 1.2]
     reply = {"q_l_chunk": [[*left, opening]] * 48, "q_r_chunk": [[*right, opening]] * 48}
-    trajectory = action_trajectory(reply, np.array([0.0] * 12 + [0.5, 0.5]))
+    trajectory = action_trajectory(reply, np.array([0.0] * 12 + [0.5, 0.5]), BOUNDS)
     assert trajectory.points[1].positions == [*left, *right, expected, expected]
     assert trajectory.points[-1].positions == [*left, *right, expected, expected]
     assert reply["q_l_chunk"][0][-1] == opening
@@ -64,4 +65,41 @@ def test_nonfinite_output_gripper_is_rejected(opening: float) -> None:
         action_trajectory(
             {"q_l_chunk": VALID, "q_r_chunk": [[0.0] * 6 + [opening]] * 48},
             np.array([0.0] * 12 + [0.5, 0.5]),
+            BOUNDS,
+        )
+
+
+@pytest.mark.parametrize("value, expected", [(-0.02, 0.0), (1.02, 1.0), (0.5, 0.5)])
+def test_small_joint_overshoot_preserves_anchor_other_joints_and_raw_reply(
+    value: float, expected: float
+) -> None:
+    bounds = {**BOUNDS, "left_joint2": (0.0, 1.0)}
+    left = [0.1, value, 0.3, -0.4, 0.5, -0.6, 0.5]
+    reply = {"q_l_chunk": [left] * 48, "q_r_chunk": VALID}
+    start = np.array([0.0] * 12 + [0.5, 0.5])
+    start[1] = -0.01
+    trajectory = action_trajectory(reply, start, bounds)
+    assert trajectory.points[0].positions == start.tolist()
+    assert trajectory.points[1].positions == [
+        0.1,
+        expected,
+        0.3,
+        -0.4,
+        0.5,
+        -0.6,
+        *([0.0] * 6),
+        0.5,
+        0.5,
+    ]
+    assert reply["q_l_chunk"][0][1] == value
+
+
+@pytest.mark.parametrize("value", [-0.04, 1.04])
+def test_joint_overshoot_over_two_degrees_is_rejected(value: float) -> None:
+    left = [0.0, value, 0.0, 0.0, 0.0, 0.0, 0.5]
+    with pytest.raises(ValueError, match="left_joint2.*more than 2 degrees"):
+        action_trajectory(
+            {"q_l_chunk": [left] * 48, "q_r_chunk": VALID},
+            np.array([0.0] * 12 + [0.5, 0.5]),
+            {**BOUNDS, "left_joint2": (0.0, 1.0)},
         )

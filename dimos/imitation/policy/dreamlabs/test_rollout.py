@@ -186,14 +186,14 @@ def test_explicit_dispatch_uses_coordinator_and_cancels(
     assert instance.rollout_status()["chunks_executed"] == 1
 
 
-def test_out_of_model_chunk_fails_without_clipping(
+def test_large_model_overshoot_fails_without_dispatch(
     rollout: RolloutFixture,
     mocker: MockerFixture,
 ) -> None:
     instance, client, entered, release, _ = rollout
     client.get_action.side_effect = None
     client.get_action.return_value = {
-        "q_l_chunk": [[0.0, -0.01749, 0.0, 0.0, 0.0, 0.0, 0.5]] * 48,
+        "q_l_chunk": [[0.0, -0.04, 0.0, 0.0, 0.0, 0.0, 0.5]] * 48,
         "q_r_chunk": [[*POSITIONS[6:12], 0.5]] * 48,
     }
     failed = Event()

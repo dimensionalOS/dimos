@@ -71,8 +71,10 @@ blueprint contains only this protocol module and no hardware stack.
 
 The preview maps `q_l_chunk` and `q_r_chunk` into DimOS order, anchors the first
 point on the supplied state, and spaces 48 rows at 20 Hz. Checks cover shape,
-finite values, and normalized grips. They do not check physical joint limits,
-speed, collision, freshness, tracking, or stop behavior on a real robot.
+finite values, normalized grips, and canonical model position bounds. Arm targets
+up to 2 degrees outside a bound are clamped; larger overshoots reject the whole
+chunk. The measured anchor is unchanged. Speed, collision, physical calibration,
+freshness, tracking, and stop behavior on a real robot remain unverified.
 
 ## Keep live inference and execution explicit
 
@@ -194,8 +196,14 @@ logs record raw extrema, clipped indices/values and counts. Inputs remain strict
 `get_last_action_response()` returns the last SDK action dict before conversion,
 even after conversion rejection or episode reset, so raw diagnostics remain
 available in memory. No request images or credentials are retained by that RPC.
-Dispatch still rejects arm targets outside the coordinator model's position bounds;
-arm joints are never clamped by this adapter. Preview does not certify physical limits.
+Conversion applies the same canonical arm bounds to previews and dispatch: model
+output up to 2 degrees beyond a bound is clamped to that bound, with joint name,
+indices, raw values, count and maximum correction logged. An overshoot larger than
+2 degrees or any nonfinite value rejects the whole chunk. This tolerance is an
+explicit prototype choice, not a measured hardware accuracy specification. Raw SDK
+output and measured state remain unchanged. Dispatch retains its strict position
+bounds check, including the unmodified measured anchor. Preview is not proof of
+physical readiness.
 
 
 ### View the robot with Viser
@@ -240,7 +248,8 @@ Its right-gripper output reached `1.0061448679` (21/48 rows above one); left/rig
 J2 targets reached `-0.0174917514` / `-0.0034554977` rad although measured J2 was
 inside the model bounds. The original strict prototype rejected this response.
 With the later explicitly requested gripper-output clamp, the right-gripper
-outliers become 1.0; the J2 arm-limit violations still reject physical dispatch. SDK-reference J2 lower bounds and coordinator-model lower
+outliers become 1.0. The later bounded arm-output correction below also handles
+these small J2 overshoots. SDK-reference J2 lower bounds and coordinator-model lower
 bounds were both effectively zero, but physical encoder/calibration agreement
 has not been independently verified. Equal before/after cached SDK readings did
 not prove fresh per-motor CAN feedback; a recent host message timestamp still
@@ -252,3 +261,32 @@ The manual interface tests use synthetic streams and mocked inference/execution.
 They cover idle/preview/explicit dispatch, in-flight stop/prompt invalidation,
 model-bound rejection and blueprint/config wiring. They do not launch devices
 or call the live API.
+
+
+### Retained-response limit check and offline replay
+
+Both retained full-blueprint preview runs started with left J2 at +0.054642 degrees,
+inside but almost touching the canonical lower bound (effectively zero). No other
+arm joint's SDK-smoothed chunk exceeded the canonical limits in either run.
+These data support a small near-boundary overshoot; they do not establish a joint
+convention error. The current YAM joint-head path is retained; no local IK is added.
+
+| Retained acquisition commit | Left J2 minimum | Rows corrected | Maximum correction | Maximum TCP displacement from correction |
+| --- | ---: | ---: | ---: | ---: |
+| `ee042059fa` (previous FK) | -1.015477 degrees | 27/48 | 1.015477 degrees | 4.127 mm |
+| `cc10fb4a56` (canonical FK) | -1.326378 degrees | 29/48 | 1.326378 degrees | 5.383 mm |
+
+Replay uses the retained SDK-returned action dictionaries, not new inference.
+Those dictionaries are already SDK-smoothed, not untouched HTTP responses.
+Both pass the bounded conversion, with all 48 output rows inside the canonical arm
+bounds. Original responses and measured anchors are preserved. The TCP figures
+compare FK before/after correction using the canonical model and explicit SDK TCP;
+they are not observed physical motion. Raw right-gripper outliers are corrected by
+the separately approved [0,1] clamp. Neither replay dispatches anything.
+
+Validation: all 37 scoped Dreamlabs tests and the scoped pre-commit checks passed.
+Offline regression covers lower/upper near-boundary correction, unchanged in-range
+joints and raw responses, preserved anchors, rejection beyond 2 degrees, nonfinite
+values, gripper conversion, and the existing stop/stale/prompt behavior. No new
+hardware or API test was performed for this change, and fresh motor feedback and
+physical calibration remain unverified.

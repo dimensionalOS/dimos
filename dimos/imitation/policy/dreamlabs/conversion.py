@@ -33,6 +33,7 @@ logger = setup_logger()
 ACTION_HZ = 20.0
 HORIZON = 48
 CAMERAS = ("overhead", "wrist_l", "wrist_r")
+MAX_JOINT_OVERSHOOT_RAD = np.deg2rad(2.0)
 
 
 def state_vector(state: JointState) -> NDArray[np.float64]:
@@ -68,6 +69,7 @@ def encode_image(image: Image) -> str:
 def action_trajectory(
     reply: dict[str, Any],
     start: NDArray[np.float64],
+    joint_bounds: dict[str, tuple[float, float]],
 ) -> JointTrajectory:
     left = np.asarray(reply.get("q_l_chunk"), dtype=np.float64)
     right = np.asarray(reply.get("q_r_chunk"), dtype=np.float64)
@@ -78,6 +80,36 @@ def action_trajectory(
         invalid = np.argwhere(~np.isfinite(values))
         if invalid.size:
             raise ValueError(f"action contains non-finite {label} targets at {invalid.tolist()}")
+    # Bound model output only; the measured anchor must remain an actual observation.
+    # Validate the whole chunk before applying any corrections.
+    for column, name in enumerate(DUAL_OPENYAM_JOINTS[:12]):
+        lower, upper = joint_bounds[name]
+        if not np.isfinite([lower, upper]).all() or lower >= upper:
+            raise ValueError(f"invalid model limits for {name}")
+        values = rows[:, column]
+        excess = np.maximum(lower - values, values - upper)
+        if np.any(excess > MAX_JOINT_OVERSHOOT_RAD):
+            raise ValueError(
+                f"{name} targets exceed model limits by more than 2 degrees: "
+                f"maximum excess {np.degrees(excess.max()):.6f} degrees"
+            )
+    for column, name in enumerate(DUAL_OPENYAM_JOINTS[:12]):
+        lower, upper = joint_bounds[name]
+        values = rows[:, column]
+        indices = np.flatnonzero((values < lower) | (values > upper))
+        if indices.size:
+            corrected = np.clip(values, lower, upper)
+            logger.warning(
+                "Clipping small Dreamlabs joint overshoot to model limits",
+                joint=name,
+                count=int(indices.size),
+                lower=lower,
+                upper=upper,
+                max_correction_rad=float(np.max(np.abs(corrected - values))),
+                indices=indices.tolist(),
+                raw_values=values[indices].tolist(),
+            )
+            rows[:, column] = corrected
     for side, column in (("left", 12), ("right", 13)):
         opening = rows[:, column]
         indices = np.flatnonzero((opening < 0) | (opening > 1))

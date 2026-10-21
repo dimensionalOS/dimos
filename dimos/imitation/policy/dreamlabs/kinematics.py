@@ -42,6 +42,10 @@ class DreamlabsKinematics:
         model = pinocchio.buildModelFromXML(description.xml)
         if tuple(model.names)[1:] != tuple(DUAL_OPENYAM_ARM_JOINTS) or model.nq != 12:
             raise ValueError("Dreamlabs requires the canonical dual six-joint YAM model")
+        self.joint_bounds = {
+            name: (float(model.lowerPositionLimit[i]), float(model.upperPositionLimit[i]))
+            for i, name in enumerate(DUAL_OPENYAM_ARM_JOINTS)
+        }
         self._arms: dict[str, tuple[PinocchioIK, pinocchio.SE3, list[int]]] = {}
         for side in ("left", "right"):
             base = model.frames[model.getFrameId(f"{side}_base")]
