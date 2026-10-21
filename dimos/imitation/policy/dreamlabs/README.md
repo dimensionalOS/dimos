@@ -80,13 +80,44 @@ compensation: idle policy does **not** mean motors are disabled or no low-level
 arm commands are written. The earlier enable-and-read fake-rollout script is a
 separate diagnostic path.
 
-From the PR checkout, with the `dreamlabs` extra available, inspect configuration
-without launching devices. `PYTHONPATH=.` also ensures a shared virtualenv uses
-this checkout rather than another editable installation:
+### Prepare an isolated environment
+
+The manual stack needs the `planning` and `dreamlabs` extras. The existing station
+shared environment has RoboPlan 0.6.0; this branch pins the 0.7 series and its lock
+resolves `roboplan` and `roboplan-core` to 0.7.0. Version 0.6 lacks
+`loadUrdfSceneDescriptionFromXml`, so merely setting `PYTHONPATH` to this checkout
+is insufficient. Do not upgrade the shared environment used by other worktrees.
+
+On anvil, run the following setup yourself from the updated PR worktree. It
+installs locked dependencies into a new isolated environment; it does not launch
+cameras, drivers or inference. The lock records official PyPI RoboPlan packages.
+No station installation is performed automatically by this PR.
 
 ```bash
-PYTHONPATH=. dimos run dreamlabs-dual-openyam-manual --help
+cd /home/anvil/worktrees/dreamlabs-fake-rollout-4653-20261021
+UV_CACHE_DIR="$PWD/.station_test/uv-cache" \
+UV_PROJECT_ENVIRONMENT="$PWD/.station_test/venv" \
+  /home/anvil/.local/bin/uv sync --frozen --no-default-groups \
+  --extra planning --extra dreamlabs \
+  --python /home/anvil/codes/dimos/.venv/bin/python
+source .station_test/venv/bin/activate
+export PYTHONPATH="$PWD"
 ```
+
+Use that environment in **both** the launcher and shell terminals. The earlier
+`.station_test/client-packages` SDK-only overlay is preserved but is no longer
+needed with this complete environment. Check the actual API before hardware launch:
+
+```bash
+python -c 'from importlib.metadata import version; import roboplan.core as c; print(version("roboplan-core")); assert callable(getattr(c, "loadUrdfSceneDescriptionFromXml", None))'
+dimos run dreamlabs-dual-openyam-manual --help
+```
+
+The blueprint also checks that loader before deploying any module, so this
+specific mismatch fails before cameras or robot drivers start. This is a
+capability check, not a compatibility shim for the old API.
+
+### Launch the stack
 
 For the tested anvil station, the physical USB paths were A overhead, B right
 wrist, C left wrist. Recheck ownership and camera roles if cabling changes.
@@ -102,7 +133,8 @@ PYTHONPATH=. dimos run dreamlabs-dual-openyam-manual \
   --dreamlabsrolloutmodule.timeout-ms 5000
 ```
 
-In another terminal in the same checkout, `PYTHONPATH=. dimos shell` attaches to the run. Use normal SDK credentials
+In another terminal in the same checkout, activate `.station_test/venv/bin/activate`,
+set `PYTHONPATH="$PWD"`, then run `dimos shell`. Use normal SDK credentials
 configured locally; do not put API keys in shell commands. These RPCs control
 only the policy:
 

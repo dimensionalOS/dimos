@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 from threading import Event
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.imitation.policy.dreamlabs.requirements import check_planning_dependencies
 from dimos.imitation.policy.dreamlabs.rollout import DreamlabsRolloutModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -279,3 +281,31 @@ def test_uncertain_cancellation_requires_retry(rollout: RolloutFixture) -> None:
     )
     instance.stop_rollout()
     release.set()
+
+
+def test_dependency_preflight_rejects_old_api_before_manual_start(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "dimos.imitation.policy.dreamlabs.requirements.import_module",
+        return_value=SimpleNamespace(),
+    )
+    [check] = dreamlabs_dual_openyam_manual.requirement_checks
+    result = check()
+    assert isinstance(result, str)
+    assert "isolated" in result
+    assert "loadUrdfSceneDescriptionFromXml" in result
+
+
+def test_dependency_preflight_accepts_supported_api(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "dimos.imitation.policy.dreamlabs.requirements.import_module",
+        return_value=SimpleNamespace(loadUrdfSceneDescriptionFromXml=mocker.Mock()),
+    )
+    assert check_planning_dependencies() is None
+
+
+def test_dependency_preflight_handles_missing_native_package(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "dimos.imitation.policy.dreamlabs.requirements.import_module",
+        side_effect=ImportError("offline missing dependency fixture"),
+    )
+    assert "RoboPlan import failed: ImportError" in check_planning_dependencies()
