@@ -12,18 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporary: dump apriltag detector replay (.rrd) for reliability investigation.
+"""Dump an apriltag detector replay of a recording to .rrd.
 
-Walks a recorded SQLite dataset and writes an rrd containing:
-- per-image: camera pose + pinhole + image data
-- per-lidar:  base_link pose (a moving axis)
-- per detection: marker box in world frame, at the detection timestamp
+Logs camera pose + pinhole + image per frame, base_link pose per lidar frame,
+and each detection as a world-frame marker box at its timestamp::
 
-Usage:
     uv run python -m dimos.navigation.go2.loop_closure.utils.markers_rrd hk_village1 --out hk.rrd
     rerun hk.rrd
-
-Throwaway script; remove once the apriltag reliability work lands.
 """
 
 from __future__ import annotations
@@ -70,8 +65,7 @@ def main(
     rr.init("dimos markers", recording_id=db_path.stem)
     rr.save(str(out))
 
-    # Static pinhole on the camera entity; per-frame Transform3D goes on the
-    # same entity. Image is the child so it projects through the pinhole.
+    # Image is a child of the camera so it projects through the pinhole.
     pinhole = cam_info.to_rerun()
     assert not isinstance(pinhole, list)
     rr.log("world/camera", pinhole, static=True)
@@ -81,7 +75,7 @@ def main(
         color_image = store.stream("color_image", Image)
         lidar = store.stream("lidar", PointCloud2)
 
-        # Pass 1: robot base pose over time (from lidar.pose).
+        # Pass 1: robot base pose from lidar.pose.
         for lidar_obs in lidar:
             if lidar_obs.pose_tuple is None:
                 continue
@@ -107,8 +101,7 @@ def main(
                     ),
                 )
             rr.log("world/camera/image", img_obs.data.to_rerun())
-            # Clear any prior detection box at this ts; pass 3 will overwrite
-            # this with the actual detection iff one fires for this frame.
+            # Clear the 2D box; pass 3 overwrites it when a detection fires on this frame.
             rr.log(
                 "world/camera/image/detections",
                 rr.Boxes2D(array=[], array_format=rr.Box2DFormat.XYWH),
@@ -128,9 +121,7 @@ def main(
                     max_dps=marker_max_rot_rate if marker_max_rot_rate > 0 else None,
                 )
             )
-        # Each 3D detection gets its own entity path so it persists from its
-        # ts onward — earlier detections stay visible as new ones appear.
-        # Color by ts (turbo) across the recording's full image-time range.
+        # One entity per detection so earlier ones stay visible; colored by ts.
         ts_min = color_image.first().ts
         ts_max = color_image.last().ts
         ts_span = ts_max - ts_min if ts_max > ts_min else 1.0
@@ -174,10 +165,7 @@ def main(
             )
         print(f"detections: {n_det}")
 
-        # Pass 4: averaged tracks (smoothing_window > 0 → per-track ids).
-        # Re-runs the same filtered pipeline through a smoothing detector;
-        # each track yields one entity that updates as the windowed average
-        # refines. Color stable per track_id for visual identity.
+        # Pass 4: smoothed tracks, one entity per track_id updated as its average refines.
         if smoothing_window > 0:
             xf_tracked = DetectMarkers(
                 camera_info=cam_info,

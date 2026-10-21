@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
@@ -26,20 +24,14 @@ class PackedVoxels:
     """CPU voxel store: sorted int64 keys, 21 bits/axis, (x,y) in the high bits.
 
     Column carving is contiguous-range deletion (searchsorted), insertion is a
-    sorted merge — O(map) at memcpy speed per frame, single-threaded, no Open3D
+    sorted merge: O(map) at memcpy speed per frame, single-threaded, no Open3D
     ops. ~25x faster than the Open3D CPU hashmap path on recorded go2 data.
-
-    `stamped` also remembers, per voxel, the ts of the frame that wrote it and
-    the key it was inserted at, so `reproject` can move the map later.
     """
 
-    def __init__(self, voxel_size: float, carve_columns: bool, stamped: bool = False) -> None:
+    def __init__(self, voxel_size: float, carve_columns: bool) -> None:
         self._voxel_size = voxel_size
         self._carve_columns = carve_columns
-        self.stamped = stamped
         self._keys = np.empty(0, dtype=np.int64)
-        self._ts = np.empty(0, dtype=np.float64)
-        self._raw = np.empty(0, dtype=np.int64)
 
     def _pack(self, pts: np.ndarray) -> np.ndarray:
         vox = np.floor(pts / np.float32(self._voxel_size)).astype(np.int64)
@@ -73,8 +65,6 @@ class PackedVoxels:
             np.add.at(delta, ends, -1)
             keep = np.cumsum(delta[:-1]) == 0
             keys = keys[keep]
-            if self.stamped:
-                self._ts, self._raw = self._ts[keep], self._raw[keep]
 
         # merge two sorted arrays; carving already emptied `new`'s columns, so
         # duplicates only need filtering in union mode
@@ -83,30 +73,6 @@ class PackedVoxels:
             fresh = (pos == len(keys)) | (keys[np.minimum(pos, len(keys) - 1)] != new)
             pos, new = pos[fresh], new[fresh]
         self._keys = np.insert(keys, pos, new)
-        if self.stamped:
-            self._ts = np.insert(self._ts, pos, frame.ts)
-            self._raw = np.insert(self._raw, pos, new)
-
-    def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
-        """Move every voxel to where `place` puts its stamped original position."""
-        if not self.stamped:
-            raise RuntimeError("reproject needs a stamped store")
-        if not len(self._keys):
-            return
-        keys = self._pack(
-            place(PointCloud2.from_numpy(self._centers(self._raw), stamps=self._ts)).points_f32()
-        )
-        order = np.lexsort((-self._ts, keys))  # by key, latest stamp first
-        keys, ts, raw = keys[order], self._ts[order], self._raw[order]
-        if self._carve_columns:
-            # carving invariant: a column belongs to the latest frame that landed in it
-            col = keys >> _BITS
-            starts = np.flatnonzero(np.r_[True, col[1:] != col[:-1]])
-            latest = np.repeat(np.maximum.reduceat(ts, starts), np.diff(np.r_[starts, len(keys)]))
-            keep = ts == latest
-            keys, ts, raw = keys[keep], ts[keep], raw[keep]
-        first = np.r_[True, keys[1:] != keys[:-1]]
-        self._keys, self._ts, self._raw = keys[first], ts[first], raw[first]
 
     def points(self) -> np.ndarray:
         """Voxel centers, (N, 3) float32."""
@@ -117,5 +83,3 @@ class PackedVoxels:
 
     def dispose(self) -> None:
         self._keys = np.empty(0, dtype=np.int64)
-        self._ts = np.empty(0, dtype=np.float64)
-        self._raw = np.empty(0, dtype=np.int64)
