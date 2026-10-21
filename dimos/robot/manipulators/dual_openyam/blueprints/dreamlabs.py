@@ -20,7 +20,10 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.policy.dreamlabs.camera import DreamlabsCameraModule
 from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
 from dimos.imitation.policy.dreamlabs.rollout import DreamlabsRolloutModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 # Protocol-only: no camera, driver, coordinator, or action executor is launched.
@@ -36,6 +39,11 @@ dreamlabs_dual_openyam_manual = autoconnect(
         tasks=[joint_trajectory_task(DUAL_OPENYAM_JOINTS)],
     ),
     DreamlabsRolloutModule.blueprint(),
+    ManipulationModule.blueprint(
+        model=dual_openyam_model_config(),
+        # View actual state without a second interactive execution surface.
+        visualization=ViserVisualizationConfig(panel_enabled=False),
+    ),
 ).remappings(
     [
         ("OverheadCamera", "color_image", "overhead_image"),

@@ -71,8 +71,8 @@ with `_record=False`. The hardware-free probe is independent of the station run 
 ## Manual testing stack
 
 `dreamlabs-dual-openyam-manual` composes three existing camera modules, the dual
-YAM coordinator and its canonical trajectory task (all 14 joints), and
-`DreamlabsRolloutModule`. Device paths are required configuration; omitted CAN
+YAM coordinator and its canonical trajectory task (all 14 joints),
+`DreamlabsRolloutModule`, and the existing `ManipulationModule` with Viser. Device paths are required configuration; omitted CAN
 ports select the existing mock hardware. This blueprint starts acquisition but
 leaves policy inference and policy dispatch idle. With real CAN ports, the
 existing driver startup enables motors, calibrates grippers and starts gravity
@@ -140,6 +140,43 @@ No automatic API retries occur. Errors stop the trial and remain visible in
 both modes. Gripper/shape/finite errors reject the response; dispatch additionally
 rejects arm targets outside the coordinator model's position bounds, without
 clipping. Preview mode does not certify physical limits.
+
+
+### View the robot with Viser
+
+The existing manipulation model uses the same dual-YAM URDF as the coordinator.
+Both modules consume `coordinator_joint_state`; no extra driver or motor
+initialization is added. Viser displays the 12 arm joints from the received state.
+This remains SDK-derived feedback, not independently timestamped motor telemetry.
+The default Viser host/port are `127.0.0.1:8095`. From your laptop, forward the port:
+
+```bash
+ssh -N -L 8095:127.0.0.1:8095 anvil@10.10.0.229
+```
+
+Open `http://localhost:8095`. In the DimOS shell, the configured URL is also
+available through `app.ManipulationModule.get_visualization_url()`. An occupied
+port can be changed with `--manipulationmodule.visualization.port 8096` (adjust
+the SSH forward too). The existing manipulation/Viser extra is required; this
+change does not install it on the station.
+
+Viser's operator panel is disabled by default to avoid its execution buttons
+replacing a policy trajectory. Manipulation planning/RPCs remain available. For
+manual manipulation execution, first call `stop_rollout()`, wait for
+`busy=False`, and finish/cancel that execution before starting policy again.
+Both use the coordinator's same canonical trajectory task: it can replace an
+existing trajectory, so it is not a cross-client ownership lock. If you explicitly
+turn on `--manipulationmodule.visualization.panel-enabled true`, the same ordering
+applies to its buttons. Neither planner nor policy runs automatically at startup.
+
+The viewer currently shows measured state, not automatic Dreamlabs target ghosts
+or measured-commanded error. Existing Viser ghosts are used by manipulation's
+`preview_plan()` workflow; there is no `policy_preview` stream adapter, and the
+raw 14-joint policy chunk includes grippers outside this 12-joint display model.
+No separate visualization framework or ghost adapter is added here. The current
+base also has no per-group `gripper_tasks` API from unmerged PR #4747; manipulation
+gripper controls remain absent, while policy's normalized grippers continue
+through its existing 14-joint trajectory.
 
 ### What remains unvalidated
 

@@ -31,13 +31,17 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.imitation.policy.dreamlabs.rollout import DreamlabsRolloutModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.dreamlabs import (
     dreamlabs_dual_openyam_manual,
 )
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 RolloutFixture = tuple[DreamlabsRolloutModule, Any, Event, Event, list[Subject[Any]]]
@@ -209,6 +213,12 @@ def test_manual_blueprint_and_deployment_arguments() -> None:
     blueprint = dreamlabs_dual_openyam_manual
     modules = {atom.name: atom for atom in blueprint.blueprints}
     assert modules["ControlCoordinator"].kwargs["tasks"][0].joint_names == DUAL_OPENYAM_JOINTS
+    assert sum(atom.module is DualOpenYamCoordinator for atom in blueprint.blueprints) == 1
+    [manipulation] = [atom for atom in blueprint.blueprints if atom.module is ManipulationModule]
+    assert manipulation.kwargs["model"] == dual_openyam_model_config()
+    assert manipulation.kwargs["visualization"] == ViserVisualizationConfig(panel_enabled=False)
+    assert any(port.name == "coordinator_joint_state" for port in manipulation.streams)
+    assert manipulation.module_refs[0].name == "_control_coordinator"
     assert blueprint.remapping_map[("OverheadCamera", "color_image")] == "overhead_image"
     assert blueprint.remapping_map[("LeftWristCamera", "color_image")] == "left_wrist_image"
     assert blueprint.remapping_map[("RightWristCamera", "color_image")] == "right_wrist_image"
@@ -224,11 +234,14 @@ def test_manual_blueprint_and_deployment_arguments() -> None:
             "follower_l",
             "--controlcoordinator.right-can-port",
             "follower_r",
+            "--manipulationmodule.visualization.port",
+            "8096",
         ],
         environ={},
     )
     assert parsed.module_kwargs("OverheadCamera")["device"] == "/dev/cam-a"
     assert parsed.module_kwargs("ControlCoordinator")["left_can_port"] == "follower_l"
+    assert parsed.module_kwargs("manipulationmodule")["visualization"]["port"] == 8096
 
 
 def test_stream_loss_during_inference_rejects_response(rollout: RolloutFixture) -> None:
