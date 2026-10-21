@@ -180,7 +180,8 @@ class PGOVoxelMapper(Module):
 
         def write() -> None:
             joint = build()
-            if not self._backed_up:
+            # without backups the old map stays until the save replaces it
+            if not self._backed_up and self.config.backup_keep_last:
                 backup = backup_file(path, keep_last=self.config.backup_keep_last)
                 if backup is not None:
                     logger.info(f"PGO premap: backed up {path.name} -> {backup.name}")
