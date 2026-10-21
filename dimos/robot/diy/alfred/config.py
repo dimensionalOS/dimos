@@ -59,7 +59,7 @@ class AlfredConfig:
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
 
 
-ALFRED = AlfredConfig(
+ALFRED_HARDWARE = AlfredConfig(
     name="alfred",
     height_clearance=2.0,  # meters
     width_clearance=1.0,

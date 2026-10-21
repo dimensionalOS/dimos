@@ -20,7 +20,7 @@ import rerun as rr
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.robot.unitree.go2.dds.blueprints import CAMERA_ENTITY, go2_dds_nav_viewer
+from dimos.robot.unitree.go2.dds.blueprints import CAMERA_ENTITY, go2_nav_viewer
 
 
 def _rerun_kwargs(blueprint: Any) -> dict[str, Any]:
@@ -29,7 +29,7 @@ def _rerun_kwargs(blueprint: Any) -> dict[str, Any]:
 
 
 def test_both_encodings_land_on_the_pane() -> None:
-    kwargs = _rerun_kwargs(go2_dds_nav_viewer)
+    kwargs = _rerun_kwargs(go2_nav_viewer)
     overrides = kwargs["visual_override"]
     assert kwargs["blueprint"]().root_container is not None
     info = CameraInfo(width=640, height=480, frame_id="camera_optical")
@@ -41,5 +41,5 @@ def test_both_encodings_land_on_the_pane() -> None:
 
 
 def test_viewer_subscribes_both_encodings() -> None:
-    topics = _rerun_kwargs(go2_dds_nav_viewer)["topics"]
+    topics = _rerun_kwargs(go2_nav_viewer)["topics"]
     assert {"video", "image", "camera_info"} <= set(topics)

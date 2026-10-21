@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.robot.diy.alfred.config import ALFRED
+from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
@@ -42,7 +42,7 @@ _alfred_hardware = autoconnect(
         enable_color=False,
         align_depth_to_color=False,
         frame_id="camera_front_link",
-        serial_number=ALFRED.d455_serial,
+        serial_number=ALFRED_HARDWARE.d455_serial,
     ).remappings(
         [
             (RealSenseCamera, "infrared_left", "image"),

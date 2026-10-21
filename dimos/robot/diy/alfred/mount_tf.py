@@ -57,9 +57,7 @@ def _fixed_edges() -> dict[str, list[Transform]]:
 def mount_transforms(root_frame: str) -> list[Transform]:
     """Every link rigidly fixed to base_link, minus the camera imager frames, rooted at root_frame.
 
-    The camera drivers publish their own imager offsets from the factory extrinsics read
-    off the device; the urdf's copies of those are nominal, so publishing them too
-    would put a second, worse answer on tf for the same edge.
+    The camera drivers publish their own imager offsets from factory extrinsics.
     """
     edges = _fixed_edges()
     transforms = []

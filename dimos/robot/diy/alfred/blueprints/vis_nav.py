@@ -33,7 +33,7 @@ from dimos.mapping.dim_slam.dim_slam import (
     ImuConfig,
     SourceConfig,
 )
-from dimos.robot.diy.alfred.blueprints.alfred_nav import _alfred_nav, _alfred_rerun_config
+from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
 from dimos.visualization.vis_module import vis_module
 
 CAMERA_RERUN_ROOT = "world/camera"

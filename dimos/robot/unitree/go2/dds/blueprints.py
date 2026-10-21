@@ -83,9 +83,9 @@ go2_nav = autoconnect(
     robot_model="unitree_go2",
 )
 
-# go2-nav plus the head L1's deskewed scans on `l1_lidar`, in Point-LIO's odom. The later
-# GO2DDS atom wins and spins the L1 up; go2-nav's remappings still apply.
-go2_dds_nav_l1 = autoconnect(
+# go2-nav plus the head L1's deskewed scans on l1_lidar, in Point-LIO's odom. The later
+# GO2DDS atom wins and spins the L1 up. go2-nav's remappings still apply.
+go2_nav_l1 = autoconnect(
     go2_nav,
     GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link", obstacle_avoidance=False),
     GO2L1Lidar.blueprint(),
@@ -218,4 +218,4 @@ VIEWER_GLOBAL_CONFIG = {
     "robot_model": "unitree_go2",
 }
 
-go2_dds_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
+go2_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
