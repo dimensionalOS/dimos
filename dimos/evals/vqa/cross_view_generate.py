@@ -26,7 +26,7 @@ from typing import Any
 import jsonlines
 from pydantic import BaseModel, ConfigDict, Field
 
-from dimos.agents.cli.util.file_system_utils import STATE_DIR
+from dimos.constants import STATE_DIR
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
 from dimos.evals.vqa.primitives.cross_view_identity import (
