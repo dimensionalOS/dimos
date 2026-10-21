@@ -16,24 +16,26 @@
 
 Run: uv run python -m dimos.perception.localize.tools.tool_localize
          [query ...] [out.rrd] [--dataset <db>] [--from <s>] [--duration <s>] [--multi]
-         [--policy <json>] [--embedder <m>] [--detector <m>] [--segmenter <m>]
+         [--params <name|json>] [--embedder <m>] [--detector <m>] [--segmenter <m>]
 
 The offline bench for a stage combination: try it on a recording and find
-its policy before deploying. Each stage takes a dandetect registry name or
-a module:attr path; the policy starts at the chosen models' shifts.
+its params before deploying. Each stage takes a dandetect registry name or
+a module:attr path. --params names a bench preset from PRESETS, xarm when
+omitted, or sets fields as JSON on xarm or on the preset its "base" key
+names; the chosen models' shifts apply as in DanDetector.shifted.
 
 Every calibrated camera with colour runs in one pass, lifted through its
 aligned depth or, without one, the recording's lidar scans of the window merged.
 With --multi the queries go to localize() as one list and share one
-detection pass; without it each query runs alone. --policy overrides
-LocalizePolicy fields. Every query prints one line per verified instance,
-plus where each camera puts it on a multi-camera rig. Exit code 0 when any
-query verified; 1 when none did, with "no verified detection of ..." per
-miss. An ambiguous instance (identical twins in view) is flagged.
+detection pass; without it each query runs alone. Every query prints one
+line per verified instance, plus where each camera puts it on a
+multi-camera rig. Exit code 0 when any query verified; 1 when none did,
+with "no verified detection of ..." per miss. An ambiguous instance
+(identical twins in view) is flagged.
 """
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import heapq
 from itertools import combinations
 import json
@@ -51,17 +53,65 @@ from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
-from dimos.perception.localize.types import Localization, LocalizePolicy
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.data import get_data
 
 XARM_DATASET = (
     "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
     "xarm6_worldbelief_20260729_203624_161992.db"
 )
+# offline bench presets, fit with SigLIP + OWLv2 + EdgeTAM on each rig's recordings
+XARM_PARAMS = LocalizeParams()
+DUAL_YAM_PARAMS = replace(XARM_PARAMS, min_camera_range_m=0.07)
+GO2_PARAMS = LocalizeParams(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=13,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+)
+G1_PARAMS = replace(GO2_PARAMS, min_points=30)
+
+PRESETS: dict[str, LocalizeParams] = {
+    "xarm": XARM_PARAMS,
+    "dual_yam": DUAL_YAM_PARAMS,
+    "go2": GO2_PARAMS,
+    "g1": G1_PARAMS,
+}
+
+
+def parse_params(
+    spec: str, current: LocalizeParams = XARM_PARAMS
+) -> tuple[LocalizeParams, dict[str, Any]]:
+    """The params ``spec`` starts from, and the fields it sets on them.
+
+    ``""`` keeps ``current``, a preset name switches to that preset, and a JSON
+    object sets its fields on ``current``, or on the preset its ``"base"`` key names.
+    """
+    spec = spec.strip()
+    fields: dict[str, Any] = {}
+    name: str | None = spec or None
+    if spec.startswith("{"):
+        fields = json.loads(spec)
+        name = fields.pop("base", None)
+    if name is None:
+        return current, fields
+    if name not in PRESETS:
+        raise ValueError(f"unknown preset {name!r}: one of {', '.join(PRESETS)}")
+    return PRESETS[name], fields
+
+
 REFUSAL_MARGIN = 0.15
 POINT_SIZE = 0.005  # m, depth camera point spacing
 LIDAR_POINT_SIZE = 0.03  # m, a lidar cloud that carries no lattice pitch
 MAP_CELL = 0.01  # m, backdrop voxel and carve cell
+WALK_MAP_CELL = 0.03  # m, backdrop voxel of a mobile rig's merged depth frames
+WALK_DEPTH_TRUNC = 4.0  # m, the depth each of those frames keeps
 BASE_FRAME = "base_link"  # a mobile robot's body frame
 ROBOT_HALF_SIZES = (0.35, 0.155, 0.2)  # m, the Go2 body box the go2 blueprints draw
 ROBOT_COLOR = (0, 255, 127)
@@ -92,8 +142,9 @@ def render(
     """Write the .rrd - rerun stays an inline import.
 
     Entity contract: ``map/<camera>`` is each depth camera's RGBD cloud at
-    ``backdrop_ts`` and ``map/lidar`` the lidar's scans over the window, both
-    carved free of every answer's cells and desaturated. Each
+    ``backdrop_ts``, on a mobile rig its frames over the window merged, and
+    ``map/lidar`` the lidar's scans over the window, all carved free of every
+    answer's cells and desaturated. Each
     ``detections/<query>/answer/<k>`` is one verified instance, its sightings
     split per camera under ``<k>/<camera>`` and textured with each sighting's
     own image, wrapped in a labeled wireframe box; answers are static. Every
@@ -108,7 +159,7 @@ def render(
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.sensor_msgs.PointCloud2 import _get_colormap_lut
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, _get_colormap_lut
     from dimos.visualization.rerun.init import rerun_init
 
     names = {frame: rr.escape_entity_path_part(frame) for frame in rig.cameras}
@@ -171,16 +222,33 @@ def render(
         height, width = rgb.shape[:2]
         return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
 
-    # backdrop: each depth camera's RGBD cloud at the answer frame and the
-    # lidar's scans over the window, height-colored over the range they share
+    # backdrop: each depth camera's RGBD cloud at the answer frame, on a mobile
+    # rig its frames over the window merged, and the lidar's scans over the
+    # window, height-colored over the range they share
     through_lidar = {frame for frame, camera in rig.cameras.items() if camera.depth is None}
     views: dict[str, tuple[np.ndarray, float]] = {}
     for frame, name in names.items():
-        backdrop = rig.backdrop(backdrop_ts, frame) if frame not in through_lidar else None
-        if backdrop is not None:
+        if frame in through_lidar:
+            continue
+        if rig.mobile:
+            parts = [
+                cloud.voxel_downsample(WALK_MAP_CELL).points_f32()
+                for obs in rig.cameras[frame].color.after(t0).before(t1).transform(throttle(1.0))
+                if (cloud := rig.backdrop(obs.ts, frame, WALK_DEPTH_TRUNC)) is not None
+            ]
+            if not parts:
+                continue
+            merged = PointCloud2.from_numpy(np.vstack(parts), frame_id=rig.world_frame)
+            carved = carve(merged.voxel_downsample(WALK_MAP_CELL).points_f32())
+            spacing = WALK_MAP_CELL
+        else:
+            backdrop = rig.backdrop(backdrop_ts, frame)
+            if backdrop is None:
+                continue
             carved = carve(backdrop.voxel_downsample(MAP_CELL).points_f32())
-            if len(carved):
-                views[name] = (carved, POINT_SIZE)
+            spacing = POINT_SIZE
+        if len(carved):
+            views[name] = (carved, spacing)
     lidar_size = LIDAR_POINT_SIZE
     lidar_map = rig.lidar_map() if through_lidar else None
     if lidar_map is not None:
@@ -419,7 +487,12 @@ def main() -> int:
         action="store_true",
         help="pass all queries to localize() as one list sharing one detection pass",
     )
-    parser.add_argument("--policy", help='JSON of LocalizePolicy overrides, e.g. {"min_views": 3}')
+    parser.add_argument(
+        "--params",
+        default="xarm",
+        help=f"a preset, one of {', '.join(PRESETS)}, or JSON of LocalizeParams fields on xarm "
+        'or on its "base" preset, e.g. {"base": "go2", "min_points": 30}',
+    )
     parser.add_argument("--embedder", default="siglip", help="frame retrieval model")
     parser.add_argument("--detector", default="owlv2", help="open-vocabulary detector")
     parser.add_argument("--segmenter", default="edgetam", help="box to mask model")
@@ -439,10 +512,11 @@ def main() -> int:
     if rig.lidar is not None:
         rig.lidar = rig.lidar.after(after).before(before)
     detector = DanDetector(args.embedder, args.detector, args.segmenter)
-    policy = detector.policy(json.loads(args.policy) if args.policy else None)
-    default = LocalizePolicy()
-    changed = {k: v for k, v in asdict(policy).items() if v != getattr(default, k)}
-    print(f"stages: {' + '.join(detector.names)}; policy: {changed or 'default'}")
+    base, fields = parse_params(args.params, XARM_PARAMS)
+    params = detector.shifted(base, fields)
+    name = next(n for n, p in PRESETS.items() if p == base)
+    changed = {k: v for k, v in asdict(params).items() if v != getattr(base, k)}
+    print(f"stages: {' + '.join(detector.names)}; params: {name} {changed or ''}".rstrip())
 
     traces: list[tuple[str, LocalizeTrace]] = []
     backdrop_ts: float | None = None
@@ -450,7 +524,9 @@ def main() -> int:
         index = embed_index(rig, dan.embedder, after, before)
         for batch in [queries] if args.multi else [[query] for query in queries]:
             batch_traces = [LocalizeTrace() for _ in batch]
-            results = dan.localize(batch, index=index, rig=rig, policy=policy, traces=batch_traces)
+            results = dan.localize(
+                batch, index=index, rig=rig, params=base, fields=fields, traces=batch_traces
+            )
             for query, trace, hits in zip(batch, batch_traces, results, strict=True):
                 if report(query, hits, trace, rig, lo) and backdrop_ts is None:
                     backdrop_ts = hits[0].last_seen_timestamp

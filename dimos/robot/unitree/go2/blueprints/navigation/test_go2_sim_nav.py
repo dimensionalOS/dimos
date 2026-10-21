@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.go2_sim import go2_sim
 from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
@@ -46,6 +47,15 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
     for name in _atoms(_go2_nav):
         assert (sim[name].module, sim[name].kwargs) == (robot[name].module, robot[name].kwargs)
         assert _remappings(go2_sim_nav, name) == _remappings(go2_nav, name)
+
+
+def test_teleop_cancel_reaches_the_planner() -> None:
+    def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
+        (atom,) = (a for a in go2_nav.active_blueprints if a.module is module)
+        (stream,) = (s for s in atom.streams if s.name == "goal")
+        return go2_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+
+    assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 
 
 def test_one_movement_manager() -> None:
