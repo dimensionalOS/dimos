@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ElementTree
 
+import pytest
+
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.diy.alfred.blueprints.vis_nav import DEPTH_FRAME, IR_ENTITY_BY_FRAME
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 from dimos.robot.diy.alfred.mount_tf import CAMERA_LINKS, mount_transforms
+
+# The urdf is LFS data.
+pytestmark = pytest.mark.self_hosted
 
 
 def _buffer(root_frame: str) -> MultiTBuffer:
