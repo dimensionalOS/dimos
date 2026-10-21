@@ -1,0 +1,40 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 897.12 596.16" data-pikchr-date="20260403102956">
+<path d="M342.36,240.48L554.76,240.48A9 9 0 0 0 563.76 231.48L563.76,47.88A9 9 0 0 0 554.76 38.88L342.36,38.88A9 9 0 0 0 333.36 47.88L333.36,231.48A9 9 0 0 0 342.36 240.48Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="448.56" y="17.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">laptop: Host</text>
+<path d="M367.324,131.76L529.796,131.76A9 9 0 0 0 538.796 122.76L538.796,70.2A9 9 0 0 0 529.796 61.2L367.324,61.2A9 9 0 0 0 358.324 70.2L358.324,122.76A9 9 0 0 0 367.324 131.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="448.56" y="86.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">blueprint root</text>
+<text x="448.56" y="106.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">dimos run ...</text>
+<path d="M395.548,225.36L501.572,225.36A9 9 0 0 0 510.572 216.36L510.572,163.8A9 9 0 0 0 501.572 154.8L395.548,154.8A9 9 0 0 0 386.548 163.8L386.548,216.36A9 9 0 0 0 395.548 225.36Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="448.56" y="180" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">viewer</text>
+<text x="448.56" y="200.16" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">fragment</text>
+<polygon points="448.56,154.8 444.24,143.28 452.88,143.28" style="fill:rgb(255,255,255)"/>
+<path d="M448.56,131.76L448.56,149.04"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<path d="M11.16,557.28L223.56,557.28A9 9 0 0 0 232.56 548.28L232.56,364.68A9 9 0 0 0 223.56 355.68L11.16,355.68A9 9 0 0 0 2.16 364.68L2.16,548.28A9 9 0 0 0 11.16 557.28Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="117.36" y="578.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Jetson: Host</text>
+<path d="M64.3478,491.76L170.372,491.76A9 9 0 0 0 179.372 482.76L179.372,430.2A9 9 0 0 0 170.372 421.2L64.3478,421.2A9 9 0 0 0 55.3478 430.2L55.3478,482.76A9 9 0 0 0 64.3478 491.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="117.36" y="446.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">go2 nav</text>
+<text x="117.36" y="466.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">fragment</text>
+<path d="M673.56,557.28L885.96,557.28A9 9 0 0 0 894.96 548.28L894.96,364.68A9 9 0 0 0 885.96 355.68L673.56,355.68A9 9 0 0 0 664.56 364.68L664.56,548.28A9 9 0 0 0 673.56 557.28Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="779.76" y="578.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">GPU box: Host</text>
+<path d="M726.748,491.76L832.772,491.76A9 9 0 0 0 841.772 482.76L841.772,430.2A9 9 0 0 0 832.772 421.2L726.748,421.2A9 9 0 0 0 717.748 430.2L717.748,482.76A9 9 0 0 0 726.748 491.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="779.76" y="446.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">mesher</text>
+<text x="779.76" y="466.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">fragment</text>
+<polygon points="229.924,358.316 234.294,346.815 240.779,352.525" style="fill:rgb(255,255,255)"/>
+<polygon points="335.996,237.844 331.626,249.345 325.141,243.635" style="fill:rgb(255,255,255)"/>
+<path d="M233.73,353.993L332.19,242.167"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="282.96" y="286.38" text-anchor="middle" fill="rgb(255,255,255)" transform="rotate(-48.63704255 282.96,298.08)" dominant-baseline="central">zenoh</text>
+<polygon points="561.124,237.844 571.979,243.635 565.494,249.345" style="fill:rgb(255,255,255)"/>
+<polygon points="667.196,358.316 656.341,352.525 662.826,346.815" style="fill:rgb(255,255,255)"/>
+<path d="M564.93,242.167L663.39,353.993"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="614.16" y="286.38" text-anchor="middle" fill="rgb(255,255,255)" transform="rotate(48.63704255 614.16,298.08)" dominant-baseline="central">zenoh</text>
+<polygon points="232.56,456.48 244.08,452.16 244.08,460.8" style="fill:rgb(255,255,255)"/>
+<polygon points="664.56,456.48 653.04,460.8 653.04,452.16" style="fill:rgb(255,255,255)"/>
+<path d="M238.32,456.48L658.8,456.48"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="448.56" y="444.78" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">zenoh</text>
+<polygon points="117.36,421.2 120.756,409.375 127.694,414.523" style="fill:rgb(255,255,255)"/>
+<path d="M120.792,416.574L358.324,96.48"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<text x="237.842" y="247.14" text-anchor="middle" fill="rgb(255,255,255)" transform="rotate(-53.42212708 237.842,258.84)" dominant-baseline="central">fragment</text>
+<polygon points="779.76,421.2 769.426,414.523 776.364,409.375" style="fill:rgb(255,255,255)"/>
+<path d="M538.796,96.48L776.328,416.574"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<text x="659.278" y="247.14" text-anchor="middle" fill="rgb(255,255,255)" transform="rotate(53.42212708 659.278,258.84)" dominant-baseline="central">fragment</text>
+</svg>

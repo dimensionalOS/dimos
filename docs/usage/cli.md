@@ -348,6 +348,10 @@ Upload recordings (or any file) to hosted storage and pull them back. See [Cloud
 | `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
 | `status ID` / `quota` | Upload state and parts on server / storage quota |
 
+### `dimos host`
+
+Run this machine as a Host for [distributed runs](/docs/usage/distributed/index.md). See [`dimos host`](/docs/usage/distributed/cli.md).
+
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
