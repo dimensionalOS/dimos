@@ -14,27 +14,11 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-This file is the contract: every relocalizer, whatever it matches, loads a
-prior map and answers with a ``world -> map`` transform, so it publishes the
-same two things - that transform on ``tf`` and the placed prior map on
-``loaded_map``. All of that lives here: ``map_file`` is read into
-``self.premap``, republished on ``loaded_map`` once a fix can resolve its
-frame, and :meth:`RelocalizationModule.submit` takes the transform.
-
-An implementation reads ``self.premap`` in its own ``start()`` (after
-``super().start()``, and ``None`` means no map was configured), builds
-whatever it matches against, and drives itself from its own inputs. It owns
-what the base cannot know: which ports it listens on, when to attempt a fix,
-and how good a fix must be. Matching lidar against the premap's points,
-apriltags against tag poses baked into it and GPS against a datum share none
-of that. See ``lidar/module.py``, the pointcloud runtime.
-
-Whether a fix is good enough is the implementation's call, made against its
-own config. A second threshold here would be a second place to configure one
-decision, and the two would drift.
-
-A dual strategy is a subclass of two implementations: ports merge across the
-MRO and ``start()`` chains through ``super()``.
+The base loads ``map_file`` into ``self.premap``, publishes accepted
+``world -> map`` fixes on ``tf`` and the premap on ``loaded_map`` once a fix lands.
+An implementation reads ``self.premap`` after ``super().start()`` (``None`` when
+no map is configured), picks its inputs, decides when a fix is good enough, and
+hands it to :meth:`RelocalizationModule.submit`. See ``lidar/module.py``.
 """
 
 from __future__ import annotations
@@ -80,20 +64,15 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 
 class Config(ModuleConfig):
-    # Premap stem or path, e.g. `--map-file=go2_hongkong_office_twopass_map`;
-    # `.pc2.lcm` is appended if absent. Without one the module runs but never
-    # attempts a fix.
+    # Premap stem or path (`.pc2.lcm` appended if absent); None never attempts a fix
     map_file: str | None = None
-    # What the live fixed frame is called, whatever the odometry is in
+    # Live fixed frame
     world_frame: str = "world"
-    # frame for a loaded premap
+    # Frame for the loaded premap
     map_frame: str = "map"
-    # Seconds between tf republishes of the accepted fix. The fix itself does
-    # not change but tf is not latched,
+    # Seconds between tf republishes of the accepted fix (tf is not latched)
     tf_interval: float = 10.0
-    # Seconds between `loaded_map` republishes. A premap does not change, so
-    # one publish is all the information there is - but the topic is not
-    # latched. Zero for the one publish.
+    # Seconds between `loaded_map` republishes; 0 publishes once per fix
     republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted.
     relocalize_once: bool = True

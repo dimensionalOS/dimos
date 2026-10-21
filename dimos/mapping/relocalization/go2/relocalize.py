@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# https://github.com/dimensionalOS/dimos/blob/2c069c8ac3dbc677fbba31fddd2f68291f21a50a/dimos/mapping/relocalization/relocalize.py
-# auto research from ivan sloptimization/ransac
-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -54,39 +51,20 @@ def _preprocess(
     return down, fpfh
 
 
-# Per-process cache of the global map's downsampled cloud + FPFH features and
-# the fine-voxel cloud used for ICP. The evaluator forks workers and reuses
-# the same global map across all 20 frames per worker, so the first call in
-# each worker pays the cost; the remaining 4-5 frames it handles get it free.
-# Allowed per program.md: "caching the global map's FPFH features across calls
-# is fine *within one run*; the evaluator instantiates fresh state per process."
-_GLOBAL_CACHE: dict[tuple[str, float, int], Any] = {}
+@dataclass(frozen=True)
+class Target:
+    """A global map prepared once: per-scale downsample and FPFH, and the fine cloud for ICP."""
+
+    scales: dict[float, tuple[o3d.geometry.PointCloud, Any]]
+    fine: o3d.geometry.PointCloud
 
 
-def _global_preprocess(
-    global_map: o3d.geometry.PointCloud, voxel_size: float
-) -> tuple[o3d.geometry.PointCloud, Any]:
-    key = ("ransac", voxel_size, len(global_map.points))
-    cached = _GLOBAL_CACHE.get(key)
-    if cached is None:
-        cached = _preprocess(global_map, voxel_size)
-        _GLOBAL_CACHE[key] = cached
-    return cached  # type: ignore[no-any-return]
-
-
-def _global_fine(global_map: o3d.geometry.PointCloud, voxel_size: float) -> o3d.geometry.PointCloud:
+def prepare(global_map: o3d.geometry.PointCloud) -> Target:
     import open3d as o3d
 
-    key = ("fine", voxel_size, len(global_map.points))
-    cached = _GLOBAL_CACHE.get(key)
-    if cached is None:
-        down = global_map.voxel_down_sample(voxel_size)
-        down.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 2, max_nn=30)
-        )
-        cached = down
-        _GLOBAL_CACHE[key] = cached
-    return cached  # type: ignore[no-any-return]
+    fine = global_map.voxel_down_sample(FINE_VOXEL)
+    fine.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30))
+    return Target({vs: _preprocess(global_map, vs) for vs, _ in SCALE_PLAN}, fine)
 
 
 def _ransac(
@@ -128,45 +106,75 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(z_world[2], -1.0, 1.0))))
 
 
+def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+    import open3d as o3d
+
+    nrm = np.asarray(cloud.normals)
+    mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
+    if mask.sum() < 100:
+        return cloud  # too sparse -> fall back to full cloud
+    sub = o3d.geometry.PointCloud()
+    sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
+    sub.normals = o3d.utility.Vector3dVector(nrm[mask])
+    return sub
+
+
+def wall_fitness(
+    target: Target,
+    local_map: o3d.geometry.PointCloud,
+    T: np.ndarray,
+) -> float:
+    """What `relocalize` would score placement ``T`` as: wall-only fitness after its stage 2 polish."""
+    import open3d as o3d
+
+    _reg = o3d.pipelines.registration
+    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
+    src_fine.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
+    )
+    tgt_fine = target.fine
+    tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
+    r = _reg.registration_icp(
+        _wall_subset(src_fine),
+        _wall_subset(tgt_fine),
+        RERANK_DIST,
+        T,
+        tukey,
+        _reg.ICPConvergenceCriteria(max_iteration=70),
+    )
+    return float(r.fitness)
+
+
 def relocalize(
-    global_map: o3d.geometry.PointCloud,
+    target: Target,
     local_map: o3d.geometry.PointCloud,
 ) -> tuple[np.ndarray, float]:
-    """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
+    """Return the 4x4 placing ``local_map`` in the ``target`` map, and its wall fitness.
 
-    Multi-scale x multi-restart FPFH+RANSAC -> gravity-filtered, re-ranked by
-    fine-scale inlier ratio (not RANSAC's own fitness) -> fine ICP. The
-    rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
-    5m-off candidate has ~0 inliers while RANSAC reports it as fit.
+    Multi-scale FPFH+RANSAC candidates, gravity-filtered, re-ranked by wall-only
+    fine-scale fitness (RANSAC's own fitness passes wrong-room candidates), then ICP.
     """
     import open3d as o3d
 
     _reg = o3d.pipelines.registration
 
-    # Fine downsample once — used for both candidate scoring and the final ICP.
+    # Fine downsample once, for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
     src_fine.estimate_normals(
         o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
     )
-    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+    tgt_fine = target.fine
 
     candidates: list[np.ndarray] = []  # 4x4 transforms
     for vs, n_runs in SCALE_PLAN:
         src_down, src_fpfh = _preprocess(local_map, vs)
-        tgt_down, tgt_fpfh = _global_preprocess(global_map, vs)
+        tgt_down, tgt_fpfh = target.scales[vs]
         for _ in range(n_runs):
-            # Successive calls advance Open3D's RNG state (seeded per-frame in
-            # run.py), so each restart explores a different sample sequence.
+            # Successive calls advance Open3D's RNG state, so each restart explores a new sample.
             result = _ransac(src_down, tgt_down, src_fpfh, tgt_fpfh, vs)
             candidates.append(np.asarray(result.transformation))
 
-    # Centroid-aware yaw flip: for every candidate, add the variant where the
-    # body cloud is rotated 180° around its OWN xy-centroid (not body origin).
-    # A naive `T @ Rz_180` rotates around body origin, which moves the entire
-    # cloud across the world when lidar coverage isn't centered on the robot.
-    # Rotating around the cloud centroid keeps the flipped cloud in the same
-    # approximate world location — the right reading of "same place, opposite
-    # heading" for an indoor submap.
+    # Each candidate also flipped 180 deg about the cloud's own xy centroid: same place, opposite heading.
     src_pts = np.asarray(src_fine.points)
     c_body = np.array([src_pts[:, 0].mean(), src_pts[:, 1].mean(), 0.0])
     rz180 = np.diag([-1.0, -1.0, 1.0])
@@ -179,22 +187,7 @@ def relocalize(
     upright = [T for T in candidates if _gravity_tilt_deg(T) <= GRAVITY_TILT_MAX_DEG]
     pool = upright if upright else candidates
 
-    # Build WALL-ONLY clouds for scoring + polish. Floor/ceiling points have
-    # vertical normals; they fit equally well in any yaw rotation (flat planes
-    # are rotationally symmetric). Including them in scoring lets a 180°-flipped
-    # candidate hide its wall misalignment behind perfect floor alignment. The
-    # FULL clouds are still used for the final refinement, so the gravity
-    # anchor and inlier density are preserved in the output.
-    def _wall_subset(cloud: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-        nrm = np.asarray(cloud.normals)
-        mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
-        if mask.sum() < 100:
-            return cloud  # too sparse -> fall back to full cloud
-        sub = o3d.geometry.PointCloud()
-        sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
-        sub.normals = o3d.utility.Vector3dVector(nrm[mask])
-        return sub
-
+    # Score and polish on walls only: floors fit any yaw, so they would hide a flipped candidate.
     src_walls = _wall_subset(src_fine)
     tgt_walls = _wall_subset(tgt_fine)
 
@@ -205,9 +198,7 @@ def relocalize(
 
     top_k = sorted(pool, key=fine_fitness, reverse=True)[:10]
 
-    # Stage 2: run a moderate-distance ICP on each top-10 on WALL clouds.
-    # Wall correspondences drive yaw and xy; the rerank then picks the
-    # candidate whose walls actually align (not the one whose floors agree).
+    # Stage 2: ICP each of the top 10 on walls, keep the one whose walls align best.
     tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
     polished: list[tuple[float, np.ndarray]] = []
     for T0 in top_k:

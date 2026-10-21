@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 from pydantic import Field
-from reactivex import combine_latest, operators as ops
+from reactivex import operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -44,7 +44,6 @@ class Config(ModuleConfig):
 class CostMapper(Module):
     config: Config
     global_map: In[PointCloud2]
-    merged_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
     @rpc
@@ -53,12 +52,6 @@ class CostMapper(Module):
 
         # numba (0.3 s): load the occupancy kernels now rather than on the first map.
         import dimos.mapping.pointclouds.occupancy_kernels  # noqa: F401
-
-        def _select_map(
-            pair: tuple[PointCloud2, PointCloud2 | None],
-        ) -> PointCloud2:
-            gmap, merged = pair
-            return merged if merged is not None else gmap
 
         def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
             self.global_costmap.publish(grid)
@@ -73,11 +66,7 @@ class CostMapper(Module):
             return grid, elapsed_ms, rx_monotonic
 
         self.register_disposable(
-            combine_latest(
-                self.global_map.observable(),  # type: ignore[no-untyped-call]
-                self.merged_map.observable().pipe(ops.start_with(None)),  # type: ignore[no-untyped-call,arg-type]
-            )
-            .pipe(ops.map(_select_map))
+            self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(_calculate_and_time))
             .subscribe(lambda result: _publish_costmap(result[0], result[1], result[2]))
         )

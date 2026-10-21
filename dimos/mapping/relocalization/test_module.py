@@ -64,7 +64,7 @@ def test_submit_publishes_and_checks_frames(module):
 
 
 def test_relocalize_once_stops_after_the_first_fix(module):
-    """What the flag does, either way. Which one is the default is a policy call."""
+    """What the flag does, either way."""
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
 
     once = module(relocalize_once=True)
@@ -93,15 +93,14 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
 
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
-    """Loading is the base's: every strategy reads a premap and publishes it, once placed."""
+    """The base loads the premap and publishes it once placed."""
     path = tmp_path / "somewhere.pc2.lcm"
     path.write_bytes(
         PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
     )
     m = module()
     published, disposables = [], []
-    # The one collaborator worth faking: a real Out port would publish onto a
-    # bus nothing in this test is listening to.
+    # Capture publishes without a bus.
     m.loaded_map = SimpleNamespace(publish=published.append)
     m.register_disposable = disposables.append
 

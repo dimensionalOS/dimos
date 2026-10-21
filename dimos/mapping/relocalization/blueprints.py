@@ -16,15 +16,9 @@
 
     dimos run relocalize-mid360
 
-Replays a mid360 walk's lidar and tf at wall-clock rate into the same mapper
-the Go2 stack runs, so the relocalizer sees exactly the streams it would on
-hardware, and has to find the walk inside a premap built from it. Watch it in
-Rerun: `loaded_map` appears only once a fix lands, and lands on top of
-`global_map` when the fix is right.
-
-The recording and the premap are the eval's dataset (``lidar/tune.py``,
-``lidar/tune.md``), so a demo that looks wrong and an eval that scores
-badly are the same bug.
+Replays a mid360 walk's lidar and tf at wall-clock rate into the Go2 mapper and
+relocalizer. In Rerun, `loaded_map` appears once a fix lands, on top of
+`global_map` when the fix is right. Same dataset as ``lidar/tune.py``.
 """
 
 from typing import Any
@@ -45,8 +39,6 @@ from dimos.visualization.vis_module import vis_module
 
 logger = setup_logger()
 
-# The walk, and a premap built from the same walk's second half. Overlapping
-# but not identical: the relocalizer has to place the live scans, not
 WORLD = "odom"
 
 
@@ -116,9 +108,7 @@ relocalize_mid360 = autoconnect(
     RayTracingVoxelMap.blueprint(voxel_size=0.1, world_frame=WORLD, global_emit_every=5).remappings(
         [(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]
     ),
-    # LocalMapRelocalization and not LidarWindowRelocalization: these recordings
-    # carry the scans in the sensor frame, as the sensor published them, and the
-    # window one wants them registered. The mapper is what registers them here.
+    # Scans are recorded in the sensor frame, so match the mapper's registered local map.
     LocalMapRelocalization.blueprint(world_frame=WORLD),
     vis_module(
         "rerun",
