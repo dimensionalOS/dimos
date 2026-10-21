@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.local_planner.native import LocalPlannerNative
@@ -72,8 +73,8 @@ _go2_nav = autoconnect(
         )
     ),
     _mls_planner,
-    LocalPlannerNative.blueprint(body_dilate_m=BODY_DILATE_M),
-    TrajectoryFollowerNative.blueprint(),
+    LocalPlannerNative.blueprint(embodiment=GO2, body_dilate_m=BODY_DILATE_M),
+    TrajectoryFollowerNative.blueprint(embodiment=GO2),
     MovementManager.blueprint(),
 )
 
@@ -87,5 +88,5 @@ def go2_nav_overrides() -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
         **nav_visual_override(planner_viz_hz, voxel_size, WALL_CLEARANCE_M),
-        **motion_visual_override(body_dilate_m=BODY_DILATE_M),
+        **motion_visual_override(embodiment=GO2, body_dilate_m=BODY_DILATE_M),
     }

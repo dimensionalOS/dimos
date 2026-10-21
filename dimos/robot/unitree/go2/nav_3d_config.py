@@ -17,7 +17,7 @@
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import GO2_NAV
+from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNativeConfig
 from dimos.robot.unitree.go2.constants import BASE_LINK_HEIGHT, ROBOT_HEIGHT
 
@@ -66,5 +66,5 @@ def relocalization(republish_loaded_map: float) -> Blueprint:
     return LocalMapRelocalization.blueprint(
         world_frame="odom",
         republish_loaded_map=republish_loaded_map,
-        relocalize=GO2_NAV,
+        relocalize=MID360_NAV,
     )

@@ -23,9 +23,9 @@ from dimos.robot.unitree.go2.dds.blueprints import (
 )
 from dimos.robot.unitree.go2.nav_3d_config import voxel_size
 
-# go2-dds-nav-viewer meshing map_regions on this machine's GPU; the mesh stands in for
+# go2-nav-viewer meshing map_regions on this machine's GPU; the mesh stands in for
 # the region cloud and surface map, which stay tickable.
-go2_dds_nav_viewer_mesh = autoconnect(
+go2_nav_viewer_mesh = autoconnect(
     nav_viewer(
         extra_topics=("mesh",),
         visual_override={MESH_ENTITY: MeshColours(alpha=1.0)},

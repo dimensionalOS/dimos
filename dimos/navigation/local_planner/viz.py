@@ -30,7 +30,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import (
     ceilings_to_clearance,
     decode_ceilings,
@@ -65,7 +64,7 @@ def plan_clearance(msg: Path, emb: Embodiment) -> NDArray[np.float64] | None:
 
 def render_body(
     msg: Path,
-    emb: Embodiment = GO2,
+    emb: Embodiment,
     stride_m: float = 0.35,
     line_radius: float = 0.012,
 ) -> Archetype | None:
@@ -146,8 +145,8 @@ def render_ground_support(msg: PointCloud2) -> Archetype | None:
 
 def render_plan(
     msg: Path,
+    emb: Embodiment,
     entity: str = "world/path",
-    emb: Embodiment = GO2,
     stride_m: float = 0.35,
     line_radius: float = 0.012,
 ) -> RerunMulti | None:
@@ -167,7 +166,7 @@ def render_plan(
 
 
 def motion_visual_override(
-    embodiment: Embodiment = GO2,
+    embodiment: Embodiment,
     line_radius: float = 0.012,
     body_dilate_m: float = 0.0,
     entity: str = "world/path",

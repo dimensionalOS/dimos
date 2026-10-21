@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
 import type { CostmapValue, VoxelsValue } from "@dimos/sdk";
@@ -306,6 +306,10 @@ describe("VideoPanel", () => {
     await act(async () => {
       frame(store, 1, now / 1000);
       await flush();
+      // The first frame published its snapshot before the decode failed
+      // (the store's first-frame flush); the failure shows at the next
+      // snapshot, which the moving age bucket forces within 500 ms.
+      now += 500;
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
@@ -875,6 +879,7 @@ describe("MapPanel", () => {
       );
       await flush();
       await flush();
+      now += 500; // the failure shows at the next snapshot (see the video test)
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
@@ -1323,6 +1328,77 @@ describe("Map3DPanel", () => {
     const noPose = { ...SPEC, channels: [VOX_CH] };
     act(() => root.render(<Map3DPanel spec={noPose} store={store} sinkDeps={deps} />));
     expect(follow()).toBeNull();
+  });
+
+  it("disposes the scene while its canvas is still in the document", async () => {
+    // OrbitControls.dispose() unregisters from the canvas's root node; a
+    // canvas already detached from the document leaks the listener and
+    // everything it reaches (the whole grid, per page switch).
+    let connectedAtDispose: boolean | null = null;
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        scene.dispose.mockImplementation(() => {
+          connectedAtDispose = canvas.isConnected;
+        });
+        return Promise.resolve(scene as unknown as VoxelScene);
+      },
+    };
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    act(() => root.render(<div />));
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+    expect(connectedAtDispose).toBe(true);
+  });
+
+  it("replaces the canvas whenever the scene is recreated", async () => {
+    const deps = sinkDeps();
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const first = container.querySelector("canvas")!;
+    const changed = { ...SPEC, channels: [VOX_CH, "other_pose"] };
+    act(() => root.render(<Map3DPanel spec={changed} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const second = container.querySelector("canvas")!;
+    expect(first.isConnected).toBe(false);
+    expect(second).not.toBe(first);
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      root.render(<Map3DPanel spec={changed} store={new ChannelStore()} sinkDeps={deps} />)
+    );
+    await act(flush);
+    expect(second.isConnected).toBe(false);
+    expect(container.querySelector("canvas")).not.toBe(second);
+    expect(scene.dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives replayed effects separate canvases while the scene is loading", async () => {
+    const canvases: HTMLCanvasElement[] = [];
+    const scenes: ReturnType<typeof fakeScene>[] = [];
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        canvases.push(canvas);
+        const created = fakeScene();
+        scenes.push(created);
+        return Promise.resolve(created);
+      },
+    };
+    act(() => {
+      root.render(
+        <StrictMode>
+          <Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />
+        </StrictMode>,
+      );
+    });
+    await act(flush);
+    expect(canvases).toHaveLength(2);
+    expect(canvases[0]).not.toBe(canvases[1]);
+    expect(canvases[0].isConnected).toBe(false);
+    expect(container.querySelector("canvas")).toBe(canvases[1]);
+    expect(scenes[0].dispose).toHaveBeenCalledTimes(1);
+    expect(scenes[1].dispose).not.toHaveBeenCalled();
   });
 
   it("shows why the renderer could not start", async () => {

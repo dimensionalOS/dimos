@@ -663,6 +663,20 @@ def test_load_blueprint_twice(dynamic_coordinator) -> None:
     assert b.data3.transport.topic == c.data3.transport.topic
 
 
+def test_transport_observer_visits_existing_and_new_streams_once(dynamic_coordinator) -> None:
+    dynamic_coordinator.load_module(ModuleA)
+    seen: list[str] = []
+    with pytest.raises(RuntimeError, match="leave recording"):
+        with dynamic_coordinator.observe_transports(
+            lambda name, stream_type, transport: seen.append(name)
+        ):
+            dynamic_coordinator.load_module(ModuleB)
+            raise RuntimeError("leave recording")
+
+    dynamic_coordinator.load_module(SourceModule)
+    assert sorted(seen) == ["data1", "data2", "data3"]
+
+
 def test_load_module_convenience(dynamic_coordinator) -> None:
     """load_module is a shorthand for load_blueprint(cls.blueprint())."""
     dynamic_coordinator.load_module(ModuleA)
