@@ -136,7 +136,9 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
                 (MLSPlannerNative, "path", "planner_path"),
             ]
         ),
-        LocalPlannerNative.blueprint(embodiment=ALFRED, body_dilate_m=BODY_DILATE_M),
+        LocalPlannerNative.blueprint(
+            embodiment=ALFRED, body_dilate_m=BODY_DILATE_M, step_speed=0.2
+        ),
         TrajectoryFollowerNative.blueprint(embodiment=ALFRED),
         MovementManager.blueprint(),
     )
