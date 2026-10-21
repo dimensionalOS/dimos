@@ -290,3 +290,10 @@ joints and raw responses, preserved anchors, rejection beyond 2 degrees, nonfini
 values, gripper conversion, and the existing stop/stale/prompt behavior. No new
 hardware or API test was performed for this change, and fresh motor feedback and
 physical calibration remain unverified.
+
+Subsequent operator test: the user reported that physical rollout worked after
+stopping the preview episode, waiting for `busy=False`, and explicitly starting
+with `start_rollout(dispatch_actions=True)`. The earlier no-motion run had
+`dispatch_actions=False`; it was preview mode, not evidence of task preemption.
+This is operator-reported execution success, not an independently measured
+tracking, calibration, or motor-feedback-freshness result.
