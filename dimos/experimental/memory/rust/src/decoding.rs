@@ -30,6 +30,8 @@ use crate::{Codec, StreamConfig, IMAGE_PAYLOAD_TYPE};
 /// Transport-decoded payload consumed by storage codecs.
 #[derive(Debug)]
 pub(crate) enum DecodedPayload {
+    /// Plain CDR is preserved byte-for-byte, including its original Header.
+    Cdr(Vec<u8>),
     /// An LCM payload whose storage codecs operate on its canonical wire form.
     Lcm(Vec<u8>),
     /// UTF-8 JSON after removing the existing String transport envelope.
@@ -51,6 +53,12 @@ pub(crate) fn decode(
     data: &[u8],
     reception_ts: f64,
 ) -> Result<Vec<DecodedObservation>> {
+    if stream.codec == Codec::Cdr {
+        return Ok(vec![DecodedObservation {
+            ts: reception_ts,
+            payload: DecodedPayload::Cdr(data.to_vec()),
+        }]);
+    }
     if stream.codec == Codec::Json {
         anyhow::ensure!(
             stream.payload_type == "dimos.msgs.std_msgs.String.String",
@@ -194,6 +202,7 @@ mod tests {
 
     fn json_stream(field: Option<&str>) -> StreamConfig {
         StreamConfig {
+            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
             payload_type: "dimos.msgs.std_msgs.String.String".into(),

@@ -27,9 +27,11 @@ from pytest_mock import MockerFixture
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
+from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.messages.geometry_msgs.msg import PoseStamped as GeneratedPoseStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
@@ -359,3 +361,40 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
     assert popen.call_args.args[0] == "nix build -L path:."
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_plan_records_generated_messages_with_schema_on_plain_topic(backend):
+    transport = (
+        LCMTransport("pose", GeneratedPoseStamped, url="memq://")
+        if backend == "lcm"
+        else ZenohTransport("pose", GeneratedPoseStamped)
+    )
+    try:
+        plan = rust_cli_recorder.make_plan({("pose", GeneratedPoseStamped): transport})
+        assert plan.backend == backend
+        assert plan.topics == {"stream_0": "pose"}
+        assert plan.streams[0].codec == "cdr"
+        assert plan.streams[0].cdr_schema == recording_schema(GeneratedPoseStamped)
+    finally:
+        transport.stop()
+
+
+def test_prepare_uses_explicit_executable_without_build(tmp_path, monkeypatch, mocker):
+    executable = tmp_path / "recorder"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setattr(global_config, "record_executable", str(executable))
+    build = mocker.patch.object(rust_cli_recorder.subprocess, "Popen")
+    assert rust_cli_recorder.prepare_rust_recorder() == executable
+    build.assert_not_called()
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_prepare_rejects_unusable_explicit_executable(tmp_path, monkeypatch, exists):
+    executable = tmp_path / "recorder"
+    if exists:
+        executable.touch()
+    monkeypatch.setattr(global_config, "record_executable", str(executable))
+    with pytest.raises(PermissionError if exists else FileNotFoundError):
+        rust_cli_recorder.prepare_rust_recorder()

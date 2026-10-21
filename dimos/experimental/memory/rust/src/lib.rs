@@ -31,6 +31,7 @@ use tracing::{debug, info};
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
 
+pub mod cdr;
 mod decoding;
 mod encoding;
 pub mod store;
@@ -44,6 +45,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
+    Cdr,
     Lcm,
     Json,
     Jpeg,
@@ -54,6 +56,7 @@ pub enum Codec {
 impl Codec {
     pub(crate) fn id(self) -> &'static str {
         match self {
+            Self::Cdr => "cdr",
             Self::Lcm => "lcm",
             Self::Json => "json",
             Self::Jpeg => "jpeg",
@@ -73,11 +76,13 @@ pub struct StreamConfig {
     pub timestamp_field: Option<String>,
     #[serde(default)]
     pub json_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cdr_schema: Option<cdr::CdrSchema>,
 }
 
 impl StreamConfig {
     pub fn is_tf(&self) -> bool {
-        self.payload_type == TF_PAYLOAD_TYPE
+        self.codec != Codec::Cdr && self.payload_type == TF_PAYLOAD_TYPE
     }
 }
 
@@ -152,6 +157,18 @@ pub struct RecorderEngine {
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
         for stream in &config.streams {
+            if stream.codec == Codec::Cdr {
+                stream
+                    .cdr_schema
+                    .as_ref()
+                    .context("CDR codec requires its resolved schema")?
+                    .validate()?;
+            } else {
+                anyhow::ensure!(
+                    stream.cdr_schema.is_none(),
+                    "Only the cdr codec accepts a CDR schema"
+                );
+            }
             anyhow::ensure!(
                 stream.codec == Codec::Json
                     || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
@@ -467,6 +484,7 @@ mod tests {
 
     fn stream(name: &str, codec: Codec, is_tf: bool) -> Arc<StreamConfig> {
         Arc::new(StreamConfig {
+            cdr_schema: None,
             port: name.to_string(),
             name: name.to_string(),
             payload_type: if is_tf {
@@ -482,6 +500,7 @@ mod tests {
 
     fn typed_stream(name: &str, payload_type: &str, codec: Codec) -> Arc<StreamConfig> {
         Arc::new(StreamConfig {
+            cdr_schema: None,
             port: name.to_string(),
             name: name.to_string(),
             payload_type: payload_type.to_string(),
@@ -562,6 +581,7 @@ mod tests {
         let mut message = Imu::default();
         message.header.stamp = Time { sec: 42, nsec: 25 };
         let stream = Arc::new(StreamConfig {
+            cdr_schema: None,
             port: "imu".to_string(),
             name: "imu".to_string(),
             payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
@@ -817,6 +837,7 @@ mod tests {
         let message = lcm_msgs::std_msgs::String { data: text.into() };
         let schema = serde_json::json!({"type":"object","properties":{"sent":{"type":"number"}}});
         let stream = Arc::new(StreamConfig {
+            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
             payload_type: "dimos.msgs.std_msgs.String.String".into(),
@@ -868,5 +889,97 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cdr_recording_tests {
+    use super::*;
+    use crate::cdr::CdrSchema;
+    use tempfile::tempdir;
+
+    #[test]
+    fn cdr_raw_storage_keeps_schema_and_opaque_payload_with_reception_time() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("cdr.mcap");
+        let schema_text = "int32 sec\nuint32 nanosec\nstring label\n";
+        let stream = Arc::new(StreamConfig {
+            port: "events".into(),
+            name: "events".into(),
+            payload_type: "test_msgs.StampedEvent".into(),
+            codec: Codec::Cdr,
+            timestamp_field: None,
+            json_schema: None,
+            cdr_schema: Some(CdrSchema {
+                name: "test_msgs/msg/StampedEvent".into(),
+                data: schema_text.into(),
+            }),
+        });
+        let payload = vec![0, 1, 0, 0, 255, 123, 45];
+        let encoded = process(&stream, &payload, 99.0).unwrap().pop().unwrap();
+        assert_eq!(encoded.data, payload);
+        assert_eq!(encoded.ts, 99.0);
+        let config = store::RecordingStoreConfig::Mcap {
+            path: path.to_str().unwrap().into(),
+        };
+        let mut output = store::open(&config, &[(*stream).clone()], 1).unwrap();
+        output
+            .write_batch(&[Observation {
+                stream,
+                source_ts: encoded.ts,
+                reception_ts: 99.0,
+                data: encoded.data,
+            }])
+            .unwrap();
+        output.finish().unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        let messages = mcap::MessageStream::new(&bytes)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(message.publish_time, 99_000_000_000);
+        assert_eq!(message.log_time, 99_000_000_000);
+        assert_eq!(message.channel.message_encoding, "cdr");
+        assert_eq!(message.data.as_ref(), payload);
+        let actual_schema = message.channel.schema.as_ref().unwrap();
+        assert_eq!(actual_schema.name, "test_msgs/msg/StampedEvent");
+        assert_eq!(actual_schema.encoding, "ros2msg");
+        assert_eq!(actual_schema.data.as_ref(), schema_text.as_bytes());
+    }
+
+    #[test]
+    fn cdr_stream_preflight_rejects_missing_or_cross_codec_schema() {
+        let directory = tempdir().unwrap();
+        let mut stream = StreamConfig {
+            port: "sample".into(),
+            name: "sample".into(),
+            payload_type: "test.Sample".into(),
+            codec: Codec::Cdr,
+            cdr_schema: None,
+            timestamp_field: None,
+            json_schema: None,
+        };
+        let config = |stream| RecorderConfig {
+            store: store::RecordingStoreConfig::Mcap {
+                path: directory
+                    .path()
+                    .join("should-not-exist.mcap")
+                    .to_str()
+                    .unwrap()
+                    .into(),
+            },
+            encoding_threads: 1,
+            streams: vec![stream],
+        };
+        assert!(RecorderEngine::start(config(stream.clone())).is_err());
+        stream.cdr_schema = Some(CdrSchema {
+            name: "test_msgs/msg/Clock".into(),
+            data: "float64 ts\n".into(),
+        });
+        stream.codec = Codec::Lcm;
+        assert!(RecorderEngine::start(config(stream)).is_err());
+        assert!(!directory.path().join("should-not-exist.mcap").exists());
     }
 }

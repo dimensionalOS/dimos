@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import importlib.util
 import os
 from pathlib import Path
@@ -25,13 +26,14 @@ import time
 from typing import cast
 import uuid
 
+from dimos_cdrgen.registry import encode as encode_cdr
 import numpy as np
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingSession
 from dimos.experimental.memory.rust_recorder import (
@@ -42,15 +44,25 @@ from dimos.experimental.memory.rust_recorder import (
 )
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.store.cdr_mcap import CdrMcapStore
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
+from dimos.messages.builtin_interfaces.msg import Time as NativeTime
+from dimos.messages.geometry_msgs.msg import (
+    Point as NativePoint,
+    Pose as NativePose,
+    PoseStamped as NativePoseStamped,
+    Quaternion as NativeQuaternion,
+)
+from dimos.messages.std_msgs.msg import Header as NativeHeader
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 pytestmark = pytest.mark.self_hosted
@@ -420,3 +432,140 @@ def test_tf_records_over_zenoh_and_replays_through_python(
             "base_link",
             "camera",
         ]
+
+
+class CdrInteropRustRecorder(RustRecorder):
+    pose: In[NativePoseStamped]
+
+
+def _stop_owned_process(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+
+
+@pytest.mark.parametrize(
+    "store_kind",
+    [
+        "sqlite",
+        pytest.param(
+            "mcap", marks=pytest.mark.skipif(not _MCAP_AVAILABLE, reason="mcap not installed")
+        ),
+    ],
+)
+def test_cdr_native_artifact_replays_raw_payload_with_reception_time(
+    tmp_path,
+    rust_recorder_executable,
+    store_kind,
+    monkeypatch,
+    mocker,
+):
+    artifact = tmp_path / ("native.db" if store_kind == "sqlite" else "native.mcap")
+    store = (
+        RustSqliteStoreConfig(path=str(artifact))
+        if store_kind == "sqlite"
+        else RustMcapStoreConfig(path=str(artifact))
+    )
+    # RPC is unrelated to this storage acceptance; the actual raw pub/sub and
+    # native process below remain real and bound only to loopback.
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    endpoint = f"tcp/127.0.0.1:{_free_port()}"
+    channel = "example/pose/" + uuid.uuid4().hex
+    with ExitStack() as resources:
+        recorder = CdrInteropRustRecorder(
+            source_dir=None,
+            build_command=None,
+            executable=str(rust_recorder_executable),
+            store=store,
+            record_tf=False,
+            encoding_threads=2,
+            session=ZenohConfig(
+                mode="peer",
+                connect=[],
+                listen=[endpoint],
+                multicast=False,
+                gossip=False,
+                connect_timeout=0,
+            ),
+        )
+        resources.callback(recorder.stop)
+        recorder.pose.transport = mocker.Mock(spec=PubSubTransport, channel=channel)
+        specs = recorder._stream_specs()
+        assert specs[0].codec == "cdr"
+        recorder._prepare_store(specs)
+        recorder.config.streams = specs
+        pool = ZenohSessionPool()
+        resources.callback(pool.close_all)
+        publisher = ZenohPubSubBase(
+            session_pool=pool,
+            mode="client",
+            connect=[endpoint],
+            multicast=False,
+            gossip=False,
+            scouting=False,
+            connect_timeout=5,
+        )
+        resources.callback(publisher.stop)
+        process = resources.enter_context(
+            subprocess.Popen(
+                [str(rust_recorder_executable)],
+                cwd=_RUST_PACKAGE,
+                env={
+                    **os.environ,
+                    "DIMOS_TRANSPORT": "zenoh",
+                    "RUST_LOG": "info,dimos_memory_recorder=debug",
+                },
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        )
+        resources.callback(_stop_owned_process, process)
+        assert process.stdin is not None
+        process.stdin.write(recorder._stdin_blob({"pose": channel}))
+        process.stdin.close()
+        _wait_for_log(process, "memory recorder ready")
+        publisher.start()
+        expected = NativePoseStamped(
+            NativeHeader(NativeTime(1_700_000_000, 123_456_789), "map"),
+            NativePose(NativePoint(1.5, -2.0, 3.0), NativeQuaternion(0.0, 0.0, 0.0, 1.0)),
+        )
+        payload = encode_cdr(expected)
+        received_after = time.time()
+        publisher.publish(ZenohTopic(channel), payload)
+        _wait_for_log(process, "memory recorder batch written")
+        process.terminate()
+        assert process.wait(timeout=10) == 0
+    memory = (
+        SqliteStore(path=str(artifact))
+        if store_kind == "sqlite"
+        else CdrMcapStore(path=str(artifact))
+    )
+    with memory:
+        observations = list(memory.stream("pose"))
+        assert len(observations) == 1
+        actual = observations[0]
+        assert received_after <= actual.ts <= time.time()
+        assert type(actual.data) is NativePoseStamped
+        assert type(actual.data.header) is NativeHeader
+        assert actual.data == expected
+        assert encode_cdr(actual.data) == payload
+    if store_kind == "mcap":
+        # MCAP is optional; this parametrization is skipped when it is absent.
+        reader_module = importlib.import_module("mcap.reader")
+        with artifact.open("rb") as source:
+            records = list(reader_module.make_reader(source).iter_messages())
+        assert len(records) == 1
+        actual_schema, actual_channel, message = records[0]
+        assert message.publish_time == message.log_time
+        assert message.data == payload
+        assert actual_channel.message_encoding == "cdr"
+        assert actual_schema.encoding == "ros2msg"
+        assert actual_schema.name == "geometry_msgs/msg/PoseStamped"
+        assert actual_schema.data.decode() == specs[0].cdr_schema["data"]
