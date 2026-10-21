@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.1", "dimos==0.0.14"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+description = "An external message reusing the installed DimOS Header"
+requires-python = ">=3.12"
+dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.1"]
+
+[tool.dimos.messages.dependencies]
+"dimos.messages" = "0.0.14"
