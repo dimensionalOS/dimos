@@ -121,6 +121,7 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             max_range=map_max_range,
+            global_emit_every=50,
         ).remappings([(RayTracingVoxelMap, "lidar", map_cloud_topic)]),
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
