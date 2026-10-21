@@ -70,7 +70,7 @@ go2_dds_mid360 = GO2DDS.blueprint(**_MID360_KWARGS).remappings(_MID360_REMAPPING
 # viewer dials go22); every other process dials it on loopback. Headless:
 # go2-dds-mid360-viewer on another machine is the screen.
 # The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
-go2_dds_nav = autoconnect(
+go2_nav = autoconnect(
     GO2DDS.blueprint(**_MID360_KWARGS, obstacle_avoidance=False).remappings(_MID360_REMAPPINGS),
     mid360_for_pointlio(),
     _go2_nav,
@@ -83,10 +83,10 @@ go2_dds_nav = autoconnect(
     robot_model="unitree_go2",
 )
 
-# go2-dds-nav plus the head L1's deskewed scans on `l1_lidar`, in Point-LIO's odom. The later
-# GO2DDS atom wins and spins the L1 up; go2-dds-nav's remappings still apply.
+# go2-nav plus the head L1's deskewed scans on `l1_lidar`, in Point-LIO's odom. The later
+# GO2DDS atom wins and spins the L1 up; go2-nav's remappings still apply.
 go2_dds_nav_l1 = autoconnect(
-    go2_dds_nav,
+    go2_nav,
     GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link", obstacle_avoidance=False),
     GO2L1Lidar.blueprint(),
 ).global_config(n_workers=12)
