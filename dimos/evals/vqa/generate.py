@@ -438,7 +438,8 @@ def _generate_frame(
     families = tuple(
         family
         for family in AVAILABLE_FAMILIES
-        if not (family.requires_masks and mask_estimator is None)
+        if family.name != "cross_view_same_object"
+        and not (family.requires_masks and mask_estimator is None)
         and not (
             family.requires_pointcloud
             and (source.pointcloud_frame is None or range_estimator is None)

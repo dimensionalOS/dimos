@@ -139,6 +139,14 @@ EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
     ),
     requires_localize=True,
 )
+CROSS_VIEW_SAME_OBJECT_FAMILY = FamilySpec(
+    name="cross_view_same_object",
+    description=(
+        "Ask whether the named category in image A and image B is the same physical "
+        "instance. Generated from Dan localize multi-view traces (not image-only authoring). "
+        "Both views must pass center/size framing gates on the original full frames."
+    ),
+)
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
@@ -151,6 +159,7 @@ AVAILABLE_FAMILIES = (
     HEIGHT_ORDER_FAMILY,
     EGO_TURN_FAMILY,
     EGO_ANY_FORE_AFT_FAMILY,
+    CROSS_VIEW_SAME_OBJECT_FAMILY,
 )
 
 _FAMILIES_BY_NAME = {family.name: family for family in AVAILABLE_FAMILIES}
@@ -215,6 +224,11 @@ def answer_question(
         if localize_scene is None:
             raise InsufficientEvidenceError("ego any fore/aft requires localize scene evidence")
         return _answer_ego_any_fore_aft(proposal, localize_scene)
+    if proposal.family == "cross_view_same_object":
+        raise InsufficientEvidenceError(
+            "cross_view_same_object is produced by generate_cross_view_dataset, "
+            "not the per-frame image author path"
+        )
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 

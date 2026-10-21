@@ -113,6 +113,58 @@ def generate(
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 
 
+@app.command("generate-cross-view")
+def generate_cross_view(
+    dataset: str = typer.Argument(help="Memory recording with color_image, camera_info, tf, lidar"),
+    query: list[str] = typer.Option(
+        ...,
+        "--query",
+        help="Object category to localize (repeatable), e.g. --query 'storage box'",
+    ),
+    start: float = typer.Option(0.0, "--from", help="Start offset into the recording (seconds)"),
+    duration: float | None = typer.Option(None, help="How much of the recording to use (seconds)"),
+    params: str = typer.Option(
+        "go2",
+        help='Localize params preset or JSON, e.g. go2 or {"base":"go2","accept_score":0.4}',
+    ),
+    min_views: int = typer.Option(
+        3,
+        min=1,
+        help="Minimum distinct camera poses for an instance to enter the identity pool",
+    ),
+    output: Path | None = typer.Option(None, help="Destination directory; must be absent or empty"),
+) -> None:
+    """Generate same/different object identity cases from Dan localize multi-view traces.
+
+    Sampling is instance-centric (not stride frames). Each view must pass center/size
+    framing on the original full image; rejected pairs are dropped, not cropped.
+    """
+    from dimos.evals.vqa.cross_view_generate import (
+        CrossViewGenerationRequest,
+        generate_cross_view_dataset,
+    )
+
+    try:
+        result = generate_cross_view_dataset(
+            CrossViewGenerationRequest(
+                dataset=dataset,
+                queries=tuple(query),
+                output=output,
+                start_s=start,
+                duration_s=duration,
+                params_preset=params,
+                min_views=min_views,
+            )
+        )
+    except (ValueError, IndexError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"Generated {len(result.cases)} cross-view case(s) in {result.output} "
+        f"(instances={result.n_instances_considered}, "
+        f"pairs={result.n_pairs_proposed}, rejected={result.n_rejected})"
+    )
+
+
 @app.command("run")
 def run(
     dataset: Path = typer.Argument(help="Generated standalone VQA dataset"),

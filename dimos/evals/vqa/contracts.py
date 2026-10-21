@@ -47,6 +47,7 @@ FamilyName = Literal[
     "height_order",
     "ego_turn",
     "ego_any_fore_aft",
+    "cross_view_same_object",
 ]
 
 
