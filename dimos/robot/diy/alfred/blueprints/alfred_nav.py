@@ -75,9 +75,25 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
     ]
 
 
+def _rerun_blueprint() -> Any:
+    """The default 3D view with the premap hidden until ticked on."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Spatial3DView(
+            origin="world",
+            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+            line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
+            overrides={"world/loaded_map": rrb.EntityBehavior(visible=False)},
+        ),
+    )
+
+
 def _alfred_rerun_config() -> dict[str, Any]:
     """The rerun bridge config every Alfred navigation blueprint shares."""
     return {
+        "blueprint": _rerun_blueprint,
         "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
         # Keyed by the topic's entity path, before any visual_override renames it.
         # Everything is held to 1 Hz: the viewer rides a wifi link, and the
