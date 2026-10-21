@@ -50,7 +50,8 @@ def create_client() -> DreamClient:
 class DreamlabsModule(Module):
     """Accept explicitly supplied camera ticks and return unexecuted action previews.
 
-    Calls are serialized, including stop. There is no background inference, live
+    SDK requests/reset/close are serialized. Observation buffering can continue during
+    inference. There is no background inference, live
     camera synchronization, or coordinator connection.
     """
 
@@ -59,6 +60,7 @@ class DreamlabsModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
+        self._request_lock = RLock()
         self._client: DreamClient | None = None
         self._fk: DreamlabsKinematics | None = None
         self._latest: NDArray[np.float64] | None = None
@@ -106,15 +108,20 @@ class DreamlabsModule(Module):
         Requires prior observation input and approval of the image/state upload.
         The result has protocol checks, not physical rollout safety validation.
         """
-        with self._lock:
-            if self._client is None or self._latest is None:
-                raise RuntimeError("set_observation must precede get_action")
-            return action_trajectory(self._client.get_action(), self._latest)
+        with self._request_lock:
+            with self._lock:
+                if self._client is None or self._latest is None:
+                    raise RuntimeError("set_observation must precede get_action")
+                client = self._client
+            response = client.get_action()
+            with self._lock:
+                assert self._latest is not None
+                return action_trajectory(response, self._latest.copy())
 
     @rpc
     def reset_episode(self) -> None:
         """Clear the SDK's frame history before another trial."""
-        with self._lock:
+        with self._request_lock, self._lock:
             if self._client is not None:
                 self._client.reset_episode()
             self._latest = None
@@ -122,7 +129,7 @@ class DreamlabsModule(Module):
     @rpc
     def stop(self) -> None:
         try:
-            with self._lock:
+            with self._request_lock, self._lock:
                 if self._client is not None:
                     self._client.close()
                     self._client = None

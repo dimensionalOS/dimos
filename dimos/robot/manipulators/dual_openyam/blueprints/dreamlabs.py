@@ -15,8 +15,31 @@
 
 """Dreamlabs rollout using the dual OpenYAM coordinator and existing image ports."""
 
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.imitation.policy.dreamlabs.camera import DreamlabsCameraModule
 from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
+from dimos.imitation.policy.dreamlabs.rollout import DreamlabsRolloutModule
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 # Protocol-only: no camera, driver, coordinator, or action executor is launched.
 dreamlabs_dual_openyam = autoconnect(DreamlabsModule.blueprint())
+
+# Device paths are required deployment config. CAN omitted means existing mock hardware.
+dreamlabs_dual_openyam_manual = autoconnect(
+    DreamlabsCameraModule.blueprint(instance_name="OverheadCamera", transform=None),
+    DreamlabsCameraModule.blueprint(instance_name="LeftWristCamera", transform=None),
+    DreamlabsCameraModule.blueprint(instance_name="RightWristCamera", transform=None),
+    DualOpenYamCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tasks=[joint_trajectory_task(DUAL_OPENYAM_JOINTS)],
+    ),
+    DreamlabsRolloutModule.blueprint(),
+).remappings(
+    [
+        ("OverheadCamera", "color_image", "overhead_image"),
+        ("LeftWristCamera", "color_image", "left_wrist_image"),
+        ("RightWristCamera", "color_image", "right_wrist_image"),
+    ]
+)

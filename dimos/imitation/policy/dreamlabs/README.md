@@ -1,8 +1,8 @@
-# Inspect Dreamlabs observations and action previews
+# Dreamlabs observations, previews and manual controls
 
-This is a protocol/data-flow prototype for standard dual six-joint YAM input.
-It does not open cameras, start robot drivers, connect a coordinator, or execute
-returned actions. A preview is not a trajectory validated for physical rollout.
+The protocol-only entry accepts standard dual six-joint YAM input without opening
+hardware or executing actions. The separate manual stack below adds acquisition
+and explicit rollout controls. A preview is not proof of physical rollout readiness.
 
 ## Check the protocol offline
 
@@ -45,7 +45,7 @@ physical calibration or a replacement for the coordinator's robot model.
 - `reset_episode()` clears the SDK history between trials.
 - `stop()` closes the client through the normal module lifecycle.
 
-Calls are serialized. There are no custom sampler threads, watchdogs, takeover
+Calls are serialized. This protocol-only entry has no custom sampler threads, watchdogs, takeover
 logic, automatic rollout loops, or added coordinator RPCs. Starting the module
 does not create a client or send observations. The `dreamlabs-dual-openyam`
 blueprint contains only this protocol module and no hardware stack.
@@ -66,13 +66,96 @@ uv run --extra dreamlabs python -m dimos.imitation.policy.dreamlabs.probe --live
 
 It sends one inference with generated black images and a synthetic state. Session
 close may make an additional control request. SDK background recording is disabled
-with `_record=False`. No live call has been validated here.
+with `_record=False`. The hardware-free probe is independent of the station run described below.
 
-Physical execution is outside this prototype. A later approved station integration
-can use the existing `ControlCoordinator.execute_trajectory()` and
-`cancel_trajectory()`, and `task_invoke("joint_trajectory", "get_status",
-{"t_now": None})` for status. No second executor is needed. This PR leaves those
-APIs and all existing lower-level protections unchanged. Real execution still
-needs verified robot/calibration, appropriate limits, an operator, workspace and
-stop conditions. Do not treat this non-executing prototype as a complete robot
-rollout or remove existing protections to attach it to hardware.
+## Manual testing stack
+
+`dreamlabs-dual-openyam-manual` composes three existing camera modules, the dual
+YAM coordinator and its canonical trajectory task (all 14 joints), and
+`DreamlabsRolloutModule`. Device paths are required configuration; omitted CAN
+ports select the existing mock hardware. This blueprint starts acquisition but
+leaves policy inference and policy dispatch idle. With real CAN ports, the
+existing driver startup enables motors, calibrates grippers and starts gravity
+compensation: idle policy does **not** mean motors are disabled or no low-level
+arm commands are written. The earlier enable-and-read fake-rollout script is a
+separate diagnostic path.
+
+From the PR checkout, with the `dreamlabs` extra available, inspect configuration
+without launching devices. `PYTHONPATH=.` also ensures a shared virtualenv uses
+this checkout rather than another editable installation:
+
+```bash
+PYTHONPATH=. dimos run dreamlabs-dual-openyam-manual --help
+```
+
+For the tested anvil station, the physical USB paths were A overhead, B right
+wrist, C left wrist. Recheck ownership and camera roles if cabling changes.
+The following command is a **manual hardware launch**, not an offline probe:
+
+```bash
+PYTHONPATH=. dimos run dreamlabs-dual-openyam-manual \
+  --overheadcamera.device /dev/v4l/by-path/pci-0000:06:00.0-usb-0:1.3:1.0-video-index4 \
+  --rightwristcamera.device /dev/v4l/by-path/pci-0000:07:00.0-usb-0:1.3:1.0-video-index4 \
+  --leftwristcamera.device /dev/v4l/by-path/pci-0000:08:00.0-usb-0:1.3:1.0-video-index4 \
+  --controlcoordinator.left-can-port follower_l \
+  --controlcoordinator.right-can-port follower_r \
+  --dreamlabsrolloutmodule.timeout-ms 5000
+```
+
+In another terminal in the same checkout, `PYTHONPATH=. dimos shell` attaches to the run. Use normal SDK credentials
+configured locally; do not put API keys in shell commands. These RPCs control
+only the policy:
+
+```python
+app.DreamlabsRolloutModule.rollout_status()
+app.DreamlabsRolloutModule.set_prompt("hold position")
+app.DreamlabsRolloutModule.start_rollout()  # billed inference + previews; no policy dispatch
+app.DreamlabsRolloutModule.stop_rollout()
+```
+
+The explicit actuator opt-in, for a separately cleared physical test, is:
+
+```python
+app.DreamlabsRolloutModule.start_rollout(dispatch_actions=True)
+app.DreamlabsRolloutModule.stop_rollout()
+```
+
+Stop invalidates pending replies before cancelling the existing trajectory task.
+An already running API request can finish and be billed, but its result cannot
+publish or execute after stop. `busy=True` means that request/history reset is
+still draining; wait for `busy=False` before starting again. Cancellation errors
+are raised and reported in `last_error`; retry cancellation before restarting.
+Stop is not a physical E-stop, does not disable motors or stop acquisition.
+Use the existing run shutdown (`Ctrl-C` in the launch terminal) for teardown.
+
+Changing the prompt stops/cancels the current trial and stays idle. A new start
+collects a fresh nine-tick episode before inference. No old chunks are queued.
+At 5 Hz, the module pairs latest camera/state messages within configurable
+age/skew tolerances; this is not hardware synchronization. The SDK owns frame
+history and inference chunk blending. One request is active at a time. The
+coordinator owns trajectory interpolation, completion, start-state mismatch
+checks and cancellation; its existing velocity limiting remains in effect.
+No automatic API retries occur. Errors stop the trial and remain visible in
+`rollout_status()`. Validated trajectories are published on `policy_preview` in
+both modes. Gripper/shape/finite errors reject the response; dispatch additionally
+rejects arm targets outside the coordinator model's position bounds, without
+clipping. Preview mode does not certify physical limits.
+
+### What remains unvalidated
+
+The retained live fake-rollout run02 at `59c3239b1` executed no policy actions.
+Its right-gripper output reached `1.0061448679` (21/48 rows above one); left/right
+J2 targets reached `-0.0174917514` / `-0.0034554977` rad although measured J2 was
+inside the model bounds. Those requests are rejected by the manual adapter,
+not silently clamped. SDK-reference J2 lower bounds and coordinator-model lower
+bounds were both effectively zero, but physical encoder/calibration agreement
+has not been independently verified. Equal before/after cached SDK readings did
+not prove fresh per-motor CAN feedback; a recent host message timestamp still
+does not prove it. No collision, physical tracking, feedback-freshness or real
+start/stop validation is claimed. This interface must not be treated as proof
+that physical rollout is ready.
+
+The manual interface tests use synthetic streams and mocked inference/execution.
+They cover idle/preview/explicit dispatch, in-flight stop/prompt invalidation,
+model-bound rejection and blueprint/config wiring. They do not launch devices
+or call the live API.
