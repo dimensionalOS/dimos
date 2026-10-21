@@ -40,6 +40,9 @@ const BUCKET: f64 = 0.2;
 /// Pitch at which a route is priced along its own arc.
 const COST_STEP: f64 = FINE;
 
+/// Gait cost (m) a shortcut chord may add over the raw span it replaces.
+const GAIT_SLACK: f64 = 0.05;
+
 /// Cost advantage (m) a fresh route needs before it replaces the incumbent.
 pub const COMMIT_MARGIN: f64 = 3.0;
 
@@ -1468,8 +1471,14 @@ fn se2_search_in(
         arc[m] = arc[m - 1] + (raw[m][0] - raw[m - 1][0]).hypot(raw[m][1] - raw[m - 1][1]);
         priced[m] = priced[m - 1] + priced_len(w, &raw[m - 1], &raw[m]);
     }
+    // Nor more gait: a chord that crabs or backs where the search turned is refused.
+    let mut gait = vec![0.0f64; raw.len()];
+    for m in 1..raw.len() {
+        gait[m] = gait[m - 1] + motion_cost(emb, &raw[m - 1], &raw[m]);
+    }
     let chord_priced = |w: &World, j: usize, k: usize| -> bool {
         priced_len(w, &raw[j], &raw[k]) <= priced[k] - priced[j] + CELL
+            && motion_cost(emb, &raw[j], &raw[k]) <= gait[k] - gait[j] + GAIT_SLACK
     };
     let mut keep = vec![raw.len() - 1];
     while *keep.last().unwrap() > 0 {
@@ -1522,6 +1531,29 @@ fn se2_search_in(
 
 /// Largest yaw change one published waypoint may command.
 const YAW_STEP: f64 = 0.045;
+
+/// Gait cost of `a -> b` with yaw interpolated along it, as the search prices an edge.
+fn motion_cost(emb: &Emb, a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len = dx.hypot(dy);
+    let dyaw = rem_2pi(b[2] - a[2]);
+    let mut cost = emb.yaw_w * dyaw.abs();
+    if len < 1e-9 {
+        return cost;
+    }
+    let head = dy.atan2(dx);
+    let n = 8usize.max((len / 0.05) as usize);
+    for k in 0..n {
+        let rel = head - (a[2] + (k as f64 + 0.5) / n as f64 * dyaw);
+        let backward = if rel.cos() < 0.0 {
+            emb.reverse - 1.0
+        } else {
+            0.0
+        };
+        cost += len / n as f64 * (1.0 + (emb.strafe - 1.0) * rel.sin().abs() + backward);
+    }
+    cost
+}
 
 /// Largest yaw window a station may carry, under the 0.5 rad cylinder threshold.
 const MAX_STATION_YAW: f64 = 0.45;
@@ -2188,6 +2220,29 @@ mod tests {
                 assert!(y.abs() > 3.8, "path hopped the wall at y={y:.2}");
             }
         }
+    }
+
+    #[test]
+    fn shortcuts_keep_the_turn_when_strafing_is_expensive() {
+        let emb = Emb {
+            strafe: 3.0,
+            reverse: 3.0,
+            yaw_w: 0.05,
+            ..Emb::fixture()
+        };
+        let pose = (0.0, 0.0, std::f64::consts::FRAC_PI_2);
+        let path = plan(&[], pose, (4.0, 0.0), &emb, 0.1, None, COMMIT_MARGIN).unwrap();
+        let (mut forward, mut sideways) = (0.0, 0.0);
+        for w in path.windows(2) {
+            let (dx, dy) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+            let (sn, c) = w[0][2].sin_cos();
+            forward += (c * dx + sn * dy).max(0.0);
+            sideways += (-sn * dx + c * dy).abs();
+        }
+        assert!(
+            sideways < 0.1 * (forward + sideways),
+            "crabbed {sideways:.2} m sideways against {forward:.2} m forward"
+        );
     }
 
     #[test]
