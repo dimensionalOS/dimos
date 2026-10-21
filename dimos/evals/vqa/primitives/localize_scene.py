@@ -80,7 +80,6 @@ class LocalizeInstanceEvidence(BaseModel):
 
     object_name: NonEmptyString
     position_world_xyz: tuple[float, float, float]
-    extent_m: float | None = Field(default=None, gt=0)
     n_views: int = Field(default=1, ge=1)
     semantic_score: float = Field(default=1.0, ge=0)
 
@@ -157,6 +156,8 @@ def format_referent(
     landmark: str | None = None,
 ) -> str:
     """Build the canonical referent string used in proposals and questions."""
+    if selector in ("left", "right"):
+        raise ValueError("left/right category referents are not supported")
     if selector == "unique":
         return category
     if selector == "next_to":
@@ -164,18 +165,6 @@ def format_referent(
             raise ValueError("next_to referents require a landmark category")
         return f"{category}{_NEXT_TO_TOKEN}{landmark}"
     return f"{selector} {category}"
-
-
-def require_one_instance(
-    scene: LocalizeSceneEvidence, object_name: str
-) -> LocalizeInstanceEvidence:
-    """Exactly one instance of ``object_name``, else reject."""
-    hits = instances_named(scene, object_name)
-    if len(hits) != 1:
-        raise InsufficientEvidenceError(
-            f"localize scene requires exactly one verified {object_name!r}, got {len(hits)}"
-        )
-    return hits[0]
 
 
 def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeInstanceEvidence:

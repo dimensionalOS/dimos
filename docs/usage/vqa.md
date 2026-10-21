@@ -67,10 +67,10 @@ answers. Every proposal uses `object_names`; single-object families require one 
 | `largest_visible_area` | Two to five authored object references | Select a mask at least 20% larger than the runner-up |
 | `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
 | `closest_object` | Two to five authored object references | Select the smallest unambiguous LiDAR range |
-| `ego_fore_aft` | ahead, behind | Sign on the robot forward axis for a referent: bare unique name, `nearest X`, `left X`, or `right X` |
+| `ego_fore_aft` | ahead, behind | Shared ±45° / ±135° ego cones for a referent: bare unique name, `nearest X`, or `X next to Y` |
 | `height_order` | Two authored object references | Higher world-`z` with a minimum vertical margin (localize scene) |
-| `ego_turn` | left, right, ahead | Bearing to a resolved referent in the robot yaw frame |
-| `ego_any_fore_aft` | yes, no | Whether any verified instance of a category lies ahead of the robot |
+| `ego_turn` | left, right, ahead, turn around | Bearing wedges in the robot yaw frame (ahead cone + turn around behind) |
+| `ego_any_fore_aft` | yes, no | Whether any verified instance of a category lies in the ahead cone |
 
 Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
 can be answered, generation fails without publishing a dataset.

@@ -42,6 +42,7 @@ def test_coverage_cell_maps_selectors() -> None:
     assert coverage_cell("ego_any_fore_aft", ("chair",)) == ("ego_any_fore_aft", "any_ahead")
     assert coverage_cell("height_order", ("chair", "table")) == ("height_order", "unique")
     assert coverage_cell("ego_fore_aft", ("nearest chair",)) == ("ego_fore_aft", "nearest")
+    # left/right still parse for legacy audits; publish path drops these selectors.
     assert coverage_cell("ego_fore_aft", ("left chair",)) == ("ego_fore_aft", "left")
     assert coverage_cell("ego_fore_aft", ("chair next to table",)) == ("ego_fore_aft", "next_to")
     assert coverage_cell("ego_fore_aft", ("chair",)) == ("ego_fore_aft", "unique")
