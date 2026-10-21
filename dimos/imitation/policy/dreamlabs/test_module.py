@@ -114,8 +114,8 @@ def test_real_colored_images_and_state_reach_client_without_execution(
     np.testing.assert_allclose(sent["state.right_arm"], RIGHT)
     np.testing.assert_allclose(sent["state.left_gripper"], [0.2])
     np.testing.assert_allclose(sent["state.right_gripper"], [0.8])
-    np.testing.assert_allclose(sent["state.left_eef_xyz"], [0.244997, 0, 0.164002], atol=2e-5)
-    np.testing.assert_allclose(sent["state.right_eef_xyz"], [0.262523, 0, 0.206904], atol=2e-5)
+    np.testing.assert_allclose(sent["state.left_eef_xyz"], [0.245297, 0, 0.173502], atol=2e-5)
+    np.testing.assert_allclose(sent["state.right_eef_xyz"], [0.262805, 0, 0.216301], atol=2e-5)
     np.testing.assert_allclose(
         sent["state.right_eef_rot6"], [0, 1, 0, 0.342891, 0, 0.939375], atol=2e-5
     )

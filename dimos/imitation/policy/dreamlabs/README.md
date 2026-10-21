@@ -17,7 +17,8 @@ uv run --extra dreamlabs pytest dimos/imitation/policy/dreamlabs
 The default probe prepares synthetic images and YAM state/FK locally. It makes no
 API call and needs no credential. Tests replace the SDK network transport, check
 three actual colored JPEGs, and compare three representative poses against fixed
-offline SDK FK references. No full robot SDK or `dream_ik` is required at runtime.
+canonical-model TCP pose fixtures. The canonical dual-YAM model asset must already
+be cached for a fully offline probe. No full robot SDK or `dream_ik` is required at runtime.
 
 Each image follows `Image.resize(320, 176, interpolation=cv2.INTER_AREA)` and
 `Image.to_base64(quality=85)`. The result is one JPEG/base64 string with no `data:`
@@ -27,10 +28,28 @@ resize the image. It keeps its own nine-frame history at 5 Hz.
 
 State is mapped by joint name into left six joints, right six joints, left grip,
 and right grip. Angles remain radians and grips remain 0 closed to 1 open.
-Existing Pinocchio FK supplies arm-local XYZ in metres and the first two rotation
-columns, plus the SDK grip aliases. The checked-in kinematic-only reference
-retains the SDK's joint geometry and 0.1347 m TCP along flange z. It is not a
-physical calibration or a replacement for the coordinator's robot model.
+Existing Pinocchio FK uses the same canonical `DUAL_OPENYAM_MODEL` as the
+coordinator, supplying arm-local XYZ in metres and the first two rotation columns,
+plus SDK grip aliases. Each arm's fixed mount is removed from the world pose.
+The canonical gripper link has a different coordinate convention from the SDK:
+SDK x = -canonical y, SDK y = -canonical x, SDK z = -canonical z. The SDK TCP is
+`[0, 0, -0.1347]` metres in that canonical gripper frame. This fixed tool transform
+preserves the SDK pose convention; it is not a joint offset or measured physical
+calibration. Our `grasp_frame` is only 0.1 m along -z and cannot be substituted
+without that extra tool distance and rotation. No vendored URDF remains.
+
+This path does **FK only**, even though its existing helper is named `PinocchioIK`.
+It never calls `solve()`. SDK configuration has `robot="yam"` and no `ik`; returned
+`q_l_chunk/q_r_chunk` are absolute joint targets, not Cartesian targets solved by
+local IK. Server-internal generation is not established by this adapter.
+
+Offline comparison at identical retained left/right q showed canonical TCP
+position differences of 9.486/9.560 mm from the former vendor geometry, mainly
+height, with orientation differences below 0.000004 rad. Joint screw directions
+in the arm base agree despite different local axis labels; no joint-angle sign
+or zero-offset remapping was introduced. Both models retain a nonnegative J2
+lower bound. Replacing FK geometry does not prove that policy out-of-limit joint
+requests or physical calibration are fixed.
 
 ## Supply explicit observations
 

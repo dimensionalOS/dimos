@@ -19,14 +19,14 @@ import pytest
 from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
 
 
-# Offline SDK 1.0.1 references: zero, working, and asymmetric seed-4653 poses.
-# Expected values are test data, not runtime models, calibration, or FK code.
+# Canonical dual_openyam_abc_box_v2 references with the explicit SDK TCP transform.
+# These are offline pose fixtures, not physical calibration or a duplicate model.
 @pytest.mark.parametrize(
     ("q", "xyz", "rot6"),
     [
         (
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.24499693512916565, 2.03184617930674e-06, 0.1640017181634903],
+            [0.24529726268831478, 1.479606077632217e-06, 0.1735023068035244],
             [
                 -3.684216608235147e-06,
                 0.9999999403953552,
@@ -38,7 +38,7 @@ from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
         ),
         (
             [0.0, 0.5, 0.5, -0.35, 0.0, 0.0],
-            [0.26252272725105286, 2.677086740732193e-06, 0.20690391957759857],
+            [0.2628045210176952, 2.0465567064393546e-06, 0.21630107502670454],
             [
                 -5.072791736893123e-06,
                 1.0,
@@ -57,7 +57,7 @@ from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
                 0.3820993768416505,
                 0.3238620147410465,
             ],
-            [-0.021850548684597015, -0.06219909340143204, -0.25211554765701294],
+            [-0.022005077517198553, -0.06230098400405956, -0.24285246094908358],
             [
                 0.13360722362995148,
                 0.8732455968856812,
@@ -69,9 +69,13 @@ from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
         ),
     ],
 )
-def test_sdk_coordinate_mapping(q: list[float], xyz: list[float], rot6: list[float]) -> None:
-    pose = DreamlabsKinematics().pose(np.array(q))
+def test_canonical_arm_local_tcp(q: list[float], xyz: list[float], rot6: list[float]) -> None:
+    fk = DreamlabsKinematics()
+    pose = fk.pose(np.array(q))
+    np.testing.assert_allclose(
+        fk.pose(np.array(q), "right").homogeneous, pose.homogeneous, atol=2e-6, rtol=0
+    )
     np.testing.assert_allclose(pose.translation, xyz, atol=2e-6, rtol=0)
     np.testing.assert_allclose(
-        np.concatenate((pose.rotation[:, 0], pose.rotation[:, 1])), rot6, atol=2e-6, rtol=0
+        np.concatenate((pose.rotation[:, 0], pose.rotation[:, 1])), rot6, atol=1e-5, rtol=0
     )
