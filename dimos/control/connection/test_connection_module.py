@@ -27,9 +27,10 @@ import threading
 import time
 from typing import Any
 
+from pydantic import Field
 import pytest
 
-from dimos.control._control_test_helpers import FakeArm, FakeArmConfig
+from dimos.control._control_test_helpers import FakeArm, FakeArmConfig, fake_arm_model
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.contract.description import Limits
 from dimos.control.contract.keys import Interface
@@ -42,10 +43,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.assets.model import RobotModel
 
 JOINT1 = "mock/joint1/position"
 DEADMAN_S = 0.05
-JOINTS = ["joint1", "joint2"]
+JOINTS = ("joint1", "joint2")
 #: Every reading a ``BodyAndBase`` reports, all zero but a level IMU.
 BODY_AND_BASE_READINGS = {
     **{f"g1/{j}/{i}": 0.0 for j in JOINTS for i in ("position", "velocity", "effort")},
@@ -135,8 +137,9 @@ class BodyAndBaseConfig(FakeArmConfig):
     """A two-joint body held by stiffness and damping, on a base, with an IMU."""
 
     source: str = "g1"
-    position_command: JointPort = JointPort(joints=JOINTS)
-    motor_command: MotorPort = MotorPort(joints=JOINTS)
+    model: RobotModel | None = Field(default_factory=lambda: fake_arm_model(JOINTS))
+    position_command: JointPort = JointPort()
+    motor_command: MotorPort = MotorPort()
     base_command: TwistPort = TwistPort(
         range=Twist(linear=Vector3(1.0, 1.0, 0.0), angular=Vector3(0.0, 0.0, 1.0))
     )
@@ -160,8 +163,8 @@ class PushedBodyAndBase(BodyAndBase):
 
 
 class PositionAndVelocityConfig(FakeArmConfig):
-    position_command: JointPort = JointPort(joints=["joint1"])
-    velocity_command: JointPort = JointPort(interface=Interface.VELOCITY, joints=["joint1"])
+    position_command: JointPort = JointPort()
+    velocity_command: JointPort = JointPort(interface=Interface.VELOCITY)
 
 
 class PositionAndVelocity(FakeArm):
@@ -418,8 +421,8 @@ def test_a_base_command_past_its_limit_is_pulled_back_to_it(rig: Callable[..., R
 
 
 def test_an_arm_command_past_its_limit_is_refused_and_shown(rig: Callable[..., Rig]) -> None:
-    r = rig(position_command=JointPort(limit_overrides={"joint1": Limits(-1.0, 1.0)}))
-    r.move(joint1=1.5)
+    r = rig()
+    r.move(joint1=4.0)
     assert wait_until(lambda: r.module.status().last_rejection is not None)
     assert "limit" in str(r.module.status().last_rejection)
     assert writes(r) == []

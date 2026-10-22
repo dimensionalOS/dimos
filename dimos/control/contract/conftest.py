@@ -14,8 +14,9 @@
 
 """Three example robots for the tests, written out by hand.
 
-  arm      a 7-joint arm with a gripper. It cannot measure how fast its
-           joints are turning, so it does not claim to
+  arm      a 7-joint arm with a sliding gripper, measured in metres. It
+           cannot measure how fast its joints are turning, so it does not
+           claim to
   g1       a humanoid body whose joints are held in place by stiffness and
            damping, with an IMU in its chest
   chassis  a base that drives around on the floor, in any direction. Its
@@ -67,13 +68,18 @@ def xarm() -> ControlDescription:
     gripper = Resource(
         name="gripper",
         kind=ResourceKind.JOINT,
-        state_interfaces=(Interface.POSITION,),
-        command_interfaces=(Interface.POSITION,),
-        units={Interface.POSITION: Unit.M},
+        state_interfaces=(Interface.POSITION, Interface.EFFORT),
+        command_interfaces=(Interface.POSITION, Interface.VELOCITY),
+        units={
+            Interface.POSITION: Unit.M,
+            Interface.VELOCITY: Unit.M_PER_S,
+            Interface.EFFORT: Unit.N,
+        },
     )
     limits = {Key.of("arm", j, Interface.POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS}
     limits |= {Key.of("arm", j, Interface.VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS}
     limits[Key.of("arm", "gripper", Interface.POSITION)] = Limits(0.0, 0.085)
+    limits[Key.of("arm", "gripper", Interface.VELOCITY)] = Limits(-0.2, 0.2)
     return ControlDescription(
         source="arm",
         resources=(*joints, gripper),

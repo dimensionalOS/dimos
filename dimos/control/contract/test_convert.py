@@ -15,10 +15,10 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
+from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.contract.convert import (
     IMU_INTERFACES,
     imu_from_values,
@@ -33,9 +33,8 @@ from dimos.control.contract.convert import (
     twist_from_values,
     twist_to_values,
 )
-from dimos.control.contract.keys import Interface, Unit
+from dimos.control.contract.keys import Interface
 from dimos.control.contract.presets import (
-    GripperSpec,
     manipulator_description,
     pd_joint_description,
     twist_base_description,
@@ -47,7 +46,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.assets.model import RobotModel
 
 BASE = "chassis/base"
 
@@ -104,42 +102,9 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
         joint_state_from_values(values, ["arm/j3"])
 
 
-#: Three turning joints: one for an arm, two for a body.
-THREE_JOINTS_URDF = """<?xml version="1.0"?>
-<robot name="three">
-  <link name="l0"/>
-  <link name="l1"/>
-  <link name="l2"/>
-  <link name="l3"/>
-  <joint name="a1" type="revolute">
-    <parent link="l0"/>
-    <child link="l1"/>
-    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
-  </joint>
-  <joint name="left_knee" type="revolute">
-    <parent link="l1"/>
-    <child link="l2"/>
-    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
-  </joint>
-  <joint name="right_knee" type="revolute">
-    <parent link="l2"/>
-    <child link="l3"/>
-    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
-  </joint>
-</robot>
-"""
-
-
-def test_motor_joints_are_the_stiffness_driven_joints_in_description_order(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "three.urdf"
-    path.write_text(THREE_JOINTS_URDF)
-    model = RobotModel.from_file(path)
-    arm = manipulator_description(
-        model, source="arm", joints=["a1"], gripper=GripperSpec(unit=Unit.M, lo=0, hi=1)
-    )
-    body = pd_joint_description(model, source="g1", joints=["left_knee", "right_knee"])
+def test_motor_joints_are_the_stiffness_driven_joints_in_description_order() -> None:
+    arm = manipulator_description(fake_arm_model(("a1",)), source="arm")
+    body = pd_joint_description(fake_arm_model(("left_knee", "right_knee")), source="g1")
     base = twist_base_description("base", limits={})
     assert motor_joints([arm, body, base]) == ["g1/left_knee", "g1/right_knee"]
 
