@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""pick_object with the grasp contact check: the gripper's shape says which
+"""pick_object with the grasp contact check: the robot's shape says which
 grasps would touch the cup off the finger pads or hit the scene."""
 
 from typing import Any
@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.planning.gripper_contact import GraspContactChecker
 
 # The pick-and-place unit tests' arm and cup, and their fixtures.
 from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
@@ -31,6 +31,7 @@ from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
     settled_gripper,
 )
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
@@ -44,11 +45,13 @@ def _table() -> PointCloud2:
 
 @pytest.fixture
 def gripper(module: PickAndPlaceModule) -> MagicMock:
-    """The gripper's shape on the arm's tool tip; its check says which grasps pass."""
+    """The contact check for the arm; its check says which grasps pass."""
     module.config.robot = MagicMock()
     model = MagicMock()
-    model.keep_clear.side_effect = lambda *args: GripperContactModel.keep_clear(model, *args)
-    module._contact_models["tool"] = model
+    model.keep_clear.side_effect = lambda *args: GraspContactChecker.keep_clear(model, *args)
+    module._contact_checkers["arm/tool"] = model
+    state: Any = module._manipulation.get_state.return_value
+    state.groups["arm/tool"].joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
     scene: Any = module._scene
     scene.get_full_scene_pointcloud.return_value = _table()
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
@@ -60,7 +63,7 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
 def test_pick_skips_grasps_the_contact_check_rejects(
     module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:
-    gripper.check.return_value = np.array([False, True])
+    gripper.check.return_value = [False, True]
 
     result = module.pick_object("cup-1")
 
@@ -68,24 +71,29 @@ def test_pick_skips_grasps_the_contact_check_rejects(
     assert result.metadata["score"] == 0.5
     assert result.metadata["contact_rejected"] == 1
     assert [c.score for c in module.get_grasp_candidates().candidates] == [0.5]
-    poses, target, obstacles, contact_margin, obstacle_margin = gripper.check.call_args.args
-    assert poses.shape == (2, 4, 4)
+    poses, target, obstacles, frame, contact_margin, obstacle_margin, seed = (
+        gripper.check.call_args.args
+    )
+    assert len(poses) == 2
     assert target.shape == (2, 3)
     # The table under the cup, cropped to the gripper's reach.
     assert 0 < len(obstacles) < len(_table().points_f32())
-    assert (contact_margin, obstacle_margin) == (0.005, 0.003)
+    assert (frame, contact_margin, obstacle_margin) == ("world", 0.005, 0.003)
+    # The IK starts from where the arm is now.
+    assert (seed.name, seed.position) == (["j1", "j2"], [0.1, 0.2])
 
 
 def test_pick_says_when_the_contact_check_rejects_every_grasp(
     module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:
-    gripper.check.return_value = np.array([False, False])
+    gripper.check.return_value = [False, False]
 
     result = module.pick_object("cup-1")
 
     assert result.message == (
         "Generated 0 grasp candidates for object cup-1. The contact check dropped 2 grasp(s) "
-        "whose gripper would touch the object off its finger pads or hit the scene."
+        "the arm cannot reach or where the robot would touch the object off its finger pads "
+        "or hit the scene."
     )
     assert result.metadata["contact_rejected"] == 2
     module._manipulation.plan_to_poses.assert_not_called()

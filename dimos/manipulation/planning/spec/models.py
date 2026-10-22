@@ -112,6 +112,8 @@ class Obstacle:
         mesh_path: Path to mesh file (for MESH type)
         points: Occupied cell centers in the obstacle's frame (for OCTREE type)
         octree_resolution: Edge length of an OCTREE cell (meters)
+        touch_links: Robot links allowed to touch the obstacle, by exact link
+            name; their collisions with it are ignored
     """
 
     name: str
@@ -124,6 +126,7 @@ class Obstacle:
     # pickled across worker RPC, and an ndarray field breaks all three.
     points: tuple[tuple[float, float, float], ...] = ()
     octree_resolution: float | None = None
+    touch_links: tuple[str, ...] = ()
 
 
 @dataclass

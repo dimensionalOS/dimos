@@ -36,7 +36,7 @@ from dimos.manipulation.grasp_verification import (
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
-from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.planning.gripper_contact import GraspContactChecker
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
@@ -44,6 +44,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
@@ -67,15 +68,15 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
-    # The robot, for checking grasps against its gripper's shape before moving:
-    # a grasp whose gripper would touch the target anywhere but its contact
-    # patches (the finger pads), open or as the fingers close, or would overlap
-    # another scene point, is dropped. None, or a robot model without a gripper
-    # config, tries every grasp the provider gives.
+    # The robot, for checking grasps before moving: a grasp the arm cannot reach,
+    # or where the robot would touch the target with anything but the gripper's
+    # pad links, open or as the fingers close, or touch another scene point, is
+    # dropped. None, or a robot model without a gripper config, tries every grasp
+    # the provider gives.
     robot: RobotModelConfig | None = None
-    # A gripper part closer than this (metres) to the target touches it.
+    # About this close (metres) to the target is a touch.
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
-    # A gripper part closer than this (metres) to another scene point overlaps it.
+    # About this close (metres) to another scene point is a touch.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
 
 
@@ -129,8 +130,8 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
-        # The gripper's shape for the grasp contact check, by tool tip link, built on first use.
-        self._contact_models: dict[str, GripperContactModel] = {}
+        # The grasp contact check, by planning group, built on first use.
+        self._contact_checkers: dict[PlanningGroupID, GraspContactChecker] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -170,8 +171,9 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
-        ``contact_rejected`` in the result counts the grasps dropped because their
-        gripper would touch the object off its finger pads or hit the scene.
+        ``contact_rejected`` in the result counts the grasps dropped because the
+        arm cannot reach them, or the robot would touch the object off its finger
+        pads or hit the scene.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -208,8 +210,8 @@ class PickAndPlaceModule(Module):
             note = ""
             if rejected := facts.get("contact_rejected"):
                 note = (
-                    f" The contact check dropped {rejected} grasp(s) whose gripper would touch "
-                    "the object off its finger pads or hit the scene."
+                    f" The contact check dropped {rejected} grasp(s) the arm cannot reach or "
+                    "where the robot would touch the object off its finger pads or hit the scene."
                 )
             return SkillResult(
                 f"Generated 0 grasp candidates for object {object_id}.{note}", metadata=facts
@@ -234,7 +236,7 @@ class PickAndPlaceModule(Module):
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
     ) -> tuple[GraspCandidateArray, dict[str, Any]]:
-        """Drop the grasps whose gripper would touch the target off its finger pads, or hit the scene.
+        """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
         Args:
             object_id: The object to grasp, from the latest scan.
@@ -255,24 +257,25 @@ class PickAndPlaceModule(Module):
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
             }
-        tips = [
-            state.end_effector_pose.position
-            for state in self._manipulation.get_state().groups.values()
-            if state.end_effector_pose is not None
-        ]
+        states = self._manipulation.get_state().groups.values()
+        tips = [s.end_effector_pose.position for s in states if s.end_effector_pose is not None]
+        joints = {
+            name: position
+            for s in states
+            if s.joints is not None
+            for name, position in zip(s.joints.name, s.joints.position, strict=True)
+        }
         try:
-            tip = self._tip_frame(group)
-            if tip not in self._contact_models:
-                self._contact_models[tip] = GripperContactModel(
-                    robot.model.load(), robot.gripper, tip
-                )
-            kept = self._contact_models[tip].keep_clear(
+            if group not in self._contact_checkers:
+                self._contact_checkers[group] = GraspContactChecker(robot, group)
+            kept = self._contact_checkers[group].keep_clear(
                 candidates,
                 pointcloud,
                 scene,
                 tips,
                 self.config.grasp_contact_margin,
                 self.config.grasp_obstacle_margin,
+                JointState(name=list(joints), position=list(joints.values())),
             )
         except Exception as exc:
             logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))
