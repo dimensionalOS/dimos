@@ -71,6 +71,7 @@ struct EvalConfig {
     loop_candidate_max_distance_m: f64,
     loop_max_yank_rotation_deg: f64,
     loop_yank_gate: bool,
+    loop_icp_dump_dir: String,
     loop_yank_gate_max_distance_m: f64,
     loop_min_id_gap: u64,
 
@@ -143,6 +144,7 @@ impl Default for EvalConfig {
             loop_candidate_max_distance_m: 0.0,
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate: false,
+            loop_icp_dump_dir: String::new(),
             loop_yank_gate_max_distance_m: 0.0,
             loop_min_id_gap: 0,
             subtract_odom_from_cloud: false,
@@ -205,6 +207,7 @@ impl EvalConfig {
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate: self.loop_yank_gate,
+            loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,
