@@ -104,7 +104,7 @@ default**. Enable them with `--with-localize`. Generation then:
 
 Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m): ahead
 `|θ| ≤ 45°`, behind `|θ| ≥ 135°`, sides rejected for fore/aft; `ego_turn` answers
-left / right / ahead / **turn around**. See `experience/ego-spatial-sectors.md`.
+left / right / ahead / **turn around**.
 
 These families are **pose-grounded**: answers come from verified 3D instances +
 `base_link`, not from pixels in the published RGB alone. A referent may be behind

@@ -46,7 +46,7 @@ ForeAft = Literal["ahead", "behind"]
 EgoTurn = Literal["left", "right", "ahead", "turn around"]
 ReferentSelector = Literal["unique", "nearest", "left", "right", "next_to"]
 
-# Shared ego cones — see experience/ego-spatial-sectors.md
+# Shared ego cones: ahead |θ|<=45°, behind |θ|>=135°, else side; range [0.5, 5] m.
 AHEAD_ABS_DEG = 45.0
 BEHIND_ABS_DEG = 135.0
 RANGE_MIN_M = 0.5
