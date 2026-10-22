@@ -38,7 +38,7 @@ from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.memory.module import default_recording_dir
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -55,7 +55,7 @@ _RECORDING_DIR = default_recording_dir()
 
 unitree_go2_mid360_record = autoconnect(
     MovementManager.blueprint(),
-    GO2Connection.blueprint(publish_tf=False).remappings(
+    go2_connection(publish_tf=False).remappings(
         [
             (GO2Connection, "lidar", "go2_lidar"),
             (GO2Connection, "odom", "go2_odom"),

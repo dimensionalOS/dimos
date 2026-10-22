@@ -31,7 +31,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, KeyboardTeleop
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
@@ -118,7 +118,7 @@ record_rerun_config: dict[str, Any] = {
 
 unitree_go2_joystick_record = (
     autoconnect(
-        GO2Connection.blueprint(),
+        go2_connection(),
         KeyboardTeleop.blueprint(),
         vis_module(viewer_backend=global_config.viewer, rerun_config=record_rerun_config),
     )

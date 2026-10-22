@@ -23,7 +23,7 @@ from numpy.typing import ArrayLike
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.simulation.go2_legged.policy import (
+from dimos.robot.unitree.go2.controllers.locomotion.policy import (
     BAND_FAST,
     BAND_LIMITS,
     BAND_ROTATE,

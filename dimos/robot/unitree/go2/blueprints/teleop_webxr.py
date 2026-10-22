@@ -18,14 +18,14 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.teleop.webxr.extensions import Go2TeleopModule
 
 # Go2 quadruped: thumbstick velocity teleop + camera streamed to the headset.
 teleop_webxr_go2 = (
     autoconnect(
         Go2TeleopModule.blueprint(),
-        GO2Connection.blueprint(),
+        go2_connection(),
     )
     .transports(
         {

@@ -28,7 +28,7 @@ Usage:
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 _ips = global_config.processed_robot_ips
@@ -36,7 +36,7 @@ _ips = global_config.processed_robot_ips
 unitree_go2_multi_teleop = autoconnect(
     *[
         autoconnect(
-            GO2Connection.blueprint(ip=ip),
+            go2_connection(ip=ip),
             KeyboardTeleop.blueprint(),
         ).namespace(f"robot{i}")
         for i, ip in enumerate(_ips)

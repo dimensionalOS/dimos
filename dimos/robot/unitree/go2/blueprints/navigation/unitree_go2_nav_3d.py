@@ -29,7 +29,7 @@ from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.robot.unitree.go2.nav_3d_config import (
@@ -66,7 +66,7 @@ _nav_rerun_config = {
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
-    GO2Connection.blueprint(
+    go2_connection(
         obstacle_avoidance=False,
         lidar=False,
         camera=False,

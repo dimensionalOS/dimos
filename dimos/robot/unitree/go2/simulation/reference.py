@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Go2 in MuJoCo walking under a locomotion policy, with physics fitted to real runs."""
+"""Synchronous Go2 calibration/reference rollouts, not the deployed sim2 stepping loop."""
 
 from __future__ import annotations
 
@@ -22,28 +22,21 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.simulation.go2_legged.policy import LEGS, Go2Policy, Proprioception
+from dimos.robot.unitree.go2.controllers.locomotion.policy import (
+    COMMAND_SLEW,
+    CONTROL_DT,
+    LEGS,
+    Go2Policy,
+    Proprioception,
+    projected_gravity,
+)
+from dimos.robot.unitree.go2.simulation.calibration import FITTED_ACTUATOR_TAU, FITTED_PHYSICS
 from dimos.utils.data import get_data
 
-CONTROL_DT = 0.02
-COMMAND_SLEW = np.array([0.05, 0.04, 0.10])
 LEG_DOFS = slice(6, 18)
 BASE_QUAT = slice(3, 7)
 BASE_LINEAR_VELOCITY = slice(0, 3)
 BASE_ANGULAR_VELOCITY = slice(3, 6)
-
-FITTED_PHYSICS = {
-    "armature": 0.00712,
-    "damping": 0.2850,
-    "frictionloss": 0.3650,
-    "trunk_mass_scale": 0.9412,
-    "trunk_inertia_scale": 0.8601,
-    "foot_friction": 0.7860,
-    "foot_friction_torsional": 0.006134,
-    "trunk_com_x": -0.006845,
-    "leg_mass_scale": 1.616,
-}
-FITTED_ACTUATOR_TAU = 0.01510
 
 
 def go2_spec() -> mujoco.MjSpec:
@@ -69,11 +62,6 @@ def apply_fitted_physics(model: mujoco.MjModel) -> None:
         foot = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, leg)
         model.geom_friction[foot, 0] = p["foot_friction"]
         model.geom_friction[foot, 1] = p["foot_friction_torsional"]
-
-
-def projected_gravity(quat_wxyz: NDArray[np.float64]) -> NDArray[np.float64]:
-    w, x, y, z = quat_wxyz
-    return np.array([-2 * (x * z - w * y), -2 * (y * z + w * x), -(1 - 2 * (x * x + y * y))])
 
 
 def yaw_of(quat_wxyz: NDArray[np.float64]) -> float:

@@ -29,6 +29,14 @@ import onnxruntime as ort
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.data import get_data
 
+CONTROL_DT = 0.02
+COMMAND_SLEW = np.array([0.05, 0.04, 0.10])
+
+
+def projected_gravity(quat_wxyz: NDArray[np.float64]) -> NDArray[np.float64]:
+    w, x, y, z = quat_wxyz
+    return np.array([-2 * (x * z - w * y), -2 * (y * z + w * x), -(1 - 2 * (x * x + y * y))])
+
 
 @dataclass(frozen=True)
 class Proprioception:

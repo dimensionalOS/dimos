@@ -23,7 +23,7 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 def _convert_camera_info(camera_info: CameraInfo) -> RerunData:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
-        optical_frame="camera_optical",
+        optical_frame=camera_info.frame_id,
     )
 
 
@@ -195,7 +195,7 @@ _with_vis = autoconnect(
 unitree_go2_basic = (
     autoconnect(
         _with_vis,
-        GO2Connection.blueprint(),
+        go2_connection(),
     ).global_config(n_workers=4, robot_model="unitree_go2")
     # we temporarily disabled sensor timestamps
     # and are derriving all timestmaps upon reception

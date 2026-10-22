@@ -28,13 +28,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 
 _go2_joints = make_twist_base_joints("go2")
 
 unitree_go2_coordinator = (
     autoconnect(
-        GO2Connection.blueprint(obstacle_avoidance=False),
+        go2_connection(obstacle_avoidance=False),
         ControlCoordinator.blueprint(
             hardware=[
                 HardwareComponent(

@@ -20,8 +20,7 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.msgs.sim_msgs.Contacts import Contact
-from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.go2_legged.robot import CONTROL_DT
+from dimos.robot.unitree.go2.controllers.locomotion.policy import CONTROL_DT, OnnxGo2Policy
 from dimos.simulation.go2_sim.world import (
     CEILING_GROUP,
     FRAME_DT,

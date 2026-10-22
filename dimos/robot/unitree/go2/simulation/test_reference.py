@@ -21,9 +21,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.go2_legged.robot import (
-    CONTROL_DT,
+from dimos.robot.unitree.go2.controllers.locomotion.policy import CONTROL_DT, OnnxGo2Policy
+from dimos.robot.unitree.go2.simulation.reference import (
     LeggedGo2,
     apply_fitted_physics,
     go2_spec,

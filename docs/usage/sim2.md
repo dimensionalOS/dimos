@@ -64,6 +64,13 @@ PRs #4304, #4305 and #3557; this stack does not include its implementation or
 sim2 integration. Changing a policy does not require moving or duplicating
 the robot description.
 
+Go2 follows the same ownership: `controllers/locomotion/` contains policy
+inference, while `simulation/` contains the simulated device, physical model
+bindings, and measured physics fit. Its synchronous `simulation/reference.py`
+is retained for calibration/regression rollouts, not used by sim2's live loop.
+Small xArm/Piper packages keep `connection.py`, `config.py`, and `simulation.py`
+alongside `blueprints/`; they do not need empty policy/device directories.
+
 | Component | Owns |
 | --- | --- |
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |

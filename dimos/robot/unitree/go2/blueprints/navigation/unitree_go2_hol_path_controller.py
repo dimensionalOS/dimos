@@ -30,7 +30,7 @@ from dimos.navigation.global_planner.mls_planner.viz import planner_visual_overr
 from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
@@ -67,7 +67,7 @@ _nav_rerun_config = {
 
 unitree_go2_hol_path_controller = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint(obstacle_avoidance=False, motion_mode="mcf", velocity_api=True),
+    go2_connection(obstacle_avoidance=False, motion_mode="mcf", velocity_api=True),
     VoxelGridMapper.blueprint(
         voxel_size=voxel_size,
         frame_id="world",

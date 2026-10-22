@@ -51,9 +51,9 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.controllers.locomotion.policy import CONTROL_DT, Go2Policy, load_policy
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
-from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
-from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
+from dimos.robot.unitree.go2.simulation.reference import LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.procedural import Family, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE

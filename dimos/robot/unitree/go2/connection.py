@@ -13,23 +13,30 @@
 # limitations under the License.
 
 import copy
+from dataclasses import replace
 from enum import Enum
 from importlib import resources
+from pathlib import Path
 import sys
 from threading import Lock, Thread
 import time
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol, cast
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
-from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import (
+    ConnectionConfig as ControlConnectionConfig,
+    ConnectionModule,
+)
+from dimos.control.contract.convert import twist_from_values
+from dimos.control.contract.ports import TwistPort
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
@@ -45,10 +52,18 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.controllers.locomotion.policy import load_policy
+from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
+from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.robot.unitree.type.lowstate import LowStateMsg
+from dimos.sim2.messages import StreamDescriptor
+from dimos.sim2.module import SimulationSpec
+from dimos.sim2.spec import RobotInstance
+from dimos.sim2.world.scene import scene_robot
 from dimos.simulation.dimsim.config import DimSimConfig
-from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
+from dimos.utils.data import LfsPath
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
@@ -65,7 +80,13 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
-class ConnectionConfig(ModuleConfig):
+class ConnectionConfig(ControlConnectionConfig):
+    source: str = "go2"
+    # Navigation publishes at 10 Hz; retain Go2's existing velocity watchdog.
+    deadman_timeout_s: float = CMD_VEL_TIMEOUT
+    cmd_vel: TwistPort = Field(
+        default_factory=lambda: TwistPort(range=Twist(Vector3(3, 1, 0), Vector3(0, 0, 3)))
+    )
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -77,7 +98,8 @@ class ConnectionConfig(ModuleConfig):
     aes_128_key: str | None = Field(default=None, repr=False)
     obstacle_avoidance: bool = True
     replay_exit: bool = False
-    mujoco: MujocoConfig = Field(default_factory=MujocoConfig)
+    policy: Path | None = None
+    spawn: str = "default"
     dimsim: DimSimConfig = Field(default_factory=DimSimConfig)
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
@@ -152,9 +174,7 @@ def make_connection(
     if ip in ("fake", "mock", "replay") or mode == "replay":
         return ReplayConnection(dataset=cfg.g.replay_db, exit_on_complete=cfg.replay_exit)
     elif ip == "mujoco" or mode in ("mujoco", "true"):
-        from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
-        return MujocoConnection(cfg.mujoco, robot_model=cfg.g.robot_model)
+        return Go2SimDevice(cfg.policy)
     elif mode == "dimsim":
         from dimos.robot.unitree.dimsim_connection import DimSimConnection
 
@@ -345,10 +365,12 @@ class ReplayConnection(CompositeResource):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module, Camera, Pointcloud):
+class GO2Connection(ConnectionModule, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
+    default_sim_scene: ClassVar[str] = "logistics.xml"
+    _simulation: SimulationSpec | None
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -376,6 +398,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._simulation = None
         self.connection = make_connection(
             self.config.ip,
             self.config,
@@ -398,7 +421,6 @@ class GO2Connection(Module, Camera, Pointcloud):
         super().start()
         if not hasattr(self, "connection"):
             return
-        self.connection.start()
 
         def onimage(image: Image) -> None:
             image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
@@ -408,9 +430,8 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
-        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        if self.config.camera:
+        if self.config.camera and not isinstance(self.connection, Go2SimDevice):
             self.register_disposable(self.connection.video_stream().subscribe(onimage))
             self._camera_info_thread = Thread(
                 target=self.publish_camera_info,
@@ -435,13 +456,73 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.config.mode == Go2Mode.RAGE:
             self.connection.set_rage_mode(True)
 
-        self.connection.set_obstacle_avoidance(self.config.obstacle_avoidance)
+        if not isinstance(self.connection, Go2SimDevice):
+            self.connection.set_obstacle_avoidance(self.config.obstacle_avoidance)
+
+    @staticmethod
+    def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance:
+        config = cast("ConnectionConfig", config)
+        policy = load_policy(config.policy)
+        instance = scene_robot(
+            scene,
+            go2_definition(camera=config.camera, lidar=config.lidar),
+            config.spawn,
+            default=(0, 0, 0),
+        )
+        return replace(
+            instance,
+            initial_positions=dict(
+                zip(policy.joint_names, map(float, policy.default_pose), strict=True)
+            ),
+            hold_gains={
+                name: (float(p), float(d))
+                for name, p, d in zip(policy.joint_names, policy.kp, policy.kd, strict=True)
+            },
+            control_imu="imu",
+            wait_for_first_command=True,
+            controller={
+                "implementation": type(policy),
+                "weights": config.policy or LfsPath("go2_sim/go2_policy/policy.onnx"),
+            },
+        )
+
+    def control_readings(self) -> dict[type, str]:
+        return {}
+
+    def connect(self) -> None:
+        if isinstance(self.connection, Go2SimDevice):
+            if self._simulation is None:
+                raise RuntimeError("Go2 requires the collected sim2 world")
+            robot_id = self.config.instance_name or self.name
+            self.connection.bind(
+                StreamDescriptor.from_dict(self._simulation.describe()["robots"][robot_id])
+            )
+        self.connection.start()
+
+    def read_state(self) -> dict[str, float]:
+        # This stock walking API has no joint-control feedback contract.
+        if isinstance(self.connection, Go2SimDevice):
+            self.connection.check_health()
+        return {}
+
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
+        duration = 0.0
+        if isinstance(self.connection, Go2SimDevice) and source_ts is not None:
+            duration = CMD_VEL_TIMEOUT - max(0.0, time.time() - source_ts)
+            if duration <= 0:
+                raise TimeoutError("Go2 velocity command is stale")
+        self.move(twist_from_values(values, f"{self.config.source}/base"), duration)
+
+    def halt(self) -> None:
+        self.connection.stop_movement()
 
     @rpc
     def stop(self) -> None:
+        super().stop()
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
-            self.liedown()
+            if not isinstance(self.connection, Go2SimDevice):
+                self.liedown()
         except Exception:
             logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
@@ -453,8 +534,6 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
-        super().stop()
 
     @classmethod
     def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
@@ -491,9 +570,9 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
-        while True:
+        while not self._stop_event.is_set():
             self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
-            time.sleep(1.0)
+            self._stop_event.wait(1.0)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -582,3 +661,17 @@ class GO2Connection(Module, Camera, Pointcloud):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
+
+
+def go2_connection(**kwargs: Any) -> Blueprint:
+    """The same public device topics on hardware and in the collected sim2 world."""
+    name = kwargs.get("instance_name") or GO2Connection.name
+    return GO2Connection.blueprint(**kwargs).remappings(
+        [
+            (f"{name}_camera", "color_image", "color_image"),
+            (f"{name}_camera", "camera_info", "camera_info"),
+            (f"{name}_camera", "depth_image", "depth_image"),
+            (f"{name}_camera", "depth_camera_info", "depth_camera_info"),
+            (f"{name}_lidar", "pointcloud", "lidar"),
+        ]
+    )

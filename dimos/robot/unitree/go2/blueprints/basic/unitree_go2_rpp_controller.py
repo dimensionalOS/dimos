@@ -64,7 +64,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 _go2_joints = make_twist_base_joints("go2")
@@ -76,7 +76,7 @@ class _Go2RppCoordinator(PathFollowingCoordinator):
 
 unitree_go2_rpp_controller = (
     autoconnect(
-        GO2Connection.blueprint(obstacle_avoidance=False),
+        go2_connection(obstacle_avoidance=False),
         _Go2RppCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
