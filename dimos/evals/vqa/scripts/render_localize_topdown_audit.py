@@ -74,7 +74,9 @@ def _evidence_xyz_rows(evidence: dict[str, object]) -> list[tuple[str, tuple[flo
         if not isinstance(nested, dict) or "position_world_xyz" not in nested:
             continue
         xyz = tuple(float(v) for v in nested["position_world_xyz"][:3])
-        name = str(nested.get("choice") or nested.get("object_name") or evidence.get("object_name") or "?")
+        name = str(
+            nested.get("choice") or nested.get("object_name") or evidence.get("object_name") or "?"
+        )
         rows.append((name, xyz))
     for nested in evidence.get("instances") or []:
         if not isinstance(nested, dict) or "position_world_xyz" not in nested:

@@ -186,10 +186,7 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {parsed.category!r}")
     ranked = sorted(
-        (
-            (math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)), inst)
-            for inst in hits
-        ),
+        ((math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)), inst) for inst in hits),
         key=lambda row: row[0],
     )
     best_dist, best = ranked[0]
@@ -357,9 +354,7 @@ def instances_in_ahead_cone(
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
     return tuple(
-        inst
-        for inst in hits
-        if _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz))
+        inst for inst in hits if _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz))
     )
 
 
