@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from copy import deepcopy
 import time
 
-from pydantic import Field
+from pydantic import Field, InstanceOf
 import reactivex as rx
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -25,28 +26,32 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils.image import image_sharpness
+from dimos.message_utils.time import time_from_nanoseconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
+from dimos.utils.reactive import quality_barrier
 from dimos.visualization.vis_module import vis_module
 
 
-def default_transform() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+def default_transform() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
+        transform=Transform(
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     )
 
 
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Transform | None = Field(default_factory=default_transform)
+    transform: InstanceOf[TransformStamped] | None = Field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
     frequency: float = 0.0  # Hz, 0 means no limit
 
@@ -71,7 +76,7 @@ class CameraModule(Module, perception.Camera):
         stream = self.hardware.image_stream()
 
         if self.config.frequency > 0:
-            stream = stream.pipe(sharpness_barrier(self.config.frequency))
+            stream = stream.pipe(quality_barrier(image_sharpness, self.config.frequency))
 
         self.register_disposable(
             stream.subscribe(self.color_image.publish),
@@ -82,24 +87,24 @@ class CameraModule(Module, perception.Camera):
         )
 
     def publish_metadata(self) -> None:
-        camera_info = self.hardware.camera_info.with_ts(time.time())
+        camera_info = deepcopy(self.hardware.camera_info)
+        camera_info.header.stamp = time_from_nanoseconds(time.time_ns())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:
             return
 
-        camera_link = self.config.transform
-        camera_link.ts = camera_info.ts
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-            ts=camera_link.ts,
+        camera_link = deepcopy(self.config.transform)
+        camera_link.header.stamp = camera_info.header.stamp
+        camera_optical = TransformStamped(
+            header=Header(frame_id=camera_link.child_frame_id, stamp=camera_info.header.stamp),
+            child_frame_id=camera_info.header.frame_id,
+            transform=Transform(
+                rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         )
-
-        self.tf.publish(TFMessage(camera_link, camera_optical))
+        self.tf.publish(TFMessage(transforms=[camera_link, camera_optical]))
 
     @rpc
     def stop(self) -> None:

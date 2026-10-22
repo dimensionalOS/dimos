@@ -18,20 +18,31 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString};
-use std::io::Write;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::dimos_msgs::msg::imu_info::ImuInfo;
+use dimos_generated_messages::geometry_msgs::msg::{
+    quaternion::Quaternion as QuaternionMsg, vector3::Vector3 as Vector3Msg,
+};
+use dimos_generated_messages::geometry_msgs::msg::{
+    transform::Transform as TransformMsg, transform_stamped::TransformStamped,
+};
+use dimos_generated_messages::sensor_msgs::msg::{
+    camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
+    point_field::PointField, region_of_interest::RegionOfInterest,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+use dimos_module::cdr;
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,
 };
 use dimos_module::{native_config, run_with_transport, Module, Output, Tf, Transform};
-use lcm_msgs::geometry_msgs::{Quaternion as QuaternionMsg, Vector3 as Vector3Msg};
-use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest};
-use lcm_msgs::std_msgs::{Header, Time};
 use realsense_rust::base::{Rs2Extrinsics, Rs2Intrinsics};
 use realsense_rust::config::Config as RsConfig;
 use realsense_rust::context::Context;
@@ -56,8 +67,63 @@ const IMU_CLOCK_WINDOW_SECONDS: i64 = 30;
 const FRAME_TIMEOUT: Duration = Duration::from_secs(1);
 // Body (REP-103) from optical axes, x y z w.
 const OPTICAL_ROTATION: [f64; 4] = [-0.5, 0.5, -0.5, 0.5];
-// lcm-gen fingerprint of sensor_msgs.ImuInfo; it has no generated bindings.
-const IMU_INFO_FINGERPRINT: u64 = 0xe6aa5563f2a33280;
+fn encode_cdr<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    cdr::encode(value).expect("serialize a valid camera value")
+}
+
+fn encode_cdr_tf(values: &[Transform]) -> std::io::Result<Vec<u8>> {
+    let message = TFMessage {
+        transforms: values
+            .iter()
+            .map(|value| {
+                let t = value.translation();
+                let q = value.rotation();
+                TransformStamped {
+                    header: header(&value.parent, value.ts),
+                    child_frame_id: value.child.clone(),
+                    transform: TransformMsg {
+                        translation: Vector3Msg {
+                            x: t.x,
+                            y: t.y,
+                            z: t.z,
+                        },
+                        rotation: QuaternionMsg {
+                            x: q.i,
+                            y: q.j,
+                            z: q.k,
+                            w: q.w,
+                        },
+                    },
+                }
+            })
+            .collect(),
+    };
+    cdr::encode(&message)
+}
+
+fn decode_cdr_tf(bytes: &[u8]) -> std::io::Result<Vec<Transform>> {
+    let message: TFMessage = cdr::decode(bytes)?;
+    let mut values = Vec::with_capacity(message.transforms.len());
+    for value in message.transforms {
+        let t = value.transform.translation;
+        let q = value.transform.rotation;
+        let Some(rotation) = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
+        else {
+            dimos_module::error_throttled!(
+                Duration::from_secs(1), parent = %value.header.frame_id,
+                child = %value.child_frame_id, "tf rotation is not a valid quaternion"
+            );
+            continue;
+        };
+        values.push(Transform::new(
+            value.header.frame_id,
+            value.child_frame_id,
+            value.header.stamp.sec as f64 + value.header.stamp.nanosec as f64 * 1e-9,
+            Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation),
+        ));
+    }
+    Ok(values)
+}
 
 // ---- config, field for field with RealSenseCameraConfig ----
 
@@ -170,36 +236,6 @@ impl Config {
     }
 }
 
-// ---- sensor_msgs.ImuInfo, hand-encoded ----
-
-#[derive(Clone)]
-struct ImuInfo {
-    header: Header,
-    gyro_noise_density: f64,
-    gyro_random_walk: f64,
-    accel_noise_density: f64,
-    accel_random_walk: f64,
-    frequency: f64,
-}
-
-impl ImuInfo {
-    fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8 + self.header.encoded_size() + 40);
-        buf.write_all(&IMU_INFO_FINGERPRINT.to_be_bytes()).unwrap();
-        self.header.encode_one(&mut buf).unwrap();
-        for v in [
-            self.gyro_noise_density,
-            self.gyro_random_walk,
-            self.accel_noise_density,
-            self.accel_random_walk,
-            self.frequency,
-        ] {
-            buf.write_all(&v.to_be_bytes()).unwrap();
-        }
-        buf
-    }
-}
-
 // ---- module ----
 
 /// What the capture thread learns at start and the tickers publish from.
@@ -250,29 +286,29 @@ struct Outs {
 #[derive(Module)]
 #[module(name = "realsense", setup = start, teardown = stop)]
 struct RealSense {
-    #[output(encode = Image::encode)]
+    #[output(encode = encode_cdr)]
     color_image: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = encode_cdr)]
     depth_image: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = encode_cdr)]
     infrared_left: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = encode_cdr)]
     infrared_right: Output<Image>,
-    #[output(encode = Imu::encode)]
+    #[output(encode = encode_cdr)]
     imu: Output<Imu>,
-    #[output(encode = ImuInfo::encode)]
+    #[output(encode = encode_cdr)]
     imu_info: Output<ImuInfo>,
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = encode_cdr)]
     pointcloud: Output<PointCloud2>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = encode_cdr)]
     camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = encode_cdr)]
     depth_camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = encode_cdr)]
     infrared_left_camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = encode_cdr)]
     infrared_right_camera_info: Output<CameraInfo>,
-    #[tf]
+    #[tf(decode = decode_cdr_tf, encode = encode_cdr_tf)]
     tf: Tf,
     #[config]
     config: Config,
@@ -358,12 +394,16 @@ fn unix_now() -> f64 {
 }
 
 fn header(frame_id: &str, ts: f64) -> Header {
-    let sec = ts.trunc();
+    let mut sec = ts.floor();
+    let mut nanosec = ((ts - sec) * 1e9).round() as u32;
+    if nanosec >= 1_000_000_000 {
+        sec += 1.0;
+        nanosec -= 1_000_000_000;
+    }
     Header {
-        seq: 0,
         stamp: Time {
             sec: sec as i32,
-            nsec: ((ts - sec) * 1e9) as i32,
+            nanosec,
         },
         frame_id: frame_id.to_string(),
     }
@@ -390,11 +430,11 @@ fn image<K>(
     };
     Image {
         header: header(frame_id, ts),
-        height: frame.height() as i32,
-        width: frame.width() as i32,
+        height: frame.height() as u32,
+        width: frame.width() as u32,
         encoding: encoding.to_string(),
         is_bigendian: 0,
-        step: (frame.width() * bytes_per_pixel) as i32,
+        step: (frame.width() * bytes_per_pixel) as u32,
         data: data.to_vec(),
     }
 }
@@ -411,13 +451,13 @@ fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str) -> CameraInfo {
     };
     CameraInfo {
         header: header(frame_id, 0.0),
-        height: intrinsics.height() as i32,
-        width: intrinsics.width() as i32,
+        height: intrinsics.height() as u32,
+        width: intrinsics.width() as u32,
         distortion_model: model.to_string(),
-        D: intrinsics.0.coeffs.iter().map(|&c| c as f64).collect(),
-        K: [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P: [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        d: intrinsics.0.coeffs.iter().map(|&c| c as f64).collect(),
+        k: [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        r: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        p: [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
         binning_x: 0,
         binning_y: 0,
         roi: RegionOfInterest {
@@ -677,7 +717,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             // The pair is rectified, so the whole of their offset is along x.
             if let (Some(info), Ok(ext)) = (infra2_info.as_mut(), p2.extrinsics(p1)) {
                 let baseline = (ext.translation()[0] as f64).abs();
-                info.P[3] = -info.P[0] * baseline;
+                info.p[3] = -info.p[0] * baseline;
             }
         }
     }
@@ -937,10 +977,10 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
 }
 
 fn empty_cloud(header: &Header) -> PointCloud2 {
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.to_string(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -968,8 +1008,8 @@ fn rgbd_to_cloud(
     stride: usize,
     depth_trunc_m: f32,
 ) -> PointCloud2 {
-    let (fx, fy) = (info.K[0] as f32, info.K[4] as f32);
-    let (cx, cy) = (info.K[2] as f32, info.K[5] as f32);
+    let (fx, fy) = (info.k[0] as f32, info.k[4] as f32);
+    let (cx, cy) = (info.k[2] as f32, info.k[5] as f32);
     let (w, h) = (rgbd.depth.width as usize, rgbd.depth.height as usize);
     let rgb = &rgbd.color.data;
     if rgb.len() != w * h * 3 || rgbd.depth.data.len() != w * h * 2 {
@@ -1020,13 +1060,13 @@ fn rgbd_to_cloud(
             ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
         data.extend_from_slice(&packed.to_le_bytes());
     }
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.to_string(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     PointCloud2 {
         header: rgbd.depth.header.clone(),
         height: if n == 0 { 0 } else { 1 },
@@ -1374,6 +1414,134 @@ async fn main() {
 mod tests {
     use super::*;
 
+    fn export_fixture<T: serde::Serialize>(name: &str, value: &T) {
+        use std::io::Write;
+        if let Some(directory) = std::env::var_os("DIMOS_REALSENSE_CDR_FIXTURES") {
+            let path = std::path::Path::new(&directory).join(name);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("create a new requested fixture")
+                .write_all(&cdr::encode(value).unwrap())
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn canonical_tf_preserves_frames_math_and_normalized_time_in_both_endians() {
+        for ts in [3.25, -0.25, 1.0 - 1e-12] {
+            let transform =
+                Transform::new("map", "camera", ts, Isometry3::translation(1.0, 2.0, 3.0));
+            let bytes = encode_cdr_tf(&[transform]).unwrap();
+            assert_eq!(&bytes[..4], &[0, 1, 0, 0]);
+            let message: TFMessage = cdr::decode(&bytes).unwrap();
+            assert!(message.transforms[0].header.stamp.nanosec < 1_000_000_000);
+            for payload in [bytes, cdr::encode_endian(&message, false).unwrap()] {
+                let decoded = decode_cdr_tf(&payload).unwrap();
+                assert_eq!(decoded.len(), 1);
+                assert_eq!(decoded[0].parent, "map");
+                assert_eq!(decoded[0].child, "camera");
+                assert!((decoded[0].ts - ts).abs() <= 1e-9);
+                assert_eq!(decoded[0].translation(), Vector3::new(1.0, 2.0, 3.0));
+            }
+        }
+        let bytes =
+            encode_cdr_tf(&[Transform::new("map", "camera", 3.25, Isometry3::identity())]).unwrap();
+        export_fixture("tf.cdr", &cdr::decode::<TFMessage>(&bytes).unwrap());
+        assert!(decode_cdr_tf(b"legacy or malformed bytes").is_err());
+    }
+
+    #[test]
+    fn canonical_tf_keeps_valid_edges_when_one_quaternion_is_invalid() {
+        let bytes =
+            encode_cdr_tf(&[Transform::new("map", "camera", 3.25, Isometry3::identity())]).unwrap();
+        let mut message: TFMessage = cdr::decode(&bytes).unwrap();
+        let mut invalid = message.transforms[0].clone();
+        invalid.child_frame_id = "invalid".into();
+        invalid.transform.rotation = QuaternionMsg {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+        };
+        message.transforms.push(invalid);
+        let decoded = decode_cdr_tf(&cdr::encode(&message).unwrap()).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].child, "camera");
+    }
+
+    #[test]
+    fn generated_calibration_and_rgbd_cloud_keep_source_stamp_and_matching_colors() {
+        let intrinsics = Rs2Intrinsics(sys::rs2_intrinsics {
+            width: 2,
+            height: 1,
+            ppx: 0.0,
+            ppy: 0.0,
+            fx: 2.0,
+            fy: 2.0,
+            model: Rs2DistortionModel::None as sys::rs2_distortion,
+            coeffs: [0.0; 5],
+        });
+        let info = camera_info(&intrinsics, "camera_optical");
+        assert_eq!(info.k, [2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 1.0]);
+        let source = header("camera_optical", 3.25);
+        let rgbd = Rgbd {
+            color: Image {
+                header: source.clone(),
+                width: 2,
+                height: 1,
+                encoding: "rgb8".into(),
+                is_bigendian: 0,
+                step: 6,
+                data: vec![255, 0, 0, 0, 0, 255],
+            },
+            depth: Image {
+                header: source.clone(),
+                width: 2,
+                height: 1,
+                encoding: "16UC1".into(),
+                is_bigendian: 0,
+                step: 4,
+                data: [1000u16.to_le_bytes(), 2000u16.to_le_bytes()].concat(),
+            },
+        };
+        let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, 1, 3.0);
+        let decoded: PointCloud2 = cdr::decode(&encode_cdr(&cloud)).unwrap();
+        assert_eq!(decoded.header, source);
+        assert_eq!(
+            (
+                decoded.width,
+                decoded.height,
+                decoded.point_step,
+                decoded.row_step
+            ),
+            (2, 1, 16, 32)
+        );
+        for (chunk, point) in decoded
+            .data
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .zip([[0.0f32, 0.0, 1.0], [1.0, 0.0, 2.0]])
+        {
+            for (value, expected) in chunk[..12].as_chunks::<4>().0.iter().zip(point) {
+                assert!((f32::from_le_bytes(*value) - expected).abs() < 1e-6);
+            }
+        }
+        assert_eq!(
+            u32::from_le_bytes(decoded.data[12..16].try_into().unwrap()),
+            0x00ff0000
+        );
+        assert_eq!(
+            u32::from_le_bytes(decoded.data[28..32].try_into().unwrap()),
+            0x000000ff
+        );
+        export_fixture("cloud.cdr", &cloud);
+        export_fixture("image.cdr", &rgbd.color);
+        export_fixture("calibration.cdr", &info);
+    }
+
     #[test]
     fn pairer_interpolates_accel_at_gyro_time() {
         let mut p = ImuPairer::default();
@@ -1406,10 +1574,10 @@ mod tests {
             accel_random_walk: 4.0,
             frequency: 5.0,
         };
-        let bytes = msg.encode();
-        assert_eq!(&bytes[..8], &IMU_INFO_FINGERPRINT.to_be_bytes());
-        assert_eq!(bytes.len(), 8 + msg.header.encoded_size() + 40);
-        assert_eq!(&bytes[bytes.len() - 8..], &5.0f64.to_be_bytes());
+        let bytes = cdr::encode(&msg).unwrap();
+        assert_eq!(&bytes[..4], &[0, 1, 0, 0]);
+        assert_eq!(cdr::decode::<ImuInfo>(&bytes).unwrap(), msg);
+        export_fixture("imu-info.cdr", &msg);
     }
 }
 
@@ -1427,20 +1595,20 @@ mod bench {
         let rgbd = Rgbd {
             color: Image {
                 header: header("f", 0.0),
-                height: h as i32,
-                width: w as i32,
+                height: h as u32,
+                width: w as u32,
                 encoding: "rgb8".into(),
                 is_bigendian: 0,
-                step: (w * 3) as i32,
+                step: (w * 3) as u32,
                 data: vec![128; w * h * 3],
             },
             depth: Image {
                 header: header("f", 0.0),
-                height: h as i32,
-                width: w as i32,
+                height: h as u32,
+                width: w as u32,
                 encoding: "16UC1".into(),
                 is_bigendian: 0,
-                step: (w * 2) as i32,
+                step: (w * 2) as u32,
                 data: depth,
             },
         };
@@ -1463,7 +1631,7 @@ mod bench {
             let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 5.0);
             let build = t.elapsed();
             let t = std::time::Instant::now();
-            let bytes = cloud.encode();
+            let bytes = cdr::encode(&cloud).unwrap();
             eprintln!(
                 "stride={stride} points={} build={:?} encode={:?} bytes={}",
                 cloud.width,

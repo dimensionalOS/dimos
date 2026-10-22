@@ -16,87 +16,110 @@
 
 from __future__ import annotations
 
-import time
-import uuid
+from contextlib import ExitStack
+from threading import Event
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.protocol.tf.tf import TF
 
 
 def _marker_detection_array(ts: float) -> Detection3DArray:
-    det = Detection3D()
-    det.header = Header(ts, "world")
+    det = Detection3D(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            size=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        id="",
+    )
+    det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
     det.id = "11"
     det.results = [
         ObjectHypothesisWithPose(
             hypothesis=ObjectHypothesis(
                 class_id="DICT_APRILTAG_36h11:11",
                 score=1.0,
-            )
+            ),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
     ]
-    det.results_length = len(det.results)
     det.bbox = BoundingBox3D(
         center=Pose(
-            position=Vector3(0.5, -0.2, 1.25),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            position=Point(x=0.5, y=-0.2, z=1.25),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         ),
-        size=Vector3(0.18, 0.18, 0.0),
+        size=Vector3(x=0.18, y=0.18, z=0.0),
     )
     return Detection3DArray(
-        header=Header(ts, "world"),
+        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
         detections=[det],
-        detections_length=1,
     )
 
 
 def test_marker_tf_consumes_detection_array_over_lcm() -> None:
-    ts = time.time()
-    module = MarkerTfModule(marker_namespace_prefix="marker_tf")
-    detections_transport = LCMTransport(
-        f"/mtf/{uuid.uuid4().hex[:8]}",
-        Detection3DArray,
-    )
-    module.detections.transport = detections_transport
-    module.tf.transport = make_transport("/tf", TFMessage)
-    host_transport = make_transport("/tf", TFMessage)
-    host_tf = TF(host_transport)
+    stamp = Time(sec=1700000000, nanosec=123456789)
+    ts = stamp.sec + stamp.nanosec / 1e9
+    with ExitStack() as cleanup:
+        detections_transport = LCMTransport("/mtf/detections", Detection3DArray, url="memq://")
+        cleanup.callback(detections_transport.stop)
+        tf_transport = LCMTransport("/mtf/tf", TFMessage, url="memq://")
+        cleanup.callback(tf_transport.stop)
+        module = MarkerTfModule(marker_namespace_prefix="marker_tf")
+        cleanup.callback(module.stop)
+        module.detections.transport = detections_transport
+        module.tf.transport = tf_transport
+        host_tf = TF(tf_transport)
+        cleanup.callback(host_tf.dispose)
+        received = []
+        ready = Event()
 
-    try:
+        def receive(value):
+            received.append(value)
+            ready.set()
+
+        cleanup.callback(tf_transport.subscribe(receive))
         module.start()
         msg = _marker_detection_array(ts)
-        w_markers = None
-        w_marker = None
-        for _ in range(40):
-            detections_transport.publish(msg)
-            time.sleep(0.05)
-            w_markers = host_tf.get("world", "marker_tf/markers", ts, 1.0)
-            w_marker = host_tf.get("world", "marker_tf/marker_11", ts, 1.0)
-            if w_markers is not None and w_marker is not None:
-                break
-
-        assert w_markers is not None, "Timed out waiting for world -> marker_tf/markers"
-        assert w_marker is not None, "Timed out waiting for world -> marker_tf/marker_11"
-        assert w_markers.frame_id == "world"
+        msg.header.stamp = stamp
+        msg.detections[0].header.stamp = stamp
+        detections_transport.publish(msg)
+        assert ready.wait(2), "Timed out waiting for generated CDR marker transforms"
+        assert len(received) == 1
+        assert [tf.header.stamp for tf in received[0].transforms] == [stamp, stamp]
+        w_markers = host_tf.get("world", "marker_tf/markers", ts, 1.0)
+        w_marker = host_tf.get("world", "marker_tf/marker_11", ts, 1.0)
+        assert w_markers is not None
+        assert w_marker is not None
+        assert w_markers.header.frame_id == "world"
         assert w_markers.child_frame_id == "marker_tf/markers"
-        assert w_marker.frame_id == "world"
+        assert w_marker.header.frame_id == "world"
         assert w_marker.child_frame_id == "marker_tf/marker_11"
-        assert w_marker.translation.x == pytest.approx(0.5)
-        assert w_marker.translation.y == pytest.approx(-0.2)
-        assert w_marker.translation.z == pytest.approx(1.25)
-    finally:
-        host_tf.dispose()
-        host_transport.stop()
-        module.stop()
+        assert w_marker.transform.translation.x == pytest.approx(0.5)
+        assert w_marker.transform.translation.y == pytest.approx(-0.2)
+        assert w_marker.transform.translation.z == pytest.approx(1.25)

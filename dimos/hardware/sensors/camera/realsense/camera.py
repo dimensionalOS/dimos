@@ -19,17 +19,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
+from pydantic import Field, InstanceOf
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import ImuInfo
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
 
 
@@ -60,13 +59,15 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
-    imu_info: ImuInfo | None = Field(
+    imu_info: InstanceOf[ImuInfo] | None = Field(
         # default value based on a d455, but this should be measured for every physical camera (every d455,d435,etc)
         default_factory=lambda: ImuInfo(
             gyro_noise_density=2.0e-4,
             gyro_random_walk=1.0e-5,
             accel_noise_density=1.8e-3,
             accel_random_walk=1.0e-4,
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            frequency=0.0,
         )
     )
     pointcloud_fps: float = 5.0

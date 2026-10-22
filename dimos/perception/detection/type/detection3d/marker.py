@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.messages.vision_msgs.msg import Detection3D
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 
 
@@ -35,7 +35,9 @@ class Detection3DMarker(Detection3DBBox):
     """
 
     marker_id: int = -1
-    corners_px: np.ndarray = field(default_factory=lambda: np.zeros((4, 2), dtype=np.float32))
+    corners_px: np.ndarray[Any, np.dtype[np.float32]] = field(
+        default_factory=lambda: np.zeros((4, 2), dtype=np.float32)
+    )
     dictionary: str = ""
     reprojection_error: float = 0.0
 
@@ -52,8 +54,9 @@ class Detection3DMarker(Detection3DBBox):
         msg = super().to_detection3d_msg()
         msg.id = str(self.marker_id)
         if msg.results:
-            msg.results[0].hypothesis.class_id = self.marker_label
-        msg.results_length = len(msg.results)
+            result = msg.results[0]
+            result.hypothesis.class_id = self.marker_label
+            msg.results[0] = result
         return msg
 
     def to_repr_dict(self) -> dict[str, Any]:

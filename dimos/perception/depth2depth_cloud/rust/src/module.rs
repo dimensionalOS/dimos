@@ -31,16 +31,137 @@ use std::time::{Duration, Instant};
 use depth2depth::{
     Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
 };
-use dimos_module::pointcloud::extract_xyz;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
+use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImage;
+use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
+use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_module::cdr;
+use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{Isometry3, Point3};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::undistort::{Lens, UndistortMap};
+
+fn encode_cloud(cloud: &PointCloud2) -> Vec<u8> {
+    cdr::encode(cloud).expect("serialize a valid generated PointCloud2")
+}
+
+fn extract_xyz(cloud: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
+    let offset = |name: &str| {
+        cloud
+            .fields
+            .iter()
+            .find(|field| {
+                field.name == name && field.datatype == PointField::FLOAT32 && field.count == 1
+            })
+            .map(|field| field.offset as usize)
+            .ok_or(ExtractError("missing a scalar float32 xyz field"))
+    };
+    extract_xyz_rows(
+        &cloud.data,
+        [cloud.width as usize, cloud.height as usize],
+        [cloud.point_step as usize, cloud.row_step as usize],
+        [offset("x")?, offset("y")?, offset("z")?],
+        cloud.is_bigendian,
+    )
+}
+
+fn decode_tf(bytes: &[u8]) -> std::io::Result<Vec<dimos_module::tf::Transform>> {
+    use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+    use nalgebra::{Quaternion, Translation3, UnitQuaternion};
+    let message: TFMessage = cdr::decode(bytes)?;
+    message
+        .transforms
+        .into_iter()
+        .map(|edge| {
+            let p = edge.transform.translation;
+            let q = edge.transform.rotation;
+            if ![p.x, p.y, p.z, q.x, q.y, q.z, q.w]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "nonfinite TF components",
+                ));
+            }
+            let rotation = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "zero TF quaternion")
+                })?;
+            if edge.header.stamp.nanosec >= 1_000_000_000 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unnormalized TF stamp",
+                ));
+            }
+            Ok(dimos_module::tf::Transform::from_nanoseconds(
+                edge.header.frame_id,
+                edge.child_frame_id,
+                edge.header.stamp.sec as i64 * 1_000_000_000 + edge.header.stamp.nanosec as i64,
+                Isometry3::from_parts(Translation3::new(p.x, p.y, p.z), rotation),
+            ))
+        })
+        .collect()
+}
+
+fn encode_tf(transforms: &[dimos_module::tf::Transform]) -> std::io::Result<Vec<u8>> {
+    use dimos_generated_messages::{
+        geometry_msgs::msg::{
+            quaternion::Quaternion, transform::Transform, transform_stamped::TransformStamped,
+            vector3::Vector3,
+        },
+        tf2_msgs::msg::tf_message::TFMessage,
+    };
+    let transforms = transforms
+        .iter()
+        .map(|value| {
+            let ns = value.stamp_nanoseconds().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "TF timestamp is outside range",
+                )
+            })?;
+            let sec = i32::try_from(ns.div_euclid(1_000_000_000)).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "TF seconds exceed ROS int32",
+                )
+            })?;
+            let p = value.translation();
+            let q = value.rotation();
+            Ok(TransformStamped {
+                header: Header {
+                    stamp: Time {
+                        sec,
+                        nanosec: ns.rem_euclid(1_000_000_000) as u32,
+                    },
+                    frame_id: value.parent.clone(),
+                },
+                child_frame_id: value.child.clone(),
+                transform: Transform {
+                    translation: Vector3 {
+                        x: p.x,
+                        y: p.y,
+                        z: p.z,
+                    },
+                    rotation: Quaternion {
+                        x: q.i,
+                        y: q.j,
+                        z: q.k,
+                        w: q.w,
+                    },
+                },
+            })
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    cdr::encode(&TFMessage { transforms })
+}
 
 const TIMING_REPORT_EVERY: Duration = Duration::from_secs(5);
 /// Scans up to this far after a frame still anchor it...
@@ -122,19 +243,19 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "depth2depth_cloud", setup = start, teardown = stop)]
 pub struct Depth2DepthCloud {
-    #[input(decode = CompressedImage::decode, handler = on_image)]
+    #[input(decode = cdr::decode, handler = on_image)]
     image: Input<CompressedImage>,
 
-    #[input(decode = CameraInfo::decode, handler = on_camera_info)]
+    #[input(decode = cdr::decode, handler = on_camera_info)]
     camera_info: Input<CameraInfo>,
 
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
-    #[tf]
+    #[tf(decode = decode_tf, encode = encode_tf)]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = encode_cloud)]
     depth_cloud: Output<PointCloud2>,
 
     #[config]
@@ -418,8 +539,8 @@ impl Worker {
             };
             let decoded = Instant::now();
             if !undistort.as_ref().is_some_and(|(held, held_width, _)| {
-                held.K == info.K
-                    && held.D == info.D
+                held.k == info.k
+                    && held.d == info.d
                     && held.distortion_model == info.distortion_model
                     && held.width == info.width
                     && *held_width == width
@@ -712,10 +833,10 @@ fn decode_rgb(image: &CompressedImage, scale: usize) -> Option<(Vec<u8>, usize, 
 }
 
 fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCloud2 {
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.into(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     let data: Vec<u8> = points
@@ -725,16 +846,15 @@ fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCl
         .collect();
     PointCloud2 {
         header: Header {
-            seq: source.seq,
             stamp: source.stamp.clone(),
             frame_id,
         },
         height: 1,
-        width: points.len() as i32,
+        width: points.len() as u32,
         fields: vec![field("x", 0), field("y", 4), field("z", 8)],
         is_bigendian: false,
         point_step: 12,
-        row_step: 12 * points.len() as i32,
+        row_step: 12 * points.len() as u32,
         data,
         is_dense: true,
     }
@@ -754,7 +874,7 @@ fn or_derived(configured: usize, derived: usize) -> usize {
 }
 
 fn seconds(stamp: &Time) -> f64 {
-    stamp.sec as f64 + stamp.nsec as f64 * 1e-9
+    stamp.sec as f64 + stamp.nanosec as f64 * 1e-9
 }
 
 /// Config, then calibration, then image frame, since drivers stamp frames nobody publishes a transform for.
@@ -825,6 +945,77 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_cloud_roundtrips_cdr_with_exact_negative_and_epoch_stamps() {
+        for stamp in [
+            Time {
+                sec: -1,
+                nanosec: 999_999_999,
+            },
+            Time {
+                sec: 1_700_000_000,
+                nanosec: 123_456_789,
+            },
+        ] {
+            let header = Header {
+                stamp: stamp.clone(),
+                frame_id: "camera".into(),
+            };
+            let cloud = make_cloud(&[[1., 2., 3.]], &header, "optical".into());
+            let received: PointCloud2 = cdr::decode(&encode_cloud(&cloud)).unwrap();
+            assert_eq!(received.header.stamp.sec, stamp.sec);
+            assert_eq!(received.header.stamp.nanosec, stamp.nanosec);
+            assert_eq!(received.header.frame_id, "optical");
+            assert_eq!(extract_xyz(&received).unwrap(), vec![[1., 2., 3.]]);
+        }
+    }
+
+    #[test]
+    fn cdr_tf_adapter_preserves_frames_and_rejects_wrong_encoding() {
+        let transform = dimos_module::tf::Transform::new(
+            "world",
+            "camera",
+            -0.25,
+            Isometry3::translation(1., 2., 3.),
+        );
+        let decoded = decode_tf(&encode_tf(&[transform]).unwrap()).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].parent, "world");
+        assert_eq!(decoded[0].child, "camera");
+        assert_eq!(decoded[0].ts, -0.25);
+        assert_eq!(decoded[0].translation(), nalgebra::Vector3::new(1., 2., 3.));
+        assert!(decode_tf(&[0, 3, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn tf_cdr_source_stamps_survive_epoch_nanoseconds_and_negative_times() {
+        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+        for ns in [0, -1, 1_700_000_000_123_456_789] {
+            let value = dimos_module::tf::Transform::from_nanoseconds(
+                "world",
+                "camera",
+                ns,
+                Isometry3::translation(1., 2., 3.),
+            );
+            let message: TFMessage = cdr::decode(&encode_tf(&[value]).unwrap()).unwrap();
+            assert_eq!(
+                message.transforms[0].header.stamp.sec as i64,
+                ns.div_euclid(1_000_000_000)
+            );
+            assert_eq!(
+                message.transforms[0].header.stamp.nanosec as i64,
+                ns.rem_euclid(1_000_000_000)
+            );
+            for little in [false, true] {
+                let bytes = cdr::encode_endian(&message, little).unwrap();
+                let decoded = decode_tf(&bytes).unwrap();
+                assert_eq!(decoded[0].stamp_nanoseconds(), Some(ns));
+                let output: TFMessage = cdr::decode(&encode_tf(&decoded).unwrap()).unwrap();
+                assert_eq!(output, message);
+            }
+        }
+    }
+
+    #[test]
     fn a_stage_behind_takes_the_newest_item_and_counts_the_ones_it_missed() {
         let latest = Latest::default();
         latest.put(1);
@@ -845,8 +1036,12 @@ mod tests {
     #[test]
     fn a_non_jpeg_format_is_refused_rather_than_fed_to_the_decoder() {
         let png = CompressedImage {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
             format: "png".into(),
-            ..Default::default()
+            data: Vec::new(),
         };
         assert!(decode_rgb(&png, 1).is_none());
     }
@@ -854,8 +1049,7 @@ mod tests {
     #[test]
     fn the_cloud_carries_the_points_and_the_source_stamp() {
         let header = Header {
-            seq: 7,
-            stamp: Time { sec: 3, nsec: 4 },
+            stamp: Time { sec: 3, nanosec: 4 },
             frame_id: "image".into(),
         };
         let cloud = make_cloud(
@@ -867,7 +1061,7 @@ mod tests {
             (
                 cloud.width,
                 cloud.header.frame_id.as_str(),
-                cloud.header.stamp.nsec
+                cloud.header.stamp.nanosec
             ),
             (2, "camera", 4)
         );

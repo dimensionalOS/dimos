@@ -13,19 +13,29 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator
+from contextlib import ExitStack
+from copy import deepcopy
 import functools
+import hashlib
+from importlib import resources
+import json
+import math
+from pathlib import Path
 from typing import TypedDict
-from unittest import mock
 
-from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
+from dimos_cdrgen.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.message_utils.camera_info import camera_info_from_yaml
+from dimos.message_utils.geometry import transform_from_pose
+from dimos.message_utils.time import to_nanoseconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -33,22 +43,44 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.experimental.moduleDB import ObjectDBModule
+from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import TF
-from dimos.robot.unitree.go2 import connection
-from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+
+
+def _test_data(name):
+    local = Path(__file__).resolve().parents[3] / "data" / name
+    return local if local.exists() else get_data(name)
+
+
+@pytest.fixture(scope="session")
+def detection_assets():
+    return _test_data
+
+
+def front_camera_calibration() -> CameraInfo:
+    source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
+    with resources.as_file(source) as path:
+        return camera_info_from_yaml(
+            path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+        )
+
+
+def _dispose_module(module):
+    try:
+        module.detector.stop()
+    finally:
+        module._close_module()
 
 
 class Moment(TypedDict, total=False):
-    odom_frame: Odometry
+    odom_frame: PoseStamped
     lidar_frame: PointCloud2
     image_frame: Image
     camera_info: CameraInfo
-    transforms: list[Transform]
+    transforms: list[TransformStamped]
     tf: TF
     detections: ImageDetections3DPC | None
-    markers: MarkerArray | None
 
 
 class Moment2D(Moment):
@@ -70,34 +102,48 @@ def tf():
 def get_moment(tf):
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment:
-        print("MOMENT PROVIDER ARGS:", kwargs)
         seek = kwargs.get("seek", 10.0)
+        data_dir = _test_data("unitree_go2_detection_cdr")
+        manifest = json.loads((data_dir / "manifest.json").read_text())
+        entry = next(item for item in manifest["moments"] if item["seek"] == seek)
 
-        data_dir = "unitree_go2_lidar_corrected"
-        get_data(data_dir)
+        def payload(name):
+            stream = entry["streams"][name]
+            data = (data_dir / stream["file"]).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == stream["cdr_sha256"]
+            value = cdr_decode(
+                data, {"lidar": PointCloud2, "video": Image, "odom": PoseStamped}[name]
+            )
+            assert (
+                to_nanoseconds(value.header.stamp)
+                == stream["source_sec"] * 1_000_000_000 + stream["source_nanosec"]
+            )
+            return data
 
-        lidar_frame_result = LegacyPickleStore(f"{data_dir}/lidar").find_closest_seek(seek)
-        if lidar_frame_result is None:
-            raise ValueError("No lidar frame found")
-        lidar_frame: PointCloud2 = lidar_frame_result
+        lidar_frame = cdr_decode(payload("lidar"), PointCloud2)
+        image_frame = cdr_decode(payload("video"), Image)
+        image_frame.header.frame_id = "camera_optical"
+        odom_frame = cdr_decode(payload("odom"), PoseStamped)
+        # Match the Go2 connection's configured global parent for this recording.
+        odom_frame.header.frame_id = "world"
 
-        image_frame = LegacyPickleStore(
-            f"{data_dir}/video",
-        ).find_closest(lidar_frame.ts)
-
-        if image_frame is None:
-            raise ValueError("No image frame found")
-
-        image_frame.frame_id = "camera_optical"
-
-        odom_frame = LegacyPickleStore(f"{data_dir}/odom", autocast=Odometry.from_msg).find_closest(
-            lidar_frame.ts
+        transforms = [transform_from_pose(odom_frame, child_frame_id="base_link")]
+        # Recorded Go2 mounting geometry; no robot connection is constructed.
+        transforms.extend(
+            frames_to_edge_transforms(
+                [
+                    ("camera_link", "base_link", (0.3, 0, 0), (0, 0, 0)),
+                    (
+                        "camera_optical",
+                        "camera_link",
+                        (0, 0, 0),
+                        (-math.pi / 2, 0, -math.pi / 2),
+                    ),
+                ]
+            )
         )
-
-        if odom_frame is None:
-            raise ValueError("No odom frame found")
-
-        transforms = connection.GO2Connection._odom_to_tf(odom_frame)
+        for transform in transforms:
+            transform.header.stamp = deepcopy(odom_frame.header.stamp)
 
         tf.receive_transform(*transforms)
 
@@ -105,7 +151,7 @@ def get_moment(tf):
             "odom_frame": odom_frame,
             "lidar_frame": lidar_frame,
             "image_frame": image_frame,
-            "camera_info": connection._camera_info_static(),
+            "camera_info": front_camera_calibration(),
             "transforms": transforms,
             "tf": tf,
         }
@@ -117,40 +163,28 @@ def get_moment(tf):
 @pytest.fixture(scope="session")
 def publish_moment():
     def publisher(moment: Moment | Moment2D | Moment3D) -> None:
-        detections2d_val = moment.get("detections2d")
-        if detections2d_val:
-            detections: LCMTransport[Detection2DArray] = LCMTransport(
-                "/detections", Detection2DArray
-            )
-            assert isinstance(detections2d_val, ImageDetections2D)
-            detections.publish(detections2d_val.to_ros_detection2d_array())
-            detections.lcm.stop()
+        with ExitStack() as cleanup:
 
-        lidar_frame = moment.get("lidar_frame")
-        if lidar_frame:
-            lidar: LCMTransport[PointCloud2] = LCMTransport("/lidar", PointCloud2)
-            lidar.publish(lidar_frame)
-            lidar.lcm.stop()
+            def publish(topic, msg_type, value):
+                transport = LCMTransport(topic, msg_type)
+                cleanup.callback(transport.stop)
+                transport.publish(value)
 
-        image_frame = moment.get("image_frame")
-        if image_frame:
-            image: LCMTransport[Image] = LCMTransport("/image", Image)
-            image.publish(image_frame)
-            image.lcm.stop()
-
-        camera_info_val = moment.get("camera_info")
-        if camera_info_val:
-            camera_info: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
-            camera_info.publish(camera_info_val)
-            camera_info.lcm.stop()
-
-        tf = moment.get("tf")
-        transforms = moment.get("transforms")
-        if tf is not None and transforms is not None:
-            tf.publish(*transforms)
-
-    # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
-    # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
+            detections = moment.get("detections2d")
+            if detections is not None:
+                publish("/detections", Detection2DArray, detections.to_ros_detection2d_array())
+            for key, topic, msg_type in [
+                ("lidar_frame", "/lidar", PointCloud2),
+                ("image_frame", "/image", Image),
+                ("camera_info", "/camera_info", CameraInfo),
+            ]:
+                value = moment.get(key)
+                if value is not None:
+                    publish(topic, msg_type, value)
+            buffer = moment.get("tf")
+            transforms = moment.get("transforms")
+            if buffer is not None and transforms is not None:
+                buffer.publish(*transforms)
 
     return publisher
 
@@ -182,11 +216,13 @@ def detection3dpc(detections3dpc) -> Detection3DPC:
 
 
 @pytest.fixture(scope="session")
-def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-
-    c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
+def get_moment_2d(get_moment, request) -> Generator[Callable[[], Moment2D], None, None]:
+    c = front_camera_calibration()
+    module = Detection2DModule(
+        detector=lambda: Yolo2DDetector(model_path=str(_test_data("models_yolo")), device="cpu"),
+        camera_info=c,
+    )
+    request.addfinalizer(lambda: _dispose_module(module))
 
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment2D:
@@ -201,11 +237,10 @@ def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
     yield moment_provider
 
     moment_provider.cache_clear()
-    module._close_module()
 
 
 @pytest.fixture(scope="session")
-def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, None]:
+def get_moment_3dpc(get_moment_2d, request) -> Generator[Callable[[], Moment3D], None, None]:
     module: Detection3DModule | None = None
 
     @functools.lru_cache(maxsize=1)
@@ -214,13 +249,19 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
         moment = get_moment_2d(**kwargs)
 
         if not module:
-            module = Detection3DModule(camera_info=moment["camera_info"])
+            module = Detection3DModule(
+                camera_info=moment["camera_info"],
+                detector=lambda: Yolo2DDetector(
+                    model_path=str(_test_data("models_yolo")), device="cpu"
+                ),
+            )
+            request.addfinalizer(lambda: _dispose_module(module))
 
         lidar_frame = moment.get("lidar_frame")
         if lidar_frame is None:
             raise ValueError("No lidar frame found")
 
-        camera_transform = moment["tf"].get("camera_optical", lidar_frame.frame_id)
+        camera_transform = moment["tf"].get("camera_optical", lidar_frame.header.frame_id)
         if camera_transform is None:
             raise ValueError("No camera_optical transform in tf")
 
@@ -235,19 +276,27 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
 
     yield moment_provider
     moment_provider.cache_clear()
-    if module is not None:
-        module._close_module()
 
 
 @pytest.fixture(scope="session")
-def object_db_module(get_moment):
+def object_db_module(get_moment, request):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-
-    c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module2d = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
-    module3d = Detection3DModule(camera_info=connection._camera_info_static())
-    moduleDB = ObjectDBModule(camera_info=connection._camera_info_static())
+    c = front_camera_calibration()
+    module2d = Detection2DModule(
+        detector=lambda: Yolo2DDetector(model_path=str(_test_data("models_yolo")), device="cpu"),
+        camera_info=c,
+    )
+    request.addfinalizer(lambda: _dispose_module(module2d))
+    module3d = Detection3DModule(
+        camera_info=front_camera_calibration(),
+        detector=lambda: Yolo2DDetector(model_path=str(_test_data("models_yolo")), device="cpu"),
+    )
+    request.addfinalizer(lambda: _dispose_module(module3d))
+    moduleDB = ObjectDBModule(
+        camera_info=front_camera_calibration(),
+        detector=lambda: Yolo2DDetector(model_path=str(_test_data("models_yolo")), device="cpu"),
+    )
+    request.addfinalizer(lambda: _dispose_module(moduleDB))
 
     # Process 5 frames to build up object history
     for i in range(5):
@@ -258,7 +307,7 @@ def object_db_module(get_moment):
         imageDetections2d = module2d.process_image_frame(moment["image_frame"])
 
         # Get camera transform
-        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
+        camera_transform = moment["tf"].get("camera_optical", moment["lidar_frame"].header.frame_id)
 
         # Process 3D detections
         imageDetections3d = module3d.process_frame(
@@ -269,10 +318,6 @@ def object_db_module(get_moment):
         moduleDB.add_detections(imageDetections3d)
 
     yield moduleDB
-
-    module2d._close_module()
-    module3d._close_module()
-    moduleDB._close_module()
 
 
 @pytest.fixture(scope="session")

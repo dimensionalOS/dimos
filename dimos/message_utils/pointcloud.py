@@ -12,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read generated point-cloud layouts and extract positions and colors."""
+"""NumPy conversions for generated PointCloud2 messages."""
 
+from copy import deepcopy
+import math
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
+import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.message_utils.camera_info import intrinsic_matrix
+from dimos.message_utils.geometry import transform_matrix
+from dimos.message_utils.image import image_to_rgb, image_view
+from dimos.message_utils.time import to_nanoseconds
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from dimos.messages.std_msgs.msg import Header
 
 _FIELD_KINDS = {1: "i1", 2: "u1", 3: "i2", 4: "u2", 5: "i4", 6: "u4", 7: "f4", 8: "f8"}
 
@@ -72,6 +82,96 @@ def pointcloud_xyz(message: PointCloud2) -> NDArray[np.float64]:
     return np.stack([points[name].ravel() for name in ("x", "y", "z")], axis=-1).astype(np.float64)
 
 
+def pointcloud_from_xyz(
+    points: NDArray[Any], *, header: Header, stamps: NDArray[Any] | None = None
+) -> PointCloud2:
+    """Copy Nx3 or HxWx3 coordinates into a tightly packed little-endian XYZ cloud.
+
+    XYZ fields are float32. NaNs/infinities remain missing-point markers and set
+    is_dense=False; finite coordinates outside float32 range are rejected.
+    """
+    values = np.asarray(points)
+    if values.ndim not in (2, 3) or values.shape[-1] != 3:
+        raise ValueError("XYZ coordinates must have shape (N, 3) or (H, W, 3)")
+    if values.dtype.kind not in "fiu":
+        raise ValueError("XYZ coordinates must be numeric")
+    finite = np.isfinite(values)
+    if np.any(np.abs(values[finite].astype(np.float64)) > np.finfo(np.float32).max):
+        raise ValueError("XYZ coordinates exceed float32 range")
+    packed = np.ascontiguousarray(values, dtype="<f4")
+    height, width = (1, packed.shape[0]) if packed.ndim == 2 else packed.shape[:2]
+    message = PointCloud2(
+        header=deepcopy(header),
+        height=height,
+        width=width,
+        fields=[
+            PointField(name=name, offset=index * 4, datatype=PointField.FLOAT32, count=1)
+            for index, name in enumerate(("x", "y", "z"))
+        ],
+        is_bigendian=False,
+        point_step=12,
+        row_step=width * 12,
+        data=np.asarray(packed.view(np.uint8).reshape(-1), dtype=np.uint8),
+        is_dense=bool(finite.all()),
+    )
+
+    if stamps is not None:
+        times = np.asarray(stamps, dtype="<f8")
+        if times.shape != values.shape[:-1]:
+            raise ValueError("Per-point stamps must match the coordinate shape")
+        if not np.isfinite(times).all():
+            raise ValueError("Per-point stamps must be finite")
+        stamped = np.empty(times.shape, dtype=[("xyz", "<f4", (3,)), ("stamps", "<f8")])
+        stamped["xyz"], stamped["stamps"] = packed, times
+        message.fields.append(
+            PointField(name="stamps", offset=12, datatype=PointField.FLOAT64, count=1)
+        )
+        message.point_step = 20
+        message.row_step = width * 20
+        message.data = stamped.view(np.uint8).reshape(-1)
+    return message
+
+
+def pointcloud_stamps(message: PointCloud2) -> NDArray[np.float64] | None:
+    """Read per-point capture times; absence falls back to the header at the caller."""
+    fields = [field for field in message.fields if field.name == "stamps"]
+    if not fields:
+        return None
+    if len(fields) != 1 or fields[0].datatype != PointField.FLOAT64 or fields[0].count != 1:
+        raise ValueError("Per-point stamps must be a scalar FLOAT64 field")
+    return np.asarray(pointcloud_view(message)["stamps"].reshape(-1), dtype=np.float64)
+
+
+def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
+    """Copy selected point records in row order, retaining every field and point byte.
+
+    The result is unorganized with no row padding. Point padding, endianness,
+    field metadata, source header, and the conservative density flag survive.
+    """
+    pointcloud_view(message)  # Validate the full declared layout before selecting bytes.
+    if keep.dtype != np.bool_ or keep.shape != (message.height * message.width,):
+        raise ValueError("point selection must be a flat boolean mask matching the point count")
+    records: NDArray[np.uint8] = np.ndarray(
+        (message.height, message.width, message.point_step),
+        dtype=np.uint8,
+        buffer=message.data,
+        strides=(message.row_step, message.point_step, 1),
+    )
+    selected = records.reshape(message.height * message.width, message.point_step)[keep]
+    width = len(selected)
+    return PointCloud2(
+        header=deepcopy(message.header),
+        height=1,
+        width=width,
+        fields=deepcopy(message.fields),
+        is_bigendian=message.is_bigendian,
+        point_step=message.point_step,
+        row_step=width * message.point_step,
+        data=np.asarray(np.frombuffer(selected.tobytes(), dtype=np.uint8).copy(), dtype=np.uint8),
+        is_dense=message.is_dense,
+    )
+
+
 def pointcloud_rgb(message: PointCloud2) -> NDArray[np.uint8] | None:
     """Copy RGB bytes from the standard packed rgb/rgba field, if present.
 
@@ -88,3 +188,193 @@ def pointcloud_rgb(message: PointCloud2) -> NDArray[np.uint8] | None:
         raise ValueError("packed point cloud color must be a scalar FLOAT32 or UINT32 field")
     packed = field.view(np.dtype(">u4" if message.is_bigendian else "<u4")).ravel()
     return np.stack([(packed >> shift) & 255 for shift in (16, 8, 0)], axis=-1).astype(np.uint8)
+
+
+def concatenate_clouds(first: PointCloud2, second: PointCloud2) -> PointCloud2:
+    """Join compatible point records, preserving fields, endian, and point padding.
+
+    Row padding is removed. The first frame and newest exact source stamp survive.
+    Empty inputs are identities; differing nonempty frames/layouts are rejected.
+    """
+    pointcloud_view(first)
+    pointcloud_view(second)
+    if not first.width * first.height:
+        return cdr_decode(cdr_encode(second), PointCloud2)
+    if not second.width * second.height:
+        return cdr_decode(cdr_encode(first), PointCloud2)
+    if first.header.frame_id != second.header.frame_id:
+        raise ValueError("cannot concatenate point clouds in different frames")
+    if (
+        first.fields != second.fields
+        or first.point_step != second.point_step
+        or first.is_bigendian != second.is_bigendian
+    ):
+        raise ValueError("cannot concatenate point clouds with different record layouts")
+    a = select_points(first, np.ones(first.width * first.height, dtype=np.bool_))
+    b = select_points(second, np.ones(second.width * second.height, dtype=np.bool_))
+    stamp = max((first.header.stamp, second.header.stamp), key=to_nanoseconds)
+    return PointCloud2(
+        header=Header(frame_id=first.header.frame_id, stamp=stamp),
+        height=1,
+        width=a.width + b.width,
+        fields=deepcopy(first.fields),
+        is_bigendian=first.is_bigendian,
+        point_step=first.point_step,
+        row_step=a.row_step + b.row_step,
+        data=np.asarray(np.concatenate((a.data, b.data)), dtype=np.uint8),
+        is_dense=first.is_dense and second.is_dense,
+    )
+
+
+def transform_cloud(message: PointCloud2, transform: TransformStamped) -> PointCloud2:
+    """Apply parent←child to XYZ while retaining the complete organized record layout.
+
+    Copy storage before changing coordinates. Keep all other fields, point/row
+    padding, endian and the cloud's exact source stamp. Frames must match;
+    integer XYZ is rejected because transformed coordinates would be truncated.
+    """
+    if message.header.frame_id != transform.child_frame_id:
+        raise ValueError("point cloud frame does not match transform child frame")
+    view = pointcloud_view(message)
+    for name in ("x", "y", "z"):
+        if name not in (view.dtype.names or ()) or view.dtype[name].kind != "f":
+            raise ValueError("transform requires scalar floating-point XYZ fields")
+    matrix = transform_matrix(transform.transform)
+    xyz = pointcloud_xyz(message)
+    transformed = xyz @ matrix[:3, :3].T + matrix[:3, 3]
+    for index, name in enumerate(("x", "y", "z")):
+        values = transformed[:, index]
+        if np.any(np.abs(values[np.isfinite(values)]) > np.finfo(view.dtype[name]).max):
+            raise ValueError(f"transformed {name} coordinates exceed field range")
+    payload = bytearray(bytes(message.data))
+    writable = np.ndarray(
+        (message.height, message.width),
+        dtype=view.dtype,
+        buffer=payload,
+        strides=(message.row_step, message.point_step),
+    )
+    for index, name in enumerate(("x", "y", "z")):
+        writable[name] = transformed[:, index].reshape(message.height, message.width)
+    output = cdr_decode(cdr_encode(message), PointCloud2)
+    output.data = np.frombuffer(payload, dtype=np.uint8).copy()
+    output.header = Header(stamp=deepcopy(message.header.stamp), frame_id=transform.header.frame_id)
+    return output
+
+
+def pointcloud_from_xyz_rgb(
+    points: NDArray[Any], colors: NDArray[np.uint8], *, header: Header
+) -> PointCloud2:
+    """Copy XYZ and RGB8 into a declared XYZ FLOAT32 / packed RGB UINT32 layout."""
+    cloud = pointcloud_from_xyz(points, header=header)
+    rgb = np.asarray(colors)
+    if rgb.dtype != np.uint8 or rgb.shape != np.asarray(points).shape:
+        raise ValueError("RGB must be uint8 with the same (..., 3) shape as XYZ")
+    records = np.empty((cloud.height, cloud.width), dtype=[("xyz", "<f4", (3,)), ("rgb", "<u4")])
+    records["xyz"] = np.asarray(points).reshape(cloud.height, cloud.width, 3)
+    rgb = rgb.reshape(cloud.height, cloud.width, 3).astype(np.uint32)
+    records["rgb"] = (rgb[..., 0] << 16) | (rgb[..., 1] << 8) | rgb[..., 2]
+    cloud.fields.append(PointField(name="rgb", offset=12, datatype=PointField.UINT32, count=1))
+    cloud.point_step = 16
+    cloud.row_step = cloud.width * cloud.point_step
+    cloud.data = np.frombuffer(records.tobytes(), dtype=np.uint8).copy()
+    return cloud
+
+
+def pointcloud_from_rgbd(
+    color: Image,
+    depth: Image,
+    calibration: CameraInfo,
+    *,
+    depth_scale: float = 1.0,
+    depth_trunc: float = 5.0,
+) -> PointCloud2:
+    """Project a rectified RGB/depth pair into the depth optical frame.
+
+    Integer depth is multiplied by depth_scale to obtain meters; 32FC1 already
+    represents meters. Invalid/nonpositive/too-distant samples are removed.
+    Scale K when calibration resolution differs, retaining the depth header.
+    """
+    if (
+        not math.isfinite(depth_scale)
+        or depth_scale <= 0
+        or not math.isfinite(depth_trunc)
+        or depth_trunc <= 0
+    ):
+        raise ValueError("depth scale and truncation must be finite and positive")
+    if (color.width, color.height) != (depth.width, depth.height):
+        raise ValueError("color and depth dimensions do not match")
+    if depth.encoding not in ("16UC1", "mono16", "32FC1"):
+        raise ValueError("RGBD requires uint16 or float32 depth")
+    if calibration.width <= 0 or calibration.height <= 0:
+        raise ValueError("calibration dimensions must be positive")
+    matrix = intrinsic_matrix(calibration).copy()
+    matrix[0, :] *= depth.width / calibration.width
+    matrix[1, :] *= depth.height / calibration.height
+    distances = image_view(depth).astype(np.float64)
+    if depth.encoding != "32FC1":
+        distances *= depth_scale
+    valid = np.isfinite(distances) & (distances > 0) & (distances < depth_trunc)
+    rows = np.broadcast_to(np.arange(depth.height, dtype=np.float64)[:, None], distances.shape)
+    columns = np.broadcast_to(np.arange(depth.width, dtype=np.float64)[None, :], distances.shape)
+    z = distances[valid]
+    xyz = np.column_stack(
+        (
+            (columns[valid] - matrix[0, 2]) * z / matrix[0, 0],
+            (rows[valid] - matrix[1, 2]) * z / matrix[1, 1],
+            z,
+        )
+    )
+    return pointcloud_from_xyz_rgb(xyz, image_to_rgb(color)[valid], header=depth.header)
+
+
+def voxel_downsample_cloud(message: PointCloud2, voxel_size: float = 0.025) -> PointCloud2:
+    """Downsample XYZ/RGB clouds with the existing Open3D tensor backend.
+
+    Non-positive sizes and clouds below twenty points retain the existing fast
+    path. Unsupported extra fields are rejected rather than silently dropped.
+    Source headers are preserved; generated messages own no numerical methods.
+    """
+    if not math.isfinite(voxel_size):
+        raise ValueError("voxel_size must be finite")
+    if voxel_size <= 0 or message.width * message.height < 20:
+        return message
+    names = {field.name for field in message.fields}
+    if names not in ({"x", "y", "z"}, {"x", "y", "z", "rgb"}):
+        raise ValueError("voxel downsampling supports only XYZ and optional RGB fields")
+    points = pointcloud_xyz(message).astype(np.float32)
+    if not np.isfinite(points).all():
+        raise ValueError("voxel downsampling requires finite XYZ positions")
+    colors = pointcloud_rgb(message)
+
+    device = o3d.core.Device("CPU:0")
+    cloud = o3d.t.geometry.PointCloud(o3d.core.Tensor(points, o3d.core.Dtype.Float32, device))
+    if colors is not None:
+        cloud.point["colors"] = o3d.core.Tensor(
+            colors.astype(np.float32) / 255.0, o3d.core.Dtype.Float32, device
+        )
+    reduced = cloud.voxel_down_sample(voxel_size)
+    xyz = reduced.point["positions"].numpy()
+    if colors is None:
+        return pointcloud_from_xyz(xyz, header=message.header)
+    rgb = np.clip(reduced.point["colors"].numpy() * 255.0, 0, 255).astype(np.uint8)
+    return pointcloud_from_xyz_rgb(xyz, rgb, header=message.header)
+
+
+def pointcloud_to_open3d(message: PointCloud2) -> Any:
+    """Copy generated XYZ/RGB values into a native geometry algorithm input."""
+
+    result = o3d.geometry.PointCloud()
+    result.points = o3d.utility.Vector3dVector(pointcloud_xyz(message))
+    colors = pointcloud_rgb(message)
+    if colors is not None:
+        result.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
+    return result
+
+
+def cloud_bounds_intersect(first: PointCloud2, second: PointCloud2) -> bool:
+    """Test closed axis-aligned bounds; empty or entirely nonfinite clouds do not intersect."""
+    a, b = pointcloud_xyz(first), pointcloud_xyz(second)
+    a, b = a[np.isfinite(a).all(axis=1)], b[np.isfinite(b).all(axis=1)]
+    if len(a) == 0 or len(b) == 0:
+        return False
+    return bool(np.all(a.min(axis=0) <= b.max(axis=0)) and np.all(a.max(axis=0) >= b.min(axis=0)))

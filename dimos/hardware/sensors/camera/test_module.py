@@ -1,0 +1,73 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Camera metadata uses the same generated header and frame chain as its images."""
+
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
+import pytest
+
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.message_utils.geometry import transform_matrix
+from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
+
+
+@pytest.fixture
+def module(mocker):
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    camera = CameraModule()
+    camera.hardware = Webcam(frame_id_prefix="robot")
+    try:
+        yield camera
+    finally:
+        camera.stop()
+
+
+def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(module, mocker):
+    info_publish = mocker.patch.object(module.camera_info, "publish")
+    tf_publish = mocker.patch.object(module.tf, "publish")
+    mocker.patch(
+        "dimos.hardware.sensors.camera.module.time.time_ns", return_value=1700000000123456789
+    )
+    original = cdr_encode(module.config.transform)
+
+    module.publish_metadata()
+
+    info_publish.assert_called_once()
+    tf_publish.assert_called_once()
+    info = cdr_decode(cdr_encode(info_publish.call_args.args[0]), CameraInfo)
+    transforms = cdr_decode(cdr_encode(tf_publish.call_args.args[0]), TFMessage).transforms
+    assert (info.header.stamp.sec, info.header.stamp.nanosec) == (1700000000, 123456789)
+    assert len(transforms) == 2
+    assert [(edge.header.frame_id, edge.child_frame_id) for edge in transforms] == [
+        ("base_link", "camera_link"),
+        ("camera_link", "robot/camera_optical"),
+    ]
+    assert all(edge.header.stamp == info.header.stamp for edge in transforms)
+    assert cdr_encode(module.config.transform) == original
+    np.testing.assert_allclose(transform_matrix(transforms[0].transform), np.eye(4))
+
+
+def test_disabled_mount_publishes_calibration_without_tf(module, mocker):
+    module.config.transform = None
+    info_publish = mocker.patch.object(module.camera_info, "publish")
+    tf_publish = mocker.patch.object(module.tf, "publish")
+    module.publish_metadata()
+    info_publish.assert_called_once()
+    tf_publish.assert_not_called()
+    assert type(info_publish.call_args.args[0]) is CameraInfo

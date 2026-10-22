@@ -22,11 +22,13 @@ import numpy as np
 import pytest
 
 from dimos.memory.store.memory import MemoryStore
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.embedding.base import Embedding
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.localize import dandetect
 from dimos.perception.localize.dandetect import DanDetector, NoSegmenter, Option
 from dimos.perception.localize.localize import embed_index
@@ -57,7 +59,7 @@ class _TwoViewScoreDetector:
     def query_score_rows(
         self, image: Image, queries: list[str], threshold: float
     ) -> tuple[np.ndarray, np.ndarray]:
-        score = self.scores[image.ts]
+        score = self.scores[to_seconds(image.header.stamp)]
         if score < threshold:
             return np.empty((0, 4)), np.empty((0, len(queries)))
         boxes = np.array([[10.0, 10.0, 30.0, 30.0]], dtype=np.float32)
@@ -74,28 +76,36 @@ def two_view_rig() -> Generator[tuple[Rig, Any], None, None]:
     color = store.stream("color_image", Image)
     depth = store.stream("depth_image", Image)
     tf = MultiTBuffer(buffer_size=math.inf)
-    info = CameraInfo(
-        frame_id="cam",
-        height=40,
-        width=40,
-        K=[40.0, 0.0, 20.0, 0.0, 40.0, 20.0, 0.0, 0.0, 1.0],
+    info = camera_info_from_intrinsics(
+        40, 40, 20, 20, 40, 40, header=Header(stamp=time_from_seconds(0), frame_id="cam")
     )
 
     for k, (ts, x_offset) in enumerate(((1.0, 0.0), (2.0, 0.02))):
         rgb = np.full((40, 40, 3), 120 + k, dtype=np.uint8)
         rgb[10:30, 10:30] = 220
-        color.append(Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="cam", ts=ts), ts=ts)
+        color.append(
+            image_from_array(
+                rgb, encoding="rgb8", header=Header(frame_id="cam", stamp=time_from_seconds(ts))
+            ),
+            ts=ts,
+        )
         depth_mm = np.full((40, 40), 500, dtype=np.uint16)
         depth_mm[10:30, 10:30] = 450
         depth.append(
-            Image.from_numpy(depth_mm, format=ImageFormat.DEPTH16, frame_id="cam", ts=ts), ts=ts
+            image_from_array(
+                depth_mm,
+                encoding="16UC1",
+                header=Header(frame_id="cam", stamp=time_from_seconds(ts)),
+            ),
+            ts=ts,
         )
         tf.receive_transform(
-            Transform(
-                translation=Vector3(x_offset, 0.0, 0.0),
-                frame_id="world",
+            TransformStamped(
+                header=Header(frame_id="world", stamp=time_from_seconds(ts)),
                 child_frame_id="cam",
-                ts=ts,
+                transform=Transform(
+                    translation=Vector3(x_offset, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
             )
         )
 
