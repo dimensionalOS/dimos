@@ -34,12 +34,14 @@ from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
     MAX_PUB_DATA_BYTES,
+    Ack,
     DataFrame,
     Error,
     FrameHeader,
     Manifest,
     Stop,
     Subs,
+    decode_datagram,
     encode_data_frame,
     encode_datagram,
 )
@@ -446,3 +448,21 @@ async def test_failed_session_does_not_leak_into_a_fresh_epoch():
     fresh._stream_data_received(3, _control_bytes(encode_datagram(Subs(chs=["odom"], n=1))), False)
     assert fresh.control_msgs.qsize() == 1
     assert not fresh.closed.is_set()
+
+
+async def test_viewer_acks_latest_frames_as_it_reads_them():
+    """v8: every latest frame read off a stream is acknowledged with a
+    datagram (the relay keeps at most two unacknowledged in flight);
+    reliable frames are not."""
+    session = _session()
+    session.session_id = 0
+    sent: list[bytes] = []
+    session.h3.send_datagram = lambda sid, data: sent.append(data)  # type: ignore[method-assign]
+    session.transmit = lambda: None  # type: ignore[method-assign]
+    latest = FrameHeader(ch="cam", seq=7, ts=1.5, delivery="latest")
+    reliable = FrameHeader(ch="odom", seq=8, ts=1.5, delivery="reliable")
+    session._stream_data_received(
+        3, encode_data_frame(latest, b"x") + encode_data_frame(reliable, b"y"), False
+    )
+    assert session.frames.qsize() == 2
+    assert [decode_datagram(d) for d in sent] == [Ack(ch="cam", seq=7)]

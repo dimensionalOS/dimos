@@ -84,7 +84,7 @@ def test_protocol_version():
     # v7: the WebRTC signaling messages (rtc_ice/rtc_offer/rtc_answer) and
     # video.webrtc.v1 track channels; an older peer would drop the messages
     # and show a video panel that never draws, so the handshake must fail.
-    assert PROTOCOL_VERSION == 7
+    assert PROTOCOL_VERSION == 8
 
 
 def test_control_hello_payload_is_the_datagram_encoding():

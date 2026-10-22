@@ -5,19 +5,21 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
-import { type ChannelStore, inflateVoxels, type VoxelsValue } from "@dimos/sdk";
+import type { ChannelStore, VoxelsValue } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./Map3DPanel.module.css";
 import type { PanelProps } from "./registry.tsx";
-import { heightColors, type Pose3d, type VoxelScene } from "./voxelView.ts";
+import { type PrepareVoxels, prepareVoxels } from "./voxelPrepare.ts";
+import type { Pose3d, VoxelScene } from "./voxelView.ts";
 
 // The mapper republishes the whole map at ~1.5 Hz on hardware and 0.4 Hz in
 // simulation; staleness only trips on real silence.
 export const MAP3D_STALE_MS = 10_000;
 
-/** Test seams; the real scene is the lazily imported three.js one. */
+/** Test seams; the real scene is the lazily imported three.js one, the
+ * real preparer the worker-backed one. */
 export interface VoxelSinkDeps {
-  inflate?: (value: VoxelsValue) => Promise<Float32Array>;
+  prepare?: PrepareVoxels;
   hidden?: () => boolean;
   /** Calls back on element size changes; returns the disposer. */
   observeResize?: (el: Element, cb: () => void) => () => void;
@@ -66,8 +68,9 @@ async function loadScene(canvas: HTMLCanvasElement): Promise<VoxelScene> {
 }
 
 /**
- * Inflate one frame at a time, skipping to the newest after each completion,
- * and hand the voxels to the scene. The first frame with voxels frames the
+ * Prepare one frame at a time (inflate, unpack and colour, in the worker),
+ * skipping to the newest after each completion, and hand the voxels to the
+ * scene. The first frame with voxels frames the
  * camera unless it is following the robot; later frames leave the viewer's
  * orbit alone, and an empty frame (a cleared or filtered-out map) clears the
  * drawn voxels. Hidden documents pause both inflation and drawing. Renders
@@ -82,7 +85,7 @@ export function startVoxelSink(
   health: DrawHealth,
   deps: VoxelSinkDeps = {},
 ): VoxelSink {
-  const inflate = deps.inflate ?? inflateVoxels;
+  const prepare = deps.prepare ?? prepareVoxels;
   const hidden = deps.hidden ?? (() => document.hidden);
   const observeResize = deps.observeResize ?? ((el, cb) => {
     const observer = new ResizeObserver(cb);
@@ -99,8 +102,6 @@ export function startVoxelSink(
   let stopped = false;
   let frameScheduled = false;
   let drawnPose: Pose3d | null = null;
-  // The colour array is reused across same-size frames (heightColors).
-  let colors: Uint8Array | undefined;
   // A fresh mount is never instantly "stalled".
   health.lastDrawOkAtMs = Date.now();
   health.failures = 0;
@@ -140,10 +141,9 @@ export function startVoxelSink(
     const value = slot.value;
     const version = slot.version;
     inflating = true;
-    inflate(value)
-      .then((positions) => {
+    prepare(value)
+      .then(({ positions, colors }) => {
         if (stopped || scene === null) return;
-        colors = heightColors(positions, colors);
         scene.setVoxels(positions, colors, value.res);
         if (!fitted && value.n > 0) {
           // An empty frame has nothing to frame and must not use up the fit,

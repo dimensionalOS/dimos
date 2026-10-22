@@ -35,6 +35,16 @@ const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 // stale_after.
 export const LATEST_STALL_MS = 500;
 
+// Latest frames written to a viewer and not yet acknowledged by it (v8 ack
+// messages, sent as the viewer reads a frame) before the channel holds the
+// next one: the backlog a slow link can carry is this many frames, not the
+// stream window's worth (20 s of video at 3 fps). Two keeps the link busy
+// while the ack of the previous frame travels back. An ack that never comes
+// (a lost datagram from the Python viewer, a viewer bug) releases its frame
+// after ACK_TIMEOUT_MS, counted as `ackTimeouts`.
+export const ACK_BUDGET = 2;
+export const ACK_TIMEOUT_MS = 2000;
+
 // One decoder for every robot frame header (fatal so corrupt UTF-8 drops the
 // frame rather than routing a mangled channel name).
 const headerDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -56,6 +66,7 @@ export interface FrameWriter {
 
 export interface PolicyOptions {
   stallMs?: number;
+  ackTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -78,7 +89,16 @@ export interface ChannelPolicy {
   queued(): number;
   /** True while a write waits for the transport to accept it. */
   writing(): boolean;
-  offer(bytes: Uint8Array): void;
+  /** Latest frames written and not yet acknowledged by the viewer. */
+  unacked(): number;
+  /** Frames released by the ack timeout instead of an ack. */
+  ackTimeouts: number;
+  /** Route one frame; `seq` is its header seq (the ack currency). */
+  offer(bytes: Uint8Array, seq: number): void;
+  /** The viewer has read every frame up to `seq`. */
+  ack(seq: number): void;
+  /** Periodic housekeeping (the ack timeout); clock passed in. */
+  tick(nowMs: number): void;
   /** Discard queued frames and release the persistent stream; later offers
    * and in-flight drain completions become no-ops. Idempotent. */
   dispose(): void;
@@ -167,30 +187,36 @@ export class TokenBucket {
  * delivered. A slow viewer sheds its own frames and nothing else.
  *
  * Acceptance is not delivery: `write()` resolves when quinn took the bytes
- * into the stream's send window, which the viewer's reads replenish. A
- * viewer that stops reading therefore stalls the write once the window is
- * full (counted as `stalled`); when it resumes it reads the window's worth
- * of stale frames oldest first and keeps the newest by seq. One stream per
- * channel instead of one per frame: Deno 2.6.10 never resets or ends a
- * stream before its wrapper is finalized and leaks ~400 B per stream for
- * the connection's life, and every client allows only ~100 open streams.
+ * into the stream's send window. The viewer's acks (v8) are the delivery
+ * signal: a frame is written only while fewer than ACK_BUDGET written frames
+ * await their ack, so the backlog on a slow link is bounded by frames, not
+ * by the window. A viewer that stops reading (a suspended tab) therefore
+ * holds at most that many frames; the write itself stalls (counted as
+ * `stalled`) only once the window is full. One stream per channel instead of
+ * one per frame: Deno 2.6.10 never resets or ends a stream before its
+ * wrapper is finalized and leaks ~400 B per stream for the connection's
+ * life, and every client allows only ~100 open streams.
  */
 export class LatestChannel implements ChannelPolicy {
   readonly delivery: Delivery = "latest";
   sent = 0;
   dropped = 0;
   stalled = 0;
+  ackTimeouts = 0;
   bytesOut = 0;
   readonly rate = new Rate();
-  #pending: Uint8Array | null = null;
+  #pending: { bytes: Uint8Array; seq: number } | null = null;
+  #unacked: { seq: number; at: number }[] = [];
   #writing = false;
   #writer: FrameWriter | null = null;
   #disposed = false;
   readonly #stallMs: number;
+  readonly #ackTimeoutMs: number;
   readonly #now: () => number;
 
   constructor(readonly sink: ViewerSink, opts: PolicyOptions = {}) {
     this.#stallMs = opts.stallMs ?? LATEST_STALL_MS;
+    this.#ackTimeoutMs = opts.ackTimeoutMs ?? ACK_TIMEOUT_MS;
     this.#now = opts.now ?? Date.now;
   }
 
@@ -202,10 +228,30 @@ export class LatestChannel implements ChannelPolicy {
     return this.#writing;
   }
 
-  offer(bytes: Uint8Array): void {
+  unacked(): number {
+    return this.#unacked.length;
+  }
+
+  offer(bytes: Uint8Array, seq: number): void {
     if (this.#disposed) return;
     if (this.#pending) this.dropped++;
-    this.#pending = bytes;
+    this.#pending = { bytes, seq };
+    this.#drain();
+  }
+
+  ack(seq: number): void {
+    const before = this.#unacked.length;
+    // Cumulative, and a restarted producer's low seqs must not pin old
+    // entries: anything at or below the acked seq is delivered.
+    this.#unacked = this.#unacked.filter((u) => u.seq > seq);
+    if (this.#unacked.length < before) this.#drain();
+  }
+
+  tick(nowMs: number): void {
+    const live = this.#unacked.filter((u) => nowMs - u.at < this.#ackTimeoutMs);
+    if (live.length === this.#unacked.length) return;
+    this.ackTimeouts += this.#unacked.length - live.length;
+    this.#unacked = live;
     this.#drain();
   }
 
@@ -215,12 +261,14 @@ export class LatestChannel implements ChannelPolicy {
     // disposal, not viewer failure.
     this.#disposed = true;
     this.#pending = null;
+    this.#unacked.length = 0;
     this.#writer?.abort().catch(() => {});
     this.#writer = null;
   }
 
   #drain(): void {
     if (this.#writing || this.#disposed) return;
+    if (this.#pending === null || this.#unacked.length >= ACK_BUDGET) return;
     this.#writing = true;
     (async () => {
       const writer = this.#writer ??= await this.sink.openStream(LATEST_SEND_ORDER);
@@ -231,10 +279,11 @@ export class LatestChannel implements ChannelPolicy {
         this.#writer = null;
         return;
       }
-      while (this.#pending) {
-        const bytes = this.#pending;
+      while (this.#pending && this.#unacked.length < ACK_BUDGET) {
+        const { bytes, seq } = this.#pending;
         this.#pending = null;
         const started = this.#now();
+        this.#unacked.push({ seq, at: started });
         await writer.write(bytes);
         if (this.#disposed) return;
         const now = this.#now();
@@ -255,7 +304,7 @@ export class LatestChannel implements ChannelPolicy {
         // callback saw #writing still true and started no drain, so only
         // this recheck can pick it up.
         this.#writing = false;
-        if (this.#pending) this.#drain();
+        this.#drain();
       });
   }
 }
@@ -274,6 +323,7 @@ export class ReliableChannel implements ChannelPolicy {
   sent = 0;
   dropped = 0;
   stalled = 0; // reliable queues instead of shedding; fixed 0
+  ackTimeouts = 0; // reliable frames are not acked; fixed 0
   bytesOut = 0;
   readonly rate = new Rate();
   #fifo: Uint8Array[] = [];
@@ -295,7 +345,19 @@ export class ReliableChannel implements ChannelPolicy {
     return this.#writing;
   }
 
-  offer(bytes: Uint8Array): void {
+  unacked(): number {
+    return 0;
+  }
+
+  ack(_seq: number): void {
+    // reliable frames are not acked
+  }
+
+  tick(_nowMs: number): void {
+    // nothing periodic
+  }
+
+  offer(bytes: Uint8Array, _seq: number): void {
     if (this.#disposed) return;
     this.#fifo.push(bytes);
     this.#bytes += bytes.byteLength;

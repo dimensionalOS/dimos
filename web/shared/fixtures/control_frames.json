@@ -4,7 +4,7 @@
       "name": "hello_robot",
       "message": {
         "t": "hello",
-        "v": 7,
+        "v": 8,
         "role": "robot",
         "robot": {
           "id": "go2-lab",
@@ -56,34 +56,34 @@
           "pages": []
         }
       },
-      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
+      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
     },
     {
       "name": "hello_viewer",
       "message": {
         "t": "hello",
-        "v": 7,
+        "v": 8,
         "role": "viewer"
       },
-      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InZpZXdlciJ9"
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InZpZXdlciJ9"
     },
     {
       "name": "hello_viewer_token",
       "message": {
         "t": "hello",
-        "v": 7,
+        "v": 8,
         "role": "viewer",
         "token": "viewer-token-fixture-0123456789abcdef"
       },
-      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
+      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
     },
     {
       "name": "welcome",
       "message": {
         "t": "welcome",
-        "v": 7
+        "v": 8
       },
-      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo3fQ=="
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo4fQ=="
     },
     {
       "name": "ping",
@@ -108,9 +108,9 @@
       "message": {
         "t": "error",
         "code": "version_mismatch",
-        "message": "protocol v7 required, versiune neacceptată"
+        "message": "protocol v8 required, versiune neacceptată"
       },
-      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjcgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjggcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
     },
     {
       "name": "robots_two",
@@ -200,6 +200,15 @@
         "ch": "color_image"
       },
       "b64": "IAAAAHsidCI6InVuc3ViIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    },
+    {
+      "name": "ack",
+      "message": {
+        "t": "ack",
+        "ch": "color_image",
+        "seq": 41
+      },
+      "b64": "JwAAAHsidCI6ImFjayIsImNoIjoiY29sb3JfaW1hZ2UiLCJzZXEiOjQxfQ=="
     },
     {
       "name": "subs_snapshot",

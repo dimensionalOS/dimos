@@ -119,10 +119,14 @@ function datagramQueue(readable: ReadableStream<Uint8Array>): () => Promise<Msg>
 function frameQueue(
   wt: WebTransport,
   onAcceptLoopDeath?: (e: unknown) => void,
+  /** Viewer-side receipt for latest frames (v8): without it the relay holds
+   * a latest channel after two unacknowledged frames. */
+  ack?: (header: FrameHeader) => void,
 ): () => Promise<{ header: FrameHeader; payload: Uint8Array }> {
   const queue: { header: FrameHeader; payload: Uint8Array }[] = [];
   const waiters: ((f: { header: FrameHeader; payload: Uint8Array }) => void)[] = [];
   const deliver = (frame: { header: FrameHeader; payload: Uint8Array }) => {
+    if (frame.header.delivery === "latest") ack?.(frame.header);
     const waiter = waiters.shift();
     if (waiter) waiter(frame);
     else queue.push(frame);
@@ -220,10 +224,10 @@ async function nextOfType(next: () => Promise<Msg>, t: Msg["t"], what: string): 
   return msg;
 }
 
-// One suspended viewer must cost only itself: its latest write stalls once
-// its stream window is full (counted as `stalled`, never more than one frame
-// queued behind it) while the healthy viewer keeps receiving fresh frames at
-// full rate.
+// One suspended viewer must cost only itself: it never acknowledges, so the
+// relay holds its latest channel at the two-frame budget and sheds behind
+// it (never more than one frame queued) while the healthy viewer, which
+// acks as it reads, keeps receiving fresh frames at full rate.
 //
 // MUST RUN FIRST in this file: a preceding test's teardown churn (or plain CPU
 // starvation, e.g. a 2-CPU CI runner) can leave Deno's client-side accept
@@ -281,7 +285,9 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     });
     await within(robotDatagrams(), "robot hello reply");
 
-    const attachViewer = async (name: string): Promise<WebTransport> => {
+    const attachViewer = async (
+      name: string,
+    ): Promise<{ wt: WebTransport; writer: WritableStreamDefaultWriter<Uint8Array> }> => {
       const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
       clients.push(wt);
       await within(wt.ready, `${name} connect`);
@@ -295,20 +301,20 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       do {
         msg = await within(next(), `${name} manifest`);
       } while (msg.t !== "manifest");
-      return wt;
+      return { wt, writer };
     };
 
     const healthy = await attachViewer("healthy");
-    const healthyFrames = frameQueue(healthy, (e) => {
+    const healthyFrames = frameQueue(healthy.wt, (e) => {
       if (!tearingDown) round.glueDeath = e;
+    }, (h) => {
+      healthy.writer.write(encodeControlFrame({ t: "ack", ch: h.ch, seq: h.seq })).catch(() => {});
     });
     const stalled = await attachViewer("stalled");
     void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
 
-    // 64 KiB frames fill the stalled viewer's stream window (quinn's default
-    // 1.25 MB) within a second of frames.
-    const payload = new Uint8Array(64 * 1024).fill(9);
-    type Out = { stalled: number; queued: number; sent: number; writing: boolean };
+    const payload = new Uint8Array(8 * 1024).fill(9);
+    type Out = { unacked: number; dropped: number; queued: number; sent: number };
     const fetchOut = async (): Promise<Out[]> => {
       const stats = await (await fetch(`${httpBase}/api/stats`)).json();
       return (stats.perViewer as { channels: Record<string, Out> }[])
@@ -317,9 +323,8 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
         .sort((a, b) => a.sent - b.sent); // the stalled viewer accepts fewer
     };
 
-    // Pump frames until the stalled viewer's write is wedged in its full
-    // stream window (writing, far behind) or was accepted late at least
-    // once (stalled).
+    // Pump frames until the stalled viewer holds its unacknowledged budget
+    // and has shed a few frames behind it.
     let lastSeq = 0;
     let out: Out[] = [];
     for (let seq = 1; seq <= 600; seq++) {
@@ -332,18 +337,14 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       if (seq % 25 === 0) {
         out = await fetchOut();
         const slow = out[0];
-        if (slow !== undefined && (slow.stalled >= 1 || (slow.writing && slow.sent < seq - 50))) {
-          break;
-        }
+        if (slow !== undefined && slow.unacked >= 2 && slow.dropped >= 10) break;
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert(out.length === 2, "both viewers need a policy");
     const [slow, fast] = out;
-    assert(
-      slow.stalled >= 1 || slow.writing,
-      `expected the stalled viewer to stall, got ${JSON.stringify(slow)}`,
-    );
+    assertEquals(slow.unacked, 2, `the stalled viewer holds its budget: ${JSON.stringify(slow)}`);
+    assert(slow.dropped >= 10, `frames behind it are shed, got ${JSON.stringify(slow)}`);
     assert(slow.queued <= 1, `latest queue must stay 0|1, got ${slow.queued}`);
     assert(fast.sent > slow.sent, `healthy ${fast.sent} should outpace stalled ${slow.sent}`);
 
@@ -397,11 +398,13 @@ Deno.test({
 
   const viewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
   await within(viewer.ready, "viewer connect");
-  const viewerFrames = frameQueue(viewer);
-  const viewerDatagrams = datagramQueue(viewer.datagrams.readable);
   const control = await within(viewer.createBidirectionalStream(), "control stream");
   const controlWriter = control.writable.getWriter();
   const nextControl = controlQueue(control.readable);
+  const viewerFrames = frameQueue(viewer, undefined, (h) => {
+    controlWriter.write(encodeControlFrame({ t: "ack", ch: h.ch, seq: h.seq })).catch(() => {});
+  });
+  const viewerDatagrams = datagramQueue(viewer.datagrams.readable);
 
   await t.step("viewer control: hello -> welcome + robots, ping -> pong", async () => {
     await controlWriter.write(
