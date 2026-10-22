@@ -43,7 +43,7 @@ from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 # Custom jpeg channels authored without a quality param; the built-in
 # color_image channel never reaches this (main() merges config.jpeg_quality
 # into its params).
-_DEFAULT_JPEG_QUALITY = 75
+DEFAULT_JPEG_QUALITY = 75
 
 
 def _check_jpeg_params(params: Mapping[str, Any]) -> None:
@@ -64,7 +64,7 @@ def encode_jpeg(msg: Image, params: Mapping[str, Any]) -> EncodedPayload:
         return EncodedPayload(msg.jpeg, meta)
     # TurboJPEG via the message's own encoder (handles BGR/RGB/gray inputs).
     return EncodedPayload(
-        msg.to_jpeg_bytes(quality=params.get("quality", _DEFAULT_JPEG_QUALITY)), meta
+        msg.to_jpeg_bytes(quality=params.get("quality", DEFAULT_JPEG_QUALITY)), meta
     )
 
 

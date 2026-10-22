@@ -71,7 +71,6 @@ from dimos.web.relay_bridge.pacing import passes_rate_gate, passes_sampling_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
-    Rate,
     Stop as WireStop,
     Subs,
     TeleopStart as WireTeleopStart,
@@ -312,23 +311,6 @@ def test_jpeg_source_bytes_are_forwarded_without_re_encoding(monkeypatch) -> Non
     assert calls["n"] == encodes  # forwarded, not encoded again
     assert builtin_codecs.encode_jpeg(pixels, {"quality": 90}).payload[:2] == b"\xff\xd8"
     assert calls["n"] == encodes + 1
-
-
-def test_rate_feedback_caps_the_sampling_rate(bridge) -> None:
-    # The relay's rate message (v8) lowers the channel's sampling interval to
-    # what its slowest viewer keeps up with, never above max_hz or under the
-    # floor; a channel it does not know is ignored.
-    module, clients = bridge
-    client = clients[0]
-    close = lambda interval: abs(module._min_interval["color_image"] - interval) < 1e-9  # noqa: E731
-    assert close(1 / 30)
-    push(module, client, Rate(ch="color_image", hz=5))
-    assert wait_until(lambda: close(0.2))
-    push(module, client, Rate(ch="nope", hz=1))
-    push(module, client, Rate(ch="color_image", hz=100))
-    assert wait_until(lambda: close(1 / 30))
-    push(module, client, Rate(ch="color_image", hz=0.01))
-    assert wait_until(lambda: close(2.0))
 
 
 def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:

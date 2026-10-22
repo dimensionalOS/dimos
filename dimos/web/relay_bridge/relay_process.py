@@ -284,6 +284,17 @@ def probe_local_port(port: int) -> None:
         raise RuntimeError(f"cannot start local relay: port {port} is unavailable") from e
 
 
+# The relay's Rust side (quinn, Deno's resources) allocates through glibc
+# malloc, which keeps freed chunks under its mmap threshold in its arenas:
+# with viewers reconnecting, the relay's RSS crept by about 30 MB/h for half
+# an hour after each start on the benchmark's soak and was flat with this
+# setting (trimmed top, 128 KiB mmap threshold, no top pad). Set in the
+# relay's environment by every launcher (here, the shards, the Dockerfile).
+RELAY_GLIBC_TUNABLES = (
+    "glibc.malloc.trim_threshold=131072:glibc.malloc.mmap_threshold=131072:glibc.malloc.top_pad=0"
+)
+
+
 @dataclass
 class RelayReadyInfo:
     http_port: int
@@ -365,6 +376,7 @@ class RelayProcess:
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}
+        env.setdefault("GLIBC_TUNABLES", RELAY_GLIBC_TUNABLES)
         self._process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
         )
