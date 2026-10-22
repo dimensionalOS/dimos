@@ -66,6 +66,16 @@ class FakeTransport:
                 "limits": {"total_gb": 250, "daily_gb": 25, "max_file_gb": 50, "trust": "new"},
                 "message": "storage at 0% of quota",
             }
+        if path.endswith(("/share", "/unshare")):
+            assert body
+            self.sent = (path, body)
+            return {
+                "dry_run": body["dry_run"],
+                "recordings": body["ids"],
+                "access": [],
+                "emailed": [],
+                "removed": 0,
+            }
         if path.endswith("/uploads"):
             return {"uploads": [dict(id=k, **v) for k, v in self.uploads.items()]}
         uid = path.split("/")[4]
@@ -447,3 +457,44 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_share_resolves_prefixes_and_dry_runs_by_default(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    cloud, t, db = env
+    t.uploads = {"abc123" + "0" * 26: {}, "abd456" + "0" * 26: {}, "f" * 32: {}}
+    cloud.share(["abc", "f" * 32], "a@x.io")
+    assert t.sent == (
+        "/v1/data/share",
+        {"ids": ["abc123" + "0" * 26, "f" * 32], "to": "a@x.io", "dry_run": True},
+    )
+    cloud.share(["abd"], "a@x.io", dry_run=False)
+    assert t.sent[1]["dry_run"] is False
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        cloud.share(["ab"], "a@x.io")
+    cloud.unshare(["abc"], "", everyone=True)
+    assert t.sent == (
+        "/v1/data/unshare",
+        {"ids": ["abc123" + "0" * 26], "to": "", "everyone": True, "dry_run": True},
+    )
+
+
+@pytest.mark.parametrize("cmd", ["share", "unshare"])
+@pytest.mark.parametrize("yes", [False, True])
+def test_share_cli_dry_runs_unless_yes(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, cmd: str, yes: bool
+) -> None:
+    from typer.testing import CliRunner
+
+    from dimos.cli.commands.data import data_app
+    from dimos.cloud import cli
+
+    cloud, t, db = env
+    t.uploads = {"abc123" + "0" * 26: {}}
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    args = [cmd, "abc", "--to", "a@x.io", "--json"] + (["--yes"] if yes else [])
+    r = CliRunner().invoke(data_app, args)
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["dry_run"] is (not yes)
+    assert t.sent[1]["dry_run"] is (not yes)

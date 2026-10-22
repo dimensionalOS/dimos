@@ -20,7 +20,7 @@ callers. Transfer settings live on CloudConfig."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import contextlib
 from datetime import datetime
 import functools
@@ -73,6 +73,15 @@ class DataApi:
 
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
+
+    def share(self, ids: Sequence[str], to: str, dry_run: bool) -> dict[str, Any]:
+        return self.t.request(
+            "POST", f"{self.PREFIX}/share", {"ids": list(ids), "to": to, "dry_run": dry_run}
+        )
+
+    def unshare(self, ids: Sequence[str], to: str, everyone: bool, dry_run: bool) -> dict[str, Any]:
+        body = {"ids": list(ids), "to": to, "everyone": everyone, "dry_run": dry_run}
+        return self.t.request("POST", f"{self.PREFIX}/unshare", body)
 
     def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
         return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
@@ -276,6 +285,12 @@ class MultipartBackend:
     def quota(self) -> dict[str, Any]:
         return self.api.quota()
 
+    def share(self, ids: list[str], to: str, dry_run: bool) -> dict[str, Any]:
+        return self.api.share(ids, to, dry_run)
+
+    def unshare(self, ids: list[str], to: str, everyone: bool, dry_run: bool) -> dict[str, Any]:
+        return self.api.unshare(ids, to, everyone, dry_run)
+
 
 class CloudData:
     """Facade: resolves auth + config once, delegates to the configured backend."""
@@ -352,6 +367,29 @@ class CloudData:
 
     def quota(self) -> dict[str, Any]:
         return self.backend.quota()
+
+    def ids(self, prefixes: list[str]) -> list[str]:
+        """Full ids from ids or `ls` prefixes; a full 32-char id passes through unlisted."""
+        rows = None
+        out = []
+        for p in prefixes:
+            if len(p) == 32:
+                out.append(p)
+                continue
+            rows = rows if rows is not None else self.ls()
+            hits = [u["id"] for u in rows if u["id"].startswith(p)]
+            if len(hits) != 1:
+                raise RuntimeError(f"{'ambiguous' if hits else 'no'} upload matching {p!r}")
+            out.append(hits[0])
+        return out
+
+    def share(self, prefixes: list[str], to: str, dry_run: bool = True) -> dict[str, Any]:
+        return self.backend.share(self.ids(prefixes), to, dry_run)
+
+    def unshare(
+        self, prefixes: list[str], to: str, everyone: bool = False, dry_run: bool = True
+    ) -> dict[str, Any]:
+        return self.backend.unshare(self.ids(prefixes), to, everyone, dry_run)
 
 
 def recordings(newer_than_s: float | None = None) -> list[Path]:

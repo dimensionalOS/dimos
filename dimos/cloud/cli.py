@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 import contextlib
 from datetime import datetime, timezone
 import functools
+import json
 from pathlib import Path
 from typing import Any
 
@@ -125,9 +126,12 @@ def upload(
 
 
 @handle_fail
-def ls() -> None:
+def ls(as_json: bool = False) -> None:
     import sys
 
+    if as_json:
+        typer.echo(json.dumps(CloudData().ls(), default=str))
+        return
     if sys.stdout.isatty() and sys.stdin.isatty():  # Textual needs a real TTY
         from dimos.cloud.tui import DataBrowser
 
@@ -199,3 +203,37 @@ def quota() -> None:
         f" of {lim['total_gb']} GB, today {decimal(q['used_today'])}"
         f" of {lim['daily_gb']} GB"
     )
+
+
+@handle_fail
+def share(ids: list[str], to: str, yes: bool, as_json: bool) -> None:
+    r = CloudData().share(ids, to, dry_run=not yes)
+    if as_json:
+        typer.echo(json.dumps(r))
+        return
+    n = len(r["recordings"])
+    typer.echo(
+        f"{'Shared' if yes else 'Would share'} {n} recording{'s' * (n != 1)}"
+        f" with {', '.join(r['access']) or 'nobody new'}"
+    )
+    typer.echo(f"  email to: {', '.join(r['emailed']) or 'nobody'}")
+    for d, k in (r.get("not_emailed_domains") or {}).items():
+        typer.echo(f"  {d}: {k} accounts, too many to email")
+    if r.get("note"):
+        typer.echo(f"  {r['note']}")
+    if not yes:
+        typer.echo("Dry run: nothing changed. Re-run with --yes to share.")
+
+
+@handle_fail
+def unshare(ids: list[str], to: str, everyone: bool, yes: bool, as_json: bool) -> None:
+    r = CloudData().unshare(ids, to, everyone=everyone, dry_run=not yes)
+    if as_json:
+        typer.echo(json.dumps(r))
+        return
+    typer.echo(
+        f"{'Removed' if yes else 'Would remove'} {r['removed']} share{'s' * (r['removed'] != 1)}"
+        f" from {len(r['recordings'])} recording{'s' * (len(r['recordings']) != 1)}"
+    )
+    if not yes:
+        typer.echo("Dry run: nothing changed. Re-run with --yes to remove.")
