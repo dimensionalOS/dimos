@@ -29,6 +29,7 @@ import io
 import json
 import math
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from PIL import Image as PILImage
@@ -36,6 +37,7 @@ from PIL import Image as PILImage
 from dimos.evals.vqa.localize_coverage import case_family_from_id
 from dimos.evals.vqa.localize_recording import robot_pose_xyz_yaw
 from dimos.memory.cli.dataset import open_dataset
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.perception.localize.rig import Rig, window_tf
 
 # Distinct, muted categorical colors (colorblind-friendlier than rainbow).
@@ -63,32 +65,34 @@ def _obj_key(name: str, x: float, y: float) -> tuple[object, ...]:
     return (round(x, 1), round(y, 1), name.casefold())
 
 
-def _evidence_xyz_rows(evidence: dict[str, object]) -> list[tuple[str, tuple[float, float, float]]]:
+def _as_xyz(value: object) -> tuple[float, float, float]:
+    coords = cast("list[Any] | tuple[Any, ...]", value)[:3]
+    return (float(coords[0]), float(coords[1]), float(coords[2]))
+
+
+def _evidence_xyz_rows(evidence: dict[str, Any]) -> list[tuple[str, tuple[float, float, float]]]:
     """Collect (name, xyz) from fore/aft, turn, height_order, and any-ahead evidence."""
     rows: list[tuple[str, tuple[float, float, float]]] = []
     if "position_world_xyz" in evidence:
-        xyz = tuple(float(v) for v in evidence["position_world_xyz"][:3])  # type: ignore[index]
         name = str(evidence.get("category") or evidence.get("object_name") or "?")
-        rows.append((name, xyz))
+        rows.append((name, _as_xyz(evidence["position_world_xyz"])))
     for nested in evidence.get("objects") or []:
         if not isinstance(nested, dict) or "position_world_xyz" not in nested:
             continue
-        xyz = tuple(float(v) for v in nested["position_world_xyz"][:3])
         name = str(
             nested.get("choice") or nested.get("object_name") or evidence.get("object_name") or "?"
         )
-        rows.append((name, xyz))
+        rows.append((name, _as_xyz(nested["position_world_xyz"])))
     for nested in evidence.get("instances") or []:
         if not isinstance(nested, dict) or "position_world_xyz" not in nested:
             continue
-        xyz = tuple(float(v) for v in nested["position_world_xyz"][:3])
         name = str(evidence.get("category") or evidence.get("object_name") or "?")
-        rows.append((name, xyz))
+        rows.append((name, _as_xyz(nested["position_world_xyz"])))
     return rows
 
 
-def _collect_objects(full_audit: Path) -> list[dict[str, object]]:
-    objs: dict[tuple[object, ...], dict[str, object]] = {}
+def _collect_objects(full_audit: Path) -> list[dict[str, Any]]:
+    objs: dict[tuple[object, ...], dict[str, Any]] = {}
     for gt_path in sorted(full_audit.glob("frame-*/ground_truth.json")):
         for row in json.loads(gt_path.read_text()):
             if row.get("status") != "answered":
@@ -102,7 +106,7 @@ def _collect_objects(full_audit: Path) -> list[dict[str, object]]:
     return sorted(objs.values(), key=lambda row: (str(row["name"]).casefold(), row["x"], row["y"]))
 
 
-def _evidence_for_question(full_audit: Path, frame: str, question: str) -> dict[str, object] | None:
+def _evidence_for_question(full_audit: Path, frame: str, question: str) -> dict[str, Any] | None:
     gt_path = full_audit / frame / "ground_truth.json"
     if not gt_path.exists():
         return None
@@ -146,9 +150,9 @@ def _frame_object_ids(
 def _collect_frame_meta(
     dataset: Path,
     full_audit: Path,
-    objects: list[dict[str, object]],
+    objects: list[dict[str, Any]],
 ) -> tuple[
-    list[dict[str, object]],
+    list[dict[str, Any]],
     dict[str, tuple[tuple[float, float, float], float]],
     dict[str, list[int]],
 ]:
@@ -165,7 +169,10 @@ def _collect_frame_meta(
             if line.strip()
         )
     }
-    key_to_index = {obj["key"]: index for index, obj in enumerate(objects, start=1)}
+    key_to_index: dict[tuple[object, ...], int] = {
+        cast("tuple[object, ...]", obj["key"]): index
+        for index, obj in enumerate(objects, start=1)
+    }
     index_category = {
         index: str(obj["name"]).casefold() for index, obj in enumerate(objects, start=1)
     }
@@ -180,8 +187,10 @@ def _collect_frame_meta(
             if not isinstance(evidence, dict):
                 continue
             if "robot_position_xyz" in evidence and "robot_yaw_rad" in evidence:
-                xyz = tuple(float(v) for v in evidence["robot_position_xyz"][:3])
-                robots[frame] = (xyz, float(evidence["robot_yaw_rad"]))  # type: ignore[assignment]
+                robots[frame] = (
+                    _as_xyz(evidence["robot_position_xyz"]),
+                    float(evidence["robot_yaw_rad"]),
+                )
                 break
 
     frames_needed = {f"frame-{case['id'].split('-')[1]}" for case in cases}
@@ -189,7 +198,7 @@ def _collect_frame_meta(
         frame: _frame_object_ids(full_audit, frame, key_to_index) for frame in frames_needed
     }
 
-    questions: list[dict[str, object]] = []
+    questions: list[dict[str, Any]] = []
     for case in cases:
         frame = f"frame-{case['id'].split('-')[1]}"
         family = _family(case["id"])
@@ -252,9 +261,9 @@ def _fill_missing_poses(
         robots[frame] = pose
 
 
-def _costmap_png(recording: Path) -> tuple[bytes, object]:
+def _costmap_png(recording: Path) -> tuple[bytes, OccupancyGrid]:
     store = open_dataset(str(recording))
-    grid_msg = store.streams.global_costmap.last().data
+    grid_msg = cast("OccupancyGrid", store.streams.global_costmap.last().data)
     grid = np.asarray(grid_msg.grid, dtype=np.int16)
     # Map: unknown=#eee, free=#fff, occupied=dark by cost.
     rgba = np.empty((grid.shape[0], grid.shape[1], 3), dtype=np.uint8)
@@ -278,7 +287,7 @@ def _costmap_png(recording: Path) -> tuple[bytes, object]:
 def _world_to_px(
     x: float,
     y: float,
-    grid_msg: object,
+    grid_msg: OccupancyGrid,
 ) -> tuple[float, float]:
     cell = grid_msg.world_to_grid((x, y, 0.0))
     # After vertical flip: px_y = (height - 1) - grid_y
@@ -351,7 +360,7 @@ def render(
             f"</g>"
         )
 
-    by_frame: dict[str, list[dict[str, object]]] = defaultdict(list)
+    by_frame: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for q in questions:
         by_frame[str(q["frame"])].append(q)
 
@@ -367,7 +376,8 @@ def render(
             # Question-specific referents only. Image-path families (presence, …)
             # have no 3D evidence — do not fall back to every localize object on
             # the frame (that made presence clicks light up many dots).
-            q_ids = [int(i) for i in (q.get("obj_ids") or ())]
+            raw_ids = cast("list[Any] | tuple[Any, ...]", q.get("obj_ids") or ())
+            q_ids = [int(i) for i in raw_ids]
             q_objs = ",".join(str(i) for i in q_ids)
             frame_cell = (
                 f'<td class="fr">'

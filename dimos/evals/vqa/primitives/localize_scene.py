@@ -246,7 +246,7 @@ def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 8) -> tu
         display_name.setdefault(key, instance.object_name)
         by_category.setdefault(key, []).append(instance)
     categories = sorted(display_name, key=lambda key: display_name[key].casefold())
-    candidates: list[tuple[float, int, str]] = []
+    candidates: list[tuple[int, float, str]] = []
     for anchor_key in categories:
         for landmark_key in categories:
             if anchor_key == landmark_key:

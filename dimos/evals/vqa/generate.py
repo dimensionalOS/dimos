@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -63,6 +63,7 @@ from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
+    from dimos.evals.vqa.localize_recording import LocalizeWindowResult
     from dimos.models.vl.base import VlModel
 
 _UNORDERED_FAMILIES = frozenset(
@@ -234,7 +235,7 @@ def generate_dataset(
         else:
             indices = resolve_generation_frame_indices(request, loader.image_count)
 
-        localize_ctx = nullcontext(None)
+        localize_ctx: AbstractContextManager[LocalizeWindowResult | None] = nullcontext(None)
         if request.with_localize:
             from dimos.evals.vqa.localize_recording import localize_window
 
