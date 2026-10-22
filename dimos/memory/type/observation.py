@@ -65,9 +65,8 @@ def _to_tuple(p: Any) -> PoseTuple | None:
 
     Accepts: `None`, a 3- or 7-tuple, or any object with
     `translation`+`rotation` (Transform) or `position`+`orientation`
-    (Pose / PoseStamped) attributes. 3-tuples are padded with the identity
-    quaternion. Duck-typed to avoid importing `dimos.msgs.geometry_msgs`
-    at module load.
+    (Pose) attributes, including the standard generated stamped/covariance/
+    odometry nesting. 3-tuples are padded with the identity quaternion.
     """
     if p is None:
         return None
@@ -78,6 +77,15 @@ def _to_tuple(p: Any) -> PoseTuple | None:
             x, y, z = p
             return (float(x), float(y), float(z), 0.0, 0.0, 0.0, 1.0)
         raise TypeError(f"Pose tuple must have length 3 or 7, got {len(p)}")
+    # Generated ROS messages retain their declared nesting; only unwrap the
+    # pose-bearing shapes, leaving the indexed storage tuple contract unchanged.
+    name = getattr(type(p), "__msgtype__", None)
+    if name in ("nav_msgs/msg/Odometry", "geometry_msgs/msg/PoseWithCovarianceStamped"):
+        p = p.pose.pose
+    elif name in ("geometry_msgs/msg/PoseStamped", "geometry_msgs/msg/PoseWithCovariance"):
+        p = p.pose
+    elif name == "geometry_msgs/msg/TransformStamped":
+        p = p.transform
     # Use ``is not None`` rather than ``or`` — a Vector3 at the origin is
     # falsy but valid, and falling through to ``position`` on a Transform
     # would crash.

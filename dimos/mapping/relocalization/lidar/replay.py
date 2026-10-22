@@ -20,10 +20,13 @@ python -m dimos.mapping.relocalization.lidar.tune replay <recording.db> --premap
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_cdrgen.registry import decode
+import numpy as np
 import typer
 
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
@@ -34,12 +37,16 @@ from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESET
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils.geometry import vector_array
+from dimos.message_utils.pointcloud import pointcloud_to_open3d, pointcloud_xyz, transform_cloud
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
+from dimos.visualization.rerun.cdr import register_colormap_annotation
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.messages.geometry_msgs.msg import TransformStamped
 
 # rerun is imported inside the functions that log: it is heavy and only this command loads it.
 
@@ -55,29 +62,33 @@ _VOXEL_SIZE = RayTracingVoxelMapConfig.model_fields["voxel_size"].default
 class ReplayAttempt(NamedTuple):
     t_s: float
     fitness: float
-    fix: Transform | None
+    fix: TransformStamped | None
 
 
 class Replay(NamedTuple):
     attempts: list[ReplayAttempt]
-    fix: Transform | None
+    fix: TransformStamped | None
     fix_ts: float
-    recorded: Transform | None
+    recorded: TransformStamped | None
 
 
-def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
+def fix_error(fix: TransformStamped, recorded: TransformStamped) -> tuple[float, float]:
     """Yaw in degrees and translation in meters between two fixes of the same frame pair."""
     dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
-    return dyaw, (fix.translation - recorded.translation).length()
+    return dyaw, float(
+        np.linalg.norm(
+            vector_array(fix.transform.translation) - vector_array(recorded.transform.translation)
+        )
+    )
 
 
-def recorded_fix(store: SqliteStore, world_frame: str, map_frame: str) -> Transform | None:
+def recorded_fix(store: SqliteStore, world_frame: str, map_frame: str) -> TransformStamped | None:
     """The first world -> map edge the live run published, if the recording has one."""
     if "tf" not in store.list_streams():
         return None
     for obs in store.stream("tf", TFMessage).order_by("ts"):
         for tf in obs.data.transforms:
-            if (tf.frame_id, tf.child_frame_id) == (world_frame, map_frame):
+            if (tf.header.frame_id, tf.child_frame_id) == (world_frame, map_frame):
                 return tf
     return None
 
@@ -131,11 +142,11 @@ def replay(
     ray = RayTraceMap(voxel_size=voxel_size)
     frames = lidar.transform(pose_from_tf(tf, world_frame)).transform(ray)
 
-    relocalizer = LidarRelocalizer(premap.pointcloud, PRESETS[preset])
+    relocalizer = LidarRelocalizer(pointcloud_to_open3d(premap), PRESETS[preset])
     recorded = recorded_fix(store, world_frame, MAP_FRAME)
 
     attempts: list[ReplayAttempt] = []
-    fix: Transform | None = None
+    fix: TransformStamped | None = None
     fix_ts = 0.0
     next_attempt = 0.0
     stop_at = math.inf
@@ -147,11 +158,18 @@ def replay(
         if obs.ts >= stop_at:
             break
         rr.set_time(TIMELINE, timestamp=obs.ts)
-        rr.log("world/local_map", voxel_map_points(obs.data.points_f32(), voxel_size))
-        if fix is not None or obs.ts < next_attempt or len(obs.data) < min_local_points:
+        rr.log(
+            "world/local_map",
+            voxel_map_points(np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), voxel_size),
+        )
+        if (
+            fix is not None
+            or obs.ts < next_attempt
+            or obs.data.width * obs.data.height < min_local_points
+        ):
             continue
         next_attempt = obs.ts + reloc_interval
-        fix_attempt = relocalizer.attempt(obs.data.pointcloud, world_frame, MAP_FRAME)
+        fix_attempt = relocalizer.attempt(pointcloud_to_open3d(obs.data), world_frame, MAP_FRAME)
         attempts.append(ReplayAttempt(obs.ts - t0, fix_attempt.result.fitness, fix_attempt.fix))
         rr.log(FITNESS_SERIES, rr.Scalars(fix_attempt.result.fitness))
         _print_attempt(attempts[-1], recorded)
@@ -159,12 +177,12 @@ def replay(
             continue
         fix, fix_ts = fix_attempt.fix, obs.ts
         stop_at = obs.ts + after_s
-        log_loaded_map(premap.transform(fix).points_f32())
+        log_loaded_map(np.asarray(pointcloud_xyz(transform_cloud(premap, fix)), dtype=np.float32))
         if recorded is not None:
             rr.log(
                 "world/recorded_map",
                 rr.Points3D(
-                    premap.transform(recorded).points_f32(),
+                    pointcloud_xyz(transform_cloud(premap, recorded)),
                     colors=[RECORDED_MAP_COLOR],
                     radii=PREMAP_POINT_RADIUS,
                 ),
@@ -173,24 +191,29 @@ def replay(
 
 
 def write_loaded_map(
-    store: SqliteStore, premap: PointCloud2, fix: Transform, ts: float, world_frame: str
+    store: SqliteStore, premap: PointCloud2, fix: TransformStamped, ts: float, world_frame: str
 ) -> bool:
     """Append the placed premap to the recording as the stream plan_rrd seeds from."""
     stream = store.stream(LOADED_MAP_STREAM, PointCloud2)
     if stream.count() > 0:
         print(f"{LOADED_MAP_STREAM} already has {stream.count()} messages, leaving it")
         return False
-    placed = PointCloud2(pointcloud=premap.transform(fix).pointcloud, frame_id=world_frame, ts=ts)
+    placed = transform_cloud(premap, fix)
+    placed.header = deepcopy(placed.header)
+    placed.header.frame_id = world_frame
+    placed.header.stamp = time_from_seconds(ts)
     stream.append(placed, ts=ts)
-    print(f"wrote {len(placed)} placed premap points to {LOADED_MAP_STREAM} at {ts:.3f}")
+    print(
+        f"wrote {placed.width * placed.height} placed premap points to {LOADED_MAP_STREAM} at {ts:.3f}"
+    )
     return True
 
 
-def _print_attempt(attempt: ReplayAttempt, recorded: Transform | None) -> None:
+def _print_attempt(attempt: ReplayAttempt, recorded: TransformStamped | None) -> None:
     if attempt.fix is None:
         print(f"{attempt.t_s:.1f}s refused fitness={attempt.fitness:.3f}")
         return
-    t = attempt.fix.translation
+    t = attempt.fix.transform.translation
     line = (
         f"{attempt.t_s:.1f}s fitness={attempt.fitness:.3f} "
         f"t=({t.x:.2f}, {t.y:.2f}, {t.z:.2f}) yaw={yaw_deg(attempt.fix):.1f}deg"
@@ -203,7 +226,7 @@ def _print_attempt(attempt: ReplayAttempt, recorded: Transform | None) -> None:
 
 def main(
     recording: str = typer.Argument(..., help="Recording .db: bare name (cwd or data/) or path"),
-    premap: str = typer.Option(..., "--premap", help="Premap .pc2.lcm: bare name or path"),
+    premap: str = typer.Option(..., "--premap", help="Premap .pc2.cdr: bare name or path"),
     lidar: str = typer.Option("lidar", "--lidar", help="Lidar stream in the recording"),
     world_frame: str = typer.Option("odom", "--world-frame", help="Frame the live map is built in"),
     preset: str = typer.Option(DEFAULT_PRESET, "--preset", help=f"One of {sorted(PRESETS)}"),
@@ -232,9 +255,12 @@ def main(
 ) -> None:
     """Replay a recording through the relocalizer and compare its fix with the robot's."""
     db_path = resolve_named_path(recording, ".db")
-    premap_cloud = PointCloud2.lcm_decode(resolve_named_path(premap, ".pc2.lcm").read_bytes())
+    premap_cloud = decode(resolve_named_path(premap, ".pc2.cdr").read_bytes(), PointCloud2)
+    premap_cloud.header.frame_id = MAP_FRAME
     _init_recording(db_path.stem, out)
-    print(f"relocalizing {db_path.name} against {premap} ({len(premap_cloud)} points, {preset})")
+    print(
+        f"relocalizing {db_path.name} against {premap} ({premap_cloud.width * premap_cloud.height} points, {preset})"
+    )
     store = SqliteStore(path=str(db_path))
     with store:
         result = replay(

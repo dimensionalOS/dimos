@@ -15,6 +15,7 @@
 """Unitree WebRTC lidar message parsing utilities."""
 
 from collections.abc import Callable
+from copy import deepcopy
 import time
 from typing import TypedDict, TypeVar
 
@@ -22,6 +23,8 @@ import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
+from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
@@ -83,7 +86,7 @@ def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = N
     )
 
 
-T = TypeVar("T", bound=Timestamped)
+T = TypeVar("T", bound=Timestamped | CdrCloud)
 
 
 def repair_stale_ts(
@@ -98,40 +101,52 @@ def repair_stale_ts(
     On new firmware, occasionally frames will revert back to the initial timestamp. In these cases, we update based on the default period.
 
     We calibrate through the first few frames to determine which correction method to use. Once it's been determined, it does not change.
+
+    Generated clouds use integer Header nanoseconds; repaired values own a copy
+    so other subscribers retain the original capture Header. Legacy Timestamped
+    callers retain their existing mutation behavior until their consumers migrate.
     """
-    prev_good: float | None = None
-    prev_raw: float | None = None
+    prev_good: int | None = None
+    prev_raw: int | None = None
     n_seen = 0
     calibrated = False
     use_system_time = False
 
+    period_ns = to_nanoseconds(time_from_seconds(default_period))
+
     def _repair(item: T) -> T:
         nonlocal prev_good, prev_raw, n_seen, calibrated, use_system_time
-
+        raw = (
+            to_nanoseconds(item.header.stamp)
+            if isinstance(item, CdrCloud)
+            else to_nanoseconds(time_from_seconds(item.ts))
+        )
+        repaired = raw
         if use_system_time:
-            item.ts = now()
-            return item
-
-        if not calibrated:
-            if prev_raw is not None and item.ts != prev_raw:
+            repaired = to_nanoseconds(time_from_seconds(now()))
+        else:
+            if not calibrated:
+                if prev_raw is not None and raw != prev_raw:
+                    calibrated = True
+                prev_raw = raw
+                n_seen += 1
+            if prev_good is not None and raw <= prev_good:
+                repaired = prev_good + period_ns
+            prev_good = repaired
+            if not calibrated and n_seen >= calibration_frames:
                 calibrated = True
-                # lidar stamps advancing — using lidar time",
-            prev_raw = item.ts
-            n_seen += 1
-
-        if prev_good is not None and item.ts <= prev_good:
-            item.ts = prev_good + default_period
-
-        prev_good = item.ts
-
-        if not calibrated and n_seen >= calibration_frames:
-            calibrated = True
-            use_system_time = True
-            logger.warning(
-                "repair_stale_ts: lidar timestmaps frozen (%d calibration stamps equal) — using system time, upgrade your GO2 firmware",
-                calibration_frames,
-            )
-
+                use_system_time = True
+                logger.warning(
+                    "repair_stale_ts: lidar timestamps frozen (%d calibration stamps equal) — using system time, upgrade your GO2 firmware",
+                    calibration_frames,
+                )
+        if repaired == raw:
+            return item
+        if isinstance(item, CdrCloud):
+            result = deepcopy(item)
+            result.header.stamp = time_from_nanoseconds(repaired)
+            return result
+        item.ts = repaired / 1_000_000_000
         return item
 
     return ops.map(_repair)

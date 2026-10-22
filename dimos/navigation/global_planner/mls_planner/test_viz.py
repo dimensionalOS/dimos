@@ -14,10 +14,28 @@
 
 from functools import partial
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds
+from dimos.messages.dimos_msgs.msg import (
+    LineSegment3D,
+    LineSegments3D,
+    LineSegments3DRegion,
+    PointCloudRegion,
+)
+from dimos.messages.geometry_msgs.msg import Point
+from dimos.messages.std_msgs.msg import Header
+
+
+def _region(points):
+    header = Header(frame_id="odom", stamp=time_from_nanoseconds(0))
+    return PointCloudRegion(
+        header=header, region_id=0, cloud=pointcloud_from_xyz(points, header=header)
+    )
+
+
 from dimos.navigation.global_planner.mls_planner import viz
 
 
@@ -62,19 +80,22 @@ def test_graph_nodes_are_lifted_off_the_surface() -> None:
 
 
 def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:
-    cell = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
-    cell.seq = 1 << 16
+    cell = _region(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
+    cell.region_id = 1 << 16
     (path, arch, static) = viz.render_surface_region(cell, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 1
 
-    emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
-    emptied.seq = 1 << 16
+    emptied = _region(np.zeros((0, 3), dtype=np.float32))
+    emptied.region_id = 1 << 16
     (path, arch, static) = viz.render_surface_region(emptied, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 0
 
-    edges = LineSegments3D(segments=np.zeros((0, 2, 3)), seq=(2 << 16) | 3)
+    header = Header(frame_id="odom", stamp=time_from_nanoseconds(0))
+    edges = LineSegments3DRegion(
+        header=header, region_id=(2 << 16) | 3, lines=LineSegments3D(header=header, segments=[])
+    )
     (path, arch, static) = viz.render_edge_region(edges)[0]
     assert path == "world/node_edges/2_3" and static
     assert arch.strips.as_arrow_array().to_pylist() == []
@@ -93,3 +114,27 @@ def test_overrides_follow_the_planner_publish_rate() -> None:
     }
     assert on["world/nodes"] is viz.render_nodes
     assert on["world/node_edges"] is viz.render_edge_region
+
+
+def test_cdr_weighted_region_renders_geometry_and_keeps_source_immutable():
+    header = Header(frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789))
+    value = LineSegments3DRegion(
+        header=header,
+        region_id=(-2 << 16) | 3,
+        lines=LineSegments3D(
+            header=header,
+            segments=[
+                LineSegment3D(start=Point(x=1, y=2, z=0), end=Point(x=2, y=3, z=0), weight=0.75)
+            ],
+        ),
+    )
+    payload = encode(value)
+    received = decode(payload, LineSegments3DRegion)
+    [(entity, arch, static)] = viz.render_edge_region(received)
+    assert entity == "world/node_edges/-2_3" and static
+    np.testing.assert_allclose(
+        arch.strips.as_arrow_array().to_pylist(),
+        [[[1, 2, viz.GRAPH_Z_LIFT], [2, 3, viz.GRAPH_Z_LIFT]]],
+        atol=1e-6,
+    )
+    assert encode(received) == payload

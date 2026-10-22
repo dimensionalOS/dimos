@@ -15,7 +15,29 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-local-planner";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sdkArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/b971b729786cc12dcf4769cfbc233b0e36f1feee";
+          sha256 = "20abf8673b36a6fdea3c30b6949fe7e618c2836917c34f39425ef466609a5171";
+        };
+        sdkSource = pkgs.runCommand "dimos-local-planner-sdk-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sdkArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${sdkSource}/native/message-source.nix" { inherit pkgs; }).source;
+        # Standalone flake builds resolve explicit source artifacts, not checkout parents.
+        src = pkgs.runCommand "local-planner-cdr-source" { } ''
+          cp -r ${moduleSource} $out
+          chmod -R u+w $out
+          mkdir -p $out/sdk
+          cp -r ${sdkSource}/native/rust/dimos-module ${sdkSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/Cargo.toml \
+            --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../build/message-source/rust' 'messages'
+        '';
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 

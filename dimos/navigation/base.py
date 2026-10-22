@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +15,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped
 
 
 class NavigationState(Enum):
@@ -37,7 +36,6 @@ class NavigationInterface(ABC):
         Returns:
             True if goal was accepted, False otherwise
         """
-        pass
 
     @abstractmethod
     def get_state(self) -> NavigationState:
@@ -47,7 +45,6 @@ class NavigationInterface(ABC):
         Returns:
             Current navigation state
         """
-        pass
 
     @abstractmethod
     def is_goal_reached(self) -> bool:
@@ -57,7 +54,6 @@ class NavigationInterface(ABC):
         Returns:
             True if goal was reached, False otherwise
         """
-        pass
 
     @abstractmethod
     def cancel_goal(self) -> bool:
@@ -67,4 +63,3 @@ class NavigationInterface(ABC):
         Returns:
             True if goal was cancelled, False if no goal was active
         """
-        pass

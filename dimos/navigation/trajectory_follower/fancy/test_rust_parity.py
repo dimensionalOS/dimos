@@ -27,10 +27,11 @@ from scipy.spatial import cKDTree
 
 pytest.importorskip("dimos_trajectory_follower")
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.trajectory_follower.fancy.controller import (
     ControllerConfig,
@@ -51,14 +52,16 @@ GOVERNOR = GO2.to_json()
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        frame_id="world",
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
+        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, yaw)),
     )
 
 
 def _path(states: list[tuple[float, float, float]]) -> Path:
-    return Path(frame_id="world", poses=[_pose(*s) for s in states])
+    return Path(
+        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
+        poses=[_pose(*s) for s in states],
+    )
 
 
 def _straight(rng: np.random.Generator) -> list[tuple[float, float, float]]:
@@ -142,10 +145,12 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
                 path_xy_yaw(path), enc, float(srng.uniform(0.0, 1e9)), GOVERNOR
             )
             for q, t in zip(path.poses, ts, strict=True):
-                q.ts = t
+                q.header.stamp = time_from_seconds(t)
             if k % 8 == 3:
                 for q in path.poses:
-                    q.ts = 5.0  # flat: not the dialect, both must ignore it
+                    q.header.stamp = time_from_seconds(
+                        5.0
+                    )  # flat: not the dialect, both must ignore it
 
         # non-default gains and plant every fifth case: the params tuple order is load-bearing
         emb = GO2
@@ -153,14 +158,14 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
             emb = replace(
                 GO2,
                 control=GO2.control.model_copy(
-                    update=dict(
-                        lookahead=float(rng.uniform(0.1, 1.2)),
-                        k_pos=float(rng.uniform(0.5, 4.0)),
-                        k_yaw=float(rng.uniform(0.5, 4.0)),
-                        fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
-                        fan_yaw_done=float(rng.uniform(0.05, 0.6)),
-                        speed_lookahead=float(rng.uniform(0.5, 4.0)),
-                    )
+                    update={
+                        "lookahead": float(rng.uniform(0.1, 1.2)),
+                        "k_pos": float(rng.uniform(0.5, 4.0)),
+                        "k_yaw": float(rng.uniform(0.5, 4.0)),
+                        "fan_yaw_per_m": float(rng.uniform(1.0, 6.0)),
+                        "fan_yaw_done": float(rng.uniform(0.05, 0.6)),
+                        "speed_lookahead": float(rng.uniform(0.5, 4.0)),
+                    }
                 ),
                 max_speed=float(rng.uniform(0.2, 1.5)),
                 min_speed=float(rng.uniform(0.05, 0.3)),
@@ -203,9 +208,9 @@ def test_rust_matches_python(law: str) -> None:
             seen["held"] += 1
         if abs(a[2]) >= emb.max_yaw_rate - 1e-12 or math.hypot(a[0], a[1]) >= top - 1e-12:
             seen["clamped"] += 1
-        if case[3] is not None and len(case[3]) == len(case[2]):
+        if case[3] is not None and len(case[3]) == len(case[2].poses):
             seen["governed"] += 1
-        if len(case[2]) > 2 and math.hypot(a[0], a[1]) < 1e-3 and abs(a[2]) > 1e-3:
+        if len(case[2].poses) > 2 and math.hypot(a[0], a[1]) < 1e-3 and abs(a[2]) > 1e-3:
             seen["fan"] += 1
     # the sweep is only worth its tolerance if it actually reached the branches
     assert all(v > 0 for v in seen.values()), f"unexercised branches: {seen}"

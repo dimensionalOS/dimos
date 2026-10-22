@@ -16,9 +16,14 @@
 import itertools
 from typing import cast
 
+from dimos_cdrgen.registry import encode
+import numpy as np
 import pytest
 import reactivex as rx
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
@@ -101,3 +106,54 @@ def test_repair_stale_ts_calibration_boundary_one_differs() -> None:
         repair_stale_ts(default_period=0.130, calibration_frames=10, now=lambda: 999.0)
     ).subscribe(on_next=lambda item: out.append(item.ts))
     assert 999.0 not in out
+
+
+@pytest.mark.parametrize(
+    "stamps,expected",
+    [
+        (
+            [1700000000123456789, 1700000000123456790, 1700000000123456791],
+            [1700000000123456789, 1700000000123456790, 1700000000123456791],
+        ),
+        (
+            [1700000000123456789, 1700000000123456789, 1700000000253456789],
+            [1700000000123456789, 1700000000253456789, 1700000000383456789],
+        ),
+    ],
+)
+def test_generated_stale_repair_uses_nanoseconds_and_preserves_source(stamps, expected):
+    clouds = [
+        pointcloud_from_xyz(
+            np.array([[1, 2, 3]], dtype=np.float32),
+            header=Header(frame_id="world", stamp=time_from_nanoseconds(stamp)),
+        )
+        for stamp in stamps
+    ]
+    originals = [encode(cloud) for cloud in clouds]
+    received = []
+    rx.from_iterable(clouds).pipe(repair_stale_ts()).subscribe(received.append)
+    assert [to_nanoseconds(cloud.header.stamp) for cloud in received] == expected
+    assert [encode(cloud) for cloud in clouds] == originals
+    assert [cloud.header.frame_id for cloud in received] == ["world"] * 3
+    assert all(pointcloud_xyz(cloud).tolist() == [[1, 2, 3]] for cloud in received)
+
+
+def test_generated_frozen_firmware_uses_clock_after_same_calibration_window():
+    stamp = 1700000000123456789
+    clouds = [
+        pointcloud_from_xyz(
+            np.array([[1, 2, 3]], dtype=np.float32),
+            header=Header(frame_id="world", stamp=time_from_nanoseconds(stamp)),
+        )
+        for _ in range(13)
+    ]
+    before = [encode(cloud) for cloud in clouds]
+    received = []
+    rx.from_iterable(clouds).pipe(
+        repair_stale_ts(calibration_frames=10, now=lambda: 999.0)
+    ).subscribe(received.append)
+    assert [to_nanoseconds(cloud.header.stamp) for cloud in received[:10]] == [
+        stamp + i * 130000000 for i in range(10)
+    ]
+    assert [to_nanoseconds(cloud.header.stamp) for cloud in received[10:]] == [999000000000] * 3
+    assert [encode(cloud) for cloud in clouds] == before

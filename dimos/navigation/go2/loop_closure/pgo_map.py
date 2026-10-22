@@ -27,6 +27,7 @@ Check against the offline method on a recording::
 from __future__ import annotations
 
 from collections.abc import Iterator
+from copy import deepcopy
 import math
 import sys
 import time
@@ -34,8 +35,11 @@ import time
 import numpy as np
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PoseGraph, _PGOState, _pose_to_pose3
 from dimos.utils.logging_config import setup_logger
 
@@ -61,6 +65,7 @@ class PGOMap:
         self._grid = VoxelGrid(
             voxel_size=voxel_size, frame_id=frame_id, stamped=True, show_startup_log=False
         )
+        self._header = Header(stamp=time_from_seconds(0), frame_id=frame_id)
         self._cooldown = rebuild_cooldown_s
         self._placed_loops = 0
         self._last_rebuild_ts = -math.inf
@@ -78,19 +83,29 @@ class PGOMap:
 
     def add(self, cloud: PointCloud2, pose: Pose | None) -> bool:
         """Insert a world-frame lidar frame taken at odom `pose`. True if the map was rebuilt."""
-        self._grid.add_frame(cloud)
-        if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+        timestamp = to_seconds(cloud.header.stamp)
+        self._header.stamp = deepcopy(cloud.header.stamp)
+        self._grid.add_points(
+            np.asarray(pointcloud_xyz(cloud), dtype=np.float32), timestamp=timestamp
+        )
+        if (
+            pose is not None
+            and any((pose.position.x, pose.position.y, pose.position.z))
+            and any(
+                (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)
+            )
+        ):
             t0, loops = time.perf_counter(), self.n_loops
-            self._pgo.process(_pose_to_pose3(pose), cloud.ts, cloud)
+            self._pgo.process(_pose_to_pose3(pose), timestamp, cloud)
             if self.n_loops != loops:
                 self.loop_ms = (time.perf_counter() - t0) * 1e3
 
         # frame time, not wall time, so replay and tests pace the same as the robot
-        if self.n_loops == self._placed_loops or cloud.ts - self._last_rebuild_ts < self._cooldown:
+        if self.n_loops == self._placed_loops or timestamp - self._last_rebuild_ts < self._cooldown:
             return False
         t0 = time.perf_counter()
         self._grid.reproject(self.graph().place)
-        self._placed_loops, self._last_rebuild_ts = self.n_loops, cloud.ts
+        self._placed_loops, self._last_rebuild_ts = self.n_loops, timestamp
         self.rebuild_ms = (time.perf_counter() - t0) * 1e3
         logger.info(
             "PGO map rebuilt",
@@ -113,7 +128,9 @@ class PGOMap:
         return self._pgo.loop_segments()
 
     def global_map(self) -> PointCloud2:
-        return self._grid.get_global_pointcloud2()
+        return pointcloud_from_xyz(
+            self._grid.get_global_pointcloud().point["positions"].numpy(), header=self._header
+        )
 
     def dispose(self) -> None:
         self._grid.dispose()
@@ -144,8 +161,15 @@ def main(dataset: str) -> None:
     def frames() -> Iterator[tuple[PointCloud2, Pose | None]]:
         for obs in lidar:
             cloud = obs.data
-            cloud.ts = obs.ts  # old recordings carry Unitree's stale lidar stamps
-            yield cloud, obs.pose
+            # Explicit offline replay time override for recordings with stale sensor stamps.
+            cloud.header.stamp = time_from_seconds(obs.ts)
+            values = obs.pose_tuple
+            pose = (
+                None
+                if values is None
+                else Pose(position=Point(*values[:3]), orientation=Quaternion(*values[3:]))
+            )
+            yield cloud, pose
 
     live = PGOMap()
     step_ms, rebuilds = [], 0
@@ -161,9 +185,12 @@ def main(dataset: str) -> None:
     live._grid.reproject(graph.place)
     gold = VoxelGrid(device="CPU:0", show_startup_log=False)
     for cloud, _ in frames():
-        gold.add_frame(graph.place(cloud))
+        gold.add_points(
+            np.asarray(pointcloud_xyz(graph.place(cloud)), dtype=np.float32),
+            timestamp=to_seconds(cloud.header.stamp),
+        )
 
-    got, want = live.global_map().points_f32(), gold.get_global_pointcloud2().points_f32()
+    got, want = pointcloud_xyz(live.global_map()), gold.get_global_pointcloud2().points_f32()
     missing = 1 - _within_one_voxel(want, got, 0.05)
     extra = 1 - _within_one_voxel(got, want, 0.05)
     steps = np.array(step_ms)

@@ -235,13 +235,27 @@ def transform_cloud(message: PointCloud2, transform: TransformStamped) -> PointC
     """
     if message.header.frame_id != transform.child_frame_id:
         raise ValueError("point cloud frame does not match transform child frame")
-    view = pointcloud_view(message)
-    for name in ("x", "y", "z"):
-        if name not in (view.dtype.names or ()) or view.dtype[name].kind != "f":
-            raise ValueError("transform requires scalar floating-point XYZ fields")
     matrix = transform_matrix(transform.transform)
     xyz = pointcloud_xyz(message)
     transformed = xyz @ matrix[:3, :3].T + matrix[:3, 3]
+    output = pointcloud_with_xyz(message, transformed)
+    output.header.frame_id = transform.header.frame_id
+    return output
+
+
+def pointcloud_with_xyz(message: PointCloud2, coordinates: NDArray[Any]) -> PointCloud2:
+    """Replace XYZ on a copy, preserving all other fields, padding and exact Header.
+
+    Accept one coordinate triple per point in row order. This supports per-point
+    motion correction without losing capture times, intensity or organized layout.
+    """
+    view = pointcloud_view(message)
+    transformed = np.asarray(coordinates)
+    if transformed.shape != (message.height * message.width, 3):
+        raise ValueError("replacement coordinates must have shape (height * width, 3)")
+    for name in ("x", "y", "z"):
+        if name not in (view.dtype.names or ()) or view.dtype[name].kind != "f":
+            raise ValueError("transform requires scalar floating-point XYZ fields")
     for index, name in enumerate(("x", "y", "z")):
         values = transformed[:, index]
         if np.any(np.abs(values[np.isfinite(values)]) > np.finfo(view.dtype[name]).max):
@@ -257,7 +271,7 @@ def transform_cloud(message: PointCloud2, transform: TransformStamped) -> PointC
         writable[name] = transformed[:, index].reshape(message.height, message.width)
     output = cdr_decode(cdr_encode(message), PointCloud2)
     output.data = np.frombuffer(payload, dtype=np.uint8).copy()
-    output.header = Header(stamp=deepcopy(message.header.stamp), frame_id=transform.header.frame_id)
+    output.is_dense = message.is_dense and bool(np.isfinite(transformed).all())
     return output
 
 

@@ -14,21 +14,33 @@
 
 from __future__ import annotations
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.geometry import quaternion_from_matrix, transform_matrix, vector_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz, transform_cloud
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo import (
     PGO,
     Keyframe,
     PGOConfig,
     PoseGraph,
+    _icp,
     _obs_to_pose3,
     _PGOState,
     _pose3_to_transform,
@@ -37,6 +49,25 @@ from dimos.navigation.go2.loop_closure.pgo import (
 # TODO(PY311): drop — the mapping extra excludes gtsam-extended where it has no
 # wheels (py3.10 Linux), see pyproject.
 pytest.importorskip("gtsam")
+
+
+def _transform(*, translation=None, rotation=None, ts=0.0):
+    return TransformStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id="world_raw"),
+        child_frame_id="body",
+        transform=Transform(
+            translation=translation if translation is not None else Vector3(0, 0, 0),
+            rotation=rotation if rotation is not None else Quaternion(0, 0, 0, 1),
+        ),
+    )
+
+
+def _cloud(points, *, timestamp=0.0, stamps=None):
+    return pointcloud_from_xyz(
+        points,
+        header=Header(stamp=time_from_seconds(timestamp), frame_id="world_raw"),
+        stamps=stamps,
+    )
 
 
 def _random_R(rng: np.random.Generator) -> np.ndarray:
@@ -76,7 +107,7 @@ class TestTransformHelpers:
         """Constructing/deriving with pose=Transform should coerce to 7-tuple."""
         from dimos.memory.type.observation import Observation
 
-        tf = Transform(
+        tf = _transform(
             translation=Vector3(1.5, -2.0, 0.7),
             rotation=Quaternion(0.1, 0.2, 0.3, 0.927),
             ts=1.0,
@@ -92,9 +123,11 @@ class TestTransformHelpers:
 
     def test_observation_normalizes_posestamped(self) -> None:
         from dimos.memory.type.observation import Observation
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
-        ps = PoseStamped(ts=1.0, position=(1.0, 2.0, 3.0), orientation=(0.0, 0.0, 0.0, 1.0))
+        ps = PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id="world_raw"),
+            pose=Pose(position=Point(1.0, 2.0, 3.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
         obs: Observation[int] = Observation(id=0, ts=1.0, pose=ps, _data=0)
         assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
 
@@ -104,7 +137,7 @@ class TestTransformHelpers:
         rng = np.random.default_rng(4)
         R = _random_R(rng)
         t = rng.uniform(-3, 3, size=3)
-        tf = Transform(translation=Vector3(t), rotation=Quaternion.from_rotation_matrix(R), ts=1.0)
+        tf = _transform(translation=Vector3(*t), rotation=quaternion_from_matrix(R), ts=1.0)
         obs: Observation[int] = Observation(id=0, ts=1.0, pose=tf, _data=0)
         p = _obs_to_pose3(obs)
         np.testing.assert_allclose(p.rotation().matrix(), R, atol=1e-9)
@@ -118,8 +151,8 @@ class TestTransformHelpers:
         t = rng.uniform(-3, 3, size=3)
         p = gtsam.Pose3(gtsam.Rot3(R), gtsam.Point3(t))
         tf = _pose3_to_transform(p, ts=7.89, frame_id="world", child_frame_id="body")
-        np.testing.assert_allclose(tf.rotation.to_rotation_matrix(), R, atol=1e-10)
-        np.testing.assert_allclose(tf.translation.to_numpy(), t, atol=1e-10)
+        np.testing.assert_allclose(transform_matrix(tf.transform)[:3, :3], R, atol=1e-10)
+        np.testing.assert_allclose(vector_array(tf.transform.translation), t, atol=1e-10)
 
     def test_pose3_to_transform_with_frames(self) -> None:
         import gtsam
@@ -129,10 +162,10 @@ class TestTransformHelpers:
         t = rng.uniform(-3, 3, size=3)
         p = gtsam.Pose3(gtsam.Rot3(R), gtsam.Point3(t))
         tf = _pose3_to_transform(p, ts=1.0, frame_id="world_corrected", child_frame_id="body")
-        assert tf.frame_id == "world_corrected"
+        assert tf.header.frame_id == "world_corrected"
         assert tf.child_frame_id == "body"
-        np.testing.assert_allclose(tf.rotation.to_rotation_matrix(), R, atol=1e-10)
-        np.testing.assert_allclose(tf.translation.to_numpy(), t, atol=1e-10)
+        np.testing.assert_allclose(transform_matrix(tf.transform)[:3, :3], R, atol=1e-10)
+        np.testing.assert_allclose(vector_array(tf.transform.translation), t, atol=1e-10)
 
 
 def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Stream[PointCloud2]:
@@ -153,7 +186,7 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
         body = rng.uniform(-1, 1, size=(points_per_frame, 3)).astype(np.float32)
         world = (R_world @ body.T).T + np.array([i, 0, 0], dtype=np.float32)
         lidar.append(
-            PointCloud2.from_numpy(world.astype(np.float32)),
+            _cloud(world.astype(np.float32)),
             ts=float(i),
             pose=(float(i), 0.0, 0.0, qx, qy, qz, qw),
         )
@@ -210,9 +243,15 @@ def _graph_with_drift_at(drifts: list[Transform]) -> PoseGraph:
     return PoseGraph(
         keyframes=tuple(
             Keyframe(
-                ts=d.ts,
-                local=Transform(translation=identity, rotation=identity_rot, ts=d.ts),
-                optimized=Transform(translation=d.translation, rotation=d.rotation, ts=d.ts),
+                ts=to_seconds(d.header.stamp),
+                local=_transform(
+                    translation=identity, rotation=identity_rot, ts=to_seconds(d.header.stamp)
+                ),
+                optimized=_transform(
+                    translation=d.transform.translation,
+                    rotation=d.transform.rotation,
+                    ts=to_seconds(d.header.stamp),
+                ),
             )
             for d in drifts
         )
@@ -226,67 +265,68 @@ class TestPoseGraphCorrection:
 
     def test_single_keyframe_returns_constant(self) -> None:
         R = Rotation.from_euler("z", np.pi / 4).as_matrix()
-        only = Transform(
+        only = _transform(
             translation=Vector3(1.0, 2.0, 3.0),
-            rotation=Quaternion.from_rotation_matrix(R),
+            rotation=quaternion_from_matrix(R),
             ts=10.0,
         )
         graph = _graph_with_drift_at([only])
         for query_ts in (0.0, 10.0, 100.0):
             out = graph.correction_at(query_ts)
-            assert out.translation.x == pytest.approx(1.0, abs=1e-10)
-            assert out.translation.y == pytest.approx(2.0, abs=1e-10)
-            assert out.translation.z == pytest.approx(3.0, abs=1e-10)
+            assert out.transform.translation.x == pytest.approx(1.0, abs=1e-10)
+            assert out.transform.translation.y == pytest.approx(2.0, abs=1e-10)
+            assert out.transform.translation.z == pytest.approx(3.0, abs=1e-10)
 
     def test_out_of_range_clips_to_endpoints(self) -> None:
-        # Transform's ctor maps ts=0.0 -> time.time(); use ts>0 for determinism.
-        a = Transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0)
-        b = Transform(translation=Vector3(10.0, 0.0, 0.0), ts=11.0)
+        a = _transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0)
+        b = _transform(translation=Vector3(10.0, 0.0, 0.0), ts=11.0)
         graph = _graph_with_drift_at([a, b])
         # Below range -> clipped to a
-        assert graph.correction_at(-5.0).translation.x == pytest.approx(0.0, abs=1e-10)
+        assert graph.correction_at(-5.0).transform.translation.x == pytest.approx(0.0, abs=1e-10)
         # Above range -> clipped to b
-        assert graph.correction_at(100.0).translation.x == pytest.approx(10.0, abs=1e-10)
+        assert graph.correction_at(100.0).transform.translation.x == pytest.approx(10.0, abs=1e-10)
         # In-range midpoint
-        assert graph.correction_at(6.0).translation.x == pytest.approx(5.0, abs=1e-10)
+        assert graph.correction_at(6.0).transform.translation.x == pytest.approx(5.0, abs=1e-10)
 
     def test_frozen(self) -> None:
         graph = PoseGraph()
         with pytest.raises(Exception):
-            graph.keyframes = (Keyframe(ts=0, local=Transform(), optimized=Transform()),)  # type: ignore[misc]
+            graph.keyframes = (Keyframe(ts=0, local=_transform(), optimized=_transform()),)  # type: ignore[misc]
 
 
 class TestPlace:
     def _graph(self) -> PoseGraph:
-        turn = Quaternion.from_rotation_matrix(Rotation.from_euler("z", np.pi / 2).as_matrix())
+        turn = quaternion_from_matrix(Rotation.from_euler("z", np.pi / 2).as_matrix())
         return _graph_with_drift_at(
             [
-                Transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0),
-                Transform(translation=Vector3(10.0, 0.0, 0.0), rotation=turn, ts=11.0),
+                _transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0),
+                _transform(translation=Vector3(10.0, 0.0, 0.0), rotation=turn, ts=11.0),
             ]
         )
 
     def test_latest_data_stays_put(self) -> None:
-        cloud = PointCloud2.from_numpy(np.array([[1.0, 2.0, 3.0]]), timestamp=11.0)
+        cloud = _cloud(np.array([[1.0, 2.0, 3.0]]), timestamp=11.0)
         np.testing.assert_allclose(
-            self._graph().place(cloud).points_f32(), [[1.0, 2.0, 3.0]], atol=1e-5
+            pointcloud_xyz(self._graph().place(cloud)), [[1.0, 2.0, 3.0]], atol=1e-5
         )
 
     def test_old_data_moves_relative_to_the_latest_keyframe(self) -> None:
         # C(now)^-1 . C(1): undo the latest correction (turn 90 deg, +10 x).
-        cloud = PointCloud2.from_numpy(np.array([[10.0, 1.0, 0.0]]), timestamp=1.0)
+        cloud = _cloud(np.array([[10.0, 1.0, 0.0]]), timestamp=1.0)
         np.testing.assert_allclose(
-            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0]], atol=1e-5
+            pointcloud_xyz(self._graph().place(cloud)), [[1.0, 0.0, 0.0]], atol=1e-5
         )
 
     def test_per_point_stamps_override_the_cloud_ts(self) -> None:
-        cloud = PointCloud2.from_numpy(
+        cloud = _cloud(
             np.array([[10.0, 1.0, 0.0], [1.0, 2.0, 3.0]]),
             timestamp=1.0,
             stamps=np.array([1.0, 11.0]),
         )
         np.testing.assert_allclose(
-            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0], [1.0, 2.0, 3.0]], atol=1e-5
+            pointcloud_xyz(self._graph().place(cloud)),
+            [[1.0, 0.0, 0.0], [1.0, 2.0, 3.0]],
+            atol=1e-5,
         )
 
 
@@ -299,14 +339,14 @@ class TestApplyAsTransformer:
         lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
         for i in range(3):
             lidar.append(
-                PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32)),
+                _cloud(np.zeros((1, 3), dtype=np.float32)),
                 ts=float(i + 1),
                 pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
             )
         graph = _graph_with_drift_at(
             [
-                Transform(translation=Vector3(5.0, 0.0, 0.0), ts=1.0),
-                Transform(translation=Vector3(5.0, 0.0, 0.0), ts=3.0),
+                _transform(translation=Vector3(5.0, 0.0, 0.0), ts=1.0),
+                _transform(translation=Vector3(5.0, 0.0, 0.0), ts=3.0),
             ]
         )
         for obs in lidar.transform(graph):
@@ -320,14 +360,14 @@ class TestApplyAsTransformer:
         mem = MemoryStore()
         lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
         lidar.append(
-            PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32)),
+            _cloud(np.zeros((1, 3), dtype=np.float32)),
             ts=1.0,
             pose=None,
         )
         graph = _graph_with_drift_at(
             [
-                Transform(translation=Vector3(5.0, 0.0, 0.0), ts=1.0),
-                Transform(translation=Vector3(5.0, 0.0, 0.0), ts=2.0),
+                _transform(translation=Vector3(5.0, 0.0, 0.0), ts=1.0),
+                _transform(translation=Vector3(5.0, 0.0, 0.0), ts=2.0),
             ]
         )
         for obs in lidar.transform(graph):
@@ -336,7 +376,7 @@ class TestApplyAsTransformer:
 
 class TestKeyframeType:
     def test_keyframe_is_frozen(self) -> None:
-        identity = Transform(
+        identity = _transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             ts=1.0,
@@ -344,5 +384,61 @@ class TestKeyframeType:
         kf = Keyframe(ts=1.0, local=identity, optimized=identity)
         with pytest.raises(Exception):
             kf.ts = 2.0  # type: ignore[misc]
-        assert isinstance(kf.local, Transform)
-        assert isinstance(kf.optimized, Transform)
+        assert isinstance(kf.local, TransformStamped)
+        assert isinstance(kf.optimized, TransformStamped)
+
+
+def test_place_retains_capture_fields_header_and_input_bytes():
+    graph = _graph_with_drift_at(
+        [_transform(translation=Vector3(5, 0, 0), ts=1), _transform(ts=11)]
+    )
+    cloud = _cloud(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), stamps=np.array([1.0, 11.0]))
+    cloud.header.stamp = time_from_nanoseconds(1700000000123456789)
+    before = encode(cloud)
+    output = decode(encode(graph.place(cloud)), PointCloud2)
+    np.testing.assert_allclose(pointcloud_xyz(output), [[6, 2, 3], [4, 5, 6]])
+    assert output.header == cloud.header and output.fields == cloud.fields
+    assert encode(cloud) == before
+
+
+def test_correct_preserves_exact_input_stamp_and_child_frame():
+    graph = _graph_with_drift_at([_transform(translation=Vector3(5, 0, 0), ts=1)])
+    pose = _transform(translation=Vector3(1, 2, 3), ts=1)
+    pose.header.stamp = time_from_nanoseconds(1700000000123456789)
+    before = encode(pose)
+    corrected = decode(encode(graph.correct(pose)), TransformStamped)
+    assert corrected.header.stamp == pose.header.stamp
+    assert corrected.header.frame_id == "world_corrected" and corrected.child_frame_id == "body"
+    np.testing.assert_allclose(vector_array(corrected.transform.translation), [6, 2, 3])
+    assert encode(pose) == before
+
+
+def test_actual_point_to_plane_icp_recovers_rigid_motion():
+    axis = np.linspace(-1, 1, 17)
+    u, v = np.meshgrid(axis, axis)
+    walls = np.concatenate(
+        [
+            np.column_stack([np.full(u.size, -1), u.ravel(), v.ravel()]),
+            np.column_stack([u.ravel(), np.full(u.size, -1), v.ravel()]),
+            np.column_stack([u.ravel(), v.ravel(), np.full(u.size, -1)]),
+        ]
+    )
+    target = _cloud(walls, timestamp=7.25)
+    motion = _transform(
+        translation=Vector3(0.03, -0.02, 0.01),
+        rotation=quaternion_from_matrix(
+            Rotation.from_euler("xyz", [0.01, -0.015, 0.02]).as_matrix()
+        ),
+        ts=7.25,
+    )
+    motion.header.frame_id = motion.child_frame_id = target.header.frame_id
+    source = transform_cloud(target, motion)
+    before = encode(source)
+    correction, fitness = _icp(source, target, max_dist=0.2)
+    np.testing.assert_allclose(
+        transform_matrix(correction.transform),
+        np.linalg.inv(transform_matrix(motion.transform)),
+        atol=1e-4,
+    )
+    assert fitness < 1e-8
+    assert encode(source) == before
