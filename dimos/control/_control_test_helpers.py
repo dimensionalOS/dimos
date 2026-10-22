@@ -18,39 +18,39 @@ Not named ``test_*``/``*_test`` so pytest does not collect it; both
 ``test_control.py`` and ``test_coordinator_routing.py`` import ``RecordingTask``
 from here rather than reaching into each other's test modules.
 
-``turning_joints`` writes out a test robot's ``ControlDescription`` by hand,
-for tests that have no robot model.
-
-``FakeArm`` is a robot driver with no hardware behind it, for tests of
+``FakeArm`` is a connection module with no hardware behind it, for tests of
 ``ConnectionModule`` and of anything that talks to one.
 """
 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
 import functools
 from pathlib import Path
 import tempfile
+import threading
+import time
 from typing import Any
 
 from pydantic import Field
+from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
-from dimos.control.contract.description import (
-    ControlDescription,
-    Limits,
-    Resource,
-    ResourceKind,
+from dimos.control.contract.convert import (
+    JOINT_STATE_FIELDS,
+    joint_state_from_values,
+    joint_state_to_values,
+    motor_joints,
 )
-from dimos.control.contract.keys import Interface, Unit
-from dimos.control.contract.ports import JointPort
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -117,60 +117,6 @@ class RecordingTask(BaseControlTask):
         return self.on_buttons(msg)
 
 
-#: The unit of each joint interface, for a joint that turns.
-_TURNING: Mapping[str, Unit] = {
-    Interface.POSITION: Unit.RAD,
-    Interface.VELOCITY: Unit.RAD_PER_S,
-    Interface.EFFORT: Unit.NM,
-    Interface.KP: Unit.UNITLESS,
-    Interface.KD: Unit.UNITLESS,
-}
-
-
-def turning_joints(
-    source: str,
-    joints: Sequence[str],
-    *,
-    state: Sequence[Interface],
-    command: Sequence[Interface],
-    limits: Mapping[str, Limits] | None = None,
-    others: Sequence[Resource] = (),
-    state_rate_hz: float = 100.0,
-    deadman_timeout_s: float = 0.1,
-) -> ControlDescription:
-    """Describe a robot of turning joints by hand, without a robot model.
-
-    Args:
-        source: The robot's name, the first part of every key, e.g. "mock".
-        joints: The joint names, in order.
-        state: What each joint reports.
-        command: What each joint can be told.
-        limits: Limits by full name, such as "mock/joint1/position". A
-            command with no limit is unlimited.
-        others: Parts to add after the joints, such as an IMU.
-        state_rate_hz: How many times a second it reports.
-        deadman_timeout_s: How long it waits for a command, in seconds,
-            before halting.
-    """
-    resources = tuple(
-        Resource(
-            name=joint,
-            kind=ResourceKind.JOINT,
-            state_interfaces=tuple(state),
-            command_interfaces=tuple(command),
-            units={interface: _TURNING[interface] for interface in (*state, *command)},
-        )
-        for joint in joints
-    )
-    return ControlDescription(
-        source=source,
-        resources=(*resources, *others),
-        limits=dict(limits or {}),
-        state_rate_hz=state_rate_hz,
-        deadman_timeout_s=deadman_timeout_s,
-    )
-
-
 #: The fake arm's joints, in order.
 FAKE_ARM_JOINTS: tuple[str, ...] = tuple(f"joint{i}" for i in range(1, 8))
 
@@ -198,20 +144,26 @@ def fake_arm_model(joints: tuple[str, ...] = FAKE_ARM_JOINTS) -> RobotModel:
 
 
 class FakeArmConfig(ConnectionConfig):
-    """Settings for ``FakeArm``: named "mock", driven by joint position."""
+    """Settings for ``FakeArm``: named "mock", told joint positions.
+
+    Attributes:
+        state_rate_hz: How many times a second it reports its joints.
+    """
 
     source: str = "mock"
     model: RobotModel | None = Field(default_factory=fake_arm_model)
-    position_command: JointPort = JointPort()
+    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    state_rate_hz: float = 100.0
 
 
 class FakeArm(ConnectionModule):
-    """A pretend arm, driven by joint position, with no hardware behind it.
+    """A pretend arm, told joint positions, with no hardware behind it.
 
-    Its joints are wherever they were last told to be, at once, and it reports
-    every other reading as the last value it was told, or zero. ``writes``
-    keeps the latest commands passed to ``write`` and ``halts`` counts calls
-    to ``halt``, so a test can see what reached the "hardware".
+    Its joints are wherever they were last told to be, at once, and it
+    reports them ``state_rate_hz`` times a second from its own thread, with
+    zero speed and effort. ``writes`` keeps the latest commands passed to
+    ``write`` and ``halts`` counts calls to ``halt``, so a test can see what
+    reached the "hardware".
     """
 
     config: FakeArmConfig
@@ -225,13 +177,38 @@ class FakeArm(ConnectionModule):
         self.writes: deque[dict[str, float]] = deque(maxlen=1000)
         #: How many times ``halt`` has been called.
         self.halts = 0
+        self._joints: list[str] = []
         self._readings: dict[str, float] = {}
+        self._stop_reading = threading.Event()
+        self._reader: threading.Thread | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(
+                self.position_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+                )
+            )
+        )
+        self._reader = threading.Thread(target=self._read_loop, daemon=True, name="FakeArm-read")
+        self._reader.start()
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_reading.set()
+        if self._reader is not None:
+            self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        super().stop()
 
     def connect(self) -> None:
-        self._readings = dict.fromkeys(self.description.state_keys(), 0.0)
-
-    def read_state(self) -> dict[str, float]:
-        return dict(self._readings)
+        # The limits table was built first, so a config without a model never gets here.
+        assert self.config.model is not None
+        self._joints = motor_joints(self.config.model, self.config.source)
+        self._readings = {
+            f"{joint}/{field}": 0.0 for joint in self._joints for field in JOINT_STATE_FIELDS
+        }
 
     def write(self, values: dict[str, float]) -> None:
         self.writes.append(dict(values))
@@ -241,3 +218,10 @@ class FakeArm(ConnectionModule):
 
     def halt(self) -> None:
         self.halts += 1
+
+    def _read_loop(self) -> None:
+        period = 1.0 / self.config.state_rate_hz
+        while not self._stop_reading.wait(period):
+            self.joint_state.publish(
+                joint_state_from_values(self._readings, self._joints, ts=time.time())
+            )

@@ -34,11 +34,6 @@ from dimos.control.contract.convert import (
     twist_to_values,
 )
 from dimos.control.contract.keys import Interface
-from dimos.control.contract.presets import (
-    manipulator_description,
-    pd_joint_description,
-    twist_base_description,
-)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -102,11 +97,9 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
         joint_state_from_values(values, ["arm/j3"])
 
 
-def test_motor_joints_are_the_stiffness_driven_joints_in_description_order() -> None:
-    arm = manipulator_description(fake_arm_model(("a1",)), source="arm")
-    body = pd_joint_description(fake_arm_model(("left_knee", "right_knee")), source="g1")
-    base = twist_base_description("base", limits={})
-    assert motor_joints([arm, body, base]) == ["g1/left_knee", "g1/right_knee"]
+def test_motor_joints_are_the_models_moving_joints_named_in_full() -> None:
+    model = fake_arm_model(("left_knee", "right_knee"))
+    assert motor_joints(model, "g1") == ["g1/left_knee", "g1/right_knee"]
 
 
 def test_a_motor_command_round_trips_in_joint_order() -> None:
