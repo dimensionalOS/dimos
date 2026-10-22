@@ -29,7 +29,7 @@ unitree_go2_cockpit = autoconnect(
     unitree_go2,
     cockpit(
         layout=Row(
-            Col(Video("color_image"), Map3D()),
+            Col(Video("color_image"), Map3D(path="path", click="clicked_point")),
             Col(
                 Map2D(path="path", click="clicked_point", stop="stop_movement"),
                 Teleop(),

@@ -4,6 +4,7 @@
 // without a canvas.
 
 import type { CostmapValue } from "@dimos/sdk";
+import { PATH_COLOR, PATH_PX, type PathPoint } from "./mapPath.ts";
 
 export type GridPlacement = Pick<CostmapValue, "w" | "h" | "res" | "origin">;
 
@@ -131,10 +132,6 @@ export function gridBlit(
     dh: place.h * place.res * t.scale,
   };
 }
-
-export type PathPoint = [number, number];
-export const PATH_COLOR = "#3fb950";
-const PATH_PX = 2;
 
 export function drawPath(
   ctx: CanvasRenderingContext2D,

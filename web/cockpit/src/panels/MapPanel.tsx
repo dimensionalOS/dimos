@@ -1,11 +1,12 @@
 // Canvas updates bypass React; badges and cancellation use the slower UI tick.
 
 import { useEffect, useRef, useState } from "react";
-import type { JsonValue, PanelSpec } from "@dimos/shared";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
 import { type ChannelStore, type CostmapValue, inflateCostmap, type Session } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./MapPanel.module.css";
+import { mapChannel, sendMapCommand } from "./mapCommands.ts";
+import { readPath } from "./mapPath.ts";
 import {
   canvasToWorld,
   drawPath,
@@ -14,7 +15,6 @@ import {
   gridBlit,
   type GridPlacement,
   gridToImageData,
-  type PathPoint,
   type Pose2d,
 } from "./mapRenderer.ts";
 import type { PanelProps } from "./registry.tsx";
@@ -50,14 +50,6 @@ function readPose(v: unknown): Pose2d | null {
   const { x, y, yaw } = v as Record<string, unknown>;
   if (typeof x !== "number" || typeof y !== "number" || typeof yaw !== "number") return null;
   return { x, y, yaw };
-}
-
-function readPath(v: unknown): PathPoint[] | null {
-  if (!Array.isArray(v)) return null;
-  const ok = v.every((p) =>
-    Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
-  );
-  return ok ? v as PathPoint[] : null;
 }
 
 /**
@@ -188,23 +180,6 @@ export function startMapSink(
   };
 }
 
-function param(spec: PanelSpec, key: string): string | undefined {
-  const value = spec.params[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function send(
-  session: Session,
-  ch: string,
-  value: JsonValue,
-  onError: (message: string | null) => void,
-): void {
-  session.publish(ch, value).then(
-    () => onError(null),
-    (err: unknown) => onError(`send failed: ${err instanceof Error ? err.message : String(err)}`),
-  );
-}
-
 export function MapPanel({ spec, store, session }: PanelProps) {
   const costmapCh = spec.channels[0] as string | undefined;
   if (costmapCh === undefined) {
@@ -223,9 +198,9 @@ export function MapPanel({ spec, store, session }: PanelProps) {
       session={session}
       costmapCh={costmapCh}
       poseCh={spec.channels[1] as string | undefined}
-      pathCh={param(spec, "path")}
-      clickCh={param(spec, "click")}
-      stopCh={param(spec, "stop")}
+      pathCh={mapChannel(spec, "path")}
+      clickCh={mapChannel(spec, "click")}
+      stopCh={mapChannel(spec, "stop")}
     />
   );
 }
@@ -249,7 +224,7 @@ function MapCanvas(
     const canvas = canvasRef.current;
     if (canvas === null) return;
     const onClick = session !== undefined && clickCh !== undefined
-      ? (x: number, y: number) => send(session, clickCh, { x, y }, setError)
+      ? (x: number, y: number) => sendMapCommand(session, clickCh, { x, y }, setError)
       : undefined;
     const opts = { costmap: costmapCh, pose: poseCh, path: pathCh, onClick };
     return startMapSink(store, opts, canvas, health);
@@ -311,7 +286,7 @@ function CancelButton({ store, session, pathCh, stopCh, testId, onError }: {
       type="button"
       className={styles.cancel}
       data-testid={testId}
-      onClick={() => send(session, stopCh, true, onError)}
+      onClick={() => sendMapCommand(session, stopCh, true, onError)}
     >
       cancel
     </button>

@@ -15,9 +15,15 @@ import {
   Points,
   PointsMaterial,
   Scene,
+  Vector2,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Line2 } from "three/addons/lines/Line2.js";
+import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { PATH_COLOR, PATH_PX } from "./mapPath.ts";
+import { pickVoxelGoal } from "./voxelPicking.ts";
 import {
   type Bounds,
   boundsOf,
@@ -62,6 +68,8 @@ for (let i = 0; i < 256; i++) {
 /** Throws when WebGL is unavailable (the sink reports it). */
 export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
   const renderer = new WebGLRenderer({ canvas, antialias: false });
+  const gl = renderer.getContext();
+  const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
   renderer.setClearColor(BACKGROUND);
   const scene = new Scene();
   const camera = new PerspectiveCamera(FOV, 1, NEAR_MIN, 1000);
@@ -82,12 +90,29 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
   );
   marker.visible = false;
   scene.add(marker);
+  const path = new Line2(
+    new LineGeometry(),
+    new LineMaterial({
+      color: PATH_COLOR,
+      linewidth: PATH_PX,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  // A navigation overlay: keep it readable over the floor voxels and grid.
+  path.renderOrder = 1;
+  marker.renderOrder = 2; // keep the robot visible over its route
+  path.visible = false;
+  scene.add(path);
   let bounds: Bounds | null = null;
+  let pathBounds: Bounds | null = null;
+  let positions: Float32Array = new Float32Array(0);
 
   // The clip planes follow the drawn box and the camera, so neither a map
   // fitted from kilometres away nor one zoomed or panned to is clipped.
   const updateClipping = (): void => {
-    const box = bounds === null ? GRID_BOUNDS : unionBounds(bounds, GRID_BOUNDS);
+    let box = bounds === null ? GRID_BOUNDS : unionBounds(bounds, GRID_BOUNDS);
+    if (pathBounds !== null) box = unionBounds(box, pathBounds);
     const { x, y, z } = camera.position;
     const { near, far } = clipPlanes(box, [x, y, z]);
     camera.near = near;
@@ -123,6 +148,7 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
 
   return {
     setVoxels(next, colors, res) {
+      positions = next;
       bounds = boundsOf(next);
       for (let i = 0; i < colors.length; i++) colors[i] = SRGB_TO_LINEAR[colors[i]];
       const geometry = new BufferGeometry();
@@ -142,6 +168,24 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
       marker.rotation.set(0, 0, pose.yaw - Math.PI / 2);
       if (following) follow(pose);
     },
+    setPath(next) {
+      const geometry = new LineGeometry();
+      path.visible = next !== null && next.length > 1;
+      pathBounds = null;
+      if (next !== null && next.length > 1) {
+        const linePositions = new Float32Array(next.length * 3);
+        next.forEach(([x, y], i) => {
+          linePositions[i * 3] = x;
+          linePositions[i * 3 + 1] = y;
+          // z stays zero: the planner sends a 2D path.
+        });
+        geometry.setPositions(linePositions);
+        pathBounds = boundsOf(linePositions);
+      }
+      path.geometry.dispose();
+      path.geometry = geometry;
+      updateClipping();
+    },
     fit() {
       if (bounds === null) return;
       applyView(fitView(bounds, FOV, camera.aspect));
@@ -157,13 +201,27 @@ export function createVoxelScene(canvas: HTMLCanvasElement): VoxelScene {
       camera.aspect = cssWidth / cssHeight;
       camera.updateProjectionMatrix();
     },
+    pick(x, y) {
+      return pickVoxelGoal(
+        camera,
+        positions,
+        new Vector2(x, y),
+        material.size,
+        renderer.getDrawingBufferSize(new Vector2()),
+        pointSizeRange,
+      );
+    },
     render,
     dispose() {
       controls.dispose();
+      // OrbitControls leaves an inline cursor that overrides the panel's CSS.
+      canvas.style.cursor = "";
       points.geometry.dispose();
       material.dispose();
       marker.geometry.dispose();
       (marker.material as Material).dispose();
+      path.geometry.dispose();
+      path.material.dispose();
       grid.geometry.dispose();
       (grid.material as Material).dispose();
       // The sink owns this canvas and retires it with the scene. Losing

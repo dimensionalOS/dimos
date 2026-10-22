@@ -643,6 +643,41 @@ def test_map3d_without_pose_binds_one_slot() -> None:
     assert parse_manifest(manifest).model_dump() == manifest
 
 
+@pytest.mark.parametrize("with_map2d", [False, True])
+def test_map3d_navigation_shares_the_map2d_channels(with_map2d: bool) -> None:
+    map3d = Map3D(path="path", click="clicked_point")
+    layout = Row(Map2D(path="path", click="clicked_point"), map3d) if with_map2d else map3d
+    (atom,) = cockpit(layout=layout).blueprints
+    manifest = atom.kwargs["manifest"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    (goal,) = [channel for channel in manifest["channels"] if channel["ch"] == "clicked_point"]
+    assert (goal["dir"], goal["encoding"], goal["publish"], goal["maxHz"]) == (
+        "tx",
+        "point.json.v1",
+        "shared",
+        5.0,
+    )
+    panel = next(panel for panel in manifest["panels"] if panel["kind"] == "map3d")
+    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["params"] == {"path": "path", "click": "clicked_point"}
+    ports = {(stream.name, stream.direction): stream.type for stream in atom.streams}
+    assert ports[("clicked_point", "out")] is PointStamped
+    spec = next(spec for spec in atom.kwargs["channels"] if spec.ch == "clicked_point")
+    assert spec.decoder is not None
+    point = spec.decoder({"x": 1.25, "y": -2.5})
+    assert (point.x, point.y, point.z, point.frame_id) == (1.25, -2.5, 0.0, "world")
+    (path_channel,) = [channel for channel in manifest["channels"] if channel["ch"] == "path"]
+    assert (path_channel["dir"], path_channel["encoding"], path_channel["delivery"]) == (
+        "rx",
+        "path.json.v1",
+        "latest",
+    )
+    assert ports[("path", "in")] is Path
+    path_spec = next(spec for spec in atom.kwargs["channels"] if spec.ch == "path")
+    assert path_spec.encoder is encode_path
+    assert path_spec.paced and path_spec.resend_on_subscribe
+
+
 def test_map3d_explicit_declaration_merges_rate_and_keeps_resend() -> None:
     (atom,) = cockpit(
         layout=Map3D(res=0.1),
@@ -690,6 +725,8 @@ def test_map3d_conflicting_res_raises() -> None:
         {"pose_hz": -1.0},
         {"cloud": ""},
         {"pose": ""},
+        {"click": ""},
+        {"path": ""},
     ],
 )
 def test_map3d_rejects_bad_arguments(kwargs: dict[str, object]) -> None:
@@ -697,9 +734,10 @@ def test_map3d_rejects_bad_arguments(kwargs: dict[str, object]) -> None:
         Map3D(**kwargs)  # type: ignore[arg-type]
 
 
-def test_map2d_path_flags_survive_an_explicit_declaration() -> None:
+@pytest.mark.parametrize("panel", [Map2D, Map3D])
+def test_map_path_flags_survive_an_explicit_declaration(panel: type[Map2D] | type[Map3D]) -> None:
     (atom,) = cockpit(
-        layout=Map2D(path="path"),
+        layout=panel(path="path"),
         channels=[Channel("path", Path, encoding="path.json.v1", delivery="latest", max_hz=20.0)],
     ).blueprints
     spec = next(s for s in atom.kwargs["channels"] if s.ch == "path")

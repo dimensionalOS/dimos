@@ -213,9 +213,13 @@ The Go2 blueprints use `path="path"`, `click="clicked_point"` and `stop="stop_mo
 
 ### Map3D
 
-`Map3D(cloud="global_map", pose="odom", *, res=0.05, max_hz=1.0, pose_hz=20.0, title="")`
+`Map3D(cloud="global_map", pose="odom", *, path=None, click=None, res=0.05, max_hz=1.0, pose_hz=20.0, title="")`
 
 The world in 3D: a `PointCloud2` stream drawn as one point per voxel, coloured by height, with the robot's pose (`PoseStamped`) as a red cone. `pose=None` drops the cone and the follow toggle. Drag to orbit, wheel to zoom, right-drag to pan. The `follow` toggle keeps the camera a few metres behind and above the robot as it drives. Orbit, zoom and pan then hold relative to the robot.
+
+Set `click="clicked_point"` to publish 2D navigation goals, as the Go2 cockpit blueprints do. Clicking a voxel sprite uses that voxel's x/y; clicking elsewhere intersects the click ray with the ground plane at `z=0`. A ray that misses the ground sends no goal. Dragging the camera does not send goals.
+
+Set `path="path"` to draw the planner's current route as a green line on the ground plane, matching the 2D map. The Go2 cockpit blueprints enable this in both maps. An empty path clears the line.
 
 `cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
 
