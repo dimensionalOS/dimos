@@ -23,7 +23,8 @@
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::gsc_pgo::{
-    CommittedLoop, Config, FREE_VARIANCE, LOOP_GNC_INLIER_THRESHOLD, LOOP_GNC_MIN_VARIANCE,
+    loop_score_variances, CommittedLoop, Config, FREE_VARIANCE, LOOP_GNC_INLIER_THRESHOLD,
+    LOOP_GNC_MIN_VARIANCE,
 };
 use crate::gtsam::{FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
@@ -32,6 +33,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// (dead-reckoned) pose that defines the between-factors, and the initial
 /// estimate to seed the optimizer (local for GNC, global for the counterfactual
 /// probe).
+#[derive(Clone, Copy)]
 pub(crate) struct BackboneKeyframe {
     pub(crate) rotation_local: Mat3,
     pub(crate) translation_local: Vec3,
@@ -167,7 +169,8 @@ pub(crate) fn add_backbone_keyframe(
 /// rebuild can run on the worker thread.
 #[derive(Clone, Copy)]
 pub(crate) struct RebuildLoopNoise {
-    loop_gnc_var_scale: f64,
+    loop_rotation_variance: f64,
+    loop_translation_variance_floor: f64,
     loop_robust_kernel: bool,
     loop_robust_huber_k: f64,
 }
@@ -175,22 +178,26 @@ pub(crate) struct RebuildLoopNoise {
 impl RebuildLoopNoise {
     pub(crate) fn from_config(config: &Config) -> RebuildLoopNoise {
         RebuildLoopNoise {
-            loop_gnc_var_scale: config.loop_gnc_var_scale,
+            loop_rotation_variance: config.loop_rotation_variance,
+            loop_translation_variance_floor: config.loop_translation_variance_floor,
             loop_robust_kernel: config.loop_robust_kernel,
             loop_robust_huber_k: config.loop_robust_huber_k,
         }
     }
 }
 
-/// Stage one committed loop as a rebuild between-factor: variance from its ICP
-/// score (GNC's scale), same robust kernel the live path uses.
+/// Stage one committed loop as a rebuild between-factor with the noise it goes into the
+/// live iSAM2 with: variance from its ICP score, and the same robust kernel.
 pub(crate) fn add_rebuild_loop_factor(
     graph: &mut FactorGraph,
     loop_edge: &CommittedLoop,
     loop_noise: &RebuildLoopNoise,
 ) {
-    let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * loop_noise.loop_gnc_var_scale;
-    let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
+    let gaussian = NoiseModel::diagonal_variances(&loop_score_variances(
+        loop_noise.loop_rotation_variance,
+        loop_noise.loop_translation_variance_floor,
+        loop_edge.score.max(LOOP_GNC_MIN_VARIANCE),
+    ));
     let robust;
     let noise: &NoiseModel = if loop_noise.loop_robust_kernel {
         robust = NoiseModel::robust_huber(loop_noise.loop_robust_huber_k, &gaussian);
@@ -283,22 +290,18 @@ pub(crate) struct GncJob {
     pub(crate) keyframes: Vec<BackboneKeyframe>,
     pub(crate) loops: Vec<CommittedLoop>,
     pub(crate) backbone_noise: BackboneNoise,
-    pub(crate) rebuild_loop_noise: RebuildLoopNoise,
     pub(crate) loop_gnc_var_scale: f64,
     pub(crate) loop_gnc_inlier_probability: f64,
-    /// Monotonic dispatch counter, echoed in the result so the pipeline can
-    /// tell whether a newer solve is still in flight (worker coalesces jobs).
-    pub(crate) sequence: u64,
+    pub(crate) loop_noise: RebuildLoopNoise,
+    pub(crate) loop_gnc_confirmations: u64,
 }
 
-/// The result of one batch GNC re-solve: the corrected global pose of every
-/// keyframe that was in the job, each committed loop's final GNC weight, and
-/// (from `solve_gnc_and_rebuild`) an iSAM2 already rebuilt from them.
+/// The result of one batch GNC re-solve: each committed loop's final weight (~1 accepted,
+/// ~0 rejected) and the exact optimum of the backbone plus the loops the graph holds once the
+/// verdict is folded in, which seeds iSAM2 when the verdict changes the loop set.
 pub(crate) struct GncResult {
-    pub(crate) keyframe_globals: Vec<(Mat3, Vec3)>,
     pub(crate) loop_weights: Vec<f64>,
-    pub(crate) sequence: u64,
-    pub(crate) rebuilt: Option<RebuiltIsam2>,
+    pub(crate) poses: Vec<Pose3>,
 }
 
 /// Run one batch GNC re-solve. Pure function of the job — no shared state — so it
@@ -325,22 +328,14 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
             )
             .expect("gtsam: gnc loop between factor");
     }
-    let (estimate_values, factor_weights) = graph
+    let (estimate, factor_weights) = graph
         .gnc_optimize(
             &values,
             &known_inlier_indices,
             job.loop_gnc_inlier_probability,
         )
         .expect("gtsam: gnc optimize");
-    let keyframe_globals = (0..job.keyframes.len())
-        .map(|idx| {
-            let pose = estimate_values
-                .pose3(idx as u64)
-                .expect("gtsam: keyframe missing from gnc estimate");
-            (pose.rotation, pose.translation)
-        })
-        .collect();
-    let loop_weights = (0..job.loops.len())
+    let loop_weights: Vec<f64> = (0..job.loops.len())
         .map(|edge_idx| {
             factor_weights
                 .get(backbone_factor_count + edge_idx)
@@ -348,53 +343,39 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
                 .unwrap_or(1.0)
         })
         .collect();
+    // The loops the graph holds after the fold (the same rule as `GscPgo::fold_gnc`), solved
+    // exactly in batch with their own noise from the odometry seed, so the answer depends only on
+    // the graph, not on the order things arrived in (incremental iSAM2 can settle in a worse
+    // minimum that way), and iSAM2 seeded there is already at its optimum.
+    let mut graph = FactorGraph::new();
+    let mut values = Values::new();
+    let seeded = &job.keyframes;
+    build_odometry_backbone(&mut graph, &mut values, seeded, &job.backbone_noise);
+    for (loop_edge, weight) in job.loops.iter().zip(&loop_weights) {
+        let disagrees = (*weight >= LOOP_GNC_INLIER_THRESHOLD) != loop_edge.active_in_isam2;
+        let flips = disagrees && loop_edge.gnc_vote_streak + 1 >= job.loop_gnc_confirmations.max(1);
+        let held = loop_edge.active_in_isam2 != flips;
+        if held {
+            add_rebuild_loop_factor(&mut graph, loop_edge, &job.loop_noise);
+        }
+    }
+    let optimum = graph.lm_optimize(&values).unwrap_or(estimate);
+    let poses = (0..job.keyframes.len() as u64)
+        .map(|key| {
+            optimum
+                .pose3(key)
+                .expect("gtsam: optimum missing a keyframe")
+        })
+        .collect();
     GncResult {
-        keyframe_globals,
         loop_weights,
-        sequence: job.sequence,
-        rebuilt: None,
+        poses,
     }
 }
 
-/// What the background worker runs: the GNC solve, then the iSAM2 rebuild from
-/// its poses and kept loops, so adopting it on the pipeline thread is a swap.
-pub(crate) fn solve_gnc_and_rebuild(job: &GncJob) -> GncResult {
-    let mut result = solve_gnc(job);
-    let keyframes: Vec<BackboneKeyframe> = job
-        .keyframes
-        .iter()
-        .zip(&result.keyframe_globals)
-        .map(
-            |(keyframe, (rotation_global, translation_global))| BackboneKeyframe {
-                rotation_local: keyframe.rotation_local,
-                translation_local: keyframe.translation_local,
-                initial_rotation: *rotation_global,
-                initial_translation: *translation_global,
-            },
-        )
-        .collect();
-    let loops: Vec<CommittedLoop> = job
-        .loops
-        .iter()
-        .zip(&result.loop_weights)
-        .map(|(loop_edge, weight)| CommittedLoop {
-            gnc_weight: *weight,
-            ..*loop_edge
-        })
-        .collect();
-    result.rebuilt = Some(build_isam2_from_backbone(
-        &keyframes,
-        &loops,
-        &job.backbone_noise,
-        &job.rebuild_loop_noise,
-    ));
-    result
-}
-
-/// Handles for the background GNC worker thread. The main thread sends a fresh
-/// `GncJob` after every closure; the worker coalesces (only the newest queued
-/// job is solved) and sends back a `GncResult` with its rebuilt iSAM2 when
-/// done, so the pipeline thread never blocks on the solve or the rebuild.
+/// Handles for the background GNC worker thread. The pipeline sends a `GncJob` (see
+/// `GscPgo::step_gnc`); the worker solves each in order and sends back a `GncResult` with its
+/// rebuilt iSAM2, so the solve and the rebuild run off the pipeline thread.
 pub(crate) struct GncWorker {
     pub(crate) job_sender: Sender<GncJob>,
     pub(crate) result_receiver: Receiver<GncResult>,
@@ -404,15 +385,12 @@ pub(crate) struct GncWorker {
 /// superseded ones so a burst of closures collapses to a single solve), solve,
 /// and return the result. Exits when the main thread drops the job sender.
 pub(crate) fn gnc_worker_loop(job_receiver: Receiver<GncJob>, result_sender: Sender<GncResult>) {
-    while let Ok(job) = job_receiver.recv() {
-        let mut latest_job = job;
-        while let Ok(newer_job) = job_receiver.try_recv() {
-            latest_job = newer_job;
-        }
+    // Every job is solved, in order: skipping superseded ones would make the result timing-dependent.
+    while let Ok(latest_job) = job_receiver.recv() {
         let solve_t0 = std::time::Instant::now();
-        let result = solve_gnc_and_rebuild(&latest_job);
+        let result = solve_gnc(&latest_job);
         eprintln!(
-            "gnc-solve + isam2 rebuild (background): {} keyframes, {} loop factors, {:.1} ms",
+            "gnc-solve (background): {} keyframes, {} loop factors, {:.1} ms",
             latest_job.keyframes.len(),
             latest_job.loops.len(),
             solve_t0.elapsed().as_secs_f64() * 1000.0,

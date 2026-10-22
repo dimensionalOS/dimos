@@ -64,6 +64,9 @@ use utils::{
 // A keyframe pose change smaller than this waits to add up before it is sent.
 const POSE_CHANGE_M: f64 = 1e-3;
 const POSE_CHANGE_RAD: f64 = 1e-4;
+/// How long the pipeline sits without a scan before it finishes the background GNC: longer than
+/// any gap between a replay's scans, so it only fires once the stream pauses or ends.
+const GNC_IDLE_FINISH: Duration = Duration::from_secs(3);
 
 #[native_config]
 #[derive(Clone)]
@@ -129,10 +132,14 @@ pub struct Config {
     pub loop_rotation_variance: f64,
     pub loop_translation_variance_floor: f64,
     pub loop_refinement_passes: u64,
+    pub loop_refinement_tolerance_m: f64,
+    pub loop_refinement_max_passes: u64,
 
     // Final batch GNC (TLS) re-solve over the committed closures.
     pub loop_gnc_final: bool,
     pub loop_gnc_var_scale: f64,
+    pub loop_gnc_apply_after_fraction: f64,
+    pub loop_gnc_confirmations: u64,
     pub loop_gnc_inlier_probability: f64,
 
     // Location constraints
@@ -193,9 +200,13 @@ impl Config {
             loop_rotation_variance: self.loop_rotation_variance,
             loop_translation_variance_floor: self.loop_translation_variance_floor,
             loop_refinement_passes: self.loop_refinement_passes,
+            loop_refinement_tolerance_m: self.loop_refinement_tolerance_m,
+            loop_refinement_max_passes: self.loop_refinement_max_passes,
             loop_gnc_final: self.loop_gnc_final,
             loop_gnc_var_scale: self.loop_gnc_var_scale,
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
+            loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
+            loop_gnc_confirmations: self.loop_gnc_confirmations,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
@@ -509,6 +520,7 @@ impl Worker {
         // settle heartbeat) know the final verdict is still pending.
         let gnc_wait_publish_interval = Duration::from_secs(2);
         let mut last_gnc_wait_publish = std::time::Instant::now();
+        let mut last_scan_at = std::time::Instant::now();
 
         // Per-node deformation stream state: a stable random id per keyframe
         // plus its last published pose (re-publish only on new/moved nodes).
@@ -572,50 +584,36 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
-                // Idle: fold in any finished background GNC solve now instead
-                // of waiting for the next keyframe, so the map snaps into
-                // place when the robot pauses (or the stream ends). Adopting
-                // the batch solution (poses + the iSAM2 the worker rebuilt)
-                // recovers from incremental divergence and is only a swap here;
-                // with location constraints in use the rebuild would drop their
-                // factors, so fall back to classification-only there.
-                let gnc_folded = if self.config.use_location_constraints {
-                    let applied = pgo.poll_and_apply_gnc_classification();
-                    if applied {
-                        pgo.smooth_and_update();
+                // Idle long enough that the stream has paused or ended: finish the background
+                // GNC (non-blocking, so the graph keeps republishing while it runs). Short gaps
+                // between scans never get here, which keeps a replay's graph deterministic.
+                if pgo.gnc_pending() && last_scan_at.elapsed() >= GNC_IDLE_FINISH {
+                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
+                    let changed = pgo.poll_finish_gnc(false);
+                    if changed {
+                        self.publish_pose_changes(
+                            &pgo,
+                            &mut published,
+                            false,
+                            last_time,
+                            &frame_id,
+                        );
                     }
-                    applied
-                } else {
-                    pgo.poll_and_adopt_gnc_solution()
-                };
-                if gnc_folded {
-                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
-                    self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
-                    self.publish_graph(
-                        &pgo,
-                        last_time,
-                        &frame_id,
-                        deformation_tf_id,
-                        &mut deformation_ids,
-                        &mut deformation_last,
-                        &mut deformation_rng,
-                    );
-                    continue;
-                }
-                if pgo.gnc_in_flight()
-                    && last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval
-                {
-                    last_gnc_wait_publish = std::time::Instant::now();
-                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
-                    self.publish_graph(
-                        &pgo,
-                        last_time,
-                        &frame_id,
-                        deformation_tf_id,
-                        &mut deformation_ids,
-                        &mut deformation_last,
-                        &mut deformation_rng,
-                    );
+                    if changed || last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval {
+                        last_gnc_wait_publish = std::time::Instant::now();
+                        self.publish_graph(
+                            &pgo,
+                            last_time,
+                            &frame_id,
+                            deformation_tf_id,
+                            &mut deformation_ids,
+                            &mut deformation_last,
+                            &mut deformation_rng,
+                        );
+                    }
+                    if changed {
+                        continue;
+                    }
                 }
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.
@@ -627,6 +625,7 @@ impl Worker {
                 }
                 continue;
             };
+            last_scan_at = std::time::Instant::now();
 
             // Optionally transform world-frame scan to body-frame:
             // body = R_odom^T * (world_pts - t_odom).
@@ -685,18 +684,9 @@ impl Worker {
             // confirm the batch GNC no longer blocks here (was seconds inline).
             let pipeline_thread_t0 = std::time::Instant::now();
 
-            // Approach B: fold in the newest background GNC classification (drops
-            // outlier loops' factors via pending removals) BEFORE the iSAM2 update
-            // so the removal takes effect this cycle. iSAM2 stays authoritative for
-            // poses — no full-graph pose overwrite on the pipeline thread.
-            pgo.poll_and_apply_gnc_classification();
             pgo.smooth_and_update();
-
+            pgo.step_gnc();
             if had_loop {
-                // Queue a fresh full-graph GNC classification for the closure just
-                // committed. The heavy solve runs off-thread and only feeds back
-                // inlier/outlier decisions, so this keyframe never blocks on it.
-                pgo.dispatch_gnc_async();
                 eprintln!(
                     "gnc-main-thread: closure at {} keyframes handled in {:.1} ms",
                     pgo.key_poses().len(),

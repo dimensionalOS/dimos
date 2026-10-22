@@ -138,6 +138,10 @@ class PGOConfig(NativeModuleConfig):
     loop_translation_variance_floor: float = 0.0
     # iSAM2 update passes after an update that adds a closure.
     loop_refinement_passes: int = 5
+    # Then keep relinearizing until no keyframe moves more than this per pass (capped), so a
+    # closure moves the map once instead of drifting over the following keyframes.
+    loop_refinement_tolerance_m: float = 0.01
+    loop_refinement_max_passes: int = 200
 
     # After each loop closure, re-solve the whole graph once with a batch GNC (graduated
     # non-convexity, TLS loss) optimizer, pinning the odometry backbone as known inliers. GNC
@@ -150,6 +154,14 @@ class PGOConfig(NativeModuleConfig):
     loop_gnc_final: bool = True
     loop_gnc_var_scale: float = 10.0
     loop_gnc_inlier_probability: float = 0.95
+    # A background GNC solve is folded in once the map has grown by this fraction of its size at
+    # dispatch (waiting for it if needed), so a replay gives the same graph however fast the machine
+    # is. A solve's cost grows with the map (~2 ms per keyframe; keyframes come ~0.7 s apart), so 5%
+    # leaves it several times the time it needs.
+    loop_gnc_apply_after_fraction: float = 0.05
+    # Consecutive GNC solves that must agree before a loop enters or leaves the graph, so a verdict
+    # one solve gives and the next takes back never moves the map.
+    loop_gnc_confirmations: int = 2
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False

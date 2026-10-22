@@ -99,6 +99,7 @@ mod ffi {
             out_n_weights: *mut usize,
         ) -> *mut c_void;
         pub fn gtsam_shim_doubles_free(values: *mut f64);
+        pub fn gtsam_shim_lm_optimize(graph: *const c_void, values: *const c_void) -> *mut c_void;
     }
 }
 
@@ -318,6 +319,17 @@ impl FactorGraph {
             owned
         };
         Ok((Values { handle }, weights))
+    }
+
+    /// Levenberg-Marquardt batch optimum of this graph, starting from `values`.
+    pub fn lm_optimize(&self, values: &Values) -> Result<Values, GtsamError> {
+        let handle = unsafe { ffi::gtsam_shim_lm_optimize(self.handle, values.handle) };
+        if handle.is_null() {
+            return Err(GtsamError {
+                context: "lm_optimize",
+            });
+        }
+        Ok(Values { handle })
     }
 }
 

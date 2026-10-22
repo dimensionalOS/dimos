@@ -358,6 +358,20 @@ gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
     }
 }
 
+gtsam_shim_values* gtsam_shim_lm_optimize(const gtsam_shim_graph* graph,
+                                          const gtsam_shim_values* values) {
+    if (graph == nullptr || values == nullptr) {
+        return nullptr;
+    }
+    try {
+        gtsam::LevenbergMarquardtParams params;
+        gtsam::LevenbergMarquardtOptimizer optimizer(*unwrap(graph), *unwrap(values), params);
+        return wrap(new gtsam::Values(optimizer.optimize()));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 void gtsam_shim_doubles_free(double* values) {
     std::free(values);
 }

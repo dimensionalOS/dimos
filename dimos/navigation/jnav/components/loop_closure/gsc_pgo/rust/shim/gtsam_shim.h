@@ -121,6 +121,9 @@ gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
                                            size_t n_known, double inlier_probability,
                                            double** out_weights, size_t* out_n_weights);
 void gtsam_shim_doubles_free(double* values);
+// Levenberg-Marquardt batch optimum of `graph` from `values`; NULL on failure.
+gtsam_shim_values* gtsam_shim_lm_optimize(const gtsam_shim_graph* graph,
+                                          const gtsam_shim_values* values);
 
 #ifdef __cplusplus
 }  // extern "C"
