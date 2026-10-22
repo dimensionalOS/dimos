@@ -521,7 +521,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
             logger.info(f"cross-view {query!r}: {len(hits)} verified hit(s)")
             by_id = collect_query_instances(query, hits, list(trace.answers))
             n_instances += len(by_id)
-            pairs = propose_identity_pairs(by_id)
+            pairs = propose_identity_pairs(by_id, min_views=request.min_views)
             logger.info(f"cross-view {query!r}: {len(pairs)} pair proposal(s)")
             all_pairs.extend(pairs)
     finally:
@@ -555,7 +555,10 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
             case_id = pair_case_id(pair, pair_index)
             image = stack_pair_image(pair.left.image, pair.right.image)
             rel = f"assets/{case_id}.jpg"
-            image.save(str(staging / rel))
+            image_path = staging / rel
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            if not image.save(str(image_path)):
+                raise RuntimeError(f"failed to write cross-view image: {image_path}")
             cases.append(
                 PublicCase(
                     id=case_id,
@@ -596,8 +599,13 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
             },
         )
         _write_json(staging / "audit" / "pairs.json", audit_rows)
+        # Never delete a completed dataset from a concurrent writer.
+        if output.exists() and any(output.iterdir()):
+            raise FileExistsError(
+                f"VQA output directory already exists after generation: {output}"
+            )
         if output.exists():
-            shutil.rmtree(output)
+            output.rmdir()
         shutil.move(str(staging), str(output))
 
     return GenerationResult(output=output, cases=tuple(cases))
@@ -935,8 +943,12 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
 
 
 def _prepare_output(output: Path) -> None:
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"VQA output directory is not empty: {output}")
+    """Claim ``output`` exclusively so concurrent runs cannot share the path."""
+    try:
+        output.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        detail = "is not empty" if output.is_dir() and any(output.iterdir()) else "already exists"
+        raise FileExistsError(f"VQA output directory {detail}: {output}") from exc
 
 
 def _write_frame(output: Path, frame: _GeneratedFrame, image: Image) -> None:

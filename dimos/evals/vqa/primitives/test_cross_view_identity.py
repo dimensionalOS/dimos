@@ -91,8 +91,8 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
     pairs = propose_identity_pairs({"a": a, "b": b, "c": corner})
     assert any(p.same_object and p.left.instance_id == "a" for p in pairs)
     assert any(not p.same_object for p in pairs)
-    assert all({p.left.instance_id, p.right.instance_id} != {"c"} or True for p in pairs)
-    # No same-pair for c (only one bad view → filtered empty or single).
+    # Corner-only instance c is framing-rejected, so it is never a pair endpoint.
+    assert all("c" not in {p.left.instance_id, p.right.instance_id} for p in pairs)
     assert not any(p.same_object and p.left.instance_id == "c" for p in pairs)
 
 
@@ -130,6 +130,41 @@ def test_filter_instance_views_drops_weak_pool() -> None:
         _view(instance_id="a", bbox=centered, ts=2.0, n_views=1, score=0.9),
     )
     assert filter_instance_views(weak) == ()
+
+
+def test_filter_instance_views_honors_min_views() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    two = (
+        _view(instance_id="a", bbox=centered, ts=1.0, n_views=2, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=4.0, n_views=2, score=0.9),
+    )
+    assert filter_instance_views(two, min_views=3) == ()
+    assert len(filter_instance_views(two, min_views=2)) == 2
+
+
+def test_diff_pairs_skip_same_timestamp_frames() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    # Two instances co-visible in one frame only → must not emit a "no" pair.
+    a = (_view(instance_id="a", bbox=centered, ts=1.0, n_views=3, score=0.9),)
+    b = (_view(instance_id="b", bbox=centered, ts=1.0, n_views=3, score=0.8),)
+    pairs = propose_identity_pairs({"a": a, "b": b})
+    assert pairs == ()
+
+
+def test_pair_case_id_sanitizes_slashes() -> None:
+    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
+
+    centered = (70.0, 70.0, 130.0, 130.0)
+    pair = IdentityPair(
+        query="cup/mug",
+        left=_view(instance_id="a/1", bbox=centered, ts=1.0),
+        right=_view(instance_id="a/1", bbox=centered, ts=4.0),
+        same_object=True,
+    )
+    case_id = pair_case_id(pair, 0)
+    assert "/" not in case_id
+    assert " " not in case_id
+    assert case_id.startswith("xview-cup-mug-same-")
 
 
 def test_views_from_localize_and_collect_query_instances() -> None:

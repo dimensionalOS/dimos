@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import itertools
+import re
 from typing import Any
 
 import numpy as np
@@ -171,7 +172,11 @@ def collect_query_instances(
     return by_id
 
 
-def filter_instance_views(views: tuple[SightingView, ...]) -> tuple[SightingView, ...]:
+def filter_instance_views(
+    views: tuple[SightingView, ...],
+    *,
+    min_views: int = MIN_INSTANCE_VIEWS,
+) -> tuple[SightingView, ...]:
     """Keep framing-OK sightings from a high-certainty instance."""
     if not views:
         return ()
@@ -180,6 +185,7 @@ def filter_instance_views(views: tuple[SightingView, ...]) -> tuple[SightingView
         n_views=head.n_views,
         semantic_score=head.semantic_score,
         sighting_confidences=tuple(v.confidence for v in views),
+        min_views=min_views,
     ):
         return ()
     return tuple(v for v in views if sighting_framing_ok(v))
@@ -218,6 +224,7 @@ def _pick_diff_pairs(
     by_instance: dict[str, tuple[SightingView, ...]],
     *,
     max_pairs: int = MAX_DIFF_PAIRS_PER_QUERY,
+    min_gap_s: float = MIN_PAIR_TIME_GAP_S,
 ) -> list[IdentityPair]:
     ids = sorted(by_instance)
     if len(ids) < 2:
@@ -231,22 +238,35 @@ def _pick_diff_pairs(
     for a, b in itertools.combinations(ranked, 2):
         if len(pairs) >= max_pairs:
             break
-        left = max(by_instance[a], key=lambda v: (v.confidence, -abs(v.timestamp)))
-        right = max(by_instance[b], key=lambda v: (v.confidence, -abs(v.timestamp)))
-        # Order by time for stable ids.
-        if left.timestamp > right.timestamp:
-            left, right = right, left
-        pairs.append(IdentityPair(query=left.query, left=left, right=right, same_object=False))
+        # Prefer distinct timestamps so A/B are not the same full frame (two
+        # co-visible instances would otherwise look identical with answer "no").
+        best: tuple[float, SightingView, SightingView] | None = None
+        for left in by_instance[a]:
+            for right in by_instance[b]:
+                gap = abs(right.timestamp - left.timestamp)
+                if gap < min_gap_s:
+                    continue
+                score = left.confidence + right.confidence
+                if best is None or score > best[0]:
+                    ordered = (left, right) if left.timestamp <= right.timestamp else (right, left)
+                    best = (score, ordered[0], ordered[1])
+        if best is None:
+            continue
+        pairs.append(
+            IdentityPair(query=best[1].query, left=best[1], right=best[2], same_object=False)
+        )
     return pairs
 
 
 def propose_identity_pairs(
     instances: dict[str, tuple[SightingView, ...]],
+    *,
+    min_views: int = MIN_INSTANCE_VIEWS,
 ) -> tuple[IdentityPair, ...]:
     """Build same/different pairs for one query's filtered instance→views map."""
     kept: dict[str, tuple[SightingView, ...]] = {}
     for instance_id, views in instances.items():
-        filtered = filter_instance_views(views)
+        filtered = filter_instance_views(views, min_views=min_views)
         if len(filtered) >= 2:
             kept[instance_id] = filtered
         elif len(filtered) == 1:
@@ -302,6 +322,11 @@ def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
         raise InsufficientEvidenceError("cross-view pair requires the same category query")
     if not sighting_framing_ok(pair.left) or not sighting_framing_ok(pair.right):
         raise InsufficientEvidenceError("one or both views fail center/size framing gates")
+    if abs(pair.right.timestamp - pair.left.timestamp) < MIN_PAIR_TIME_GAP_S:
+        raise InsufficientEvidenceError(
+            f"cross-view pair needs ≥{MIN_PAIR_TIME_GAP_S:g}s between views "
+            "(same-frame A/B would be ambiguous)"
+        )
     if pair.same_object and pair.left.instance_id != pair.right.instance_id:
         raise InsufficientEvidenceError("same-object pair has mismatched instance ids")
     if (not pair.same_object) and pair.left.instance_id == pair.right.instance_id:
@@ -338,7 +363,15 @@ def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
     )
 
 
+def _path_token(value: str) -> str:
+    """Filesystem-safe token for asset paths (no slashes or spaces)."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+    return cleaned or "query"
+
+
 def pair_case_id(pair: IdentityPair, index: int) -> str:
     kind = "same" if pair.same_object else "diff"
-    q = pair.query.replace(" ", "-")
-    return f"xview-{q}-{kind}-{index:04d}-{pair.left.instance_id[:8]}-{pair.right.instance_id[:8]}"
+    q = _path_token(pair.query)
+    left_id = _path_token(pair.left.instance_id[:8])
+    right_id = _path_token(pair.right.instance_id[:8])
+    return f"xview-{q}-{kind}-{index:04d}-{left_id}-{right_id}"

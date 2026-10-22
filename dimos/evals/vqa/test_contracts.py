@@ -879,7 +879,6 @@ def test_generate_dataset_cross_view_writes_cases(
     )
 
     output = tmp_path / "cross-view"
-    output.mkdir()  # empty pre-existing dir exercises replace/rmtree
     result = generate_dataset(
         GenerationRequest(
             dataset="recording.db",
