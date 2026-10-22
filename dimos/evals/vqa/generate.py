@@ -65,6 +65,7 @@ from dimos.evals.vqa.pointcloud_frame import (
     select_quality_indices,
 )
 from dimos.evals.vqa.primitives.cross_view_identity import (
+    IdentityPair,
     answer_cross_view_same_object,
     collect_query_instances,
     pair_case_id,
@@ -511,10 +512,12 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
         queries = [str(q).strip() for q in request.queries if str(q).strip()]
         traces = [LocalizeTrace() for _ in queries]
         with DanDetector("siglip", "owlv2", "edgetam") as dan:
-            index = embed_index(rig, dan.embedder, after, before)
-            results = dan.localize(queries, index=index, rig=rig, params=params, traces=traces)
+            embedded = embed_index(rig, dan.embedder, after, before)
+            results = dan.localize(
+                queries, index=embedded, rig=rig, params=params, traces=traces
+            )
 
-        all_pairs = []
+        all_pairs: list[IdentityPair] = []
         n_instances = 0
         for query, hits, trace in zip(queries, results, traces, strict=True):
             logger.info(f"cross-view {query!r}: {len(hits)} verified hit(s)")
@@ -535,7 +538,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
         audit_rows: list[dict[str, object]] = []
         rejected = 0
 
-        for index, pair in enumerate(all_pairs):
+        for pair_index, pair in enumerate(all_pairs):
             try:
                 answered = answer_cross_view_same_object(pair)
             except InsufficientEvidenceError as exc:
@@ -550,7 +553,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
                 )
                 continue
 
-            case_id = pair_case_id(pair, index)
+            case_id = pair_case_id(pair, pair_index)
             image = stack_pair_image(pair.left.image, pair.right.image)
             rel = f"assets/{case_id}.jpg"
             image.save(str(staging / rel))
