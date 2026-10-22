@@ -1,0 +1,71 @@
+{
+  "format": "dimos.scene.v1",
+  "id": "mobile-eval-room",
+  "entities": {
+    "walls": {
+      "body": "walls",
+      "label": "room walls",
+      "kind": "fixture"
+    },
+    "bench": {
+      "body": "bench",
+      "label": "workbench",
+      "kind": "fixture"
+    },
+    "cabinet": {
+      "body": "cabinet",
+      "label": "cabinet",
+      "kind": "fixture"
+    },
+    "obstacle": {
+      "body": "obstacle",
+      "label": "red crate",
+      "kind": "object",
+      "movable": true
+    },
+    "target": {
+      "body": "target",
+      "label": "green box",
+      "kind": "object",
+      "movable": true
+    }
+  },
+  "spawns": {
+    "default": {
+      "position": [
+        -2,
+        0,
+        0
+      ],
+      "orientation": [
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  },
+  "regions": {
+    "goal": {
+      "kind": "navigation",
+      "pose": {
+        "position": [
+          1.7,
+          0,
+          0.8
+        ],
+        "orientation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "size": [
+        0.7,
+        0.7,
+        1.6
+      ]
+    }
+  }
+}

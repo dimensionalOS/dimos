@@ -762,6 +762,7 @@ def test_suites_and_agents_importable() -> None:
         "mcp_client_adapter",
         "pi",
         "dimcode",
+        "mobile_scripted",
     }
     for module_name in agents:
         assert callable(load_agent(module_name).run), module_name

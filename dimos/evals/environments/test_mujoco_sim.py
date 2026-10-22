@@ -30,6 +30,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.source import RobotDescriptionPath
 
 
 def environment(**kwargs):
@@ -81,7 +82,8 @@ def test_launch_flags(monkeypatch):
     assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
 
 
-def test_module_env_reaches_blueprint_parser(monkeypatch):
+def test_module_env_reaches_blueprint_parser(monkeypatch, mocker, tmp_path):
+    mocker.patch.object(RobotDescriptionPath, "_resolve", return_value=tmp_path / "robot.urdf")
     monkeypatch.delenv("MUJOCOSIMMODULE__HEADLESS", raising=False)
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim

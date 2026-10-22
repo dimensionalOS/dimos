@@ -208,6 +208,61 @@ without starting a new task episode. Graders must retain both, plus simulation
 time, rather than treating every scene edit as another trial. Internal transport
 `FrameMetadata.episode_id` carries that invalidation generation.
 
+## G1 and Go2 task workflows
+
+The current task delivery is G1 GR00T and Go2. Arm migrations and the rolling
+Mid360 are separate review branches; legacy arm engines/evals remain available.
+
+`dimos.evals.suites.sim2_mobile` defines three cases for each robot using the
+existing `EvalCase`, `Sim` environment and `EvalRunner`. It adds no task compiler
+or benchmark population system. The authored room is robot-free MJCF with a
+semantic sidecar. Both robot stacks use the same room and their existing
+navigation configuration. The crate starts in storage behind the spawn and is
+moved into the route only in the replanning case. These are workflow checks,
+not a general obstacle-avoidance benchmark.
+
+| Case | Setup / intervention | Grading |
+| --- | --- | --- |
+| Reach | Start at the authored spawn, request world goal (1.7, 0) | Reach within 0.35 m and remain there for at least one simulated second |
+| Replan | Move an existing crate into the route after the robot advances | Same goal/dwell, after the recorded intervention |
+| Search | Move a green box after the first approach | Reacquire it from RGB-D and remain within 1.25 m of its new position |
+
+All cases reject a fallen robot or a sampled robot contact with the walls,
+crate or target. Contacts are sampled at 10 Hz, not an every-physics-tick
+collision audit. The scripted search reference is a colour/depth detector,
+not a general object-perception model. Navigation still runs through the public
+planner and connection APIs; the reference never reads scene truth.
+
+```bash
+# All six cases, no model API needed; run only one live eval at a time.
+uv run dimos evals run dimos.evals.suites.sim2_mobile --agent dimos.evals.agents.mobile_scripted
+# Same environments and graders, with an installed/configured Pi model agent:
+uv run dimos evals run dimos.evals.suites.sim2_mobile --agent dimos.evals.agents.pi
+# Add --tags g1 or --tags go2 to select a robot.
+```
+
+`Sim2Environment` starts a fresh application for every case. This resets the
+controller, maps and perception by restarting their owners. It deliberately
+rejects `attach=True`; bare `SimulationModule.reset()` cannot provide that
+application-reset contract. Runtime object edits stay within the physical
+episode and advance only the command/sensing invalidation `generation`.
+
+The environment produces three artifacts beside the existing recording:
+
+- `memory.db`: public camera/depth, odometry, lidar, TF, commands, path and costmap.
+- `truth.db`: complete `SceneState` samples; intervention requests, before/after
+  states and applied ticks/times; a completion marker after clean recording.
+- `setup.json`: environment configuration, scene hash/description, sim2 run
+  provenance and the first recorded state.
+
+Only the public recording is handed to the evaluated agent. The grader receives
+all artifacts and rejects missing completion, unrecorded mutations, mixed
+episodes or simulation-time gaps over 0.5 s. A private artifact is **not a
+sandbox**: a shell with access to these files or simulator RPCs can still read
+truth. Model-agent isolation and measured model task success remain separate
+acceptance work. The suite does not claim deterministic replay or sim-to-real
+calibration.
+
 ## Transport and tests
 
 `device.poll()` returns typed `Measurement` values without requiring a Module,
