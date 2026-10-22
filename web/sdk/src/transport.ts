@@ -16,6 +16,9 @@ export interface RelayInfo {
   v: number;
   /** True when the relay brokers video.webrtc.v1 track channels (v7). */
   rtc?: boolean;
+  /** The shard answering for the robot named at discovery (a relay run
+   * with --shards); absent otherwise. */
+  shard?: number;
 }
 
 export type TransportPhase =
@@ -110,10 +113,12 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 
 /** The /api/info URL for an HTTP relay base; same origin when no base is
  * given. A trailing slash is normalized so path-prefixed bases keep their
- * prefix ("https://x/relay" -> "https://x/relay/api/info"). */
-export function resolveInfoUrl(base?: string): string {
-  if (base === undefined) return "/api/info";
-  return new URL("api/info", base.endsWith("/") ? base : `${base}/`).toString();
+ * prefix ("https://x/relay" -> "https://x/relay/api/info"). Naming the
+ * robot (?robot=) lets a sharded relay answer with the robot's shard. */
+export function resolveInfoUrl(base?: string, robot?: string): string {
+  const query = robot === undefined ? "" : `?robot=${encodeURIComponent(robot)}`;
+  if (base === undefined) return `/api/info${query}`;
+  return new URL(`api/info${query}`, base.endsWith("/") ? base : `${base}/`).toString();
 }
 
 export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<RelayInfo> {

@@ -351,7 +351,8 @@ class SessionImpl implements Session {
     this.#pingIntervalMs = options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
     this.#pinned = options.robot ?? null;
     this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
-    const infoUrl = resolveInfoUrl(options.url);
+    // Naming the robot at discovery lands on its shard (relay --shards).
+    const infoUrl = resolveInfoUrl(options.url, options.robot);
     this.transport = new ReconnectingTransport(
       {
         onPhase: (phase) => this.status.update({ transport: phase }),

@@ -44,7 +44,7 @@ from dimos.web.relay_bridge.protocol import (
     encode_datagram,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
-from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
+from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 
 pytestmark = pytest.mark.self_hosted
 
@@ -102,6 +102,44 @@ async def fetch_stats(relay: RelayReadyInfo) -> dict:
             return json.load(response)
 
     return await asyncio.to_thread(_get)
+
+
+def _shard_for(robot_id: str, n: int) -> int:
+    """Mirror of the relay's shardFor (FNV-1a), to pick ids for the test."""
+    h = 0x811C9DC5
+    for byte in robot_id.encode():
+        h = ((h ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return h % n
+
+
+async def test_sharded_relay_puts_a_robot_and_its_viewer_on_one_process() -> None:
+    # --shards 2: the started process is shard 0 and spawns shard 1 on its
+    # own port; discovery that names a robot answers with the robot's shard,
+    # so the robot and a viewer naming it meet there, while a client naming
+    # no robot stays on shard 0.
+    process = RelayProcess(shards=2)
+    ready = process.start()
+    try:
+        base = f"http://127.0.0.1:{ready.http_port}"
+        on_other = next(f"r{i}" for i in range(50) if _shard_for(f"r{i}", 2) == 1)
+        robot_info = await fetch_relay_info(base, robot=on_other)
+        assert robot_info.shard == 1 and robot_info.wt_url != ready.wt_url
+        plain = await fetch_relay_info(base)
+        assert plain.shard == 0 and plain.wt_url == ready.wt_url
+        assert (await fetch_relay_info(base, robot=on_other)).wt_url == robot_info.wt_url
+        async with await RelayClient.connect(robot_info.wt_url, "robot") as robot:
+            await robot.hello(robot=RobotInfo(id=on_other, name="Sharded", model="test"))
+            async with await RelayClient.connect(robot_info.wt_url, "viewer") as viewer:
+                await viewer.hello()
+                await attach_viewer(viewer, on_other, ["odom"])
+                await wait_subs(robot, {"odom"})
+                robot.send_frame("odom", b"pose", delivery="reliable")
+                frames = await collect_until(
+                    viewer, lambda fs: any(f.header.ch == "odom" for f in fs)
+                )
+                assert next(f for f in frames if f.header.ch == "odom").payload == b"pose"
+    finally:
+        process.stop()
 
 
 def test_info_matches_ready_line(relay: RelayReadyInfo) -> None:

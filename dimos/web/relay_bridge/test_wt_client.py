@@ -907,6 +907,17 @@ def _serve(body: Any, status: int = 200) -> None:
 GOOD_INFO = {"wtUrl": "https://127.0.0.1:4433", "certHash": "aGFzaA==", "v": PROTOCOL_VERSION}
 
 
+async def test_fetch_relay_info_names_the_robot_and_reads_its_shard(info_server: str) -> None:
+    # A sharded relay answers for the robot named in the query.
+    _serve({**GOOD_INFO, "shard": 1})
+    info = await fetch_relay_info(info_server, robot="go2 lab")
+    assert info.shard == 1
+    assert _InfoHandler.paths == ["/api/info?robot=go2+lab"]
+    _serve({**GOOD_INFO, "shard": "1"})
+    with pytest.raises(ProtocolError):
+        await fetch_relay_info(info_server, robot="x")
+
+
 async def test_fetch_relay_info_good_shape(info_server: str) -> None:
     _serve(GOOD_INFO)
     info = await fetch_relay_info(info_server)

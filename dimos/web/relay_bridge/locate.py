@@ -113,7 +113,12 @@ def relay_run_cmd(
     # --node-modules-dir=none: the workspace root deno.json says "auto" (for
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
-    allow_read = ",".join([str(web_dir), *(str(path) for _, path in paths)])
+    # A sharded relay (--shards N) spawns the other shards as copies of this
+    # command's deno, so it may run and read that binary.
+    sharded = any(a == "--shards" or a.startswith("--shards=") for a in args)
+    allow_read = ",".join(
+        [str(web_dir), *(str(path) for _, path in paths), *([deno] if sharded else [])]
+    )
     # --v8-flags=--expose-gc: Deno 2.6.10 ends a WebTransport send stream
     # only when GC finalizes its wrapper, so when a viewer's stream credit
     # runs out (its unsubscribed channels' streams not yet collected) the
@@ -126,6 +131,11 @@ def relay_run_cmd(
         "--node-modules-dir=none",
         f"--allow-read={allow_read}",
         "--allow-net",
+        *(
+            [f"--allow-run={deno}", "--allow-env=HOME,DENO_DIR,XDG_CACHE_HOME,PATH,NO_COLOR,TMPDIR"]
+            if sharded
+            else []
+        ),
         "--config",
         str(web_dir / "deno.json"),
         str(web_dir / "relay" / "main.ts"),
