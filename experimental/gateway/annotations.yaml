@@ -472,6 +472,10 @@ robots:
           title: xArm pick and place agent (sim)
           description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
           recommended_config: []
+        hybrid-teleop-sim:
+          title: xArm pick and place with operator hold (sim)
+          description: 'Simulated xArm7 pick and place that an operator can hold, release and e-stop: no robot needed.'
+          recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
           description: Pick-and-place on a real xArm plus an AI agent with manipulation skills.
