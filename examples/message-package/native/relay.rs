@@ -18,13 +18,9 @@ use std::{env, fs};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().collect();
     let bytes = fs::read(&args[1])?;
-    assert_eq!(&bytes[..4], &[0, 1, 0, 0]);
-    let (mut value, consumed): (Header, usize) =
-        re_cdr::from_bytes::<_, re_cdr::LittleEndian>(&bytes[4..])?;
-    assert_eq!(consumed, bytes.len() - 4);
+    let mut value: Header = cdr::deserialize(&bytes)?;
     value.frame_id.push_str("/rust");
-    let mut output = vec![0, 1, 0, 0];
-    output.extend(re_cdr::to_vec::<_, re_cdr::LittleEndian>(&value)?);
+    let output = cdr::serialize::<_, _, cdr::CdrLe>(&value, cdr::Infinite)?;
     fs::write(&args[2], output)?;
     Ok(())
 }

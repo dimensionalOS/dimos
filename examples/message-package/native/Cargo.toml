@@ -8,7 +8,7 @@ license = "Apache-2.0"
 
 [dependencies]
 dimos-generated-messages = "=0.0.14"
-re_cdr = "=0.1.0"
+cdr = { version = "=0.2.4", git = "https://github.com/TomCC7/cdr-rs", rev = "38a4368255d408faf374726653b39d4a4e9735cb" }
 
 [[example]]
 name = "relay"
