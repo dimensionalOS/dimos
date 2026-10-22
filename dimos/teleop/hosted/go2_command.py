@@ -22,21 +22,29 @@ a guarded stream filter: operator cmd_vel → E-STOP/stale/reorder/nav-yield gua
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+import numpy as np
 from reactivex.disposable import Disposable
 from unitree_webrtc_connect.constants import SPORT_CMD
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.message_utils.time import header_now, to_nanoseconds
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+)
+from dimos.messages.std_msgs.msg import Bool
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
@@ -61,7 +69,7 @@ def _all_finite(t: Twist) -> bool:
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else hi if v > hi else v
+    return lo if v < lo else min(v, hi)
 
 
 class Go2CommandConfig(ModuleConfig):
@@ -100,7 +108,7 @@ class Go2CommandModule(Module):
         self._obstacle_avoidance = True
         self._light = 0.0
         self._posture = "StandReady"
-        self._last_cmd_ts = 0.0
+        self._last_cmd_ns = 0
         self._last_cmd_nonzero = False
 
     @rpc
@@ -358,7 +366,8 @@ class Go2CommandModule(Module):
             self._send_ack(nonce, False)
             return
         pose = PoseStamped(
-            ts=time.time(), frame_id="world", position=[x, y, 0.0], orientation=[0, 0, 0, 1]
+            header=header_now("world"),
+            pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
         try:
             self.goal_request.publish(pose)
@@ -376,8 +385,7 @@ class Go2CommandModule(Module):
 
     def _cancel_nav(self) -> None:
         try:
-            msg = Bool()
-            msg.data = True
+            msg = Bool(data=True)
             self.stop_movement.publish(msg)
         except Exception:
             logger.warning("nav cancel publish failed", exc_info=True)
@@ -388,36 +396,50 @@ class Go2CommandModule(Module):
         """Guard raw operator drive, republish on tele_cmd_vel for MovementManager."""
         if self._estopped:
             return
-        ts = float(twist.ts)
-        if not math.isfinite(ts):
-            # NaN ts passes every comparison below and would poison _last_cmd_ts.
+        try:
+            stamp_ns = to_nanoseconds(twist.header.stamp)
+        except (ValueError, TypeError):
             return
-        age = time.time() - ts
+        if not isinstance(stamp_ns, int):
+            # Direct in-process calls must not poison the guard with malformed fields.
+            return
+        age = (time.time_ns() - stamp_ns) / 1_000_000_000
         if age > self.config.cmd_stale_after_sec:
             return
-        if age < 0:  # future-stamped: don't advance _last_cmd_ts (would stall drive)
+        if age < 0:  # future-stamped: don't advance _last_cmd_ns (would stall drive)
             return
-        if ts <= self._last_cmd_ts:  # out-of-order
+        if stamp_ns <= self._last_cmd_ns:  # out-of-order
             return
-        self._last_cmd_ts = ts
+        self._last_cmd_ns = stamp_ns
 
-        if not _all_finite(twist):
+        value = deepcopy(twist.twist)
+        if not _all_finite(value):
             logger.warning("dropping non-finite cmd_vel")
             return
         lin_max = self.config.max_linear_mps
         ang_max = self.config.max_angular_rps
-        twist.linear.x = _clamp(twist.linear.x, -lin_max, lin_max)
-        twist.linear.y = _clamp(twist.linear.y, -lin_max, lin_max)
-        twist.angular.z = _clamp(twist.angular.z, -ang_max, ang_max)
+        value.linear.x = _clamp(value.linear.x, -lin_max, lin_max)
+        value.linear.y = _clamp(value.linear.y, -lin_max, lin_max)
+        value.angular.z = _clamp(value.angular.z, -ang_max, ang_max)
 
         # Idle zeros would make MovementManager cancel the nav plan, so forward a
         # zero only as the release edge (prev frame moving), then stay silent.
-        moving = not twist.is_zero()
+        moving = not np.allclose(
+            [
+                value.linear.x,
+                value.linear.y,
+                value.linear.z,
+                value.angular.x,
+                value.angular.y,
+                value.angular.z,
+            ],
+            0.0,
+        )
         if not moving and not self._last_cmd_nonzero:
             return
         self._last_cmd_nonzero = moving
 
-        self.tele_cmd_vel.publish(Twist(linear=twist.linear, angular=twist.angular))
+        self.tele_cmd_vel.publish(value)
 
     # ─── robot-authoritative state → stats module ─────────────────────
 

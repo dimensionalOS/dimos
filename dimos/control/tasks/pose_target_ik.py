@@ -46,6 +46,9 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.message_utils.time import to_seconds
+from dimos.messages.geometry_msgs.msg import Pose as CdrPose, PoseStamped as CdrPoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.service.spec import BaseConfig
@@ -59,6 +62,24 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 _FEEDBACK_LIMIT_WARNING_INTERVAL_S = 1.0
+
+
+def pose_target_value(pose: Pose | PoseStamped | CdrPose | CdrPoseStamped) -> PoseStamped:
+    """Copy a wire or local target into the existing numerical IK value."""
+    if isinstance(pose, CdrPoseStamped):
+        value = pose.pose
+        ts, frame_id = to_seconds(pose.header.stamp), pose.header.frame_id
+    else:
+        value = pose
+        ts = pose.ts if isinstance(pose, PoseStamped) else 0.0
+        frame_id = pose.frame_id if isinstance(pose, PoseStamped) else ""
+    p, q = value.position, value.orientation
+    return PoseStamped(
+        ts=ts,
+        frame_id=frame_id,
+        position=(p.x, p.y, p.z),
+        orientation=(q.x, q.y, q.z, q.w),
+    )
 
 
 def string_tuple_converter(values: Iterable[str]) -> tuple[str, ...]:

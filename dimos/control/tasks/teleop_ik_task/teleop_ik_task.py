@@ -31,10 +31,13 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTask,
     PoseTargetIKTaskConfig,
     PoseTargetIKTaskParams,
+    pose_target_value,
     string_tuple_converter,
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.messages.geometry_msgs.msg import Pose as CdrPose, PoseStamped as CdrPoseStamped
+from dimos.messages.std_msgs.msg import UInt32
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.protocol.service.spec import BaseConfig
@@ -160,25 +163,24 @@ class TeleopIKTask(PoseTargetIKTask):
             elif self._session_state is _SessionState.ESTOPPED:
                 self._session_state = _SessionState.DISENGAGED
 
-    def on_left_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+    def on_left_cartesian_command(
+        self, pose: Pose | PoseStamped | CdrPose | CdrPoseStamped, t_now: float
+    ) -> bool:
         """Store the latest absolute left-controller pose."""
         return self._on_controller_pose(OperatorHand.LEFT, pose, t_now)
 
-    def on_right_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+    def on_right_cartesian_command(
+        self, pose: Pose | PoseStamped | CdrPose | CdrPoseStamped, t_now: float
+    ) -> bool:
         """Store the latest absolute right-controller pose."""
         return self._on_controller_pose(OperatorHand.RIGHT, pose, t_now)
 
     def _on_controller_pose(
-        self, hand: OperatorHand, pose: Pose | PoseStamped, t_now: float
+        self, hand: OperatorHand, pose: Pose | PoseStamped | CdrPose | CdrPoseStamped, t_now: float
     ) -> bool:
         if hand not in self._bindings:
             return False
-        sample = PoseStamped(
-            ts=pose.ts if isinstance(pose, PoseStamped) else 0.0,
-            frame_id=pose.frame_id if isinstance(pose, PoseStamped) else "",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
+        sample = pose_target_value(pose)
         with self._lock:
             if self._session_state is _SessionState.ESTOPPED:
                 return False
@@ -187,11 +189,12 @@ class TeleopIKTask(PoseTargetIKTask):
             state.last_update_time = t_now
         return True
 
-    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
+    def on_teleop_buttons(self, msg: Buttons | UInt32, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition."""
+        buttons = Buttons(msg.data)
         grip_by_hand = {
-            OperatorHand.LEFT: msg.left_grip,
-            OperatorHand.RIGHT: msg.right_grip,
+            OperatorHand.LEFT: buttons.left_grip,
+            OperatorHand.RIGHT: buttons.right_grip,
         }
         with self._lock:
             self._last_button_update_time = t_now

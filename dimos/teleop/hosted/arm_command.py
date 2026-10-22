@@ -19,20 +19,27 @@ from the broker."""
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import time
 from typing import Any
 
-from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
+from dimos_cdrgen.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.message_utils.time import to_nanoseconds, to_seconds
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped as CdrPoseStamped,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Float32, Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.controller_types import Hand
@@ -70,12 +77,13 @@ class ArmCommandModule(ArmTeleopModule):
         self._cmd = SerializedCommandExecutor(
             lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
         )
-        self._last_twist_ts = 0.0
-        self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+        self._last_twist_ns: int | None = None
+        self._last_pose_ns: dict[Hand, int | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
 
-        self._decoders[LCMTwistStamped._get_packed_fingerprint()] = self._on_twist_bytes
+        self._command_types["twist"] = TwistStamped
+        self._decoders["twist"] = self._on_twist_bytes
 
     # No local WebSocket server — the operator connects through the broker.
     def _start_server(self) -> None:
@@ -103,20 +111,23 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── Inbound command plane (operator → robot) ─────────────────────
 
     def _on_cmd_raw(self, data: Any) -> None:
-        """Fingerprint-dispatch LCM bytes (Pose/Joy inherited, Twist added here)."""
+        """Dispatch the shared data-frame envelope with canonical CDR payloads."""
         if isinstance(data, str):
             data = data.encode()
-        decoder = self._decoders.get(data[:8])
-        if decoder is None:
-            return
-        try:
-            decoder(data)
-        except Exception:
-            logger.warning("cmd_raw decode failed", exc_info=True)
+        if isinstance(data, bytes):
+            self._dispatch_binary_message(data)
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame; stale/future/out-of-order dropped."""
-        msg = PoseStamped.lcm_decode(data)
+        wire = cdr_decode(data, CdrPoseStamped)
+        p, q = wire.pose.position, wire.pose.orientation
+        msg = PoseStamped(
+            ts=to_seconds(wire.header.stamp),
+            frame_id=wire.header.frame_id,
+            position=(p.x, p.y, p.z),
+            orientation=(q.x, q.y, q.z, q.w),
+        )
+        source_ns = to_nanoseconds(wire.header.stamp)
         try:
             hand = self._resolve_hand(msg.frame_id)
         except ValueError:
@@ -137,19 +148,23 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_future_warn = now
                 logger.warning("dropping future-stamped pose — operator clock sync likely off")
             return
-        if ts <= self._last_pose_ts[hand]:
+        previous = self._last_pose_ns[hand]
+        if previous is not None and source_ns <= previous:
             return
-        self._last_pose_ts[hand] = ts
+        self._last_pose_ns[hand] = source_ns
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._pose_headers[hand] = deepcopy(wire.header)
+            self._last_pose_update[hand] = time.monotonic()
 
     def _on_twist_bytes(self, data: bytes) -> None:
         """Browser keyboard EE-twist → coordinator's eef_twist task."""
         if self._estopped:
             return
-        msg = TwistStamped.lcm_decode(data)
-        ts = float(msg.ts)
+        msg = cdr_decode(data, TwistStamped)
+        source_ns = to_nanoseconds(msg.header.stamp)
+        ts = to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
         age = time.time() - ts
@@ -159,26 +174,28 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_stale_warn = now
                 logger.warning("dropping stale ee_twist: age=%.2fs — operator link lagging", age)
             return
-        if age < 0:  # future-stamped: don't advance _last_twist_ts (would stall the jog)
+        if age < 0:  # future-stamped: don't advance the watermark (would stall the jog)
             now = time.monotonic()
             if now - self._last_future_warn >= 1.0:
                 self._last_future_warn = now
                 logger.warning("dropping future-stamped ee_twist — operator clock sync likely off")
             return
-        if ts <= self._last_twist_ts:  # out-of-order
+        if self._last_twist_ns is not None and source_ns <= self._last_twist_ns:
             return
-        self._last_twist_ts = ts
+        self._last_twist_ns = source_ns
         with self._lock:
             scale = self._translation_scale
         self.ee_twist_command.publish(
             TwistStamped(
-                linear=[
-                    msg.linear.x * scale,
-                    msg.linear.y * scale,
-                    msg.linear.z * scale,
-                ],
-                angular=[msg.angular.x, msg.angular.y, msg.angular.z],
-                ts=msg.ts,
+                Header(deepcopy(msg.header.stamp), ""),
+                Twist(
+                    Vector3(
+                        msg.twist.linear.x * scale,
+                        msg.twist.linear.y * scale,
+                        msg.twist.linear.z * scale,
+                    ),
+                    deepcopy(msg.twist.angular),
+                ),
             )
         )
 

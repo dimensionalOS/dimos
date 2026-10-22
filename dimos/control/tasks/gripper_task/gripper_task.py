@@ -32,6 +32,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.messages.std_msgs.msg import Float32 as CdrFloat32
     from dimos.msgs.std_msgs.Float32 import Float32
 
 logger = setup_logger()
@@ -192,7 +193,7 @@ class GripperControlTask(BaseControlTask):
                 )
         return normalized
 
-    def on_gripper_command(self, msg: Float32, t_now: float) -> bool:
+    def on_gripper_command(self, msg: Float32 | CdrFloat32, t_now: float) -> bool:
         """Apply one normalized opening to every joint owned by the task."""
         return self.set_normalized([float(msg.data)] * len(self._joint_names), t_now)
 

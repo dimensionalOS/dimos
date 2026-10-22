@@ -14,9 +14,8 @@
 
 """Unit tests for ArmCommandModule's operator-command handling.
 
-The real module is constructed with only the framework ``Module.__init__``
-patched out (see the ``module`` fixture); its ports and coordinator ref are
-mocked. Camera mux / telemetry / stats live in separate modules now (see
+The real module is constructed normally; only output subscriptions and the
+external coordinator RPC boundary are mocked. Camera mux / telemetry / stats live in separate modules now (see
 test_camera_mux.py / test_hosted_stats.py); this file covers only the command
 plane.
 """
@@ -26,62 +25,79 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 import time
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+from dimos_cdrgen.registry import encode
+import numpy as np
 import pytest
 
-from dimos.core.module import Module
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped as CdrPoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.webxr.controller_types import Hand, WebXRControllerState
 from dimos.utils.testing.waiting import wait_until
+from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
 @pytest.fixture
-def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
-    """A real ArmCommandModule with only the framework ``Module.__init__``
-    skipped — the WebXR base-class and command-plane inits (engage state, decoder
-    table, estop/twist gates) run for real. Ports / coordinator ref / config
-    are mocked; config is seeded by the patched init."""
-
-    def _fake_init(self: Any, **kwargs: Any) -> None:
-        self.config = SimpleNamespace(
-            control_loop_hz=50.0,
-            cmd_stale_after_sec=0.5,
-            enable_ui_scaling=False,
-        )
-
-    monkeypatch.setattr(Module, "__init__", _fake_init)
-    module = ArmCommandModule()
+def module(mocker) -> Iterator[ArmCommandModule]:
+    instance = ArmCommandModule()
     for port in (
         "left_controller_output",
         "right_controller_output",
-        "buttons",
+        "teleop_buttons",
         "cmd_ack",
         "robot_state",
         "ee_twist_command",
         "gripper_command",
-        "coordinator",
     ):
-        setattr(module, port, MagicMock())
-    module._cmd.start()
-    yield module
-    module._cmd.stop()
+        mocker.patch.object(getattr(instance, port), "publish")
+    mocker.patch.object(instance, "coordinator", MagicMock(), create=True)
+    instance._cmd.start()
+    yield instance
+    instance.stop()
+
+
+def _command_frame(channel, message):
+    return encode_data_frame(
+        FrameHeader(
+            ch=channel,
+            seq=0,
+            ts=time.time(),
+            delivery="latest",
+            meta={"encoding": "cdr", "type": message.__msgtype__},
+        ),
+        encode(message),
+    )
 
 
 def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
-    return PoseStamped(ts=time.time() if ts is None else ts, frame_id=frame_id).lcm_encode()
+    message = CdrPoseStamped(
+        Header(time_from_seconds(time.time() if ts is None else ts), frame_id),
+        Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+    return _command_frame("pose", message)
 
 
 def _twist_bytes(x: float = 0.1, angular_x: float = 0.0, ts: float | None = None) -> bytes:
-    # ts=None keeps TwistStamped's default stamp (now) — a fresh command.
-    kwargs = {} if ts is None else {"ts": ts}
-    return TwistStamped(
-        frame_id="eef_twist_arm", linear=[x, 0.0, 0.0], angular=[angular_x, 0.0, 0.0], **kwargs
-    ).lcm_encode()
+    message = TwistStamped(
+        Header(time_from_seconds(time.time() if ts is None else ts), "eef_twist_arm"),
+        Twist(Vector3(x, 0.0, 0.0), Vector3(angular_x, 0.0, 0.0)),
+    )
+    return _command_frame("twist", message)
 
 
 def _tick(module: ArmCommandModule) -> None:
@@ -161,8 +177,8 @@ def test_twist_republished_without_task_address(module: ArmCommandModule) -> Non
     module._on_cmd_raw(_twist_bytes(0.2))
     module.ee_twist_command.publish.assert_called_once()
     out = module.ee_twist_command.publish.call_args.args[0]
-    assert out.frame_id == ""  # addressing is the port wiring, not the payload
-    assert out.linear.x == pytest.approx(0.2)
+    assert out.header.frame_id == ""  # addressing is the port wiring, not the payload
+    assert out.twist.linear.x == pytest.approx(0.2)
 
 
 def test_ui_scale_disabled_is_rejected(module: ArmCommandModule) -> None:
@@ -180,8 +196,8 @@ def test_ui_scale_updates_pose_and_keyboard_twist(module: ArmCommandModule) -> N
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 4, "ok": True}]
     assert module._translation_scale == 0.5
     out = module.ee_twist_command.publish.call_args.args[0]
-    assert out.linear.x == pytest.approx(0.1)
-    assert out.angular.x == pytest.approx(0.3)
+    assert out.twist.linear.x == pytest.approx(0.1)
+    assert out.twist.angular.x == pytest.approx(0.3)
 
 
 def test_twist_dropped_while_estopped(module: ArmCommandModule) -> None:
@@ -210,10 +226,10 @@ def test_out_of_order_twist_dropped(module: ArmCommandModule) -> None:
     assert module.ee_twist_command.publish.call_count == 1
 
 
-def test_stale_twist_warning_rate_limited(module: ArmCommandModule) -> None:
-    with patch("dimos.teleop.hosted.arm_command.logger") as log:
-        for _ in range(5):
-            module._on_cmd_raw(_twist_bytes(0.2, ts=time.time() - 1.0))
+def test_stale_twist_warning_rate_limited(module: ArmCommandModule, mocker) -> None:
+    log = mocker.patch("dimos.teleop.hosted.arm_command.logger")
+    for _ in range(5):
+        module._on_cmd_raw(_twist_bytes(0.2, ts=time.time() - 1.0))
     assert log.warning.call_count == 1  # burst of stale frames → one warning per second
 
 
@@ -243,7 +259,7 @@ def test_controller_pose_publishes_on_hand_port(module: ArmCommandModule) -> Non
     assert not module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_called()
     out = module.right_controller_output.publish.call_args.args[0]
-    assert out.frame_id == "right"  # handedness preserved; no task-name overwrite
+    assert out.header.frame_id == "right"  # handedness preserved; no task-name overwrite
     module.left_controller_output.publish.assert_not_called()
 
 
@@ -314,3 +330,69 @@ def test_robot_state_reports_estop_and_engage(module: ArmCommandModule) -> None:
     payload = json.loads(module.robot_state.publish.call_args.args[0])
     assert payload["estopped"] is True
     assert payload["engaged"] == {"left": False, "right": False}
+
+
+@pytest.mark.parametrize(
+    "channel,kind,encoding",
+    [
+        ("pose", "geometry_msgs/msg/TwistStamped", "cdr"),
+        ("twist", "geometry_msgs/msg/PoseStamped", "cdr"),
+        ("twist", "geometry_msgs/msg/TwistStamped", "lcm"),
+        ("unknown", "geometry_msgs/msg/TwistStamped", "cdr"),
+    ],
+)
+def test_wrong_framed_command_identity_is_rejected(module, channel, kind, encoding):
+    frame = encode_data_frame(
+        FrameHeader(
+            ch=channel,
+            seq=0,
+            ts=time.time(),
+            delivery="latest",
+            meta={"encoding": encoding, "type": kind},
+        ),
+        b"malformed payload",
+    )
+    module._on_cmd_raw(frame)
+    module.ee_twist_command.publish.assert_not_called()
+    assert module._current_poses[Hand.RIGHT] is None
+
+
+def test_cdr_twist_keeps_nanoseconds_and_sub_float_precision_ordering(module, mocker):
+    mocker.patch("dimos.teleop.hosted.arm_command.time.time", return_value=1_789_654_321.2)
+    for nanoseconds in [1, 2, 1]:
+        message = TwistStamped(
+            Header(Time(1_789_654_321, nanoseconds), "eef_twist_arm"),
+            Twist(Vector3(0.2, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)),
+        )
+        module._on_cmd_raw(_command_frame("twist", message))
+    assert module.ee_twist_command.publish.call_count == 2
+    output = module.ee_twist_command.publish.call_args.args[0]
+    assert output.header == Header(Time(1_789_654_321, 2), "")
+    assert output.twist.linear.x == 0.2
+
+
+def test_cdr_pose_output_preserves_exact_header_through_legacy_math(module, mocker):
+    mocker.patch("dimos.teleop.hosted.arm_command.time.time", return_value=1_789_654_321.2)
+    controller = Joy(
+        Header(Time(1_789_654_321, 1), "right"),
+        np.zeros(4, dtype=np.float32),
+        np.zeros(6, dtype=np.int32),
+    )
+    module._on_cmd_raw(_command_frame("joy", controller))
+    for nanoseconds in [1, 2]:
+        message = CdrPoseStamped(
+            Header(Time(1_789_654_321, nanoseconds), "right"),
+            Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
+        module._on_cmd_raw(_command_frame("pose", message))
+        _tick(module)
+    assert module.right_controller_output.publish.call_count == 2
+    output = module.right_controller_output.publish.call_args.args[0]
+    assert output.header == Header(Time(1_789_654_321, 2), "right")
+    assert type(output) is CdrPoseStamped
+
+
+def test_legacy_fingerprint_payload_is_not_an_implicit_command_fallback(module):
+    module._on_cmd_raw(PoseStamped(ts=time.time(), frame_id="right").lcm_encode())
+    assert module._current_poses[Hand.RIGHT] is None
+    module.right_controller_output.publish.assert_not_called()

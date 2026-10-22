@@ -36,9 +36,8 @@ from dimos.core.transport import (
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -89,7 +88,7 @@ teleop_hosted_go2_transport = (
             ("map_out", bytes): CloudflareTransport.spec("map_unreliable"),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
             ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
-            # drive chain on namespaced LCM topics — the bare global /cmd_vel
+            # drive chain on namespaced CDR topics — the bare global /cmd_vel
             # (other robots/tools on the machine) must not cross-decode here.
             ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
             ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
@@ -137,7 +136,7 @@ teleop_hosted_go2_multicam = (
             ("map_out", bytes): CloudflareTransport.spec("map_unreliable"),
             ("telemetry_out", bytes): CloudflareTransport.spec("state_reliable_back"),
             ("cmd_ack", bytes): CloudflareTransport.spec("state_reliable_back"),
-            # drive chain on namespaced LCM topics (see teleop_hosted_go2_transport).
+            # drive chain on namespaced CDR topics (see teleop_hosted_go2_transport).
             ("tele_cmd_vel", Twist): LCMTransport.spec("/hosted/tele_cmd_vel", Twist),
             ("nav_cmd_vel", Twist): LCMTransport.spec("/hosted/nav_cmd_vel", Twist),
             ("cmd_vel", Twist): LCMTransport.spec("/hosted/cmd_vel", Twist),

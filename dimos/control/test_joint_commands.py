@@ -14,6 +14,7 @@
 
 """Record the position-command subset without changing dispatch."""
 
+from contextlib import ExitStack
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ControlMode
+from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
@@ -125,15 +127,19 @@ def test_subscriber_failure_does_not_suppress_measured_state():
     log_error.assert_called_once()
 
 
-def test_coordinator_wires_joint_state_command_output():
+def test_coordinator_wires_joint_state_command_output(mocker):
     coordinator = ControlCoordinator()
-    with patch("dimos.control.coordinator.TickLoop") as tick_cls:
-        try:
-            coordinator.start()
-            assert coordinator.coordinator_joint_command.type is JointState
-            assert (
-                tick_cls.call_args.kwargs["publish_command_callback"]
-                == coordinator.coordinator_joint_command.publish
-            )
-        finally:
-            coordinator.stop()
+    tick_cls = mocker.patch("dimos.control.coordinator.TickLoop")
+    publish = mocker.patch.object(coordinator.coordinator_joint_command, "publish")
+    with ExitStack() as cleanup:
+        cleanup.callback(coordinator.stop)
+        coordinator.start()
+        assert coordinator.coordinator_joint_command.type is CdrJointState
+        callback = tick_cls.call_args.kwargs["publish_command_callback"]
+        callback(JointState(ts=12.5, frame_id="arm", name=["joint1"], position=[1.2]))
+        command = publish.call_args.args[0]
+        assert type(command) is CdrJointState
+        assert command.name == ["joint1"]
+        assert command.position.tolist() == [1.2]
+        assert (command.header.stamp.sec, command.header.stamp.nanosec) == (12, 500000000)
+        assert command.header.frame_id == "arm"

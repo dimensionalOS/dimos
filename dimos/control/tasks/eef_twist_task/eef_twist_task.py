@@ -33,14 +33,16 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
+from dimos.message_utils.time import to_seconds
+from dimos.messages.geometry_msgs.msg import TwistStamped as CdrTwistStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to_numpy
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
-    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 logger = setup_logger()
 
@@ -88,7 +90,15 @@ class EEFTwistTask(PoseTargetIKTask):
         logger.warning("EEFTwistTask rejects Cartesian commands", task=self._name)
         return False
 
-    def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
+    def on_ee_twist_command(self, twist: TwistStamped | CdrTwistStamped, t_now: float) -> bool:
+        if isinstance(twist, CdrTwistStamped):
+            v, w = twist.twist.linear, twist.twist.angular
+            twist = TwistStamped(
+                ts=to_seconds(twist.header.stamp),
+                frame_id=twist.header.frame_id,
+                linear=(v.x, v.y, v.z),
+                angular=(w.x, w.y, w.z),
+            )
         values = twist_to_numpy(twist)
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)

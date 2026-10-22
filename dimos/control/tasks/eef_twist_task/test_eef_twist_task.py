@@ -25,6 +25,9 @@ from dimos.control.tasks.eef_twist_task.eef_twist_task import (
 )
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped as CdrTwistStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -95,11 +98,20 @@ def _twist(x: float = 0.1) -> TwistStamped:
     return TwistStamped(frame_id="tool", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
 
 
+@pytest.mark.parametrize("wire", [False, True])
 def test_twist_integrates_target_and_uses_shared_persistent_command(
     mocker: MockerFixture,
+    wire,
 ) -> None:
     task, solver = _task(mocker)
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    message = (
+        CdrTwistStamped(
+            Header(Time(0, 1), "tool"), Twist(Vector3(0.1, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
+        )
+        if wire
+        else _twist()
+    )
+    assert task.on_ee_twist_command(message, t_now=1.0)
 
     first = task.compute(_state(1.01))
     second = task.compute(_state(1.02))

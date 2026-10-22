@@ -20,31 +20,29 @@ import base64
 from collections.abc import Iterator
 import json
 import math
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import cv2
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.occupancy import occupancy_from_array
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.teleop.hosted.map_compress import MapCompressModule
 
 
 @pytest.fixture
-def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[MapCompressModule]:
-    """A MapCompressModule with its throttle state initialized for real (only the
-    framework Module.__init__ is skipped) and its config / map_out port mocked."""
-    monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
-    module = MapCompressModule()
-    module.config = SimpleNamespace(map_hz=2.0, map_min_resolution=0.1, odom_hz=15.0)
-    module.map_out = MagicMock()
-    yield module
+def module(mocker) -> Iterator[MapCompressModule]:
+    instance = MapCompressModule()
+    mocker.patch.object(instance.map_out, "publish")
+    yield instance
+    instance.stop()
 
 
 def _published_json(mock: MagicMock, msg_type: str) -> dict[str, Any] | None:
@@ -60,8 +58,12 @@ def _published_json(mock: MagicMock, msg_type: str) -> dict[str, Any] | None:
     return None
 
 
-def _occupancy(grid: Any) -> Any:
-    return OccupancyGrid(grid=np.asarray(grid, dtype=np.int8), resolution=0.1)
+def _occupancy(grid: Any, resolution=0.1) -> OccupancyGrid:
+    return occupancy_from_array(
+        np.asarray(grid, dtype=np.int8),
+        header=Header(time_from_seconds(0), "map"),
+        resolution=resolution,
+    )
 
 
 def test_costmap_encodes_and_publishes_map(module: MapCompressModule) -> None:
@@ -102,7 +104,7 @@ def test_block_max_preserves_obstacle_when_coarsening(module: MapCompressModule)
     # 0.02 m/cell → coarsen by 5× to reach 0.1. A lone obstacle must survive.
     cells = np.zeros((10, 10), dtype=np.int8)
     cells[3, 3] = 100
-    module._on_costmap(OccupancyGrid(grid=cells, resolution=0.02))
+    module._on_costmap(_occupancy(cells, resolution=0.02))
     msg = _published_json(module.map_out, "map")
     assert msg is not None
     assert msg["res"] == pytest.approx(0.1)  # coarsened 5×
@@ -114,8 +116,11 @@ def test_block_max_preserves_obstacle_when_coarsening(module: MapCompressModule)
 
 
 def test_odom_publishes_planar_pose(module: MapCompressModule) -> None:
-    q = Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2))  # yaw = 90°
-    pose = PoseStamped(ts=123.0, position=[1.5, -2.0, 0.3], orientation=[q.x, q.y, q.z, q.w])
+    q = quaternion_from_euler(0.0, 0.0, math.pi / 2)  # yaw = 90°
+    pose = PoseStamped(
+        header=Header(stamp=time_from_seconds(123.0), frame_id="map"),
+        pose=Pose(Point(1.5, -2.0, 0.3), q),
+    )
     module._on_odom(pose)
 
     msg = _published_json(module.map_out, "odom")
@@ -126,14 +131,19 @@ def test_odom_publishes_planar_pose(module: MapCompressModule) -> None:
 
 
 def test_empty_costmap_publishes_nothing(module: MapCompressModule) -> None:
-    module._on_costmap(OccupancyGrid())  # no-arg = empty 1D grid; must be skipped
+    module._on_costmap(
+        _occupancy(np.empty((0, 0), dtype=np.int8))
+    )  # empty generated grid; must be skipped
     assert _published_json(module.map_out, "map") is None
 
 
 def test_odom_degenerate_quaternion_does_not_raise(module: MapCompressModule) -> None:
     # A zero quaternion makes to_euler() (scipy) raise; _on_odom runs inside an
     # RxPY subscriber, so it must drop the frame, not kill the odom stream.
-    pose = PoseStamped(ts=1.0, position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
+    pose = PoseStamped(
+        header=Header(stamp=time_from_seconds(1.0), frame_id="map"),
+        pose=Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 0.0)),
+    )
     module._on_odom(pose)  # must not raise
     assert _published_json(module.map_out, "odom") is None
 
@@ -144,3 +154,33 @@ def test_oversized_map_dropped(module: MapCompressModule) -> None:
     module._on_costmap(_occupancy(noise))
     module.map_out.publish.assert_not_called()
     assert module._last_map_pub > 0  # throttle window consumed
+
+
+@pytest.mark.parametrize("kind", ["costmap", "odom"])
+def test_malformed_frame_does_not_kill_next_valid_cdr_update(module, kind):
+    if kind == "costmap":
+        broken = _occupancy([[100]])
+        broken.info.width = 2
+        module._on_costmap(broken)
+        good = _occupancy([[100]])
+        module._on_costmap(decode(encode(good), OccupancyGrid))
+        payload = _published_json(module.map_out, "map")
+        assert payload["w"] == 1 and payload["h"] == 1
+        assert good.data.tolist() == [100]
+    else:
+        module._on_odom(
+            PoseStamped(
+                Header(time_from_seconds(0), "map"), Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 0))
+            )
+        )
+        good = PoseStamped(
+            Header(time_from_seconds(17.25), "map"), Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
+        )
+        module._on_odom(decode(encode(good), PoseStamped))
+        assert _published_json(module.map_out, "odom") == {
+            "type": "odom",
+            "x": 1.0,
+            "y": 2.0,
+            "yaw": 0.0,
+            "ts": 17.25,
+        }
