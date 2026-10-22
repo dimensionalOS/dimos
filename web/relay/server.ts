@@ -10,7 +10,7 @@ import { makeEphemeralCert } from "./cert.ts";
 import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts";
 import { Registry } from "./registry.ts";
 import { RtcHub } from "./rtc.ts";
-import { forceGc, RobotSession, ViewerSession } from "./session.ts";
+import { RobotSession, ViewerSession } from "./session.ts";
 
 export interface RelayOptions {
   /**
@@ -94,18 +94,12 @@ const EPHEMERAL_PORT_ATTEMPTS = 10;
 
 // Registry housekeeping (publish timeouts) period.
 const TICK_MS = 500;
-// Forced garbage collection period. A robot sends every frame on its own
-// one-shot stream, and on Deno 2.6.10 a finished stream's slot in this
-// connection's incoming-stream budget returns only when its wrapper is
-// finalized (the relay can neither FIN nor reset its send half before
-// that), so without a collection a robot's burst wedges in aioquic once
-// the budget is spent. With viewer streams persistent there are only a
-// second's worth of finished robot streams to collect, so the pause stays
-// at its ~2 ms floor (gcMs in /api/stats).
-const GC_INTERVAL_MS = 1000;
-// Incoming bidirectional streams per connection, far above a second of any
-// robot's frames so the collection period never rate-limits a robot (quinn
-// defaults to 100). Viewers open one, their control stream.
+// Incoming bidirectional streams per connection (quinn defaults to 100). A
+// robot's data rides persistent streams, so only its rare @control frames
+// (hello, publish acks, rtc) take one-shot streams, whose slots on Deno
+// 2.6.10 return only when a garbage collection finalizes their wrappers;
+// the budget leaves room for a long session between collections. Viewers
+// open one, their control stream.
 const INCOMING_BIDI_STREAMS = 10_000;
 
 /** What the listeners serve: the ephemeral certificate or the operator's. */
@@ -226,12 +220,6 @@ export function installUnhandledRejectionGuard(): void {
       `[relay] unhandled rejection (ignored): ${(e.reason as Error)?.message ?? e.reason}${more}`,
     );
   });
-}
-
-/** Process-level figures for /api/stats: memory (Deno.memoryUsage, bytes)
- * and uptime, for soak runs watching for growth. */
-function processStats(startedAt: number): Record<string, number> {
-  return { uptimeMs: Date.now() - startedAt, ...Deno.memoryUsage() };
 }
 
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
@@ -366,14 +354,24 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   }
 
   const startedAt = Date.now();
-  const tickTimer = setInterval(() => registry.tick(Date.now()), TICK_MS);
-  const gcTimer = setInterval(() => forceGc(registry), GC_INTERVAL_MS);
-  // Pending timers must not keep the Deno process alive after shutdown().
+  // The tick's lateness is the event loop's lag (loopLagMs in /api/stats).
+  let tickDue = startedAt + TICK_MS;
+  const tickTimer = setInterval(() => {
+    const now = Date.now();
+    registry.loopLagged(Math.max(0, now - tickDue));
+    tickDue = now + TICK_MS;
+    registry.tick(now);
+  }, TICK_MS);
+  // A pending timer must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(tickTimer);
-  Deno.unrefTimer(gcTimer);
   const statsResponse = (headers?: HeadersInit): Response =>
     Response.json(
-      { ...(registry.stats() as Record<string, unknown>), process: processStats(startedAt) },
+      {
+        ...(registry.stats() as Record<string, unknown>),
+        // Memory (bytes) and uptime, for soak runs watching for growth.
+        memoryUsage: Deno.memoryUsage(),
+        uptimeMs: Date.now() - startedAt,
+      },
       { headers },
     );
 
@@ -465,7 +463,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
       clearInterval(tickTimer);
-      clearInterval(gcTimer);
       hub?.dispose();
       for (const wt of sessions) {
         try {

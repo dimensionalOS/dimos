@@ -18,6 +18,7 @@ import {
 } from "@dimos/shared";
 import type { CarrierStats } from "./carrier.ts";
 import {
+  ACK_TIMEOUT_MS,
   type ChannelPolicy,
   type FrameWriter,
   LATEST_SEND_ORDER,
@@ -44,6 +45,12 @@ class FakeSink implements ViewerSink {
   streamsAborted = 0;
   auto = true;
   #waiters: (() => void)[] = [];
+
+  #shared: Promise<FrameWriter> | null = null;
+
+  sharedStream(order: number): Promise<FrameWriter> {
+    return this.#shared ??= this.openStream(order);
+  }
 
   openStream(order: number): Promise<FrameWriter> {
     this.streamsOpened++;
@@ -385,7 +392,7 @@ Deno.test("watch switch disposes the old robot's policies", async () => {
   await tick(); // stream opened; frame 1 in flight, frame 2 queued
   send(reg, viewer, { t: "watch", robotId: "r2" });
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals(viewer.sink.streamsAborted, 0); // the shared reliable stream stays with the viewer
   viewer.sink.release(); // the in-flight write completes after the switch
   await tick();
   assertEquals(viewer.sink.sent.length, 1); // the queued r1 frame never went out
@@ -400,14 +407,14 @@ Deno.test("rapid watch switches release every abandoned persistent stream", asyn
   };
   reg.registerRobot(robots.r1);
   reg.registerRobot(robots.r2);
-  const viewer = attach(reg, "r1", ["odom"]);
-  reg.onRobotFrame(robots.r1, frame("odom", 0));
+  const viewer = attach(reg, "r1", ["color_image"]);
+  reg.onRobotFrame(robots.r1, frame("color_image", 0));
   let watching = "r1";
   for (let i = 1; i <= 6; i++) {
     watching = watching === "r1" ? "r2" : "r1";
     send(reg, viewer, { t: "watch", robotId: watching });
-    send(reg, viewer, { t: "sub", ch: "odom" });
-    reg.onRobotFrame(robots[watching], frame("odom", i));
+    send(reg, viewer, { t: "sub", ch: "color_image" });
+    reg.onRobotFrame(robots[watching], frame("color_image", i));
   }
   await tick();
   assertEquals(viewer.sink.streamsOpened, 7);
@@ -419,15 +426,15 @@ Deno.test("unsub disposes the channel's policy and releases its stream", async (
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
   reg.registerRobot(robot);
-  const viewer = attach(reg, "r1", ["odom"]);
-  reg.onRobotFrame(robot, frame("odom", 1));
+  const viewer = attach(reg, "r1", ["color_image"]);
+  reg.onRobotFrame(robot, frame("color_image", 1));
   await tick();
-  send(reg, viewer, { t: "unsub", ch: "odom" });
+  send(reg, viewer, { t: "unsub", ch: "color_image" });
   assertEquals(viewer.policies.size, 0);
   assertEquals(viewer.sink.streamsAborted, 1);
   // Re-subscribing starts a fresh policy on a fresh stream.
-  send(reg, viewer, { t: "sub", ch: "odom" });
-  reg.onRobotFrame(robot, frame("odom", 2));
+  send(reg, viewer, { t: "sub", ch: "color_image" });
+  reg.onRobotFrame(robot, frame("color_image", 2));
   await tick();
   assertEquals(viewer.sink.streamsOpened, 2);
   assertEquals(viewer.sink.sent.length, 2);
@@ -443,21 +450,23 @@ Deno.test("a delivery change disposes the superseded policy", async () => {
   assert(viewer.policies.get("tele") instanceof ReliableChannel);
   reg.onRobotFrame(robot, frame("tele", 2, "latest"));
   assert(viewer.policies.get("tele") instanceof LatestChannel);
-  assertEquals(viewer.sink.streamsAborted, 1); // the reliable writer released
+  assertEquals(viewer.sink.streamsAborted, 0); // the shared reliable stream outlives the policy
   await tick();
   assertEquals(viewer.sink.sent.length, 2);
+  assertEquals(viewer.sink.streamsOpened, 2); // the latest frame on a stream of its own
 });
 
 Deno.test("viewer teardown disposes its policies", async () => {
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
   reg.registerRobot(robot);
-  const viewer = attach(reg, "r1", ["odom"]);
+  const viewer = attach(reg, "r1", ["odom", "color_image"]);
   reg.onRobotFrame(robot, frame("odom", 1));
+  reg.onRobotFrame(robot, frame("color_image", 1));
   await tick();
   reg.viewerClosed(viewer);
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals(viewer.sink.streamsAborted, 1); // the latest stream; the shared one goes with the transport
 });
 
 Deno.test("manifest delivery wins over the frame header's", () => {
@@ -588,6 +597,37 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
   assertEquals(viewer.sink.streamsOpened, 3);
 });
 
+Deno.test("small reliable channels share one stream per viewer, bulk ones get their own", async () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", [
+    ...SPECS,
+    rxSpec("path", "json.v1", "reliable"),
+    rxSpec("cloud", "voxels.zlib.v1", "reliable"),
+  ]);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", ["odom", "path", "cloud"]);
+  reg.onRobotFrame(robot, frame("odom", 1, "reliable"));
+  reg.onRobotFrame(robot, frame("path", 1, "reliable"));
+  reg.onRobotFrame(robot, frame("odom", 2, "reliable"));
+  reg.onRobotFrame(robot, frame("cloud", 1, "reliable"));
+  await tick();
+  assertEquals(viewer.sink.streamsOpened, 2); // odom + path share, cloud is bulk
+  assertEquals(viewer.sink.orders, [RELIABLE_SEND_ORDER, RELIABLE_SEND_ORDER]);
+  const written = viewer.sink.sent.map((b) => parseRobotFrameHeader(b)!).map((h) =>
+    `${h.ch}:${h.seq}`
+  );
+  // Whole frames in offer order on the shared stream; cloud's own stream is independent.
+  assertEquals(written.filter((f) => !f.startsWith("cloud")), ["odom:1", "path:1", "odom:2"]);
+  assertEquals(written.filter((f) => f.startsWith("cloud")), ["cloud:1"]);
+  send(reg, viewer, { t: "unsub", ch: "odom" });
+  assertEquals(viewer.sink.streamsAborted, 0); // the shared stream outlives the channel
+  reg.onRobotFrame(robot, frame("path", 2, "reliable"));
+  await tick();
+  assertEquals(viewer.sink.streamsOpened, 2);
+  send(reg, viewer, { t: "unsub", ch: "cloud" });
+  assertEquals(viewer.sink.streamsAborted, 1);
+});
+
 Deno.test("claimRobot: a holder that answers its probe keeps the id; a silent one is superseded", async () => {
   const reg = new Registry();
   const first = new FakeRobot("r1", SPECS);
@@ -652,8 +692,8 @@ Deno.test("a viewer's acks release its latest channel; the tick times out missin
     await tick();
   }
   assertEquals(viewer.sink.sent.length, 4); // 4 and 5 unacked, 6 waits
-  now += 3000;
-  reg.tick(now); // nothing acked for 3 s: the timeout releases the slots
+  now += ACK_TIMEOUT_MS + 1000;
+  reg.tick(now); // nothing acked past the timeout: it releases the slots
   await tick();
   assertEquals(viewer.sink.sent.length, 5);
   const out = (reg.stats() as { perViewer: { channels: Record<string, Record<string, number>> }[] })
@@ -781,15 +821,20 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   assert((out.odom.bytesOut as number) > 0);
   assertEquals(viewer.sink.kicked, null);
   const top = reg.stats() as {
-    framesIncomplete: number;
+    swallowedIngress: number;
     streamCreditStalls: number;
     gcRuns: number;
-    gcMs: number;
+    gcPauseMs: number;
   };
-  assertEquals([top.framesIncomplete, top.streamCreditStalls, top.gcRuns, top.gcMs], [0, 0, 0, 0]);
+  assertEquals([top.swallowedIngress, top.streamCreditStalls, top.gcRuns, top.gcPauseMs], [
+    0,
+    0,
+    0,
+    0,
+  ]);
   reg.collected(1.5);
-  const after = reg.stats() as { gcRuns: number; gcMs: number };
-  assertEquals([after.gcRuns, after.gcMs], [1, 1.5]);
+  const after = reg.stats() as { gcRuns: number; gcPauseMs: number };
+  assertEquals([after.gcRuns, after.gcPauseMs], [1, 1.5]);
 });
 
 Deno.test("undeclared channel frames aggregate into one per-robot bucket", async () => {

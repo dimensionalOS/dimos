@@ -339,7 +339,7 @@ Deno.test("robot frames: a stream's frames route in order as they complete; stre
   dead.fail();
   await settle();
   assertEquals(dispatched, [1, 3, 2, 4]);
-  assertEquals((registry.stats() as { framesIncomplete: number }).framesIncomplete, 1);
+  assertEquals((registry.stats() as { swallowedIngress: number }).swallowedIngress, 1);
 });
 
 Deno.test("robot probe: a pong answers it, silence times it out, supersede closes", async () => {
