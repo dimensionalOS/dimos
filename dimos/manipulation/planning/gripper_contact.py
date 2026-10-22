@@ -33,7 +33,7 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 import trimesh
 
-from dimos.manipulation.planning.spec.gripper import GripperSpec
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.robot.assets.model import (
     CollisionDescription,
@@ -107,42 +107,48 @@ class GripperContactModel:
 
     Args:
         description: The robot's URDF, loaded.
-        spec: Contact patches and finger joint positions of the gripper.
+        gripper: Contact patches and finger joint positions of the gripper.
         tip_link: Link whose pose a grasp candidate gives (the tool tip).
 
-    Raises ValueError when a link or joint the spec names is not in the URDF.
+    Raises ValueError when a link or joint the gripper config names is not in the URDF.
     """
 
-    def __init__(self, description: LoadedRobotModel, spec: GripperSpec, tip_link: str) -> None:
+    def __init__(
+        self, description: LoadedRobotModel, gripper: GripperConfig, tip_link: str
+    ) -> None:
         links = {link.name: link for link in description.links}
         parent_joint = {joint.child_link: joint for joint in description.joints}
-        patch_links = [patch.link for patch in spec.contact_patches]
-        for name in [tip_link, *patch_links, *([spec.base_link] if spec.base_link else [])]:
+        patch_links = [patch.link for patch in gripper.contact_patches]
+        for name in [tip_link, *patch_links, *([gripper.base_link] if gripper.base_link else [])]:
             if name not in links:
                 raise ValueError(f"Gripper link {name!r} is not in the robot's URDF")
-        for name in spec.open_joints:
+        for name in gripper.open_joints:
             if description.get_joint(name) is None:
                 raise ValueError(f"Gripper joint {name!r} is not in the robot's URDF")
-        base = spec.base_link or _common_ancestor(parent_joint, [tip_link, *patch_links])
-        gripper = [link for link in links if base in _ancestors(parent_joint, link)]
-        self._shapes = [shape for link in gripper if (shape := _shape(links[link])) is not None]
+        base = gripper.base_link or _common_ancestor(parent_joint, [tip_link, *patch_links])
+        gripper_links = [link for link in links if base in _ancestors(parent_joint, link)]
+        self._shapes = [
+            shape for link in gripper_links if (shape := _shape(links[link])) is not None
+        ]
         self._patches = {
             link: [
                 (
                     np.subtract(p.center, np.divide(p.size, 2.0)),
                     np.add(p.center, np.divide(p.size, 2.0)),
                 )
-                for p in spec.contact_patches
+                for p in gripper.contact_patches
                 if p.link == link
             ]
-            for link in gripper
+            for link in gripper_links
         }
         # For each pose of the close, each link's pose in the tool tip's frame.
         self._tip_from_link: list[dict[str, NDArray[np.float64]]] = []
-        for positions in spec.joint_positions():
-            world = _link_poses(description.joints, parent_joint, [tip_link, *gripper], positions)
+        for positions in gripper.joint_positions():
+            world = _link_poses(
+                description.joints, parent_joint, [tip_link, *gripper_links], positions
+            )
             tip_inverse = np.linalg.inv(world[tip_link])
-            self._tip_from_link.append({link: tip_inverse @ world[link] for link in gripper})
+            self._tip_from_link.append({link: tip_inverse @ world[link] for link in gripper_links})
         corners = [
             (pose @ np.append(corner, 1.0))[:3]
             for poses in self._tip_from_link

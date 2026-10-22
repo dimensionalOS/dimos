@@ -73,7 +73,7 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # a grasp whose gripper would touch the target anywhere but its contact
     # patches (the finger pads), open or as the fingers close, or would overlap
     # another scene point, is dropped. None, or a robot model without a gripper
-    # spec, tries every grasp the provider gives.
+    # config, tries every grasp the provider gives.
     robot: RobotModelConfig | None = None
     # A gripper part closer than this (metres) to the target touches it.
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
@@ -247,7 +247,7 @@ class PickAndPlaceModule(Module):
         Returns the grasps that pass, and for the pick's result either
         ``contact_rejected`` (how many were dropped) or ``contact_check_skipped``
         (why every grasp was kept); nothing when the config has no robot model
-        with a gripper spec.
+        with a gripper config.
         """
         robot = self.config.robot
         if robot is None or robot.gripper is None or not candidates.candidates:

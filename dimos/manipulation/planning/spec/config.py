@@ -25,7 +25,7 @@ from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec.gripper import GripperSpec
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 
@@ -66,7 +66,7 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
     # Gripper feedback thresholds for pick/place.
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
-    gripper: GripperSpec | None = None
+    gripper: GripperConfig | None = None
 
     @field_validator("base_pose", mode="before")
     @classmethod

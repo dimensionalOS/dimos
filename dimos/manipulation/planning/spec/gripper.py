@@ -50,7 +50,7 @@ class ContactPatch(BaseConfig):
         return self
 
 
-class GripperSpec(BaseConfig):
+class GripperConfig(BaseConfig):
     """Which gripper surfaces may touch the object, and the finger positions of a close.
 
     Args:
@@ -76,7 +76,7 @@ class GripperSpec(BaseConfig):
     def _same_joints(self) -> Self:
         if set(self.open_joints) != set(self.closed_joints):
             raise ValueError(
-                "GripperSpec open_joints and closed_joints must name the same joints, got "
+                "GripperConfig open_joints and closed_joints must name the same joints, got "
                 f"{sorted(self.open_joints)} and {sorted(self.closed_joints)}"
             )
         return self

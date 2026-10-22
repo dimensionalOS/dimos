@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
+from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
@@ -56,7 +56,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 
-def xarm_gripper_spec(prefix: str = "") -> GripperSpec:
+def xarm_gripper_config(prefix: str = "") -> GripperConfig:
     """Where the xArm Gripper may touch a grasped object, and how it closes.
 
     Each finger's flat inner pad, measured from the xarm_description finger mesh
@@ -80,7 +80,7 @@ def xarm_gripper_spec(prefix: str = "") -> GripperSpec:
             size=(0.044, 0.012, 0.0503),
         )
 
-    return GripperSpec(
+    return GripperConfig(
         contact_patches=(pad("left_finger", -1.0), pad("right_finger", 1.0)),
         open_joints={f"{prefix}drive_joint": 0.0},
         closed_joints={f"{prefix}drive_joint": 0.85},
@@ -356,7 +356,7 @@ def make_xarm_model_config(
         collision_exclusion_pairs=(
             collision_exclusions if add_gripper and robot_type == "xarm" else []
         ),
-        gripper=xarm_gripper_spec(prefix) if add_gripper and robot_type == "xarm" else None,
+        gripper=xarm_gripper_config(prefix) if add_gripper and robot_type == "xarm" else None,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,

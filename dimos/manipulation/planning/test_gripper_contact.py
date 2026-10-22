@@ -27,7 +27,7 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.manipulation.planning.gripper_contact import GripperContactModel, scene_obstacles
-from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
+from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperConfig
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel
@@ -107,8 +107,8 @@ def _xarm(closing_steps: int = 4) -> GripperContactModel:
 
     config = make_xarm7_sim_robot_config()
     assert config.gripper is not None
-    spec = config.gripper.model_copy(update={"closing_steps": closing_steps})
-    return GripperContactModel(config.model.load(), spec, "link_tcp")
+    gripper = config.gripper.model_copy(update={"closing_steps": closing_steps})
+    return GripperContactModel(config.model.load(), gripper, "link_tcp")
 
 
 @pytest.fixture(scope="module")
@@ -243,7 +243,7 @@ def _hand(path: Path, closing_steps: int = 4) -> GripperContactModel:
     # Each finger's inner face lies at x = -0.005 in its own frame. The patch
     # covers it from 2 cm up to the tip, grown 6 mm along the face and past
     # the tip, 8 mm out toward the object and 4 mm into the finger.
-    spec = GripperSpec(
+    gripper = GripperConfig(
         contact_patches=tuple(
             ContactPatch(
                 link=f"finger_{i}", center=(-0.007, 0.0, 0.053), size=(0.012, 0.027, 0.066)
@@ -254,7 +254,7 @@ def _hand(path: Path, closing_steps: int = 4) -> GripperContactModel:
         closed_joints={"finger_0_joint": 0.4},
         closing_steps=closing_steps,
     )
-    return GripperContactModel(RobotModel.from_file(path).load(), spec, "tool")
+    return GripperContactModel(RobotModel.from_file(path).load(), gripper, "tool")
 
 
 @pytest.fixture(scope="module")
@@ -314,26 +314,26 @@ def test_three_finger_hand_rejects_a_neighbour_under_a_finger(hand: GripperConta
 def test_a_spec_naming_a_link_the_urdf_lacks_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "hand.urdf"
     path.write_text(_HAND_URDF.format(fingers=""))
-    spec = GripperSpec(
+    gripper = GripperConfig(
         contact_patches=(ContactPatch(link="finger_9", center=(0, 0, 0), size=(1, 1, 1)),)
     )
 
     with pytest.raises(ValueError, match="finger_9"):
-        GripperContactModel(RobotModel.from_file(path).load(), spec, "tool")
+        GripperContactModel(RobotModel.from_file(path).load(), gripper, "tool")
 
 
-def test_gripper_spec_steps_from_open_to_closed() -> None:
-    spec = GripperSpec(
+def test_gripper_config_steps_from_open_to_closed() -> None:
+    gripper = GripperConfig(
         contact_patches=(ContactPatch(link="pad", center=(0, 0, 0), size=(0.01, 0.01, 0.01)),),
         open_joints={"drive": 0.0},
         closed_joints={"drive": 0.8},
     )
 
-    assert [step["drive"] for step in spec.joint_positions()] == pytest.approx(
+    assert [step["drive"] for step in gripper.joint_positions()] == pytest.approx(
         [0.0, 0.2, 0.4, 0.6, 0.8]
     )
     with pytest.raises(ValueError, match="same joints"):
-        GripperSpec(contact_patches=spec.contact_patches, open_joints={"drive": 0.0})
+        GripperConfig(contact_patches=gripper.contact_patches, open_joints={"drive": 0.0})
 
 
 TABLE_Z = 0.745
