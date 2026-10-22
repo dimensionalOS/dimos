@@ -93,9 +93,13 @@ struct EvalConfig {
     loop_rotation_variance: f64,
     loop_translation_variance_floor: f64,
     loop_refinement_passes: u64,
+    loop_refinement_tolerance_m: f64,
+    loop_refinement_max_passes: u64,
     loop_gnc_final: bool,
     loop_gnc_var_scale: f64,
     loop_gnc_inlier_probability: f64,
+    loop_gnc_apply_after_fraction: f64,
+    loop_gnc_confirmations: u64,
 
     use_location_constraints: bool,
 
@@ -155,9 +159,13 @@ impl Default for EvalConfig {
             loop_rotation_variance: 0.0,
             loop_translation_variance_floor: 0.0,
             loop_refinement_passes: 5,
+            loop_refinement_tolerance_m: 0.01,
+            loop_refinement_max_passes: 200,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
             loop_gnc_inlier_probability: 0.99,
+            loop_gnc_apply_after_fraction: 0.05,
+            loop_gnc_confirmations: 2,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
@@ -203,9 +211,13 @@ impl EvalConfig {
             loop_rotation_variance: self.loop_rotation_variance,
             loop_translation_variance_floor: self.loop_translation_variance_floor,
             loop_refinement_passes: self.loop_refinement_passes,
+            loop_refinement_tolerance_m: self.loop_refinement_tolerance_m,
+            loop_refinement_max_passes: self.loop_refinement_max_passes,
             loop_gnc_final: self.loop_gnc_final,
             loop_gnc_var_scale: self.loop_gnc_var_scale,
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
+            loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
+            loop_gnc_confirmations: self.loop_gnc_confirmations,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
@@ -353,6 +365,10 @@ struct Args {
     /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
     /// points, for lidar streams not already expressed in the odom body frame.
     lidar_tf: Option<[f64; 7]>,
+    /// new-body pose in the odom body frame as "x,y,z,qx,qy,qz,qw": re-expresses every odom
+    /// pose and scan in that frame, e.g. a level frame for an odometry whose body is a tilted
+    /// sensor (FAST-LIO on a pitched Mid-360), since loop search assumes level clouds.
+    body_tf: Option<[f64; 7]>,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
@@ -377,6 +393,7 @@ fn parse_args() -> Result<Args, String> {
     let mut scan_stride = 1usize;
     let mut odom_stride = 1usize;
     let mut lidar_tf = None;
+    let mut body_tf = None;
     let mut event_dump = None;
 
     let mut args = std::env::args().skip(1);
@@ -391,6 +408,7 @@ fn parse_args() -> Result<Args, String> {
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
+            "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown flag {other}")),
         }
@@ -405,6 +423,7 @@ fn parse_args() -> Result<Args, String> {
         scan_stride: scan_stride.max(1),
         odom_stride: odom_stride.max(1),
         lidar_tf,
+        body_tf,
         event_dump,
     })
 }
@@ -475,7 +494,21 @@ fn run() -> Result<(), String> {
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
-    let odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    let mut odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    let body_tf = args
+        .body_tf
+        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
+    if let Some((body_rotation, body_translation)) = &body_tf {
+        for row in &mut odoms {
+            row.translation = mat3::add(
+                &row.translation,
+                &mat3::mat_vec(&row.rotation, body_translation),
+            );
+            row.rotation = mat3::mat_mul(&row.rotation, body_rotation);
+            let [qw, qx, qy, qz] = mat3::quat_from_mat(&row.rotation);
+            row.quaternion_xyzw = [qx, qy, qz, qw];
+        }
+    }
     let scans = read_scans(&connection, &args.lidar_stream, args.scan_stride)?;
 
     let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
@@ -533,6 +566,15 @@ fn run() -> Result<(), String> {
         if let Some((rotation, translation)) = &lidar_tf {
             cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
         }
+        if let Some((body_rotation, body_translation)) = &body_tf {
+            let inverse = mat3::transpose(body_rotation);
+            let offset = mat3::mat_vec(&inverse, body_translation);
+            cloud = pointcloud::transform_cloud(
+                &cloud,
+                &inverse,
+                &[-offset[0], -offset[1], -offset[2]],
+            );
+        }
         if config.subtract_odom_from_cloud && !cloud.is_empty() {
             let rotation_inverse = mat3::transpose(&latest.rotation);
             let negated = [
@@ -569,11 +611,12 @@ fn run() -> Result<(), String> {
             closures += 1;
         }
         pgo.smooth_and_update();
+        pgo.step_gnc();
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
         }
     }
-    pgo.finalize_gnc();
+    pgo.finish_gnc();
     if let Some(events) = &mut events {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         write_pose_changes(events, &pgo, &mut published, false, ts)?;
