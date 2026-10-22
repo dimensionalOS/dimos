@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from pydantic import Field
@@ -42,7 +42,6 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -67,7 +66,6 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
-    yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
     # The robot, for checking grasps against its gripper's shape before moving:
     # a grasp whose gripper would touch the target anywhere but its contact
@@ -301,14 +299,11 @@ class PickAndPlaceModule(Module):
 
         last_plan = ""
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
-            grasp = self._apply_yaw_policy(
-                PoseStamped(
-                    ts=candidates.header.timestamp,
-                    frame_id=candidates.header.frame_id,
-                    position=candidate.pose.position,
-                    orientation=candidate.pose.orientation,
-                ),
-                group,
+            grasp = PoseStamped(
+                ts=candidates.header.timestamp,
+                frame_id=candidates.header.frame_id,
+                position=candidate.pose.position,
+                orientation=candidate.pose.orientation,
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
             blocked = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
@@ -483,21 +478,6 @@ class PickAndPlaceModule(Module):
         """
         source = "planner" if isinstance(result, PlanResult) else "execution"
         return SkillResult(f"{step} did not complete; {source} returned {_status(result)}")
-
-    def _apply_yaw_policy(self, pose: PoseStamped, group: PlanningGroupID) -> PoseStamped:
-        if self.config.yaw_policy == "generated":
-            return pose
-        current = self._manipulation.get_state().groups[group].end_effector_pose
-        if current is None:
-            return pose
-        euler = pose.orientation.to_euler()
-        current_euler = current.orientation.to_euler()
-        return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position,
-            orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
-        )
 
     @staticmethod
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
