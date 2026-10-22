@@ -601,9 +601,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
         _write_json(staging / "audit" / "pairs.json", audit_rows)
         # Never delete a completed dataset from a concurrent writer.
         if output.exists() and any(output.iterdir()):
-            raise FileExistsError(
-                f"VQA output directory already exists after generation: {output}"
-            )
+            raise FileExistsError(f"VQA output directory already exists after generation: {output}")
         if output.exists():
             output.rmdir()
         shutil.move(str(staging), str(output))
