@@ -170,8 +170,7 @@ def _collect_frame_meta(
         )
     }
     key_to_index: dict[tuple[object, ...], int] = {
-        cast("tuple[object, ...]", obj["key"]): index
-        for index, obj in enumerate(objects, start=1)
+        cast("tuple[object, ...]", obj["key"]): index for index, obj in enumerate(objects, start=1)
     }
     index_category = {
         index: str(obj["name"]).casefold() for index, obj in enumerate(objects, start=1)
