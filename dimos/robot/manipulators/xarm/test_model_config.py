@@ -87,7 +87,7 @@ def test_lite6_model_config_selects_lite_robot_type() -> None:
     config = make_lite6_model_config(add_gripper=True, gripper_hardware_id="arm")
 
     assert dict(config.model._xacro_args)["robot_type"] == "lite"
-    assert config.joint_names == [f"joint{i}" for i in range(1, 7)]
+    assert config.joint_names == [f"arm/joint{i}" for i in range(1, 7)]
     assert config.planning_groups[0].tip_link == "link_tcp"
     assert config.collision_exclusion_pairs == []
 

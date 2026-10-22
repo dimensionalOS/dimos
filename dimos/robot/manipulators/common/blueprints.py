@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypedDict
+from dataclasses import replace
+from typing import Any, TypedDict, get_type_hints
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -32,12 +34,16 @@ from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
 )
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.common.coordinators import ArmCoordinator, DualArmCoordinator
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
     EEF_TWIST_TASK_NAME,
 )
+from dimos.robot.manipulators.piper.connection import PiperConnection
+from dimos.robot.manipulators.xarm.connection import XArmConnection
 
 
 class TeleopBinding(TypedDict):
@@ -160,19 +166,94 @@ def coordinator(
     instance_name: str | None = None,
     publish_robot_joint_states: bool = False,
     publish_frame_poses: bool = False,
+    camera_pointcloud: bool = False,
+    base_poses: dict[str, PoseStamped] | None = None,
 ) -> Blueprint:
     """*cls* is the subclass declaring the `{hardware_id}_joints` outputs; pass
     instance_name="ControlCoordinator" with it so RPC clients still find it."""
-    return cls.blueprint(
+    devices: list[Blueprint] = []
+    remappings = []
+    gripper_limits = {}
+    for component in hardware:
+        family = component.adapter_type
+        if family not in ("xarm", "piper"):
+            # Explicit mock/other real-device stacks retain their existing host.
+            if devices:
+                raise ValueError("one coordinator cannot mix connections and hardware adapters")
+            continue
+        connection = XArmConnection if family == "xarm" else PiperConnection
+        source = component.hardware_id
+        name = source + "_connection"
+        dof = sum(not joint.endswith("/gripper") for joint in component.joints)
+        device_config = get_type_hints(connection)["config"](
+            source=source,
+            dof=dof,
+            gripper=len(component.joints) != dof,
+        )
+        if device_config.position_command.gripper is not None:
+            spec = device_config.position_command.gripper
+            gripper_limits[f"{source}/{spec.name}"] = (spec.lo, spec.hi)
+        initial = component.adapter_kwargs.get("initial_positions")
+        devices.append(
+            connection.blueprint(
+                instance_name=name,
+                source=source,
+                dof=dof,
+                address=str(
+                    component.address or (global_config.robot_ip if family == "xarm" else "can0")
+                ),
+                gripper=len(component.joints) != dof,
+                initial_positions=initial[:dof] if initial is not None else None,
+                auto_enable=component.auto_enable,
+                base_pose=(base_poses or {}).get(source),
+                camera_pointcloud=camera_pointcloud,
+                **(
+                    {"robot_type": component.adapter_kwargs.get("robot_type", "xarm")}
+                    if family == "xarm"
+                    else {}
+                ),
+            )
+        )
+        remappings.extend(
+            [
+                (name, "position_command", f"{source}_position_command"),
+                (name, "velocity_command", f"{source}_velocity_command"),
+                (name, "joint_state", f"{source}_joint_state"),
+            ]
+        )
+        for port in (
+            ()
+            if len(hardware) != 1
+            else ("color_image", "depth_image", "camera_info", "depth_camera_info", "pointcloud")
+        ):
+            remappings.append((f"{name}_wrist_camera", port, port))
+    if devices and len(devices) != len(hardware):
+        raise ValueError("one coordinator cannot mix connections and hardware adapters")
+    if devices and cls is ControlCoordinator:
+        cls = ArmCoordinator if len(devices) == 1 else DualArmCoordinator
+        instance_name = instance_name or "ControlCoordinator"
+    controller = cls.blueprint(
         tick_rate=tick_rate,
         publish_joint_state=publish_joint_state,
         publish_robot_joint_states=publish_robot_joint_states,
         publish_frame_poses=publish_frame_poses,
         joint_state_frame_id=joint_state_frame_id,
         instance_name=instance_name,
-        hardware=list(hardware),
-        tasks=list(tasks),
+        hardware=[] if devices else list(hardware),
+        tasks=[
+            replace(
+                task,
+                params={
+                    **task.params,
+                    "position_limits": [gripper_limits[name] for name in task.joint_names],
+                },
+            )
+            if devices and task.type == "gripper"
+            else task
+            for task in tasks
+        ],
     )
+    return autoconnect(controller, *devices).remappings(remappings)
 
 
 def planner(

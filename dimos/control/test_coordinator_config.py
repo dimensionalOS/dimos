@@ -110,7 +110,7 @@ def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
     make_coordinator: Callable[[str], ControlCoordinator],
 ) -> None:
     coordinator = make_coordinator("mujoco")
-    component = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+    component = make_xarm_hardware("arm", 7, adapter_type="sim_mujoco", gripper=True)
     assert (component.adapter_type, component.address) == ("sim_mujoco", None)
 
     with pytest.raises(RuntimeError, match="no MujocoSimModule"):

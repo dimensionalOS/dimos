@@ -177,3 +177,13 @@ def test_task_requires_finite_ordered_limits(limits: list[tuple[float, float]]) 
             GripperControlTaskConfig(joint_names=["arm/tool_joint"]),
             limits=limits,
         )
+
+
+def test_connection_limits_do_not_require_an_in_process_adapter() -> None:
+    cfg = _cfg(["arm/gripper"])
+    cfg.params = {"position_limits": [(0.0, 850.0)]}
+    task = create_task(cfg, hardware={})
+    assert task.set_normalized([0.5])
+    output = task.compute(_state())
+    assert output is not None
+    assert output.positions == [425.0]
