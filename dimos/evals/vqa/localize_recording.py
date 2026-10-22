@@ -251,9 +251,7 @@ def localize_window(
         named: list[tuple[str, Localization]] = []
         with DanDetector(embedder, detector, segmenter) as dan:
             index = embed_index(rig, dan.embedder, after, before)
-            results = dan.localize(
-                query_list, index=index, rig=rig, params=_ROOM_LOCALIZE_PARAMS
-            )
+            results = dan.localize(query_list, index=index, rig=rig, params=_ROOM_LOCALIZE_PARAMS)
             for query, hits in zip(query_list, results, strict=True):
                 logger.info(f"localize verification {query!r}: {len(hits)} hit(s)")
                 for hit in hits:
