@@ -31,13 +31,14 @@ jobs:
       - name: uv lock
         run: uv lock
 
-      - name: Did native/ or a module's flake or Cargo files change?
+      - name: Did native/ or a module's flake or Cargo files change, or does a pin miss this commit's code?
         id: shared
         run: |
           set -euo pipefail
           base=${{ github.event.pull_request.base.sha }}
           git fetch --quiet --depth 1 origin "$base"
-          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock'; then
+          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock' \
+            && python3 bin/relock-shared-flakes --check; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"

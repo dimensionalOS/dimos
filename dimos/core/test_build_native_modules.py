@@ -463,24 +463,11 @@ def test_module_locks_pin_the_shared_code_as_it_is_now() -> None:
     while every module still builds against the revision before it. The revision is
     free to be older than HEAD; what must match is the content it pins.
     """
-    stale = {
-        _rel(lock): names
-        for lock in _RELOCK.flake_locks()
-        if (names := _RELOCK.stale_flake_inputs(lock))
-    }
-    stale |= {
-        _rel(manifest): why
-        for manifest in _RELOCK.cargo_manifests()
-        if (why := _RELOCK.stale_cargo_pins(manifest))
-    }
+    stale = _RELOCK.stale_pins()
     assert not stale, (
         "these modules pin shared code that is not the code in this commit, so they build "
         f"against the older version: {stale} -- push, run bin/relock-shared-flakes, commit"
     )
-
-
-def _rel(path: Path) -> str:
-    return path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
 
 
 _BUILD_EDGES = ("nixpkgs", "dimos-native-rust", "dimos-native-cpp")
