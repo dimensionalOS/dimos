@@ -159,6 +159,7 @@ class ModuleBase(Configurable, CompositeResource):
     _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
+    _loop_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
@@ -167,6 +168,7 @@ class ModuleBase(Configurable, CompositeResource):
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
+        self._loop_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
@@ -228,16 +230,17 @@ class ModuleBase(Configurable, CompositeResource):
 
         # Save into local variables to avoid race when stopping concurrently
         # (from RPC and worker shutdown)
-        loop_thread = getattr(self, "_loop_thread", None)
-        loop = getattr(self, "_loop", None)
+        with self._loop_lock:
+            loop_thread = getattr(self, "_loop_thread", None)
+            loop = getattr(self, "_loop", None)
 
-        if loop_thread:
-            if loop_thread.is_alive():
-                if loop:
-                    loop.call_soon_threadsafe(loop.stop)
-                loop_thread.join(timeout=self._loop_thread_timeout)
-            self._loop = None
-            self._loop_thread = None
+            if loop_thread:
+                if loop_thread.is_alive():
+                    if loop:
+                        loop.call_soon_threadsafe(loop.stop)
+                    loop_thread.join(timeout=self._loop_thread_timeout)
+                self._loop = None
+                self._loop_thread = None
 
         if self._tf is not None:
             self._tf.dispose()
@@ -270,6 +273,7 @@ class ModuleBase(Configurable, CompositeResource):
         # Remove unpicklable attributes
         state.pop("_disposables", None)
         state.pop("_module_closed_lock", None)
+        state.pop("_loop_lock", None)
         state.pop("_loop", None)
         state.pop("_loop_thread", None)
         state.pop("_rpc", None)
@@ -284,6 +288,7 @@ class ModuleBase(Configurable, CompositeResource):
         self.__dict__.update(state)
         # Reinitialize runtime attributes
         self._module_closed_lock = threading.Lock()
+        self._loop_lock = threading.Lock()
         self._loop = None
         self._loop_thread = None
         self._rpc = None
@@ -670,29 +675,30 @@ class ModuleBase(Configurable, CompositeResource):
 
     def _stop_main(self) -> None:
         """Resume `main` past its yield so the teardown section runs."""
-        gen = self._main_gen
-        if gen is None:
-            return
-        self._main_gen = None
-        loop = self._loop
-        if loop is None or not loop.is_running():
-            return
-        try:
-            asyncio.run_coroutine_threadsafe(gen.__anext__(), loop).result()
-        except StopAsyncIteration:
-            return
-        except BaseException as e:
-            # Do not fail teardown if main raises. Log and continue with best
-            # effort to close the module.
-            logger.exception(
-                f"Error during {type(self).__name__}.main teardown: {type(e).__name__}: {e}"
-            )
-            return
-        # No StopAsyncIteration means main yielded a second time.
-        try:
-            asyncio.run_coroutine_threadsafe(gen.aclose(), loop).result()
-        except BaseException:
-            pass
+        with self._loop_lock:
+            gen = self._main_gen
+            if gen is None:
+                return
+            self._main_gen = None
+            loop = self._loop
+            if loop is None or not loop.is_running():
+                return
+            try:
+                asyncio.run_coroutine_threadsafe(gen.__anext__(), loop).result()
+            except StopAsyncIteration:
+                return
+            except BaseException as e:
+                # Do not fail teardown if main raises. Log and continue with best
+                # effort to close the module.
+                logger.exception(
+                    f"Error during {type(self).__name__}.main teardown: {type(e).__name__}: {e}"
+                )
+                return
+            # No StopAsyncIteration means main yielded a second time.
+            try:
+                asyncio.run_coroutine_threadsafe(gen.aclose(), loop).result()
+            except BaseException:
+                pass
         logger.error(
             f"{type(self).__name__}.main yielded more than once; "
             "expected exactly one yield (setup, then teardown)"

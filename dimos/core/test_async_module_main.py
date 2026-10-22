@@ -14,8 +14,10 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from concurrent.futures import Future
 import logging
 from queue import Queue
+import threading
 from typing import Any
 
 import pytest
@@ -103,6 +105,38 @@ def test_main_teardown_runs_only_once():
     # Calling stop() again should be a no-op for main (already torn down).
     m.stop()
     assert m.resource.stop_count == 1
+
+
+def test_concurrent_stops_let_main_tear_down():
+    # The coordinator stops a module twice: the fire-and-forget stop RPC and
+    # the worker's undeploy/shutdown handler.
+    in_teardown = threading.Event()
+    release: Future[None] = Future()
+
+    class GatedTeardownMain(Module):
+        torn_down: bool = False
+
+        async def main(self) -> AsyncIterator[None]:
+            yield
+            in_teardown.set()
+            await asyncio.wrap_future(release)
+            self.torn_down = True
+
+    m = GatedTeardownMain()
+    m.start()
+    first = threading.Thread(target=m.stop, daemon=True)
+    first.start()
+    assert in_teardown.wait(timeout=5)
+    # The teardown holds the loop lock, so the second stop queues behind it
+    # instead of closing the module (and stopping its loop) underneath it.
+    assert m._loop_lock.locked()
+    second = threading.Thread(target=m.stop, daemon=True)
+    second.start()
+    release.set_result(None)
+    first.join(timeout=5)
+    second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
+    assert m.torn_down is True
 
 
 class NoYieldMain(Module):
