@@ -291,7 +291,7 @@ my_skill_container = MySkillContainer.blueprint
 | Robot | File | Variable |
 |-------|------|----------|
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
-| G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
+| G1 humanoid | `dimos/robot/unitree/g1/skills/prompt.py` | `G1_SYSTEM_PROMPT` |
 
 Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 

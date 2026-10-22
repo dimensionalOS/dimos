@@ -16,19 +16,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.unitree.g1.model.config import G1_URDF_PATH
+from dimos.robot.unitree.g1.model.joints import (
     g1_arms,
     g1_joints,
     g1_legs_waist,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
 
-G1_URDF_PATH = Path(__file__).resolve().parent / "g1.urdf"
 G1_WAIST_JOINTS = tuple(g1_legs_waist[-3:])
 G1_LEFT_ARM_JOINTS = tuple(g1_arms[:7])
 G1_RIGHT_ARM_JOINTS = tuple(g1_arms[7:])

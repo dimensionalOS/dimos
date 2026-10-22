@@ -454,7 +454,7 @@ def test_an_arm_whose_model_has_fingers_names_its_joints(tmp_path: Path) -> None
 #: The G1 shipped in this repo, to check the presets against a model nobody
 #: here wrote. Its expected numbers are typed out rather than read back from
 #: the same file, so a change to the model fails here instead of agreeing.
-G1_URDF = Path(__file__).resolve().parents[2] / "robot" / "unitree" / "g1" / "g1.urdf"
+G1_URDF = Path(__file__).resolve().parents[2] / "robot" / "unitree" / "g1" / "assets" / "g1.urdf"
 G1_LEG = ("left_hip_pitch", "left_hip_roll", "left_knee")
 
 

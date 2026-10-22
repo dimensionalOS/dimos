@@ -31,9 +31,9 @@ from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for
 from dimos.memory.module import default_recording_dir
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
-from dimos.robot.unitree.g1.g1_recorder import G1Recorder
-from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
+from dimos.robot.unitree.g1.devices.stock.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.sensors.recorder import G1Recorder
+from dimos.robot.unitree.g1.sensors.transforms import G1TfPublisher
 from dimos.visualization.vis_module import vis_module
 
 _RECORDING_DIR = default_recording_dir()

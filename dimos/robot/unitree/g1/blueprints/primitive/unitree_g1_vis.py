@@ -22,7 +22,11 @@ import numpy as np
 
 from dimos.core.global_config import global_config
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override, g1_static_robot
+from dimos.robot.unitree.g1.visualization.rerun import (
+    g1_costmap,
+    g1_odometry_tf_override,
+    g1_static_robot,
+)
 from dimos.visualization.vis_module import vis_module
 
 _PATH_Z_LIFT = 0.3

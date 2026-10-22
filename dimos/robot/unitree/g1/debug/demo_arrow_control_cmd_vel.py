@@ -25,7 +25,7 @@ import lcm
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.devices.stock.dds_sdk import G1HighLevelDdsSdk
 
 CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs.Twist"
 

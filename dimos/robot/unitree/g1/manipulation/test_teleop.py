@@ -21,11 +21,6 @@ import numpy as np
 import pytest
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    g1_arms,
-    g1_joints,
-    g1_legs_waist,
-)
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
@@ -37,8 +32,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    _G1_TELEOP_MODEL,
-    _G1GrootCoordinator,
     unitree_g1_groot_wbc,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
@@ -46,12 +39,19 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1ManipulationModule,
     unitree_g1_teleop,
 )
-from dimos.robot.unitree.g1.manip_config import (
+from dimos.robot.unitree.g1.controllers.groot.blueprint import G1_TELEOP_MODEL
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.manipulation.config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
-from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.manipulation.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.model.joints import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
@@ -77,21 +77,21 @@ def test_g1_blueprint_uses_shared_bimanual_teleop_task() -> None:
     assert task.name == "teleop_g1"
     assert task.joint_names == g1_arms
     assert task.priority == 20
-    assert task.params["robot_model"] is _G1_TELEOP_MODEL
+    assert task.params["robot_model"] is G1_TELEOP_MODEL
     assert task.params["solver_type"] is G1PinkPoseTargetSolver
     assert task.params["bindings"] == [
         {"hand": "left", "target_frame": "left_rubber_hand"},
         {"hand": "right", "target_frame": "right_rubber_hand"},
     ]
-    assert _G1_TELEOP_MODEL.base_link == "pelvis"
-    assert _G1_TELEOP_MODEL.joint_names == g1_arms
+    assert G1_TELEOP_MODEL.base_link == "pelvis"
+    assert G1_TELEOP_MODEL.joint_names == g1_arms
     assert task.params["max_joint_velocity_rad_s"] == pytest.approx(np.deg2rad(120.0))
 
 
 @pytest.mark.self_hosted
 def test_g1_teleop_model_passes_planning_validation() -> None:
     """The coordinator prepares this model at start; missing limits raise here."""
-    assert prepare_robot_model(_G1_TELEOP_MODEL).joint_space
+    assert prepare_robot_model(G1_TELEOP_MODEL).joint_space
 
 
 def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
@@ -193,7 +193,7 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
-        is _G1GrootCoordinator
+        is G1GrootCoordinator
     )
 
 

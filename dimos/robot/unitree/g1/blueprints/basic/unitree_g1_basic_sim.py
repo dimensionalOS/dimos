@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,19 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 sim stack: base sensors plus sim connection and planner."""
+"""G1 simulation using GR00T control, shared navigation and frontier exploration."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
-    unitree_g1_primitive_no_nav,
+from dimos.core.global_config import global_config
+from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
 )
-from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
+from dimos.robot.unitree.g1.blueprints.navigation._g1_navigation import g1_navigation
+from dimos.robot.unitree.g1.controllers.groot.blueprint import groot_control
+from dimos.robot.unitree.g1.visualization.rerun import g1_viewer
+
+_simulated = global_config.simulation == "mujoco"
 
 unitree_g1_basic_sim = autoconnect(
-    unitree_g1_primitive_no_nav,
-    G1SimConnection.blueprint(),
-    ReplanningAStarPlanner.blueprint(),
-    MovementManager.blueprint(),
+    groot_control(simulated=_simulated),
+    g1_navigation(simulated=_simulated),
+    g1_viewer(global_config.viewer, simulated=_simulated, joint_topic="g1_joints"),
+    WavefrontFrontierExplorer.blueprint(),
 )

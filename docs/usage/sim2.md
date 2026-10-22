@@ -39,6 +39,31 @@ Ray patterns belong to `lidar/models/`; image renderers belong to
 the choice of devices, their mounts and its actuator bindings. Tests live with
 their owner; cross-sensor acquisition tests stay in `sensors/test_sensors.py`.
 
+### Robot-owned code
+
+G1's package keeps the public entry at `connection.py`. The implementation is
+organized by responsibility, not by which blueprint first needed a file:
+
+```text
+dimos/robot/unitree/g1/
+  connection.py, connection_spec.py   Public robot interface
+  model/                             Joint groups, physical metadata, sim bindings
+  assets/                            Robot MJCF and URDF
+  devices/                           DDS motors, fault checks, stock SDK/WebRTC
+  controllers/groot/                 Gains, coordinator host, control composition
+  manipulation/                      Planning groups, arm IK, ready pose
+  sensors/                           Real sensor transforms and recording
+  visualization/                     G1 Rerun configuration
+  skills/                            Robot skills and agent prompt
+  blueprints/                        Runnable stacks and navigation composition
+```
+
+The GR00T coordinator task remains in `control/tasks/g1_groot_wbc_task/`, where
+the coordinator discovers tasks. SONIC is maintained in the independent G1
+PRs #4304, #4305 and #3557; this stack does not include its implementation or
+sim2 integration. Changing a policy does not require moving or duplicating
+the robot description.
+
 | Component | Owns |
 | --- | --- |
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |

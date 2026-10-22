@@ -21,8 +21,8 @@ from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.agents.skills.speak_skill import SpeakSkill
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
-from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
+from dimos.robot.unitree.g1.skills.module import UnitreeG1SkillContainer
+from dimos.robot.unitree.g1.skills.prompt import G1_SYSTEM_PROMPT
 
 _agentic_skills = autoconnect(
     McpServer.blueprint(),

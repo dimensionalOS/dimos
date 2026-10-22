@@ -24,6 +24,8 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
+G1_URDF_PATH = Path(__file__).parents[1] / "assets" / "g1.urdf"
+
 
 @dataclass(frozen=True)
 class G1Config:
@@ -38,7 +40,7 @@ class G1Config:
 
 G1 = G1Config(
     name="unitree_g1",
-    model_path=Path(__file__).parent / "g1.urdf",
+    model_path=G1_URDF_PATH,
     height_clearance=1.2,
     width_clearance=0.6,
     internal_odom_offsets={

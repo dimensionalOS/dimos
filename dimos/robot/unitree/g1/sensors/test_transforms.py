@@ -19,7 +19,7 @@ import math
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.tf.tf import MultiTBuffer
-from dimos.robot.unitree.g1.g1_tf_publisher import (
+from dimos.robot.unitree.g1.sensors.transforms import (
     D435_PITCH,
     MID360_PITCH,
     base_to_torso,

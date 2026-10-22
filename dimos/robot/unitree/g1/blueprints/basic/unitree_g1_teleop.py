@@ -25,16 +25,14 @@ mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
     Y                 discard the in-progress episode
 
 Controller poses route to the shared ``teleop_g1`` coordinator task declared
-in the groot blueprint. WebXR thumbstick locomotion is intentionally deferred;
+in the GR00T control composition. WebXR thumbstick locomotion is intentionally deferred;
 this module does not route controller axes to the GR00T WBC task.
 
 Recording runs continuously into a timestamped session DB under
 ``~/.local/state/dimos/recordings/``; B/Y only place episode markers
 (EpisodeMonitorModule). Off-sim, a RealSense provides ``color_image`` —
 recorded for training and pushed into the headset as the operator's view.
-The groot MuJoCo sim publishes no color camera, so sim sessions record
-joints/commands only (point DataPrep's sync anchor at joint state, or
-enable a sim color camera, if you need images from sim).
+In simulation, sim2's G1 camera supplies the color images.
 
 Export afterwards with ``dimos dataprep build`` — measured joint state,
 the commanded wrist poses, and episode status are all in the DB, so
@@ -63,11 +61,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    _G1GrootCoordinator,
-    _unitree_g1_groot_wbc_core,
-)
-from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
+from dimos.robot.unitree.g1.controllers.groot.blueprint import groot_control
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.manipulation.config import g1_manipulation_model_config
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
@@ -110,8 +106,7 @@ if not global_config.simulation:
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
-    """Real RealSense only off-sim: the groot MuJoCo sim exposes no color
-    camera, and instantiating the module with no device would fail."""
+    """Use the hardware RealSense only off-sim; sim2 supplies its own camera."""
     if global_config.simulation:
         return ()
     return (DedicatedRealSenseCamera.blueprint(enable_pointcloud=False),)
@@ -122,7 +117,7 @@ class G1ManipulationModule(ManipulationModule):
 
 
 unitree_g1_teleop = autoconnect(
-    _unitree_g1_groot_wbc_core,
+    groot_control(simulated=global_config.simulation == "mujoco"),
     VideoArmTeleopModule.blueprint(),
     G1ManipulationModule.blueprint(
         instance_name="G1Manipulation",
@@ -151,6 +146,6 @@ unitree_g1_teleop = autoconnect(
     [
         (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
         (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
+        (G1ManipulationModule, "_control_coordinator", G1GrootCoordinator),
     ]
 )

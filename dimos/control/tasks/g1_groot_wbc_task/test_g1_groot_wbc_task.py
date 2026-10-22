@@ -30,13 +30,12 @@ import numpy as np
 import pytest
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.task import CoordinatorState, JointStateSnapshot, SensorStateSnapshot
 from dimos.control.tasks.g1_groot_wbc_task import g1_groot_wbc_task
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTask,
     G1GrootWBCTaskConfig,
 )
-from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 
@@ -96,26 +95,12 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture
-def stub_adapter() -> MagicMock:
-    adapter = MagicMock()
-    adapter.read_imu.return_value = IMUState(
-        quaternion=(1.0, 0.0, 0.0, 0.0),
-        gyroscope=(0.0, 0.0, 0.0),
-        accelerometer=(0.0, 0.0, -9.81),
-        rpy=(0.0, 0.0, 0.0),
-    )
-    return adapter
-
-
-@pytest.fixture
 def joints_29() -> list[str]:
     return make_humanoid_joints("g1")
 
 
 @pytest.fixture
-def task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -127,7 +112,6 @@ def task(
             auto_arm=True,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
     )
     try:
         yield task
@@ -136,9 +120,7 @@ def task(
 
 
 @pytest.fixture
-def unarmed_task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def unarmed_task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -150,7 +132,6 @@ def unarmed_task(
             auto_arm=False,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
     )
     try:
         yield task
@@ -160,6 +141,22 @@ def unarmed_task(
 
 def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
     return CoordinatorState(
+        sensors=SensorStateSnapshot(
+            {
+                "g1/imu": {
+                    "qw": 1.0,
+                    "qx": 0.0,
+                    "qy": 0.0,
+                    "qz": 0.0,
+                    "gx": 0.0,
+                    "gy": 0.0,
+                    "gz": 0.0,
+                    "ax": 0.0,
+                    "ay": 0.0,
+                    "az": -9.81,
+                }
+            }
+        ),
         joints=JointStateSnapshot(
             joint_positions={n: 0.0 for n in joint_names},
             joint_velocities={n: 0.0 for n in joint_names},
@@ -209,7 +206,7 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     np.testing.assert_array_equal(obs[10:13], gravity)
     np.testing.assert_allclose(
         obs[13:42],
-        -np.asarray(g1_groot_wbc_task._DEFAULT_POSITIONS_29, dtype=np.float32),
+        -np.asarray(g1_groot_wbc_task.G1_GROOT_HOME, dtype=np.float32),
     )
     np.testing.assert_allclose(obs[42:71], dq * 0.05)
     np.testing.assert_array_equal(obs[71:86], np.zeros(15))
@@ -224,6 +221,22 @@ def test_partial_state_keeps_claimed_cache_consistent_with_full_cache(
     velocities = {n: 0.0 for n in joints_29[1:]}
     positions[joints_29[0]] = 0.42
     partial = CoordinatorState(
+        sensors=SensorStateSnapshot(
+            {
+                "g1/imu": {
+                    "qw": 1.0,
+                    "qx": 0.0,
+                    "qy": 0.0,
+                    "qz": 0.0,
+                    "gx": 0.0,
+                    "gy": 0.0,
+                    "gz": 0.0,
+                    "ax": 0.0,
+                    "ay": 0.0,
+                    "az": -9.81,
+                }
+            }
+        ),
         joints=JointStateSnapshot(
             joint_positions=positions,
             joint_velocities=velocities,
@@ -255,7 +268,29 @@ def test_unarmed_task_holds_current_pose_without_running_policy(
 
     out = None
     for _ in range(30):
-        out = unarmed_task.compute(CoordinatorState(joints=snap, t_now=100.0, dt=0.002))
+        out = unarmed_task.compute(
+            CoordinatorState(
+                sensors=SensorStateSnapshot(
+                    {
+                        "g1/imu": {
+                            "qw": 1.0,
+                            "qx": 0.0,
+                            "qy": 0.0,
+                            "qz": 0.0,
+                            "gx": 0.0,
+                            "gy": 0.0,
+                            "gz": 0.0,
+                            "ax": 0.0,
+                            "ay": 0.0,
+                            "az": -9.81,
+                        }
+                    }
+                ),
+                joints=snap,
+                t_now=100.0,
+                dt=0.002,
+            )
+        )
 
     assert out is not None
     np.testing.assert_allclose(out.positions, [0.1 * (i + 1) for i in range(15)], atol=1e-6)
@@ -274,12 +309,12 @@ def test_arm_with_ramp_lerps_from_current_pose_to_policy_default(
 
     out_mid = unarmed_task.compute(_state_at(0.5, joints_29))
     assert out_mid is not None
-    expected_mid = [0.5 * value for value in g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15]]
+    expected_mid = [0.5 * value for value in g1_groot_wbc_task.G1_GROOT_HOME[:15]]
     np.testing.assert_allclose(out_mid.positions, expected_mid, atol=1e-6)
 
     out_end = unarmed_task.compute(_state_at(1.0, joints_29))
     assert out_end is not None
-    np.testing.assert_allclose(out_end.positions, g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15])
+    np.testing.assert_allclose(out_end.positions, g1_groot_wbc_task.G1_GROOT_HOME[:15])
     assert unarmed_task._armed
     assert not unarmed_task._arming
     assert patched_ort == []

@@ -25,7 +25,7 @@ from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.g1.effectors.high_level.commands import (
+from dimos.robot.unitree.g1.devices.stock.commands import (
     ARM_API_ID,
     ARM_COMMANDS,
     ARM_COMMANDS_DOC,
@@ -36,7 +36,7 @@ from dimos.robot.unitree.g1.effectors.high_level.commands import (
     MODE_TOPIC,
     execute_g1_command,
 )
-from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
+from dimos.robot.unitree.g1.devices.stock.high_level_spec import HighLevelG1Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

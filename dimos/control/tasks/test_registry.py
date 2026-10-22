@@ -173,7 +173,15 @@ def test_seeded_cards_load_into_registry() -> None:
     g1 = control_task_registry.bindings_for("g1_groot_wbc")
     assert g1.consumes == (StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),)
     assert g1.exposes == frozenset(
-        {"arm", "disarm", "set_dry_run", "reset_runtime_state", "start", "state_snapshot"}
+        {
+            "arm",
+            "disarm",
+            "set_dry_run",
+            "reset_runtime_state",
+            "start",
+            "state_snapshot",
+            "set_velocity_command",
+        }
     )
 
 

@@ -40,7 +40,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
-from dimos.robot.unitree.g1.g1_rerun import g1_costmap
+from dimos.robot.unitree.g1.visualization.rerun import g1_costmap
 from dimos.visualization.vis_module import vis_module
 
 

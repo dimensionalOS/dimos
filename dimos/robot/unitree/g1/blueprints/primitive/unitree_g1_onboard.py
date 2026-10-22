@@ -20,7 +20,7 @@ import os
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.devices.stock.dds_sdk import G1HighLevelDdsSdk
 
 # Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_onboard = autoconnect(

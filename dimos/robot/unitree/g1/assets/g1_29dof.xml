@@ -52,6 +52,7 @@
 
   <worldbody>
     <body name="pelvis" pos="0 0 0.793">
+      <site name="control_imu" size="0.001" rgba="0 0 0 0"/>
       <inertial pos="0 0 -0.07605" quat="1 0 -0.000399148 0" mass="3.813" diaginertia="0.010549 0.0093089 0.0079184"/>
       <joint name="floating_base_joint" type="free" limited="false" actuatorfrclimited="false"/>
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.2 0.2 0.2 1" mesh="pelvis"/>
@@ -155,6 +156,9 @@
             <geom pos="0.0039635 0 -0.054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1" mesh="waist_support_link"/>
             <geom pos="0.0039635 0 -0.054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="waist_support_link"/>
             <camera name="lidar_front_camera" pos="0.07 0 0.42" xyaxes="0 -1 0 0 0 1" mode="fixed" fovy="160"/>
+            <camera name="front_camera" pos="0.07 0 0.42" xyaxes="0 -1 0 0 0 1" fovy="60"/>
+            <site name="mid360_link" pos="0.0002835 0.00003 0.41618"
+                  quat="0 0.9997985784932998 0 -0.020069938783589012" size="0.001" rgba="0 0 0 0"/>
             <camera name="lidar_left_camera" pos="0.05 0.07 0.42" xyaxes="1 0 0 0 0 1" mode="fixed" fovy="160"/>
             <camera name="lidar_right_camera" pos="0.05 -0.07 0.42" xyaxes="-1 0 0 0 0 1" mode="fixed" fovy="160"/>
             <site name="imu" size="0.01" pos="-0.03959 -0.00224 0.13792"/>
