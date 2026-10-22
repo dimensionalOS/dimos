@@ -378,10 +378,8 @@ class MeshColours:
     """Rerun entries for each mesh chunk, turbo by height over the mesh's own range.
 
     Once the range moves ``recolour_m``, every chunk is recoloured (colours only).
-    ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
+    ``z_range`` pins it. Works as a rerun bridge renderer and in replays.
     """
-
-    keyed_by_seq = True
 
     def __init__(
         self,

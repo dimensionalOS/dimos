@@ -21,8 +21,7 @@ the bytes arrive.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from functools import partial
+from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import patch
 
@@ -38,7 +37,6 @@ from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
     is_rerun_multi,
-    keyed_by_seq,
     region_entity,
 )
 
@@ -49,15 +47,13 @@ class FakeZenoh(Zenoh):
     def __init__(self) -> None:
         self.keys: list[str] = []
         self.subscribed_all = False
-        self.keyed: list[str] = []
 
     def subscribe(self, topic: Any, callback: Any) -> Any:
         self.keys.append(topic.key_expr)
         return lambda: None
 
-    def subscribe_all(self, callback: Any, keyed: Mapping[str, Any] | None = None) -> Any:
+    def subscribe_all(self, callback: Any) -> Any:
         self.subscribed_all = True
-        self.keyed = list(keyed or {})
         return lambda: None
 
 
@@ -107,31 +103,6 @@ def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModu
     make_bridge()._subscribe(pubsub)
     assert pubsub.subscribed_all
     assert pubsub.keys == []
-    assert pubsub.keyed == []
-
-
-def test_the_firehose_takes_keyed_renderers_per_seq(
-    make_bridge: Callable[..., RerunBridgeModule],
-) -> None:
-    @keyed_by_seq
-    def by_cell(msg: PointCloud2) -> None:
-        return None
-
-    pubsub = FakeZenoh()
-    make_bridge(
-        visual_override={
-            "world/surface_map": partial(by_cell),
-            "world/map_regions": by_cell,
-            "world/local_map": lambda msg: None,
-        },
-    )._subscribe(pubsub)
-    assert sorted(pubsub.keyed) == ["map_regions", "surface_map"]
-
-    pubsub = FakeZenoh()
-    make_bridge(entity_prefix="hall", visual_override={"hall/surface_map": by_cell})._subscribe(
-        pubsub
-    )
-    assert pubsub.keyed == ["surface_map"]
 
 
 def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:

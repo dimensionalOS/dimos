@@ -24,7 +24,7 @@ import numpy as np
 
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
+from dimos.visualization.rerun.bridge import RerunEntry, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -72,7 +72,6 @@ def surface_points(
     )
 
 
-@keyed_by_seq
 def render_surface_region(
     msg: PointCloud2,
     voxel_size: float,
@@ -127,7 +126,6 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
     return msg.to_rerun(z_offset=GRAPH_Z_LIFT, radii=0.01)
 
 
-@keyed_by_seq
 def render_edge_region(msg: LineSegments3D) -> RerunMulti:
     """One cell of the edge corridors on its own static entity."""
     return [
