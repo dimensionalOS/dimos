@@ -21,7 +21,7 @@ from here rather than reaching into each other's test modules.
 ``turning_joints`` writes out a test robot's ``ControlDescription`` by hand,
 for tests that have no robot model.
 
-``FakeArm`` is a robot driver with no hardware behind it, for tests of
+``FakeArm`` is a connection module with no hardware behind it, for tests of
 ``ConnectionModule`` and of anything that talks to one.
 """
 
@@ -32,11 +32,15 @@ from collections.abc import Mapping, Sequence
 import functools
 from pathlib import Path
 import tempfile
+import threading
+import time
 from typing import Any
 
 from pydantic import Field
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
+from dimos.control.contract.convert import joint_state_from_values, joint_state_to_values
 from dimos.control.contract.description import (
     ControlDescription,
     Limits,
@@ -44,13 +48,14 @@ from dimos.control.contract.description import (
     ResourceKind,
 )
 from dimos.control.contract.keys import Interface, Unit
-from dimos.control.contract.ports import JointPort
+from dimos.control.contract.presets import JointSpec
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -202,16 +207,17 @@ class FakeArmConfig(ConnectionConfig):
 
     source: str = "mock"
     model: RobotModel | None = Field(default_factory=fake_arm_model)
-    position_command: JointPort = JointPort()
+    position_command: JointSpec = JointSpec()
 
 
 class FakeArm(ConnectionModule):
     """A pretend arm, driven by joint position, with no hardware behind it.
 
-    Its joints are wherever they were last told to be, at once, and it reports
-    every other reading as the last value it was told, or zero. ``writes``
-    keeps the latest commands passed to ``write`` and ``halts`` counts calls
-    to ``halt``, so a test can see what reached the "hardware".
+    Its joints are wherever they were last told to be, at once, and it
+    reports them ``state_rate_hz`` times a second from its own thread, with
+    zero speed and effort. ``writes`` keeps the latest commands passed to
+    ``write`` and ``halts`` counts calls to ``halt``, so a test can see what
+    reached the "hardware".
     """
 
     config: FakeArmConfig
@@ -226,12 +232,27 @@ class FakeArm(ConnectionModule):
         #: How many times ``halt`` has been called.
         self.halts = 0
         self._readings: dict[str, float] = {}
+        self._stop_reading = threading.Event()
+        self._reader: threading.Thread | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.position_command.subscribe(
+            lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+        )
+        self._reader = threading.Thread(target=self._read_loop, daemon=True, name="FakeArm-read")
+        self._reader.start()
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_reading.set()
+        if self._reader is not None:
+            self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        super().stop()
 
     def connect(self) -> None:
         self._readings = dict.fromkeys(self.description.state_keys(), 0.0)
-
-    def read_state(self) -> dict[str, float]:
-        return dict(self._readings)
 
     def write(self, values: dict[str, float]) -> None:
         self.writes.append(dict(values))
@@ -241,3 +262,11 @@ class FakeArm(ConnectionModule):
 
     def halt(self) -> None:
         self.halts += 1
+
+    def _read_loop(self) -> None:
+        joints = self.description.joint_names()
+        period = 1.0 / self.config.state_rate_hz
+        while not self._stop_reading.wait(period):
+            self.joint_state.publish(
+                joint_state_from_values(self._readings, joints, ts=time.time())
+            )

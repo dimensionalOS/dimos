@@ -22,6 +22,9 @@ body are rebuilt from small robot models that say the same things.
 The rest cover what each preset decides: which joints an arm or body takes
 from its robot model and with what limits, that an orientation sensor is
 added as asked, and that a base is one part whose speed limits clamp.
+
+The last group is ``control_description``: a connection module's config in,
+one description out, with each spec saying what its part is told and reports.
 """
 
 from __future__ import annotations
@@ -32,13 +35,19 @@ import pickle
 
 import pytest
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.conftest import ARM_JOINTS, G1_JOINTS
 from dimos.control.contract.description import ControlDescription, Limits, ResourceKind
 from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.presets import (
+    BaseSpec,
+    JointSpec,
+    PdSpec,
+    control_description,
     imu_resource,
     manipulator_description,
     pd_joint_description,
+    specs,
     twist_base_description,
 )
 from dimos.control.contract.validate import (
@@ -49,6 +58,8 @@ from dimos.control.contract.validate import (
     validate_description,
 )
 from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 
 CHASSIS_LIMITS = {
@@ -412,3 +423,217 @@ def test_the_in_repo_g1_refuses_a_command_past_its_model_limit() -> None:
     )
     refused = validate_command(body, command({"g1/left_knee/position": 3.0}), last_sequence=None)
     assert isinstance(refused, Rejected) and refused.reason == "limit"
+
+
+# --- control_description: a connection module's config in, one description out ---
+
+SPEC_JOINTS = ("j1", "j2", "j3")
+SPEC_LIMIT = 'lower="-1.0" upper="1.0" velocity="2.0" effort="3.0"'
+ALL_STATE = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
+RANGE = Twist(linear=Vector3(1.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, 2.0))
+
+
+@pytest.fixture
+def model(tmp_path: Path) -> RobotModel:
+    """Three turning joints, all alike."""
+    return chain_model(tmp_path, "robot", SPEC_JOINTS, SPEC_LIMIT)
+
+
+class ArmConfig(ConnectionConfig):
+    source: str = "arm"
+    position_command: JointSpec = JointSpec()
+
+
+class ArmWithVelocityConfig(ArmConfig):
+    velocity_command: JointSpec = JointSpec(interface=Interface.VELOCITY)
+
+
+class BodyConfig(ConnectionConfig):
+    source: str = "g1"
+    motor_command: PdSpec = PdSpec()
+
+
+class BaseConfig(ConnectionConfig):
+    source: str = "go2"
+    cmd_vel: BaseSpec = BaseSpec(range=RANGE)
+
+
+class ArmOnBaseConfig(ConnectionConfig):
+    source: str = "r1"
+    position_command: JointSpec = JointSpec()
+    motor_command: PdSpec = PdSpec()
+    cmd_vel: BaseSpec = BaseSpec(range=RANGE)
+
+
+def test_a_joint_spec_drives_every_moving_joint_of_the_model_in_its_order(
+    model: RobotModel,
+) -> None:
+    described = control_description(ArmConfig(model=model))
+    assert described.source == "arm"
+    assert described.joint_names() == ("arm/j1", "arm/j2", "arm/j3")
+    for joint in described.resources:
+        assert joint.kind is ResourceKind.JOINT
+        assert joint.command_interfaces == (Interface.POSITION,)
+        assert joint.state_interfaces == ALL_STATE
+        assert joint.units[Interface.POSITION] is Unit.RAD
+        assert joint.units[Interface.EFFORT] is Unit.NM
+    assert described.limits == {f"arm/{j}/position": Limits(-1.0, 1.0) for j in SPEC_JOINTS}
+
+
+def test_a_joint_spec_reports_what_it_says(model: RobotModel) -> None:
+    config = ArmConfig(model=model, position_command=JointSpec(reports=(Interface.POSITION,)))
+    described = control_description(config)
+    assert all(joint.state_interfaces == (Interface.POSITION,) for joint in described.resources)
+    silent = control_description(ArmConfig(model=model, position_command=JointSpec(reports=())))
+    assert silent.state_keys() == ()
+
+
+def test_a_joint_on_two_specs_becomes_one_joint_that_takes_both(model: RobotModel) -> None:
+    described = control_description(ArmWithVelocityConfig(model=model))
+    assert described.joint_names() == ("arm/j1", "arm/j2", "arm/j3")
+    for joint in described.resources:
+        assert joint.command_interfaces == (Interface.POSITION, Interface.VELOCITY)
+        assert joint.units[Interface.VELOCITY] is Unit.RAD_PER_S
+    assert described.limits["arm/j1/velocity"] == Limits(-2.0, 2.0)
+
+
+def test_a_pd_spec_tells_each_joint_five_things(model: RobotModel) -> None:
+    described = control_description(BodyConfig(model=model))
+    for joint in described.resources:
+        assert joint.command_interfaces == (
+            Interface.POSITION,
+            Interface.VELOCITY,
+            Interface.EFFORT,
+            Interface.KP,
+            Interface.KD,
+        )
+        assert joint.state_interfaces == ALL_STATE
+    assert described.limits["g1/j1/position"] == Limits(-1.0, 1.0)
+    assert described.limits["g1/j1/velocity"] == Limits(-2.0, 2.0)
+    assert described.limits["g1/j1/effort"] == Limits(-3.0, 3.0)
+    assert "g1/j1/kp" not in described.limits
+
+
+def test_a_joint_spec_and_a_pd_spec_drive_the_same_joints(model: RobotModel) -> None:
+    described = control_description(ArmOnBaseConfig(model=model))
+    assert described.joint_names() == ("r1/j1", "r1/j2", "r1/j3")
+    for joint in (r for r in described.resources if r.kind is ResourceKind.JOINT):
+        assert joint.command_interfaces == (
+            Interface.POSITION,
+            Interface.VELOCITY,
+            Interface.EFFORT,
+            Interface.KP,
+            Interface.KD,
+        )
+
+
+def test_a_base_spec_drives_one_base_with_clamped_symmetric_limits() -> None:
+    described = control_description(BaseConfig())
+    [base] = described.resources
+    assert base.name == "base" and base.kind is ResourceKind.BASE
+    assert base.command_interfaces == (Interface.VX, Interface.VY, Interface.WZ)
+    assert base.state_interfaces == (
+        Interface.VX,
+        Interface.VY,
+        Interface.WZ,
+        Interface.X,
+        Interface.Y,
+        Interface.YAW,
+    )
+    assert base.units[Interface.VX] is Unit.M_PER_S
+    assert base.units[Interface.YAW] is Unit.RAD
+    assert described.limits == {
+        "go2/base/vx": Limits(-1.5, 1.5, clamp=True),
+        "go2/base/vy": Limits(0.0, 0.0, clamp=True),
+        "go2/base/wz": Limits(-2.0, 2.0, clamp=True),
+    }
+    assert described.joint_names() == ()
+
+
+def test_a_base_spec_reports_only_what_it_says() -> None:
+    no_odometry = control_description(BaseConfig(cmd_vel=BaseSpec(range=RANGE, odometry=False)))
+    assert no_odometry.resources[0].state_interfaces == (Interface.VX, Interface.VY, Interface.WZ)
+    silent = control_description(
+        BaseConfig(cmd_vel=BaseSpec(range=RANGE, odometry=False, measured_velocity=False))
+    )
+    assert silent.resources[0].state_interfaces == ()
+    assert silent.state_keys() == ()
+
+
+def test_a_base_spec_range_must_be_zero_or_more() -> None:
+    config = BaseConfig(cmd_vel=BaseSpec(range=Twist(linear=Vector3(-1.0, 0.0, 0.0))))
+    with pytest.raises(ValueError, match="range for vx must be 0 or more"):
+        control_description(config)
+
+
+def test_imu_adds_an_orientation_sensor_after_the_rest() -> None:
+    described = control_description(BaseConfig(imu=True))
+    base, imu = described.resources
+    assert base.kind is ResourceKind.BASE
+    assert imu.name == "imu" and imu.kind is ResourceKind.SENSOR
+    assert imu.command_interfaces == ()
+    assert "go2/imu/qw" in described.state_keys()
+    [only] = control_description(ConnectionConfig(source="sensor", imu=True)).resources
+    assert only.kind is ResourceKind.SENSOR
+
+
+def test_rates_come_from_the_config() -> None:
+    described = control_description(BaseConfig(state_rate_hz=50.0, deadman_timeout_s=0.2))
+    assert (described.state_rate_hz, described.deadman_timeout_s) == (50.0, 0.2)
+    with pytest.raises(DescriptionError, match="deadman_timeout_s"):
+        control_description(BaseConfig(deadman_timeout_s=0.0))
+
+
+def test_a_config_that_describes_nothing_or_needs_a_model_is_refused() -> None:
+    with pytest.raises(ValueError, match="needs the robot model"):
+        control_description(ArmConfig())
+    with pytest.raises(ValueError, match="describes nothing"):
+        control_description(ConnectionConfig(source="x"))
+
+
+def test_a_joint_spec_is_told_and_reports_joint_state_fields_only(model: RobotModel) -> None:
+    with pytest.raises(ValueError, match="not kp"):
+        control_description(ArmConfig(model=model, position_command=JointSpec(interface="kp")))
+    with pytest.raises(ValueError, match="not vx"):
+        control_description(
+            ArmConfig(model=model, position_command=JointSpec(reports=(Interface.VX,)))
+        )
+
+
+def test_two_base_specs_or_two_pd_specs_are_refused(model: RobotModel) -> None:
+    class TwoBases(BaseConfig):
+        other: BaseSpec = BaseSpec(range=RANGE)
+
+    with pytest.raises(ValueError, match="'cmd_vel' and 'other' both drive the base"):
+        control_description(TwoBases())
+
+    class TwoPds(BodyConfig):
+        other: PdSpec = PdSpec()
+
+    with pytest.raises(ValueError, match="'motor_command' and 'other' are both PdSpecs"):
+        control_description(TwoPds(model=model))
+
+
+def test_a_model_with_no_moving_joint_or_a_missing_limit_is_refused(tmp_path: Path) -> None:
+    fixed = chain_model(tmp_path, "fixed", SPEC_JOINTS, SPEC_LIMIT, joint_type="fixed")
+    with pytest.raises(ValueError, match="no joints to drive"):
+        control_description(ArmConfig(model=fixed))
+    unlimited = chain_model(tmp_path, "unlimited", SPEC_JOINTS, 'lower="-1.0" upper="1.0"')
+    with pytest.raises(ValueError, match="no velocity limit"):
+        control_description(ArmWithVelocityConfig(model=unlimited))
+
+
+def test_a_config_description_is_checked_and_crosses_processes(model: RobotModel) -> None:
+    described = control_description(ArmOnBaseConfig(model=model, imu=True))
+    validate_description(described)
+    assert isinstance(described, ControlDescription)
+    assert pickle.loads(pickle.dumps(described)) == described
+
+
+def test_specs_are_the_spec_fields_in_declaration_order(model: RobotModel) -> None:
+    assert list(specs(ArmOnBaseConfig(model=model))) == [
+        "position_command",
+        "motor_command",
+        "cmd_vel",
+    ]
+    assert specs(ConnectionConfig(source="x")) == {}

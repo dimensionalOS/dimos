@@ -30,16 +30,31 @@ limits from the robot's model (its URDF, loaded as a ``RobotModel``). A
 gripper is a joint of the model like any other. A robot with no URDF builds
 its ``ControlDescription`` by hand.
 
-Each one checks its own result before handing it back, so a description built
-this way is always a valid one.
+A connection module's config says the same things as typed fields: a
+``JointSpec``, ``PdSpec`` or ``BaseSpec`` for each thing the robot is told,
+plus ``imu`` for an orientation sensor. ``control_description`` reads the
+config and the robot model and builds the description::
+
+    class Go2Config(ConnectionConfig):
+        source: str = "go2"
+        cmd_vel: BaseSpec = BaseSpec(range=Twist(Vector3(1.0, 0.5, 0.0), Vector3(0.0, 0.0, 2.0)))
+        imu: bool = True
+
+A spec only describes. The module itself subscribes to its ports, turns their
+messages into values for ``command``, and publishes its readings.
+
+Each builder checks its own result before handing it back, so a description
+built this way is always a valid one.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+import math
 from typing import TYPE_CHECKING
 
+from dimos.control.contract.convert import JOINT_STATE_FIELDS, MOTOR_INTERFACES
 from dimos.control.contract.description import (
     ControlDescription,
     Limits,
@@ -48,9 +63,15 @@ from dimos.control.contract.description import (
 )
 from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.validate import validate_description
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
+    from dimos.control.connection.connection_module import ConnectionConfig
     from dimos.robot.assets.model import JointDescription, RobotModel
+
+#: The one part a base is: it is driven as a whole, not as wheels.
+BASE_NAME = "base"
 
 #: The unit of each joint interface, for a revolute joint and a prismatic one.
 _REVOLUTE: Mapping[str, Unit] = {
@@ -357,22 +378,199 @@ def twist_base_description(
         DescriptionError: If the finished description breaks a rule, such as
             a limit missing one of its bounds.
     """
-    pose = BASE_POSE_UNITS if odometry else {}
     description = ControlDescription(
         source=source,
-        resources=(
-            Resource(
-                name="base",
-                kind=ResourceKind.BASE,
-                state_interfaces=(*(BASE_TWIST_UNITS if measured_velocity else ()), *pose),
-                command_interfaces=tuple(BASE_TWIST_UNITS),
-                units={**BASE_TWIST_UNITS, **pose},
-            ),
-            *sensors,
-        ),
+        resources=(_base_resource(odometry, measured_velocity), *sensors),
         limits={key: replace(limit, clamp=True) for key, limit in limits.items()},
         state_rate_hz=state_rate_hz,
         deadman_timeout_s=deadman_timeout_s,
     )
     validate_description(description)
     return description
+
+
+def _base_resource(odometry: bool, measured_velocity: bool) -> Resource:
+    """The base: told three speeds, reporting where it is and how fast it goes as asked."""
+    pose = BASE_POSE_UNITS if odometry else {}
+    return Resource(
+        name=BASE_NAME,
+        kind=ResourceKind.BASE,
+        state_interfaces=(*(BASE_TWIST_UNITS if measured_velocity else ()), *pose),
+        command_interfaces=tuple(BASE_TWIST_UNITS),
+        units={**BASE_TWIST_UNITS, **pose},
+    )
+
+
+class Spec(BaseConfig):
+    """What one thing the robot is told drives, and what that part reports. Use a subclass."""
+
+
+class BaseSpec(Spec):
+    """The base is told how fast to drive, and reports where it is and how fast it goes.
+
+    It is told forwards (``vx``), sideways (``vy``) and turning (``wz``)
+    speeds, measured from itself. A speed past its limit is pulled back to
+    the limit and sent, not refused, so a stick pushed too far still drives
+    the base at its top speed.
+
+    Attributes:
+        range: The fastest it may go each way: ``linear.x`` and ``linear.y``
+            in m/s, ``angular.z`` in rad/s. Each is a size, 0 or more, that
+            applies in both directions; 0 means it cannot move that way.
+        odometry: Whether it reports where it has got to: ``x`` and ``y`` in
+            metres and ``yaw`` in radians.
+        measured_velocity: Whether it reports how fast it is going: ``vx``,
+            ``vy`` and ``wz``. False for one that can only repeat back what
+            it was told, which is not a measurement.
+    """
+
+    range: Twist
+    odometry: bool = True
+    measured_velocity: bool = True
+
+
+class JointSpec(Spec):
+    """Every joint of the model that can move is told one thing, and reports some.
+
+    Joints come in the model's order, within the model's limits.
+
+    Attributes:
+        interface: What each joint is told: position, velocity or effort.
+        reports: What each joint reports, out of position, velocity and
+            effort. Leave out anything the hardware cannot measure.
+    """
+
+    interface: Interface = Interface.POSITION
+    reports: tuple[Interface, ...] = JOINT_STATE_FIELDS
+
+
+class PdSpec(Spec):
+    """Every joint of the model that can move is told where to go and how stiffly to hold it.
+
+    Each joint is told a target position, speed and effort, and the stiffness
+    (``kp``) and damping (``kd``) to pull towards them with, all in every
+    command, within the model's limits. Each reports its position, speed and
+    effort.
+    """
+
+
+def specs(config: ConnectionConfig) -> dict[str, Spec]:
+    """The spec fields of a config, by field name, in the order declared."""
+    found: dict[str, Spec] = {}
+    for name in type(config).model_fields:
+        value = getattr(config, name)
+        if isinstance(value, Spec):
+            found[name] = value
+    return found
+
+
+def control_description(config: ConnectionConfig) -> ControlDescription:
+    """Describe a robot from its connection module's config.
+
+    A JointSpec or PdSpec drives every joint of the model that can move, in
+    the model's order; a joint on two specs becomes one joint that takes and
+    reports both. A BaseSpec adds the base, ``imu`` the sensor.
+
+    Raises:
+        ValueError: If a joint spec has no model to read, the config has two
+            BaseSpecs or two PdSpecs, no joint of the model can move, the
+            model is unclear about a limit, or nothing is described.
+        DescriptionError: If the finished description breaks a rule.
+    """
+    source = config.source
+    joints: dict[str, Resource] = {}
+    limits: dict[str, Limits] = {}
+    base_field: str | None = None
+    pd_field: str | None = None
+    base: Resource | None = None
+    for field, spec in specs(config).items():
+        if isinstance(spec, BaseSpec):
+            if base_field is not None:
+                raise ValueError(
+                    f"{base_field!r} and {field!r} both drive the base; a module has one"
+                )
+            base_field = field
+            base = _base_resource(spec.odometry, spec.measured_velocity)
+            limits.update(_twist_limits(source, field, spec))
+            continue
+        if config.model is None:
+            raise ValueError(
+                f"config field {field!r} is a {type(spec).__name__}, which needs the robot "
+                f"model: set `model` in the config"
+            )
+        if isinstance(spec, PdSpec):
+            if pd_field is not None:
+                raise ValueError(f"{pd_field!r} and {field!r} are both PdSpecs; a module has one")
+            pd_field = field
+            resources, spec_limits = model_joints(
+                source, config.model, JOINT_STATE_FIELDS, MOTOR_INTERFACES
+            )
+        elif isinstance(spec, JointSpec):
+            for interface in (spec.interface, *spec.reports):
+                if interface not in JOINT_STATE_FIELDS:
+                    raise ValueError(
+                        f"{field!r}: a joint is told and reports "
+                        f"{', '.join(JOINT_STATE_FIELDS)}, not {interface}"
+                    )
+            resources, spec_limits = model_joints(
+                source, config.model, spec.reports, (spec.interface,)
+            )
+        else:
+            raise TypeError(f"config field {field!r}: unknown spec {type(spec).__name__}")
+        for resource in resources:
+            _merge(joints, resource)
+        limits.update(spec_limits)
+
+    resources = list(joints.values())
+    if base is not None:
+        resources.append(base)
+    if config.imu:
+        resources.append(imu_resource())
+    if not resources:
+        raise ValueError(f"{source!r} describes nothing: no spec fields and no imu")
+
+    description = ControlDescription(
+        source=source,
+        resources=tuple(resources),
+        limits=limits,
+        state_rate_hz=config.state_rate_hz,
+        deadman_timeout_s=config.deadman_timeout_s,
+    )
+    validate_description(description)
+    return description
+
+
+def _twist_limits(source: str, field: str, spec: BaseSpec) -> dict[str, Limits]:
+    tops = {
+        Interface.VX: spec.range.linear.x,
+        Interface.VY: spec.range.linear.y,
+        Interface.WZ: spec.range.angular.z,
+    }
+    limits: dict[str, Limits] = {}
+    for axis, top in tops.items():
+        top = float(top)
+        if not (math.isfinite(top) and top >= 0.0):
+            raise ValueError(f"{field!r}: the range for {axis} must be 0 or more, got {top}")
+        limits[Key.of(source, BASE_NAME, axis)] = Limits(-top, top, clamp=True)
+    return limits
+
+
+def _merge(into: dict[str, Resource], new: Resource) -> None:
+    """Add a joint, or widen the one of that name to take and report both."""
+    old = into.get(new.name)
+    if old is None:
+        into[new.name] = new
+        return
+    for interface, unit in new.units.items():
+        if old.units.get(interface, unit) is not unit:
+            raise ValueError(
+                f"joint {new.name!r} is given two units for {interface}: "
+                f"{old.units[interface].value} and {unit.value}"
+            )
+    into[new.name] = Resource(
+        name=new.name,
+        kind=old.kind,
+        state_interfaces=tuple(dict.fromkeys((*old.state_interfaces, *new.state_interfaces))),
+        command_interfaces=tuple(dict.fromkeys((*old.command_interfaces, *new.command_interfaces))),
+        units={**old.units, **new.units},
+    )
