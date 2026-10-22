@@ -15,9 +15,9 @@
 """The base every connection module is built on: one module per robot.
 
 A connection module subclasses ``ConnectionModule``, gives it a config that
-says what the robot is told and reports, and fills in ``connect``, ``write``
-and ``halt``. It declares its own ports, hands their messages to ``command``
-as named values (``dimos.control.contract.convert``), and publishes its
+says what the robot is told, and fills in ``connect``, ``write`` and
+``halt``. It declares its own ports, hands their messages to ``command`` as
+named values (``dimos.control.contract.convert``), and publishes its
 readings however suits its SDK.
 """
 
@@ -31,12 +31,12 @@ import time
 from typing import Any, ClassVar
 import uuid
 
-from dimos.control.contract.description import ControlDescription
-from dimos.control.contract.presets import control_description
+from dimos.control.contract.keys import SEPARATOR, Interface
+from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -46,26 +46,29 @@ Values = dict[str, float]
 
 
 class ConnectionConfig(ModuleConfig):
-    """Settings every connection module has.
-
-    A module's config subclasses it and adds a spec field
-    (``dimos.control.contract.presets``) for each thing the robot is told.
+    """Settings every connection module has: what the robot is told, and when it is halted.
 
     Attributes:
         source: The robot's name, and the first part of every key, e.g. "go2".
-        model: The robot's model (its URDF): a joint spec's joints, units and
-            limits. ``None`` for a robot that has no joints.
-        state_rate_hz: How many times a second the module reports its readings.
+        model: The robot's model (its URDF): its joints, their order and their
+            limits. Needed when joints are commanded.
+        joint_commands: What every joint that moves accepts: position,
+            velocity, effort.
+        pd: The joints take position, velocity, effort, kp and kd in one
+            message, as a humanoid's do.
+        base_range: The fastest the base may be told to go, either way:
+            ``linear.x`` and ``linear.y`` in m/s, ``angular.z`` in rad/s. A
+            speed past it is clamped. ``None`` for a robot with no base.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
-        imu: Whether the robot reports an orientation sensor called "imu".
     """
 
     source: str
     model: RobotModel | None = None
-    state_rate_hz: float = 100.0
+    joint_commands: tuple[Interface, ...] = ()
+    pd: bool = False
+    base_range: Twist | None = None
     deadman_timeout_s: float = 0.1
-    imu: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +105,7 @@ class ConnectionModule(Module, ABC):
         class ArmConfig(ConnectionConfig):
             source: str = "arm"
             model: RobotModel | None = ARM_MODEL
-            position_command: JointSpec = JointSpec()
+            joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
 
         class ArmConnection(ConnectionModule):
             config: ArmConfig
@@ -112,9 +115,9 @@ class ConnectionModule(Module, ABC):
             @rpc
             def start(self) -> None:
                 super().start()
-                self.position_command.subscribe(
+                self.register_disposable(Disposable(self.position_command.subscribe(
                     lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
-                )
+                )))
 
     Readings are the module's own: publish them from wherever the SDK
     delivers them, stamped with ``frame``. Once a command is accepted, if no
@@ -129,7 +132,7 @@ class ConnectionModule(Module, ABC):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._session_id = ""
-        self._description: ControlDescription | None = None
+        self._limits: dict[str, Limits] | None = None
         # Guards the status fields and the stop flag.
         self._lock = threading.Lock()
         # Held around every write() and halt(), so they never overlap, and
@@ -139,6 +142,9 @@ class ConnectionModule(Module, ABC):
         self._connected = False
         # Only touched on the module's event loop.
         self._deadman: asyncio.TimerHandle | None = None
+        # Counts accepted commands; a deadman timer only halts if no command
+        # was accepted after the one that armed it.
+        self._command_seq = 0
         self._last_command_time: float | None = None
         self._deadman_fired = False
         self._last_rejection: str | None = None
@@ -147,11 +153,11 @@ class ConnectionModule(Module, ABC):
         self._last_logged: dict[bool, float] = {}
 
     @property
-    def description(self) -> ControlDescription:
-        """What this robot is, built once from the config; see ``control_description``."""
-        if self._description is None:
-            self._description = control_description(self.config)
-        return self._description
+    def limits(self) -> dict[str, Limits]:
+        """Every key this robot accepts and how far each may go, built once from the config."""
+        if self._limits is None:
+            self._limits = limits_of(self.config)
+        return self._limits
 
     @abstractmethod
     def connect(self) -> None:
@@ -183,7 +189,7 @@ class ConnectionModule(Module, ABC):
         super().start()
         self._session_id = uuid.uuid4().hex
         # A bad config fails here, before the hardware is touched.
-        _ = self.description
+        self._limits = limits_of(self.config)
         self.connect()
         with self._hardware_lock:
             self._connected = True
@@ -215,7 +221,7 @@ class ConnectionModule(Module, ABC):
             )
 
     def command(self, values: Values) -> None:
-        """Check one command against the description and send it to the hardware.
+        """Check one command against the limits table and send it to the hardware.
 
         Call it from a port subscription, on any thread. A refused command
         (an unknown key, a value past a limit that does not clamp) is dropped
@@ -227,22 +233,13 @@ class ConnectionModule(Module, ABC):
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
         """
-        description = self.description
-        try:
-            # validate_command takes a ControlValues; this one never leaves the
-            # process. Typed messages carry no sequence number, so order is
-            # not checked.
-            frame = ControlValues(
-                description.source, None, 0, 0, list(values), list(values.values())
-            )
-        except ValueError as error:
-            self._report(str(error), rejection=True)
+        prefix = f"{self.config.source}{SEPARATOR}"
+        own = {key: value for key, value in values.items() if key.startswith(prefix)}
+        if not own:
             return
-        result = validate_command(description, frame, last_sequence=None)
+        result = validate_command(own, self.limits)
         if isinstance(result, Rejected):
             self._report(f"{result.reason}: {result.detail}", rejection=True)
-            return
-        if not result.values:
             return
         with self._hardware_lock:
             if not self._connected:
@@ -250,7 +247,9 @@ class ConnectionModule(Module, ABC):
             with self._lock:
                 self._last_command_time = time.time()
                 self._deadman_fired = False
-            self._on_loop(self._arm_deadman)
+                self._command_seq += 1
+                seq = self._command_seq
+            self._on_loop(lambda: self._arm_deadman(seq))
             try:
                 self.write(result.values)
             except Exception as error:
@@ -269,10 +268,10 @@ class ConnectionModule(Module, ABC):
         if self._loop is not None:
             self._loop.call_soon_threadsafe(step)
 
-    def _arm_deadman(self) -> None:
+    def _arm_deadman(self, seq: int) -> None:
         self._disarm_deadman()
         self._deadman = asyncio.get_running_loop().call_later(
-            self.config.deadman_timeout_s, self._deadman_expired
+            self.config.deadman_timeout_s, self._deadman_expired, seq
         )
 
     def _disarm_deadman(self) -> None:
@@ -280,15 +279,22 @@ class ConnectionModule(Module, ABC):
             self._deadman.cancel()
             self._deadman = None
 
-    def _deadman_expired(self) -> None:
+    def _deadman_expired(self, seq: int) -> None:
         self._deadman = None
-        logger.warning(f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting")
         with self._hardware_lock:
-            if self._connected:
-                self._call_halt()
-        # Set only once halted, so a status that says it fired means the robot was told to stop.
-        with self._lock:
-            self._deadman_fired = True
+            with self._lock:
+                # A newer command was accepted while this timer was due: its
+                # own timer is armed or queued, so this one has nothing to say.
+                if seq != self._command_seq or not self._connected:
+                    return
+            logger.warning(
+                f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting"
+            )
+            self._call_halt()
+            # Set only once halted, so a status that says it fired means the
+            # robot was told to stop.
+            with self._lock:
+                self._deadman_fired = True
 
     def _call_halt(self) -> None:
         try:

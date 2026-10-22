@@ -31,9 +31,7 @@ import pytest
 
 from dimos.control._control_test_helpers import FakeArm
 from dimos.control.connection.connection_module import ConnectionStatus
-from dimos.control.contract.description import Limits
-from dimos.control.contract.keys import Interface
-from dimos.control.contract.validate import DescriptionError
+from dimos.control.contract.limits import Limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 JOINT1 = "mock/joint1/position"
@@ -132,41 +130,29 @@ class Watched(FakeArm):
 
 
 @pytest.mark.parametrize(
-    ("config", "error", "match"),
+    ("config", "match"),
     [
-        ({"state_rate_hz": 0.0}, DescriptionError, "state_rate_hz"),
-        ({"model": None}, ValueError, "'position_command' is a JointSpec, which needs"),
+        ({"joint_commands": ()}, "told nothing"),
+        ({"model": None}, "no model"),
     ],
 )
-def test_start_fails_before_connecting_on_a_bad_config(
-    config: dict[str, Any], error: type[Exception], match: str
-) -> None:
+def test_start_fails_before_connecting_on_a_bad_config(config: dict[str, Any], match: str) -> None:
     module = Watched(**config)
     try:
-        with pytest.raises(error, match=match):
+        with pytest.raises(ValueError, match=match):
             module.start()
         assert not module.connected
     finally:
         module.stop()
 
 
-def test_the_description_comes_from_the_config_alone() -> None:
+def test_the_limits_come_from_the_config_alone() -> None:
     module = FakeArm()
     try:
-        described = module.description
-        assert "description" not in FakeArm.rpcs
-        assert described.source == "mock"
-        assert described.joint_names() == tuple(f"mock/joint{i}" for i in range(1, 8))
-        joint = described.resource("joint1")
-        assert joint is not None
-        assert joint.command_interfaces == (Interface.POSITION,)
-        assert joint.state_interfaces == (
-            Interface.POSITION,
-            Interface.VELOCITY,
-            Interface.EFFORT,
-        )
-        assert described.limits[JOINT1] == Limits(-math.pi, math.pi)
-        assert module.description is described
+        table = module.limits
+        assert "limits" not in FakeArm.rpcs
+        assert table == {f"mock/joint{i}/position": Limits(-math.pi, math.pi) for i in range(1, 8)}
+        assert module.limits is table
     finally:
         module.stop()
 
@@ -242,13 +228,40 @@ def test_the_deadman_halts_once_then_starts_again_on_the_next_command(
     assert wait_until(lambda: r.module.halts == 2)
 
 
-def test_steady_commands_keep_the_deadman_quiet(rig: Callable[..., Rig]) -> None:
+def test_steady_commands_keep_the_deadman_quiet(rig: Callable[..., Rig], mocker: Any) -> None:
     r = rig()
-    for step in range(10):
+    loop = r.module._loop
+    assert loop is not None
+    # The timer's clock is advanced by hand, only after each command has
+    # reached the hardware, so a slow test machine cannot miss a deadline.
+    clock = mocker.patch.object(loop, "time", return_value=loop.time())
+    for step in range(1, 7):
+        armed = r.module._deadman
         r.move(joint1=step / 100)
-        time.sleep(DEADMAN_S / 4)
-    assert r.module.halts == 0
+        # Advance only once this command's timer is armed on the loop.
+        assert wait_until(
+            lambda a=armed: r.module._deadman is not None and r.module._deadman is not a
+        )
+        clock.return_value += DEADMAN_S * 0.75
+        loop.call_soon_threadsafe(lambda: None)
+        assert r.module.halts == 0
+    clock.return_value += DEADMAN_S * 1.01
+    loop.call_soon_threadsafe(lambda: None)
     assert wait_until(lambda: r.module.halts == 1)
+
+
+def test_an_old_timer_firing_after_a_fresh_command_does_not_halt(rig: Callable[..., Rig]) -> None:
+    """A command may be accepted on another thread just as the previous
+    deadman timer is due; that timer must then stay quiet."""
+    r = rig()
+    r.move(joint1=0.1)
+    assert wait_until(lambda: len(r.module.writes) == 1)
+    r.module._deadman_expired(r.module._command_seq - 1)
+    assert r.module.halts == 0
+    assert not r.module.status().deadman_fired
+    r.module._deadman_expired(r.module._command_seq)
+    assert r.module.halts == 1
+    assert r.module.status().deadman_fired
 
 
 def test_a_failing_write_halts_shows_the_error_and_carries_on(
@@ -284,7 +297,6 @@ def test_frame_takes_the_config_prefix(rig: Callable[..., Rig]) -> None:
 
 def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
     assert "status" in FakeArm.rpcs
-    assert "describe_control" not in FakeArm.rpcs
     r = rig()
     status = r.module.status()
     assert isinstance(status, ConnectionStatus)

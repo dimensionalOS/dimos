@@ -21,7 +21,7 @@ import pickle
 
 import pytest
 
-from dimos.control.contract.keys import Interface, Key, Unit, is_valid_segment
+from dimos.control.contract.keys import Interface, Key, is_valid_segment
 
 
 @pytest.mark.parametrize("segment", ["arm", "joint1", "left_hip_pitch", "A", "_", "9", "a_1_B"])
@@ -114,15 +114,3 @@ def test_keys_pickle_with_their_parts() -> None:
     assert restored == "arm/joint1/position"
     assert restored.source == "arm"
     assert restored.interface == "position"
-
-
-def test_units_pickle_by_identity() -> None:
-    """Units cross the same boundary and come back as the same member."""
-    assert pickle.loads(pickle.dumps(Unit.RAD_PER_S)) is Unit.RAD_PER_S
-
-
-def test_unit_values_are_stable_strings() -> None:
-    """The wire spelling of a unit is part of the contract, not an accident."""
-    assert Unit.RAD.value == "rad"
-    assert Unit.M_PER_S2.value == "m/s^2"
-    assert Unit.NORMALIZED.value == "normalized"

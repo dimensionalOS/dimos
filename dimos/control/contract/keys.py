@@ -96,20 +96,6 @@ class Interface(str, Enum):  # TODO(PY311): switch to enum.StrEnum
         return self.value
 
 
-class Unit(Enum):
-    """What a number is measured in. Each robot states its own."""
-
-    RAD = "rad"
-    RAD_PER_S = "rad/s"
-    NM = "Nm"
-    M = "m"
-    M_PER_S = "m/s"
-    N = "N"
-    NORMALIZED = "normalized"
-    M_PER_S2 = "m/s^2"
-    UNITLESS = "unitless"
-
-
 def is_valid_segment(segment: str) -> bool:
     """Whether one part of a name is spelled legally."""
     return _SEGMENT.fullmatch(segment) is not None

@@ -14,11 +14,11 @@
 
 """Turn the standard robot messages into named values, and back.
 
-Robot drivers and the coordinator talk in standard messages (``Twist``,
-``JointState``, ``MotorCommandArray``, ``PoseStamped``, ``Imu``). Inside,
-both work with named values such as ``{"arm/joint1/position": 0.3}``. These
-functions convert between the two, and both sides use the same ones, so they
-always agree on what each field means.
+Connection modules and the coordinator talk in standard messages
+(``Twist``, ``JointState``, ``MotorCommandArray``, ``PoseStamped``, ``Imu``).
+Inside, both work with named values such as ``{"arm/joint1/position": 0.3}``.
+These functions convert between the two, and both sides use the same ones, so
+they always agree on what each field means.
 
 Each pair is ``<message>_to_values`` and ``<message>_from_values``. Names:
 
@@ -35,9 +35,10 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 import math
+from typing import TYPE_CHECKING
 
-from dimos.control.contract.description import ControlDescription, ResourceKind
 from dimos.control.contract.keys import SEPARATOR, Interface
+from dimos.control.contract.limits import PD_INTERFACES, movable_joints
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -46,20 +47,14 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
+if TYPE_CHECKING:
+    from dimos.robot.assets.model import RobotModel
+
 #: The JointState fields, each named after the interface it carries.
 JOINT_STATE_FIELDS: tuple[Interface, ...] = (
     Interface.POSITION,
     Interface.VELOCITY,
     Interface.EFFORT,
-)
-#: What a MotorCommandArray carries for each joint, in its field order
-#: q, dq, tau, kp, kd.
-MOTOR_INTERFACES: tuple[Interface, ...] = (
-    Interface.POSITION,
-    Interface.VELOCITY,
-    Interface.EFFORT,
-    Interface.KP,
-    Interface.KD,
 )
 #: What a Twist carries for a base: forwards, leftwards, turning.
 TWIST_INTERFACES: tuple[Interface, ...] = (Interface.VX, Interface.VY, Interface.WZ)
@@ -80,23 +75,14 @@ IMU_INTERFACES: tuple[Interface, ...] = (
 )
 
 
-def motor_joints(descriptions: Sequence[ControlDescription]) -> list[str]:
-    """The joints a MotorCommandArray carries, in its order.
+def motor_joints(model: RobotModel, source: str) -> list[str]:
+    """The joints a MotorCommandArray carries, in its order: every joint of
+    the model that moves, named in full, e.g. "g1/left_knee".
 
-    Every joint that takes stiffness and damping (``kp`` and ``kd``), in the
-    order the descriptions list them. The message has no names, so the sender
-    and the driver must both build the order with this.
-
-    Args:
-        descriptions: The robots whose joints the message carries, in order.
+    The message has no names, so the sender and the connection module must
+    both build the order with this.
     """
-    return [
-        f"{d.source}{SEPARATOR}{r.name}"
-        for d in descriptions
-        for r in d.resources
-        if r.kind is ResourceKind.JOINT
-        and {Interface.KP, Interface.KD} <= set(r.command_interfaces)
-    ]
+    return [f"{source}{SEPARATOR}{joint.name}" for joint in movable_joints(model)]
 
 
 def twist_to_values(twist: Twist, base: str) -> dict[str, float]:
@@ -203,11 +189,12 @@ def motor_command_to_values(msg: MotorCommandArray, joints: Sequence[str]) -> di
     """
     if msg.num_joints != len(joints) or len(msg.q) != len(joints):
         raise ValueError(f"MotorCommandArray has {len(msg.q)} joints, expected {len(joints)}")
+    # The message's columns, in the order of PD_INTERFACES.
     columns = (msg.q, msg.dq, msg.tau, msg.kp, msg.kd)
     return {
         _key(joint, interface): float(column[i])
         for i, joint in enumerate(joints)
-        for interface, column in zip(MOTOR_INTERFACES, columns, strict=True)
+        for interface, column in zip(PD_INTERFACES, columns, strict=True)
     }
 
 
@@ -216,8 +203,8 @@ def motor_command_from_values(
 ) -> MotorCommandArray:
     """A MotorCommandArray from each joint's position, velocity, effort, kp
     and kd, in the order of ``joints`` (from ``motor_joints``)."""
-    _require(values, joints, MOTOR_INTERFACES)
-    q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in MOTOR_INTERFACES)
+    _require(values, joints, PD_INTERFACES)
+    q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in PD_INTERFACES)
     return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
 
 
