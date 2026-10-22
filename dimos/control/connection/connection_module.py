@@ -279,9 +279,13 @@ class ConnectionModule(Module, ABC):
             self._description = control_description(
                 self.config,
                 {name: port.type for name, port in self.inputs.items()},
-                {name: port.type for name, port in self.outputs.items()},
+                {name: message for message, name in self.control_readings().items()},
             )
         return self._description
+
+    def control_readings(self) -> dict[type, str]:
+        """Reading ports in the control contract; other outputs remain ordinary streams."""
+        return reading_ports({name: port.type for name, port in self.outputs.items()})
 
     @rpc
     def describe_control(self) -> ConnectionDescription:
@@ -297,7 +301,7 @@ class ConnectionModule(Module, ABC):
             session_id=self._session_id,
             description=description,
             command_ports=commands,
-            reading_ports=reading_ports({name: port.type for name, port in self.outputs.items()}),
+            reading_ports=self.control_readings(),
         )
 
     @abstractmethod
@@ -464,7 +468,7 @@ class ConnectionModule(Module, ABC):
     def _plan_outputs(self, description: ControlDescription) -> list[_Output]:
         """How to build each output port's message from the readings."""
         outputs: list[_Output] = []
-        reported = reading_ports({name: port.type for name, port in self.outputs.items()})
+        reported = self.control_readings()
         if JointState in reported:
             # One message per set of fields: a JointState fills a field for
             # every joint it names or for none.

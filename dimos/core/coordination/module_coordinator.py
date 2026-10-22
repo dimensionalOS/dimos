@@ -427,6 +427,13 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config
         )
         global_config.update(**global_values)
+        if global_config.simulation == "mujoco" and any(
+            hasattr(atom.module, "describe_simulated_robot") for atom in blueprint.active_blueprints
+        ):
+            # sim2 imports Module, so defer this optional dependency until build.
+            from dimos.sim2.discovery import collect_simulation
+
+            blueprint, module_kwargs = collect_simulation(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
@@ -518,6 +525,12 @@ class ModuleCoordinator(Resource):
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
+        if global_values.get("simulation", self._global_config.simulation) == "mujoco" and any(
+            hasattr(atom.module, "describe_simulated_robot") for atom in blueprint.active_blueprints
+        ):
+            raise ValueError(
+                "simulated robots must be declared before build; restart with the complete blueprint"
+            )
         self._global_config.update(**global_values)
         transports = _materialize_transports(blueprint, transport_overrides)
 
