@@ -211,6 +211,15 @@
       "b64": "JwAAAHsidCI6ImFjayIsImNoIjoiY29sb3JfaW1hZ2UiLCJzZXEiOjQxfQ=="
     },
     {
+      "name": "rate",
+      "message": {
+        "t": "rate",
+        "ch": "color_image",
+        "hz": 12.5
+      },
+      "b64": "KQAAAHsidCI6InJhdGUiLCJjaCI6ImNvbG9yX2ltYWdlIiwiaHoiOjEyLjV9"
+    },
+    {
       "name": "subs_snapshot",
       "message": {
         "t": "subs",

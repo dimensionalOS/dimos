@@ -50,6 +50,24 @@ const MAX_PENDING_BYTES_PER_ROBOT = 1024 * 1024;
 // Distinct publish rejection codes kept in stats (beyond: "other").
 const MAX_REJECT_CODES = 32;
 
+// Rate feedback (v8): per latest channel, the cap sent to the robot follows
+// the slowest viewer that is shedding. The relay sheds a viewer's frame when
+// it replaces the pending one because both in-flight frames still await
+// their ack, so a viewer shedding more than RATE_SHED of what it is offered
+// is behind, and the frames its acks release per second are what it keeps
+// up with: the cap drops to the slowest such rate at once, never under
+// RATE_MIN_HZ. A viewer votes only once it has acknowledged for a full rate
+// window (the window understates a younger one) and within RATE_ACTIVE_MS
+// (a silent one is absent or frozen, not slow). With nobody behind the cap
+// climbs by RATE_STEP per tick back toward maxHz. A change under RATE_DELTA
+// is not sent.
+export const RATE_ACTIVE_MS = 2000;
+const RATE_SHED = 0.1;
+const RATE_STEP = 1.25;
+const RATE_MIN_HZ = 1;
+const RATE_DELTA = 0.1;
+const RATE_WINDOW_MS = Rate.BUCKETS * Rate.BUCKET_MS;
+
 const enc = new TextEncoder();
 
 /** What the registry needs from a robot session. */
@@ -182,6 +200,10 @@ interface RobotEntry {
   pubPendingBytes: number;
   /** Aggregate accepted-publish rate per channel (the manifest maxHz). */
   pubBuckets: Map<string, TokenBucket>;
+  /** Rate cap per latest channel (the controller's state) and the last cap
+   * sent to the robot. */
+  caps: Map<string, number>;
+  capsSent: Map<string, number>;
 }
 
 export class Registry {
@@ -355,6 +377,8 @@ export class Registry {
       pubPending: new Map(),
       pubPendingBytes: 0,
       pubBuckets: new Map(),
+      caps: new Map(),
+      capsSent: new Map(),
     });
     this.#pushRobots();
     // Forced: gives a fresh bridge its baseline and reattaches surviving
@@ -815,7 +839,7 @@ export class Registry {
       // (a robot that declared no manifest accepts any sub).
       entry.undeclared.framesIn++;
       entry.undeclared.bytesIn += bytes.byteLength;
-      entry.undeclared.rate.push(bytes.byteLength, Date.now());
+      entry.undeclared.rate.push(bytes.byteLength, this.#now());
     } else {
       // delivery is fixed at creation: the manifest cannot change within a
       // registration.
@@ -823,7 +847,7 @@ export class Registry {
         { delivery, framesIn: 0, bytesIn: 0, rate: new Rate() };
       stats.framesIn++;
       stats.bytesIn += bytes.byteLength;
-      stats.rate.push(bytes.byteLength, Date.now());
+      stats.rate.push(bytes.byteLength, this.#now());
       entry.channelsIn.set(ch, stats);
     }
 
@@ -850,6 +874,7 @@ export class Registry {
     for (const viewer of this.#viewers) {
       for (const policy of viewer.policies.values()) policy.tick(nowMs);
     }
+    for (const [id, entry] of this.#robots) this.#feedRates(id, entry, nowMs);
     for (const entry of this.#robots.values()) {
       for (const pending of entry.pubPending.values()) {
         if (nowMs < pending.deadlineMs) continue;
@@ -863,6 +888,48 @@ export class Registry {
             requestId: pending.viewerId,
           });
         }
+      }
+    }
+  }
+
+  /** One controller step per declared latest channel of `entry`: find the
+   * slowest viewer that sheds, move the cap, and tell the robot when it
+   * moved enough. */
+  #feedRates(id: string, entry: RobotEntry, nowMs: number): void {
+    for (const [ch, spec] of entry.specs) {
+      if (spec.dir !== "rx" || spec.delivery !== "latest" || spec.encoding === TRACK_ENCODING) {
+        continue;
+      }
+      let slowest = Infinity;
+      for (const viewer of this.#viewers) {
+        if (viewer.watched !== id) continue;
+        const policy = viewer.policies.get(ch);
+        if (
+          policy === undefined || policy.firstAckAtMs === 0 ||
+          nowMs - policy.firstAckAtMs < RATE_WINDOW_MS ||
+          nowMs - policy.lastAckAtMs > RATE_ACTIVE_MS
+        ) {
+          continue;
+        }
+        const shed = policy.shed.snapshot(nowMs).fps;
+        if (shed > RATE_SHED * (shed + policy.rate.snapshot(nowMs).fps)) {
+          slowest = Math.min(slowest, policy.delivered.snapshot(nowMs).fps);
+        }
+      }
+      const cap = entry.caps.get(ch) ?? spec.maxHz;
+      const next = slowest === Infinity
+        ? Math.min(spec.maxHz, cap * RATE_STEP)
+        : Math.max(RATE_MIN_HZ, Math.min(cap, slowest));
+      entry.caps.set(ch, next);
+      const sent = entry.capsSent.get(ch) ?? spec.maxHz;
+      // The last step back to maxHz is sent however small: the robot must
+      // not stay a few percent under its rate for good.
+      const changed = next === spec.maxHz
+        ? sent !== next
+        : Math.abs(next - sent) > RATE_DELTA * sent;
+      if (changed) {
+        entry.capsSent.set(ch, next);
+        entry.peer.sendControl({ t: "rate", ch, hz: next });
       }
     }
   }
@@ -916,6 +983,7 @@ export class Registry {
               framesIn: s.framesIn,
               bytesIn: s.bytesIn,
               ...s.rate.snapshot(now),
+              ...(e.caps.has(ch) ? { rateHz: e.caps.get(ch) } : {}),
             }]),
           ),
           undeclared: {

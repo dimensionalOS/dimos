@@ -22,6 +22,7 @@ import {
   type FrameWriter,
   LATEST_SEND_ORDER,
   LatestChannel,
+  parseRobotFrameHeader,
   RELIABLE_SEND_ORDER,
   ReliableChannel,
   type ViewerSink,
@@ -658,6 +659,67 @@ Deno.test("a viewer's acks release its latest channel; the tick times out missin
   const out = (reg.stats() as { perViewer: { channels: Record<string, Record<string, number>> }[] })
     .perViewer[0].channels.color_image;
   assertEquals([out.ackTimeouts, out.unacked], [2, 1]);
+});
+
+Deno.test("rate feedback: the cap follows the slowest shedding viewer, climbs back, frees when nobody acks", async () => {
+  let now = 1_000_000;
+  const reg = new Registry(() => now);
+  const robot = new FakeRobot("r1", SPECS); // color_image maxHz 15
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", ["color_image"]);
+  const rates = () =>
+    robot.control.filter((m) => m.t === "rate").map((m) => (m as { hz: number }).hz);
+  const newestSent = () => parseRobotFrameHeader(viewer.sink.sent.at(-1)!)!.seq;
+  let seq = 0;
+  /** `frames` robot frames over one 5 s rate window; the viewer acks the
+   * newest frame it was sent on every `every`th frame. Acking every third
+   * frame sheds one in three (two in flight, the pending one replaced). */
+  const window = async (frames: number, every: number) => {
+    const start = now;
+    for (let i = 0; i < frames; i++) {
+      now = start + Math.floor((i * 5000) / frames);
+      reg.onRobotFrame(robot, frame("color_image", ++seq, "latest"));
+      await tick();
+      if (i % every === every - 1) {
+        send(reg, viewer, { t: "ack", ch: "color_image", seq: newestSent() });
+        await tick();
+      }
+    }
+    now = start + 5000;
+  };
+
+  await window(75, 1); // 15 Hz, every frame acked: keeping up
+  reg.tick(now);
+  assertEquals(rates(), []); // the cap stays at maxHz, nothing to say
+
+  await window(75, 3); // the viewer takes two frames in three: 10 of 15 fps
+  reg.tick(now);
+  // The rate window is ten 500 ms buckets, so a rate reads up to a tenth low.
+  const capped = rates()[0];
+  assert(
+    rates().length === 1 && capped >= 9 && capped <= 10,
+    `cap near the viewer's 10 fps: ${rates()}`,
+  );
+
+  await window(50, 1); // the robot follows at the cap and the viewer keeps up: probe up a quarter
+  reg.tick(now);
+  assertEquals(rates().length, 2);
+  assert(Math.abs(rates()[1] - capped * 1.25) < 1e-9, `probed up: ${rates()}`);
+
+  now += 3000; // the viewer stops acking (a frozen tab): it casts no vote
+  for (let i = 0; i < 4; i++) reg.tick(now += 500);
+  const climb = rates().slice(1);
+  assertEquals(climb.at(-1), 15); // back at maxHz, the last step sent however small
+  for (let i = 1; i < climb.length; i++) assert(climb[i] > climb[i - 1], `climbs: ${climb}`);
+  const stats = reg.stats() as {
+    perRobot: Record<string, { channels: Record<string, { rateHz?: number }> }>;
+  };
+  assertEquals(stats.perRobot.r1.channels.color_image.rateHz, 15);
+  // A reliable channel is never rate-fed.
+  reg.onRobotFrame(robot, frame("odom", 1, "reliable"));
+  reg.tick(now);
+  const after = reg.stats() as typeof stats;
+  assertEquals(after.perRobot.r1.channels.odom?.rateHz, undefined);
 });
 
 Deno.test("stats project exact per-channel key sets with counters and rates", async () => {

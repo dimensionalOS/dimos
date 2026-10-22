@@ -93,6 +93,14 @@ export interface ChannelPolicy {
   unacked(): number;
   /** Frames released by the ack timeout instead of an ack. */
   ackTimeouts: number;
+  /** Frames the viewer's acks released, and frames shed at the pending
+   * slot, over the trailing window: the rate controller's inputs
+   * (registry.ts). */
+  readonly delivered: Rate;
+  readonly shed: Rate;
+  /** When the first and the last ack arrived (0 before any). */
+  firstAckAtMs: number;
+  lastAckAtMs: number;
   /** Route one frame; `seq` is its header seq (the ack currency). */
   offer(bytes: Uint8Array, seq: number): void;
   /** The viewer has read every frame up to `seq`. */
@@ -205,6 +213,10 @@ export class LatestChannel implements ChannelPolicy {
   ackTimeouts = 0;
   bytesOut = 0;
   readonly rate = new Rate();
+  readonly delivered = new Rate();
+  readonly shed = new Rate();
+  firstAckAtMs = 0;
+  lastAckAtMs = 0;
   #pending: { bytes: Uint8Array; seq: number } | null = null;
   #unacked: { seq: number; at: number }[] = [];
   #writing = false;
@@ -234,17 +246,25 @@ export class LatestChannel implements ChannelPolicy {
 
   offer(bytes: Uint8Array, seq: number): void {
     if (this.#disposed) return;
-    if (this.#pending) this.dropped++;
+    if (this.#pending) {
+      this.dropped++;
+      this.shed.push(0, this.#now());
+    }
     this.#pending = { bytes, seq };
     this.#drain();
   }
 
   ack(seq: number): void {
+    const now = this.#now();
+    if (this.firstAckAtMs === 0) this.firstAckAtMs = now;
+    this.lastAckAtMs = now;
     const before = this.#unacked.length;
     // Cumulative, and a restarted producer's low seqs must not pin old
     // entries: anything at or below the acked seq is delivered.
     this.#unacked = this.#unacked.filter((u) => u.seq > seq);
-    if (this.#unacked.length < before) this.#drain();
+    const released = before - this.#unacked.length;
+    for (let i = 0; i < released; i++) this.delivered.push(0, now);
+    if (released > 0) this.#drain();
   }
 
   tick(nowMs: number): void {
@@ -324,6 +344,10 @@ export class ReliableChannel implements ChannelPolicy {
   dropped = 0;
   stalled = 0; // reliable queues instead of shedding; fixed 0
   ackTimeouts = 0; // reliable frames are not acked; fixed 0
+  readonly delivered = new Rate(); // never pushed
+  readonly shed = new Rate(); // never pushed
+  firstAckAtMs = 0;
+  lastAckAtMs = 0;
   bytesOut = 0;
   readonly rate = new Rate();
   #fifo: Uint8Array[] = [];

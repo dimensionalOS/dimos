@@ -207,6 +207,7 @@ When the manifest has no teleop channel, teleop messages are ignored.
 ## Connection behaviour
 
 - The bridge fetches `/api/info` on every connect and retries every 2 s. A restarted relay (new QUIC port, new certificate) is transparent, and subscriptions are re-established after each reconnect. At startup it gives up after four failed attempts.
+- The relay reports, per latest channel, the rate its slowest active viewer keeps up with, and the bridge samples the channel at that rate (never above `max_hz`), so frames a slow link would shed are not encoded at all.
 - The bridge offers the relay a 10 s QUIC idle timeout and pings it every 3 s once registered; three unanswered pings, an ICMP error on its socket (the relay process is gone) or the idle timeout end the session and start a reconnect.
 - A bridge killed without a clean close keeps its robot id registered on the relay until that 10 s idle timeout, but a restart supersedes the dead registration after a one-second probe. Against a second bridge that is alive on the same id, start waits for the conflict to clear (up to 45 s) instead of failing.
 - A wrong or missing key on a relay with an auth file fails with `auth_failed`, logged once. The bridge stops instead of retrying.
