@@ -44,6 +44,8 @@ class MujocoEnvironmentConfig(SimConfig):
         "coordinator_joint_state",
         "tf",
         "odom",
+        "overview_image",
+        "overview_camera_info",
     )
     # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
     scene: Path | None = None
