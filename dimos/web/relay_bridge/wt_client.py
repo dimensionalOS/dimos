@@ -83,13 +83,13 @@ KEEPALIVE_MISSES = 3
 # Three cover 30 fps at a 50 ms RTT. Each stream is independent and viewers
 # keep the newest frame by seq, so the relay needs nothing.
 MAX_IN_FLIGHT = 3
-# Reliable frames (one-shot streams, never shed) unACKed per channel before
-# the oldest is reset: aioquic buffers without bound, so on a stalled relay
-# the backlog would otherwise grow until the session dies. Generous: a
-# burst of a hundred frames in one event-loop turn is legitimate and none of
-# it is ACKed before the loop yields.
-RELIABLE_MAX_IN_FLIGHT = 256
-_RELIABLE_DROP_LOG_S = 5.0
+# Unacknowledged bytes a reliable channel's persistent stream may hold
+# before the bridge resets it (dropping what it held, counted in
+# `reliable_resets` and logged) and continues on a fresh stream: aioquic
+# buffers without bound, so on a stalled relay the backlog would otherwise
+# grow until the session dies. The relay's own per-viewer reliable queue cap.
+RELIABLE_MAX_UNACKED_BYTES = 16 * 1024 * 1024
+_RELIABLE_RESET_LOG_S = 5.0
 
 
 class RelayRejectedError(ProtocolError):
@@ -204,11 +204,10 @@ class RelayClient:
         self._ctx = ctx  # _quic_connect() context manager
         self._ping_n = itertools.count(1)
         self._seq: dict[str, itertools.count[int]] = {}
-        # Unacked reliable stream ids per channel (send order), and frames
-        # reset to hold the bound, per channel.
-        self._reliable_inflight: dict[str, deque[int]] = {}
-        self.reliable_dropped: dict[str, int] = {}
-        self._reliable_drop_logged: dict[str, float] = {}
+        # Persistent reliable channel streams reset to hold the byte bound,
+        # per channel.
+        self.reliable_resets: dict[str, int] = {}
+        self._reliable_reset_logged: dict[str, float] = {}
         self._writers: list[LatestChannelWriter] = []
         self._close_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
@@ -469,43 +468,41 @@ class RelayClient:
         meta: dict[str, Any] | None = None,
         ts: float | None = None,
     ) -> int:
-        """Send one data frame (one-shot bidi stream). Returns the stream id.
+        """Send one data frame. Returns the stream id.
 
-        The frame is buffered by aioquic and delivered in the background;
-        reliable senders that need pacing can `await wait_delivered(...)`.
-        A reliable channel holds at most RELIABLE_MAX_IN_FLIGHT unACKed
-        frames: beyond that the oldest is reset (the viewer sees a seq gap),
-        counted in `reliable_dropped` and logged.
+        A reliable data channel's frames ride its persistent bidi stream,
+        back to back and in order; latest and @control frames each get a
+        one-shot stream. The frame is buffered by aioquic and delivered in
+        the background; senders that need pacing can `await
+        wait_delivered(...)`. A reliable channel's stream holding more than
+        RELIABLE_MAX_UNACKED_BYTES is reset (the viewer sees a seq gap),
+        counted in `reliable_resets` and logged, and the frame opens a fresh
+        one.
         """
         seq = next(self._seq.setdefault(ch, itertools.count()))
         header = FrameHeader(
             ch=ch, seq=seq, ts=time.time() if ts is None else ts, delivery=delivery, meta=meta
         )
-        if delivery == "reliable":
-            self._bound_reliable(ch)
-        stream_id = self._session.send_frame(header, payload)
-        if delivery == "reliable":
-            self._reliable_inflight.setdefault(ch, deque()).append(stream_id)
-        return stream_id
-
-    def _bound_reliable(self, ch: str) -> None:
-        inflight = self._reliable_inflight.get(ch)
-        if inflight is None:
-            return
-        while inflight and not self._session.stream_in_flight(inflight[0]):
-            inflight.popleft()
-        while len(inflight) >= RELIABLE_MAX_IN_FLIGHT:
-            # Oldest first; the membership check and the reset share this
-            # event-loop turn (docs/web/protocol.md workaround 9).
-            self._session.reset_if_in_flight(inflight.popleft())
-            self.reliable_dropped[ch] = self.reliable_dropped.get(ch, 0) + 1
+        if delivery != "reliable" or ch == CONTROL_CHANNEL:
+            return self._session.send_frame(header, payload)
+        stream_id = self._session.channel_stream(ch)
+        if (
+            stream_id is not None
+            and self._session.stream_unacked_bytes(stream_id) + len(payload)
+            > RELIABLE_MAX_UNACKED_BYTES
+        ):
+            # Membership check and reset in one event-loop turn (workaround 9).
+            self._session.reset_if_in_flight(stream_id)
+            self._session.drop_channel_stream(ch)
+            self.reliable_resets[ch] = self.reliable_resets.get(ch, 0) + 1
             if passes_rate_gate(
-                self._reliable_drop_logged, ch, time.monotonic(), _RELIABLE_DROP_LOG_S
+                self._reliable_reset_logged, ch, time.monotonic(), _RELIABLE_RESET_LOG_S
             ):
                 logger.warning(
-                    f"reliable channel {ch}: {RELIABLE_MAX_IN_FLIGHT} frames unacknowledged, "
-                    f"dropping the oldest ({self.reliable_dropped[ch]} dropped so far)"
+                    f"reliable channel {ch}: over {RELIABLE_MAX_UNACKED_BYTES} B unacknowledged, "
+                    f"resetting its stream ({self.reliable_resets[ch]} resets so far)"
                 )
+        return self._session.send_frame_on(ch, header, payload)
 
     async def wait_delivered(self, stream_id: int, timeout: float = 10.0) -> bool:
         """True once the frame on `stream_id` is fully ACKed."""

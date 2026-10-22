@@ -75,6 +75,11 @@ export interface RobotPeer {
   sendPub(ch: string, payload: Uint8Array, meta: Record<string, unknown>): void;
   /** Live carrier queue counters for stats(). */
   carrierStats(): CarrierStats;
+  /** Ping the peer and resolve true on its pong within the probe timeout,
+   * false otherwise (or at once when the session is closing). */
+  probe(): Promise<boolean>;
+  /** Close the session as `robot_superseded`: a new session took its id. */
+  supersede(): void;
 }
 
 /** What the registry needs from a viewer session (fakeable in tests). */
@@ -195,6 +200,7 @@ export class Registry {
   #pubRejected: Record<string, number> = {};
   #framesOnTrack = 0;
   #framesIncomplete = 0;
+  #robotsSuperseded = 0;
   #streamCreditStalls = 0;
   #gcRuns = 0;
   #gcMs = 0;
@@ -295,9 +301,37 @@ export class Registry {
   }
 
   /**
+   * Register `peer` for its id after its valid hello. A different peer
+   * holding the id is probed first: one that answers its ping keeps the id
+   * and the claim fails (two live bridges cannot displace one another), one
+   * that does not (killed without a close, its idle timeout still running)
+   * is superseded and closed, so a restarted robot is back in about a
+   * second. Idempotent under hello resends.
+   */
+  async claimRobot(peer: RobotPeer): Promise<boolean> {
+    const info = peer.info;
+    if (info === null || peer.closed !== null) return false;
+    const holder = this.#robots.get(info.id)?.peer;
+    if (holder !== undefined && holder !== peer) {
+      if (await holder.probe()) return this.registerRobot(peer); // rejected: the holder lives
+      // After the await: the claimant may have closed, the holder may have
+      // gone on its own, or another claimant may have won.
+      if (peer.closed !== null) return false;
+      if (this.#robots.get(info.id)?.peer !== holder) return this.registerRobot(peer);
+      console.log(
+        `[relay] robot ${info.id}: the previous session answered no probe, superseding it`,
+      );
+      this.#robotsSuperseded++;
+      holder.supersede();
+      this.robotClosed(holder); // frees the id now; the session's own close hook finds nothing
+    }
+    return this.registerRobot(peer);
+  }
+
+  /**
    * Register a robot session after its valid hello. Idempotent under hello
-   * resends. A different live peer with the same id is rejected so two bridges
-   * cannot continually displace one another.
+   * resends. A different live peer with the same id is rejected (claimRobot
+   * probes it first).
    */
   registerRobot(peer: RobotPeer): boolean {
     const info = peer.info;
@@ -858,6 +892,7 @@ export class Registry {
       teleopDropped: this.#teleopDropped,
       carrierFailures: this.#carrierFailures,
       framesIncomplete: this.#framesIncomplete,
+      robotsSuperseded: this.#robotsSuperseded,
       streamCreditStalls: this.#streamCreditStalls,
       gcRuns: this.#gcRuns,
       gcMs: this.#gcMs,

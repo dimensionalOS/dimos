@@ -281,9 +281,9 @@ async def test_reliable_channel_is_complete_and_intact(
         lambda fs: len({f.header.seq for f in fs if f.header.ch == "odom"}) >= count,
     )
     odom = {f.header.seq: f for f in frames if f.header.ch == "odom"}
-    # Reliable = complete, no drops. One-stream-per-message may reorder;
-    # completeness is the contract, headers carry the sequence.
-    assert sorted(odom) == list(range(count))
+    # Reliable = complete, no drops, and in order: the channel's frames ride
+    # one persistent stream (v8).
+    assert [f.header.seq for f in frames if f.header.ch == "odom"] == list(range(count))
     assert all(bytes(odom[seq].payload) == payloads[seq] for seq in range(count))
     assert odom[0].header.delivery == "reliable"
     assert odom[0].header.meta == {"i": 0}
@@ -407,6 +407,24 @@ async def test_stats_reflect_traffic(
     # The module's shared relay has seen other tests' deliberate resets.
     assert isinstance(stats["framesIncomplete"], int)
     assert stats["process"]["rss"] > 0
+
+
+async def test_silent_robot_is_superseded_by_a_new_session(relay: RelayReadyInfo) -> None:
+    """A holder that answers no probe (killed, frozen) loses its id to a new
+    session within about a second instead of at the idle timeout."""
+    async with await RelayClient.connect(relay.wt_url, "robot") as first:
+        await first.hello(robot=ROBOT)
+        first._session.answer_pings = False  # plays a frozen bridge
+        async with await RelayClient.connect(relay.wt_url, "robot") as second:
+            started = time.monotonic()
+            await second.hello(robot=ROBOT)
+            assert time.monotonic() - started < 4.0
+            await asyncio.wait_for(first.wait_closed(), timeout=5.0)
+            assert first._session.relay_error is not None
+            assert first._session.relay_error.code == "robot_superseded"
+            assert await second.ping() < 5.0
+            stats = await fetch_stats(relay)
+            assert stats["robotsSuperseded"] >= 1
 
 
 async def test_duplicate_robot_id_is_terminal_until_first_disconnects(

@@ -88,6 +88,8 @@ class StubSession:
         self.pong_waiters: dict[int, asyncio.Future[Pong]] = {}
         self.failed: str | None = None
         self.progress_waits = 0
+        self.channel_streams: dict[str, int] = {}
+        self.unacked_bytes: dict[int, int] = {}
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         # Real encode so a non-serializable meta raises here, exactly as the
@@ -96,6 +98,25 @@ class StubSession:
         self._next_id += 1
         self.sent_frames.append((header, payload))
         return self._next_id
+
+    def send_frame_on(self, ch: str, header: FrameHeader, payload: bytes) -> int:
+        encode_data_frame(header, payload)
+        stream_id = self.channel_streams.get(ch)
+        if stream_id is None:
+            self._next_id += 1
+            stream_id = self.channel_streams[ch] = self._next_id
+        self.sent_frames.append((header, payload))
+        self.unacked_bytes[stream_id] = self.unacked_bytes.get(stream_id, 0) + len(payload)
+        return stream_id
+
+    def channel_stream(self, ch: str) -> int | None:
+        return self.channel_streams.get(ch)
+
+    def drop_channel_stream(self, ch: str) -> None:
+        self.channel_streams.pop(ch, None)
+
+    def stream_unacked_bytes(self, stream_id: int) -> int:
+        return self.unacked_bytes.get(stream_id, 0)
 
     def stream_in_flight(self, stream_id: int) -> bool:
         return stream_id in self.in_flight
@@ -352,29 +373,29 @@ async def test_latest_writer_resets_the_oldest_stale_stream_when_full() -> None:
         writer.stop()
 
 
-async def test_reliable_frames_are_bounded_by_unacked_count(
+async def test_reliable_frames_ride_one_stream_per_channel_bounded_by_unacked_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(wt_client, "RELIABLE_MAX_IN_FLIGHT", 4)
+    monkeypatch.setattr(wt_client, "RELIABLE_MAX_UNACKED_BYTES", 10)
     warnings: list[str] = []
     monkeypatch.setattr(wt_client.logger, "warning", warnings.append)
     session = StubSession()
-    acked: set[int] = set()
-    session.stream_in_flight = lambda sid: sid not in acked and sid not in session.resets  # type: ignore[method-assign]
     client = _client(session)
-    ids = [client.send_frame("odom", b"%d" % i) for i in range(4)]
+    first = client.send_frame("odom", b"1234")
+    assert client.send_frame("odom", b"5678") == first  # the channel's persistent stream
+    assert client.send_frame("cam", b"x", delivery="latest") != first  # one-shot
+    assert client.send_frame(CONTROL_CHANNEL, b"c") not in (first,)  # control stays one-shot
     assert session.resets == []
-    client.send_frame("odom", b"4")  # the 5th unacked frame: the oldest is reset
-    assert session.resets == [ids[0]]
-    assert client.reliable_dropped == {"odom": 1}
-    assert len(warnings) == 1 and "4 frames unacknowledged" in warnings[0]
-
-    acked.update(ids)  # everything older is delivered: no more resets
-    client.send_frame("odom", b"5")
-    client.send_frame("odom", b"6")
-    assert session.resets == [ids[0]]
-    client.send_frame("cam", b"x", delivery="latest")  # latest frames are not bounded here
-    assert len(session.sent_frames) == 8
+    # 8 B unacknowledged + 4 more would pass the 10 B bound: the stream is
+    # reset and the frame opens a fresh one.
+    second = client.send_frame("odom", b"abcd")
+    assert second != first
+    assert session.resets == [first]
+    assert client.reliable_resets == {"odom": 1}
+    assert len(warnings) == 1 and "over 10 B unacknowledged" in warnings[0]
+    session.unacked_bytes[second] = 0  # delivered
+    assert client.send_frame("odom", b"efgh") == second
+    assert session.resets == [first]
 
 
 async def test_keepalive_fails_the_session_after_unanswered_pings(

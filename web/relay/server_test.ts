@@ -1146,6 +1146,68 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "a robot id's silent holder is superseded by a new session; a live one is not",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const relay = await startRelay({ port: 0 });
+  const clients: WebTransport[] = [];
+  const connectRobot = async (answerPings: boolean) => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    clients.push(wt);
+    await within(wt.ready, "robot connect");
+    const replies: Msg[] = [];
+    const dgWriter = wt.datagrams.writable.getWriter();
+    (async () => {
+      for await (const dg of wt.datagrams.readable) {
+        const msg = decodeDatagram(dg);
+        if (msg === null) continue;
+        if (msg.t === "ping" && answerPings) {
+          await dgWriter.write(encodeDatagram({ t: "pong", n: msg.n, ts: msg.ts }));
+          continue;
+        }
+        replies.push(msg);
+      }
+    })().catch(() => {});
+    await sendRobotHello(wt, { t: "hello", v: PROTOCOL_VERSION, role: "robot", robot: ROBOT });
+    const until = async (t: Msg["t"]) => {
+      const deadline = Date.now() + 5000;
+      while (!replies.some((m) => m.t === t)) {
+        if (Date.now() > deadline) throw new Error(`no ${t} for the robot`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return replies.find((m) => m.t === t)!;
+    };
+    return { wt, replies, until };
+  };
+  try {
+    const silent = await connectRobot(false); // a bridge that answers no probe: dead or frozen
+    assertEquals((await silent.until("welcome")).t, "welcome");
+    const second = await connectRobot(true);
+    assertEquals((await second.until("welcome")).t, "welcome"); // superseded the silent one
+    const gone = await silent.until("error");
+    assertEquals(gone.t === "error" ? gone.code : null, "robot_superseded");
+    const stats = await (await fetch(`http://127.0.0.1:${relay.httpPort}/api/stats`)).json();
+    assertEquals(stats.robotsSuperseded, 1);
+    assertEquals(stats.robots, [ROBOT]);
+
+    const third = await connectRobot(true); // the live holder answers: rejected
+    const refused = await third.until("error");
+    assertEquals(refused.t === "error" ? refused.code : null, "robot_id_conflict");
+    assert(!second.replies.some((m) => m.t === "error"), "the live holder keeps its id");
+  } finally {
+    for (const wt of clients) {
+      try {
+        wt.close();
+      } catch {
+        // already gone
+      }
+    }
+    await relay.shutdown();
+  }
+});
+
 Deno.test("startRelay refuses a non-loopback host without the unsafe override", async () => {
   // Before binding anything: the local trust model (wildcard CORS, no auth,
   // optional user files) must not silently reach a LAN address.
