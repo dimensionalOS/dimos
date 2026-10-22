@@ -99,6 +99,7 @@ pub struct Config {
     pub loop_max_lowe_ratio: f64,
     pub loop_max_yank_rotation_deg: f64,
     pub loop_yank_gate: bool,
+    pub loop_icp_dump_dir: String,
     pub loop_yank_gate_max_distance_m: f64,
     pub loop_min_id_gap: u64,
 
@@ -191,6 +192,7 @@ impl Config {
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate: self.loop_yank_gate,
+            loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,

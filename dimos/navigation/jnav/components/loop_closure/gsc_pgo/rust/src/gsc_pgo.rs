@@ -369,6 +369,11 @@ pub struct Config {
     /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `LoopCandidateDiag`). A small yank needs
     /// little confidence, a large one needs a near-perfect match. The inputs are recorded either way.
     pub loop_yank_gate: bool,
+    /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
+    /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
+    /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
+    /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
+    pub loop_icp_dump_dir: String,
     /// Minimum keyframe-index separation between the two ends of a loop closure.
     /// A closure only corrects drift accumulated over the trajectory between the
     /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
@@ -470,6 +475,7 @@ impl Default for Config {
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
             loop_yank_gate: false,
+            loop_icp_dump_dir: String::new(),
             loop_min_id_gap: 0,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
@@ -1518,6 +1524,9 @@ impl GscPgo {
             },
         );
         self.timing.icp_s += t0.elapsed().as_secs_f64();
+        if !self.config.loop_icp_dump_dir.is_empty() {
+            dump_icp_inputs(&self.config.loop_icp_dump_dir, cur_idx, loop_idx, &source_cloud, &target_cloud, &icp);
+        }
         diag.icp_converged = icp.converged;
         diag.icp_fitness = icp.fitness;
         diag.icp_translation_norm = mat3::norm(&icp.translation);
@@ -2322,6 +2331,39 @@ impl GscPgo {
 
 /// Free an iSAM2 on a short-lived thread: tearing down a large Bayes tree would
 /// stall the pipeline thread.
+/// Write one candidate's ICP inputs and result (see `Config::loop_icp_dump_dir`).
+fn dump_icp_inputs(
+    dir: &str,
+    source_id: usize,
+    target_id: usize,
+    source: &PointCloud,
+    target: &PointCloud,
+    icp: &IcpResult,
+) {
+    let mut bytes = Vec::with_capacity(8 + 12 * (source.len() + target.len()) + 105);
+    bytes.extend_from_slice(&(source.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(target.len() as u32).to_le_bytes());
+    for p in source.iter().chain(target) {
+        for v in p {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    for row in &icp.rotation {
+        for v in row {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    for v in &icp.translation {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes.extend_from_slice(&icp.fitness.to_le_bytes());
+    bytes.push(icp.converged as u8);
+    let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}.icp"));
+    if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
+        eprintln!("loop_icp_dump_dir: could not write {}: {e}", path.display());
+    }
+}
+
 fn retire_isam2(isam2: Isam2) {
     let _ = std::thread::Builder::new()
         .name("isam2-retire".to_string())

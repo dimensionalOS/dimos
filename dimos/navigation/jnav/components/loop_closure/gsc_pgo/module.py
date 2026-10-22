@@ -119,6 +119,8 @@ class PGOConfig(NativeModuleConfig):
     # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of loops
     # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.loops.jsonl).
     loop_yank_gate: bool = False
+    # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
+    loop_icp_dump_dir: str = ""
     loop_yank_gate_max_distance_m: float = 0.0
 
     # Minimum keyframe-index separation for a loop closure. A closure only corrects
