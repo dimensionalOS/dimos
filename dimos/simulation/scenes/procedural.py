@@ -172,15 +172,18 @@ def _clutter(
     z: float,
     n: int,
     keep_clear: list[Rect],
+    scale: float = 1.0,
+    height: float = 1.0,
 ) -> None:
     for _ in range(n):
         for _ in range(PLACEMENT_TRIES):
-            hx, hy = _uniform(rng, 0.15, 0.5), _uniform(rng, 0.15, 0.5)
+            hx, hy = scale * _uniform(rng, 0.15, 0.5), scale * _uniform(rng, 0.15, 0.5)
             cx, cy = _uniform(rng, x0 + hx, x1 - hx), _uniform(rng, y0 + hy, y1 - hy)
-            if _clear(cx - hx, cy - hy, cx + hx, cy + hy, keep_clear):
+            fits = 2 * hx < x1 - x0 and 2 * hy < y1 - y0
+            if fits and _clear(cx - hx, cy - hy, cx + hx, cy + hy, keep_clear):
                 scene.add(
                     (cx - hx, cy - hy, z),
-                    (cx + hx, cy + hy, z + _uniform(rng, 0.2, 1.0)),
+                    (cx + hx, cy + hy, z + height * _uniform(rng, 0.2, 1.0)),
                     "clutter",
                 )
                 break
@@ -217,10 +220,13 @@ def office(
     seed: int,
     door_width: float | None = None,
     door_clutter: bool = False,
+    size: float = 1.0,
+    clutter_scale: float = 1.0,
+    clutter_height: float = 1.0,
 ) -> Scene:
     """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways."""
     rng = np.random.default_rng(seed)
-    width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
+    width, length = size * float(_uniform(rng, 12, 18)), size * float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
     scene = Scene(f"office_{seed}", {"width": width, "length": length, "z0": z0})
     top = z0 + WALL_HEIGHT
@@ -250,7 +256,19 @@ def office(
             _wall_with_doors(scene, 0, x, a, b, z0, top, [door])
     keep_clear += [_door_zone(door) for door in scene.doors]
     clutter = int(rng.integers(8, 16))
-    _clutter(scene, rng, 0.2, 0.2, width - 0.2, length - 0.2, z0, clutter, keep_clear)
+    _clutter(
+        scene,
+        rng,
+        0.2,
+        0.2,
+        width - 0.2,
+        length - 0.2,
+        z0,
+        clutter,
+        keep_clear,
+        clutter_scale,
+        clutter_height,
+    )
     tables = int(rng.integers(1, 4))
     for _ in range(tables):
         _table(scene, rng, 0.3, 0.3, width - 0.3, length - 0.3, z0, keep_clear)

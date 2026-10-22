@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import _thread
 import json
 import os
 from pathlib import Path
@@ -63,6 +64,8 @@ case_id = args["--episodedriver.case-id"]
 manifest = json.loads(Path(args["--episodedriver.manifest"]).read_text())
 case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
+if case["tag"] == "hangs":
+    signal.pause()
 if case["tag"] == "no_terminal":
     child = subprocess.Popen(["sleep", "300"])
     (out / "child.pid").write_text(str(child.pid))
@@ -162,6 +165,42 @@ def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: P
     suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
     assert find_episode("narrow_door") == episode
+
+
+def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path: Path) -> None:
+    cases = [
+        _case("mined-s1-aaaaaa", "mined", "dev", {}),
+        _case("hangs-s1-bbbbbb", "hangs", "dev", {}),
+        _case("hangs-s1-cccccc", "hangs", "dev", {}),
+    ]
+    Manifest("test", Rules(), 0, cases).save(tmp_path / "suite.json")
+    (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
+    interrupted: list[bool] = []
+
+    def interrupt_once_both_hang(progress: Progress) -> None:
+        if len(progress.running) == 2 and not interrupted:
+            interrupted.append(True)
+            _thread.interrupt_main()
+
+    config = RunConfig(
+        suite=tmp_path / "suite.json",
+        blueprint="fake",
+        procs=2,
+        out_dir=tmp_path / "run",
+        overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+        command=(sys.executable, str(tmp_path / "fake.py")),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        run(config, interrupt_once_both_hang)
+    results = tmp_path / "run" / RESULTS_FILE
+    written = results.read_text()
+    assert [json.loads(row)["case_id"] for row in written.splitlines()] == ["mined-s1-aaaaaa"]
+    assert {d.name for d in (tmp_path / "run").iterdir() if d.is_dir()} == {"mined-s1-aaaaaa"}
+    assert rescore(tmp_path / "run").read_text() == written
+    meta = json.loads((tmp_path / "run" / RUN_FILE).read_text())
+    assert meta["finished"] is False and meta["time"] >= meta["started"]
+    time.sleep(1.0)
+    assert results.read_text() == written
 
 
 def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> None:
