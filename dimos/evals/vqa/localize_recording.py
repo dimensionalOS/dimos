@@ -41,7 +41,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
 )
 from dimos.memory.cli.dataset import open_dataset
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
-from dimos.perception.localize.types import Localization
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,19 +50,20 @@ BASE_FRAME = "base_link"
 _DISCOVERY_MAX_FRAMES = 12
 _DISCOVERY_MAX_QUERIES = 12
 # Room-scale Go2 defaults used by the aa5f offline bench (not xArm desktop defaults).
-_ROOM_LOCALIZE_POLICY = {
-    "candidate_floor": 0.18,
-    "accept_score": 0.32,
-    "min_views": 1,
-    "cluster_radius_m": 0.30,
-    "verify_radius_m": 5.0,
-    "max_object_extent_m": 2.0,
-    "surface_patch_max_rise_m": 0.08,
-    "surface_patch_min_drop_m": -0.06,
-    "min_points": 13,
-    "min_camera_range_m": 0.5,
-    "fuse_voxel_m": 0.03,
-}
+# min_views=1 matches the prior LocalizePolicy overrides for single-frame VQA windows.
+_ROOM_LOCALIZE_PARAMS = LocalizeParams(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    min_views=1,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=13,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+)
 
 
 @dataclass(frozen=True)
@@ -250,8 +251,9 @@ def localize_window(
         named: list[tuple[str, Localization]] = []
         with DanDetector(embedder, detector, segmenter) as dan:
             index = embed_index(rig, dan.embedder, after, before)
-            policy = dan.policy(_ROOM_LOCALIZE_POLICY)
-            results = dan.localize(query_list, index=index, rig=rig, policy=policy)
+            results = dan.localize(
+                query_list, index=index, rig=rig, params=_ROOM_LOCALIZE_PARAMS
+            )
             for query, hits in zip(query_list, results, strict=True):
                 logger.info(f"localize verification {query!r}: {len(hits)} hit(s)")
                 for hit in hits:
