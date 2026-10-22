@@ -170,6 +170,10 @@ class PGOConfig(NativeModuleConfig):
 
     # "stiffness" in different dimensions.
     # Making roll/pitch stiff is important for mid360. irrelevant for go2 odom
+    # These suit a robot on mostly level ground. A handheld rig or long stairs drifts vertically through a slow
+    # pitch bias, which stiff roll/pitch and z cannot absorb, so GNC rejects the true loop; there use
+    # odom_rot_roll_pitch_var = odom_rot_yaw_var and odom_trans_z_var = odom_trans_xy_var (office_555_loop1:
+    # 36 m vertical drift, end-to-start 38.9 m -> 0.2 m).
     odom_rot_roll_pitch_var: float = 1e-8
     odom_rot_yaw_var: float = 1e-5
     odom_trans_xy_var: float = 1e-4
