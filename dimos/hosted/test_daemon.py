@@ -32,6 +32,7 @@ from dimos.hosted.fragment import (
     PythonFragmentPayload,
     RemoteModuleReference,
 )
+from dimos.protocol.service.zenohservice import LOOPBACK_INTERFACE
 
 
 def _spawn_sleeper() -> None:
@@ -128,9 +129,9 @@ def test_sync_checks_out_when_idle_and_refuses_while_busy(host_setup: dict[str, 
     (
         ("tcp/0.0.0.0:7447", "tcp/127.0.0.1:7447"),
         ("tcp/10.0.0.5:7447", "tcp/10.0.0.5:7447"),
-        ("tcp/0.0.0.0:7447#iface=lo", "tcp/127.0.0.1:7447"),
-        ("iface/lo", "tcp/127.0.0.1:7447"),
-        ("iface/lo:7450", "tcp/127.0.0.1:7450"),
+        (f"tcp/0.0.0.0:7447#iface={LOOPBACK_INTERFACE}", "tcp/127.0.0.1:7447"),
+        (f"iface/{LOOPBACK_INTERFACE}", "tcp/127.0.0.1:7447"),
+        (f"iface/{LOOPBACK_INTERFACE}:7450", "tcp/127.0.0.1:7450"),
         ("tcp/127.0.0.1:7447,tcp/0.0.0.0:7448#iface=nope", "tcp/127.0.0.1:7447"),
     ),
 )
