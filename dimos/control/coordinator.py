@@ -27,10 +27,13 @@ Features:
 
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+import functools
 import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+
+from reactivex.disposable import Disposable
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -41,6 +44,7 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -69,11 +73,14 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+
+    from dimos.core.stream import Stream
 
 logger = setup_logger()
 
@@ -108,6 +115,13 @@ class ControlCoordinatorConfig(ModuleConfig):
     # simulated adapters stay, so one saved robot configuration serves both.
     addresses: dict[str, str] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    # The model the robots driven through connection modules get their joints
+    # and position limits from; its joints are named "<robot>/<joint>". See
+    # ControlCoordinator for how those robots are named.
+    model: RobotModel | None = None
+    # How old a robot's newest reading may be, in seconds, before it is no
+    # longer commanded.
+    reading_timeout_s: float = 0.2
 
 
 class ControlCoordinator(Module):
@@ -123,6 +137,28 @@ class ControlCoordinator(Module):
     3. Arbitrates conflicting commands per joint (highest priority wins)
     4. Routes commands to the owning hardware adapter
     5. Publishes the aggregated canonical joint state
+
+    A robot behind a ``ConnectionModule`` is driven through ports on a
+    coordinator subclass named ``<robot>_<kind>``, which the blueprint remaps
+    onto the connection module's ports::
+
+        class Go2Coordinator(ControlCoordinator):
+            go2_cmd_vel: Out[Twist]
+            go2_odom: In[PoseStamped]
+
+        autoconnect(Go2Coordinator.blueprint(), Go2Connection.blueprint()).remappings([
+            (Go2Connection, "cmd_vel", "go2_cmd_vel"),
+            (Go2Coordinator, "go2_odom", "odom"),
+        ])
+
+    The kinds are listed in ``connection_source.COMMAND_PORTS`` and
+    ``READING_PORTS``. Joints and their limits come from ``config.model``,
+    named ``<robot>/<joint>``; a base alone needs no model. A robot is
+    commanded every tick once it has reported, and not while its newest
+    reading is older than ``config.reading_timeout_s``. In a fleet, each
+    connection module sets ``frame_id_prefix`` to its robot's name so
+    readings are told apart. A coordinator drives adapters or connection
+    modules, never both.
 
     Key design decisions:
     - Joint-centric commands (not hardware-centric)
@@ -199,6 +235,11 @@ class ControlCoordinator(Module):
         # Card-declared command names per task, keyed by task name.
         # Guarded by _task_lock; added/pruned with their task.
         self._task_commands: dict[TaskName, frozenset[str]] = {}
+
+        # Robots driven through connection modules, by name, and each one's
+        # command ports by kind. Filled on start; guarded by _hardware_lock.
+        self._connections: dict[str, ConnectionSource] = {}
+        self._command_ports: dict[str, dict[str, Out[Any]]] = {}
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -364,6 +405,53 @@ class ControlCoordinator(Module):
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
         self._robot_joint_port(hardware_id).publish(msg)
 
+    def _connect_robots(self) -> None:
+        """Set up each robot this coordinator's ports name, and listen on its reading ports.
+
+        Raises:
+            ValueError: If a port named ``<robot>_<kind>`` carries the wrong
+                message, a robot cannot be driven (see ``ConnectionSource``),
+                or this coordinator also has hardware adapters.
+        """
+        commands = _robot_ports(self.outputs, COMMAND_PORTS)
+        readings = _robot_ports(self.inputs, READING_PORTS)
+        robots = list(dict.fromkeys((*commands, *readings)))
+        if not robots:
+            return
+        if self.config.hardware:
+            raise ValueError(
+                f"{type(self).__name__} has hardware adapters and ports for robots {robots}; "
+                "a coordinator drives one or the other, not both"
+            )
+        with self._hardware_lock:
+            for robot in robots:
+                source = ConnectionSource(
+                    robot,
+                    commands.get(robot, []),
+                    readings.get(robot, []),
+                    self.config.model,
+                    self.config.reading_timeout_s,
+                )
+                self._connections[robot] = source
+                self._command_ports[robot] = {
+                    kind: self.outputs[f"{robot}_{kind}"] for kind in source.command_ports
+                }
+                for joint in source.joint_names:
+                    self._joint_to_hardware[joint] = robot
+        for robot, source in self._connections.items():
+            for kind in source.reading_ports:
+                handler = functools.partial(source.on_message, kind)
+                port = self.inputs[f"{robot}_{kind}"]
+                self.register_disposable(Disposable(port.subscribe(handler)))
+        logger.info(f"Driving robots through connection modules: {robots}")
+
+    def _publish_command(self, robot: str, values: dict[str, float]) -> None:
+        """Send one robot its command for this tick. Called by the tick loop,
+        which holds ``_hardware_lock``."""
+        ports = self._command_ports[robot]
+        for out in self._connections[robot].command_messages(values, time.time()):
+            ports[out.port].publish(out.message)
+
     @rpc
     def add_hardware(
         self,
@@ -386,6 +474,12 @@ class ControlCoordinator(Module):
                 f"Hardware type / adapter mismatch for '{component.hardware_id}': "
                 f"hardware_type={component.hardware_type.value} but got "
                 f"{type(adapter).__name__}"
+            )
+
+        if self._connections:
+            raise ValueError(
+                f"cannot add hardware {component.hardware_id!r}: this coordinator drives "
+                "connection modules, and a coordinator drives one or the other, not both"
             )
 
         if self.config.publish_robot_joint_states:
@@ -460,9 +554,9 @@ class ControlCoordinator(Module):
 
     @rpc
     def list_hardware(self) -> list[str]:
-        """List registered hardware IDs."""
+        """List registered hardware IDs, then robots driven through connection modules."""
         with self._hardware_lock:
-            return list(self._hardware.keys())
+            return [*self._hardware, *self._connections]
 
     @rpc
     def list_joints(self) -> list[str]:
@@ -479,6 +573,8 @@ class ControlCoordinator(Module):
                 state = hw.read_state()  # {joint_name: JointState}
                 for joint_name, joint_state in state.items():
                     positions[joint_name] = joint_state.position
+            for connection in self._connections.values():
+                positions.update(connection.read_joints().joint_positions)
             return positions
 
     @rpc
@@ -930,6 +1026,8 @@ class ControlCoordinator(Module):
 
         super().start()
 
+        self._connect_robots()
+
         # Setup hardware and tasks from config (if any)
         if self.config.hardware or self.config.tasks:
             self._setup_from_config()
@@ -957,6 +1055,8 @@ class ControlCoordinator(Module):
             frame_pose_hz=self.config.frame_pose_hz,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
+            connections=self._connections,
+            connection_command_callback=self._publish_command,
         )
         self._tick_loop.start()
 
@@ -1010,3 +1110,31 @@ class ControlCoordinator(Module):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
+
+
+def _robot_ports(
+    ports: "Mapping[str, Stream[Any]]", kinds: "Mapping[str, type]"
+) -> dict[str, list[str]]:
+    """The kinds of port in ``ports`` named ``<robot>_<kind>``, by robot.
+
+    Args:
+        ports: A module's input or output ports, by name.
+        kinds: The kinds to look for, each with the message its port must carry.
+
+    Raises:
+        ValueError: If a port named for a kind carries another message.
+    """
+    found: dict[str, list[str]] = {}
+    for name, port in ports.items():
+        for kind, message in kinds.items():
+            robot = name.removesuffix(f"_{kind}")
+            if robot == name or not robot:
+                continue
+            if port.type is not message:
+                raise ValueError(
+                    f"port {name!r} is robot {robot!r}'s {kind}, so it must carry "
+                    f"{message.__name__}, not {port.type_name}"
+                )
+            found.setdefault(robot, []).append(kind)
+            break
+    return found
