@@ -56,9 +56,9 @@ use lcm_msgs::tf2_msgs::TFMessage;
 mod utils;
 use tracing::{error, info, warn};
 use utils::{
-    build_loop_closure_event, build_loop_closure_records, build_odometry, build_pointcloud2,
-    build_pose_graph, build_pose_graph_records, build_tf_message, extract_xyz, frobenius_diff,
-    interpolate_odom, SplitMix64,
+    build_loop_closure_event, build_loop_closure_records, build_loop_edge_records, build_odometry,
+    build_pointcloud2, build_pose_graph, build_pose_graph_records, build_tf_message, extract_xyz,
+    frobenius_diff, interpolate_odom, SplitMix64,
 };
 
 // A keyframe pose change smaller than this waits to add up before it is sent.
@@ -98,6 +98,7 @@ pub struct Config {
     pub loop_min_degeneracy: f64,
     pub loop_max_lowe_ratio: f64,
     pub loop_max_yank_rotation_deg: f64,
+    pub loop_yank_gate: bool,
     pub loop_yank_gate_max_distance_m: f64,
     pub loop_min_id_gap: u64,
 
@@ -140,6 +141,7 @@ pub struct Config {
     pub loop_gnc_var_scale: f64,
     pub loop_gnc_apply_after_fraction: f64,
     pub loop_gnc_confirmations: u64,
+    pub loop_gnc_deterministic: bool,
     pub loop_gnc_inlier_probability: f64,
 
     // Location constraints
@@ -188,6 +190,7 @@ impl Config {
             loop_min_degeneracy: self.loop_min_degeneracy,
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
+            loop_yank_gate: self.loop_yank_gate,
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,
@@ -207,6 +210,7 @@ impl Config {
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
             loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
             loop_gnc_confirmations: self.loop_gnc_confirmations,
+            loop_gnc_deterministic: self.loop_gnc_deterministic,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
@@ -296,6 +300,11 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     loop_closure_records: Output<PointCloud2>,
 
+    // Each loop candidate's lifecycle as it happens (proposed, gated, GNC votes, accepted,
+    // rejected, applied) with both keyframes' current positions, for drawing loop edges.
+    #[output(encode = PointCloud2::encode)]
+    loop_edges: Output<PointCloud2>,
+
     #[output(encode = DeformationNode::encode)]
     tf_deformation_nodes: Output<DeformationNode>,
 
@@ -330,6 +339,7 @@ impl GscPgoModule {
             loop_closure_event: self.loop_closure_event.clone(),
             pose_graph_records: self.pose_graph_records.clone(),
             loop_closure_records: self.loop_closure_records.clone(),
+            loop_edges: self.loop_edges.clone(),
             tf_deformation_nodes: self.tf_deformation_nodes.clone(),
             global_map: self.debug_global_map.clone(),
             tf: self.tf.clone(),
@@ -473,6 +483,7 @@ struct Worker {
     loop_closure_event: Output<GraphDelta3D>,
     pose_graph_records: Output<PointCloud2>,
     loop_closure_records: Output<PointCloud2>,
+    loop_edges: Output<PointCloud2>,
     tf_deformation_nodes: Output<DeformationNode>,
     global_map: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
@@ -530,8 +541,19 @@ impl Worker {
         let mut deformation_last: Vec<(Mat3, Vec3)> = Vec::new();
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
+        // Loop-edge events already sent on loop_edges.
+        let mut edges_sent = 0usize;
+        // Search diagnostics already written to <dump_path>.loops.jsonl.
+        let mut diagnostics_written = 0usize;
 
         while !self.stop.load(Ordering::Relaxed) {
+            // Nondeterministic GNC: take a finished solve's verdict now, scans or not.
+            if !self.config.loop_gnc_deterministic && pgo.gnc_pending() && pgo.poll_gnc() {
+                let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+                self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
+            }
+            self.publish_loop_edges(&pgo, &mut edges_sent, &frame_id);
+            self.dump_loop_diagnostics(&pgo, &mut diagnostics_written);
             // Drain pending LocationConstraints first, independent of scans,
             // so a constraint is handled promptly even with no scans arriving.
             if self.config.use_location_constraints {
@@ -776,6 +798,67 @@ impl Worker {
             deformation_last,
             deformation_rng,
         );
+    }
+
+    /// Append every loop search since the last call to `<dump_path>.loops.jsonl`: the candidate,
+    /// its outcome and every input of the yank / confidence gate, for offline hypothesis tests.
+    fn dump_loop_diagnostics(&self, pgo: &GscPgo, written: &mut usize) {
+        let diagnostics = pgo.loop_diagnostics();
+        if self.config.dump_path.is_empty() || diagnostics.len() <= *written {
+            return;
+        }
+        let number = |v: f64| {
+            if v.is_finite() {
+                format!("{v}")
+            } else {
+                "null".to_string()
+            }
+        };
+        let mut lines = String::new();
+        for d in &diagnostics[*written..] {
+            lines += &format!(
+                "{{\"outcome\":\"{}\",\"source_id\":{},\"source_time\":{},\"target_id\":{},\"target_time\":{},\"scan_context_best\":{},\"lowe_ratio\":{},\"candidate_distance\":{},\"degeneracy_min\":{},\"icp_fitness\":{},\"yank_rotation_deg\":{},\"yank_translation\":{},\"sigma_rotation_deg\":{},\"sigma_translation_m\":{},\"yank_z\":{},\"scan_context_factor\":{},\"icp_factor\":{},\"degeneracy_factor\":{},\"confidence\":{},\"required_confidence\":{}}}\n",
+                d.outcome, d.source_id, number(d.source_time), d.target_id, number(d.target_time),
+                number(d.scan_context_best as f64), number(d.lowe_ratio as f64), number(d.candidate_distance),
+                number(d.degeneracy_min as f64), number(d.icp_fitness), number(d.yank_rotation_deg),
+                number(d.yank_translation), number(d.sigma_rotation_deg), number(d.sigma_translation_m),
+                number(d.yank_z), number(d.scan_context_factor), number(d.icp_factor),
+                number(d.degeneracy_factor), number(d.confidence), number(d.required_confidence),
+            );
+        }
+        use std::io::Write;
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!("{}.loops.jsonl", self.config.dump_path))
+            .and_then(|mut file| file.write_all(lines.as_bytes()));
+        if let Err(e) = appended {
+            warn!(error = %e, "Failed to dump the loop diagnostics.");
+        }
+        *written = diagnostics.len();
+    }
+
+    /// Send the loop-edge events since the last call, if any.
+    fn publish_loop_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
+        let events = pgo.loop_edge_events();
+        if events.len() <= *sent {
+            return;
+        }
+        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        let msg = build_loop_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
+        self.publish(&self.loop_edges, &msg, "loop_edges");
+        if !self.config.dump_path.is_empty() {
+            use std::io::Write;
+            let appended = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(format!("{}.edges", self.config.dump_path))
+                .and_then(|mut file| file.write_all(&msg.data));
+            if let Err(e) = appended {
+                warn!(error = %e, "Failed to dump the loop edges.");
+            }
+        }
+        *sent = events.len();
     }
 
     /// Send fast-reform consumers every keyframe pose change since they last

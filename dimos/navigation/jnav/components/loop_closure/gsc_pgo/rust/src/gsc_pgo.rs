@@ -198,6 +198,20 @@ pub struct LoopCandidateDiag {
     /// disagrees with odometry. NaN if ICP did not run.
     pub yank_translation: f64,
     pub yank_rotation_deg: f64,
+    /// The inputs and outputs of the yank / confidence gate (`loop_yank_gate`), recorded for every
+    /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
+    /// sigma_* = 1.4826 x the median yank of the candidates ICP scored before it (NaN before any);
+    /// yank_z = hypot(yank_rotation_deg / sigma_rotation_deg, yank_translation / sigma_translation_m)
+    /// (0 before any); each factor is its metric normalized by its own gate and clamped to [0, 1];
+    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2).
+    pub sigma_rotation_deg: f64,
+    pub sigma_translation_m: f64,
+    pub yank_z: f64,
+    pub scan_context_factor: f64,
+    pub icp_factor: f64,
+    pub degeneracy_factor: f64,
+    pub confidence: f64,
+    pub required_confidence: f64,
 }
 
 impl LoopCandidateDiag {
@@ -223,7 +237,77 @@ impl LoopCandidateDiag {
             icp_translation_norm: f64::NAN,
             yank_translation: f64::NAN,
             yank_rotation_deg: f64::NAN,
+            sigma_rotation_deg: f64::NAN,
+            sigma_translation_m: f64::NAN,
+            yank_z: f64::NAN,
+            scan_context_factor: f64::NAN,
+            icp_factor: f64::NAN,
+            degeneracy_factor: f64::NAN,
+            confidence: f64::NAN,
+            required_confidence: f64::NAN,
         }
+    }
+}
+
+/// Where a loop candidate is in its life: proposed by the search, through the gates, GNC's
+/// votes, in or out of the graph, and applied to the map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LoopEdgeState {
+    /// The search found a candidate keyframe for this one.
+    Proposed = 0,
+    /// A gate (distance, degeneracy, ICP, yank, ...) turned it down; it never reaches GNC.
+    GateRejected = 1,
+    /// Passed every gate; waits for GNC to vote it into the graph.
+    Committed = 2,
+    /// One GNC solve's weight for it.
+    Vote = 3,
+    /// GNC voted it into the graph.
+    Accepted = 4,
+    /// GNC voted it out of the graph (never in, or taken back out).
+    Rejected = 5,
+    /// The graph update that moved the map with it in force.
+    Applied = 6,
+}
+
+/// One step in a loop candidate's life, for visualizing proposed / accepted /
+/// rejected / applied edges as they happen. Purely observational.
+#[derive(Debug, Clone, Copy)]
+pub struct LoopEdgeEvent {
+    /// Keyframe time of the newest keyframe when it happened.
+    pub time: f64,
+    pub source_id: usize,
+    pub target_id: usize,
+    pub state: LoopEdgeState,
+    /// How likely the edge is right, in [0, 1]: scan-context similarity while only proposed,
+    /// ICP fitness against the fitness its yank requires once ICP ran, then GNC's weight times that.
+    pub confidence: f64,
+    /// How hard the edge pulls the accepted pose graph, in robust standard deviations of the
+    /// yanks of loops committed so far (`LoopCandidateDiag::yank_z`); NaN before ICP.
+    pub yank_z: f64,
+}
+
+/// Bytes per packed loop-edge record (`LoopEdgeEvent::put_record`).
+pub const LOOP_EDGE_RECORD_BYTES: usize = 52;
+
+impl LoopEdgeEvent {
+    /// Append this event as one packed record: both keyframes where they are now (x y z, then
+    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_z f32, time f64.
+    pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &[KeyPoseWithCloud]) {
+        let at = |id: usize| {
+            key_poses
+                .get(id)
+                .map_or([f64::NAN; 3], |kp| kp.translation_global)
+        };
+        for v in at(self.source_id).into_iter().chain(at(self.target_id)) {
+            data.extend_from_slice(&(v as f32).to_le_bytes());
+        }
+        data.extend_from_slice(&(self.source_id as u32).to_le_bytes());
+        data.extend_from_slice(&(self.target_id as u32).to_le_bytes());
+        data.extend_from_slice(&(self.state as u32).to_le_bytes());
+        data.extend_from_slice(&(self.confidence as f32).to_le_bytes());
+        data.extend_from_slice(&(self.yank_z as f32).to_le_bytes());
+        data.extend_from_slice(&self.time.to_le_bytes());
     }
 }
 
@@ -281,6 +365,10 @@ pub struct Config {
     /// below this (near-coincident pairs, where odom rotation is trustworthy).
     /// 0 disables the whole yank-rotation gate.
     pub loop_yank_gate_max_distance_m: f64,
+    /// Reject a loop whose match confidence is too low for how hard it yanks the accepted pose
+    /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `LoopCandidateDiag`). A small yank needs
+    /// little confidence, a large one needs a near-perfect match. The inputs are recorded either way.
+    pub loop_yank_gate: bool,
     /// Minimum keyframe-index separation between the two ends of a loop closure.
     /// A closure only corrects drift accumulated over the trajectory between the
     /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
@@ -333,6 +421,10 @@ pub struct Config {
     /// Consecutive GNC solves that must agree before a loop enters or leaves the graph, so a
     /// verdict one solve gives and the next takes back never moves the map.
     pub loop_gnc_confirmations: u64,
+    /// true: fold a background GNC solve on the keyframe schedule above, so a replay gives the same
+    /// graph on any machine. false: fold it as soon as it finishes (see `poll_gnc`), keyframes or
+    /// not, so a robot standing still at a loop still gets the closure; results then depend on timing.
+    pub loop_gnc_deterministic: bool,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
     /// by GscPgo itself).
     pub use_location_constraints: bool,
@@ -377,6 +469,7 @@ impl Default for Config {
             loop_max_lowe_ratio: 0.0,
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
+            loop_yank_gate: false,
             loop_min_id_gap: 0,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
@@ -395,6 +488,7 @@ impl Default for Config {
             loop_gnc_inlier_probability: 0.95,
             loop_gnc_apply_after_fraction: 0.05,
             loop_gnc_confirmations: 2,
+            loop_gnc_deterministic: true,
             use_location_constraints: false,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -504,6 +598,20 @@ pub struct GscPgo {
     reseeded: bool,
     timing: TimingStats,
     loop_diagnostics: Vec<LoopCandidateDiag>,
+    loop_edge_events: Vec<LoopEdgeEvent>,
+    /// Per committed loop: whether a graph update has applied it since it last entered the graph.
+    loop_applied: Vec<bool>,
+    /// Per committed loop never in the graph: consecutive GNC votes against it, and whether that
+    /// has been reported as a rejection (an edge GNC turns down without ever taking it in).
+    loop_out_votes: Vec<(u64, bool)>,
+    /// Rotation (deg) and translation (m) yank of every candidate ICP has scored, the scale new
+    /// yanks are measured against. Every scored candidate, not just committed ones: a scale taken
+    /// only from loops the gate let through would shrink with each rejection and reject the rest.
+    scored_yanks: Vec<(f64, f64)>,
+    /// Per committed loop: its yank_z and confidence (which scales its GNC votes'), for its
+    /// loop-edge events.
+    loop_yank_z: Vec<f64>,
+    loop_fit_confidence: Vec<f64>,
     /// Keyframe time of the last loop search that got past the throttles.
     last_loop_search_time: Option<f64>,
     /// Background batch-GNC worker (spawned only when `loop_gnc_final` is on); see `step_gnc`.
@@ -581,6 +689,12 @@ impl GscPgo {
             reseeded: false,
             timing: TimingStats::default(),
             loop_diagnostics: Vec::new(),
+            loop_edge_events: Vec::new(),
+            loop_applied: Vec::new(),
+            loop_out_votes: Vec::new(),
+            scored_yanks: Vec::new(),
+            loop_yank_z: Vec::new(),
+            loop_fit_confidence: Vec::new(),
             last_loop_search_time: None,
         }
     }
@@ -588,6 +702,109 @@ impl GscPgo {
     /// All per-search loop-closure diagnostic records accumulated so far.
     pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
         &self.loop_diagnostics
+    }
+
+    /// Every loop-edge lifecycle event so far, oldest first.
+    pub fn loop_edge_events(&self) -> &[LoopEdgeEvent] {
+        &self.loop_edge_events
+    }
+
+    fn newest_keyframe_time(&self) -> f64 {
+        self.key_poses.last().map_or(f64::NAN, |k| k.time)
+    }
+
+    fn push_edge(
+        &mut self,
+        source_id: usize,
+        target_id: usize,
+        state: LoopEdgeState,
+        confidence: f64,
+        yank_z: f64,
+    ) {
+        self.loop_edge_events.push(LoopEdgeEvent {
+            time: self.newest_keyframe_time(),
+            source_id,
+            target_id,
+            state,
+            confidence: confidence.clamp(0.0, 1.0),
+            yank_z,
+        });
+    }
+
+    /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, then
+    /// add its yank to the scale.
+    fn score_candidate(&mut self, diag: &mut LoopCandidateDiag) {
+        let robust_scale = |values: Vec<f64>| -> f64 {
+            let mut values = values;
+            values.sort_by(f64::total_cmp);
+            (1.4826 * values[values.len() / 2]).max(f64::EPSILON)
+        };
+        if self.scored_yanks.is_empty() {
+            diag.yank_z = 0.0;
+        } else {
+            diag.sigma_rotation_deg = robust_scale(self.scored_yanks.iter().map(|y| y.0).collect());
+            diag.sigma_translation_m =
+                robust_scale(self.scored_yanks.iter().map(|y| y.1).collect());
+            diag.yank_z = (diag.yank_rotation_deg / diag.sigma_rotation_deg)
+                .hypot(diag.yank_translation / diag.sigma_translation_m);
+        }
+        let unit = |v: f64| {
+            if v.is_finite() {
+                v.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        diag.scan_context_factor = if diag.scan_context_best.is_finite() {
+            unit(
+                1.0 - diag.scan_context_best as f64
+                    / self.config.scan_context_match_threshold.max(f64::EPSILON),
+            )
+        } else {
+            unit(1.0 - diag.candidate_distance / self.config.loop_search_radius.max(f64::EPSILON))
+        };
+        diag.icp_factor =
+            unit(1.0 - diag.icp_fitness / self.config.loop_score_thresh.max(f64::EPSILON));
+        diag.degeneracy_factor =
+            if self.config.loop_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
+                unit(diag.degeneracy_min as f64 / self.config.loop_min_degeneracy)
+            } else {
+                1.0
+            };
+        diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
+        diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / 2.0).exp();
+        self.scored_yanks
+            .push((diag.yank_rotation_deg, diag.yank_translation));
+    }
+
+    /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
+    /// as loop-edge events.
+    fn record_search(&mut self, diag: LoopCandidateDiag) {
+        if diag.target_id >= 0 {
+            let (source, target) = (diag.source_id, diag.target_id as usize);
+            let proposed = if diag.scan_context_best.is_finite() {
+                1.0 - diag.scan_context_best as f64
+            } else {
+                1.0 - diag.candidate_distance / self.config.loop_search_radius.max(f64::EPSILON)
+            };
+            self.push_edge(source, target, LoopEdgeState::Proposed, proposed, f64::NAN);
+            let checked = if diag.confidence.is_finite() {
+                diag.confidence
+            } else {
+                proposed
+            };
+            let outcome = if diag.outcome == "accepted" {
+                LoopEdgeState::Committed
+            } else {
+                LoopEdgeState::GateRejected
+            };
+            if outcome == LoopEdgeState::Committed {
+                self.loop_fit_confidence.push(checked.clamp(0.0, 1.0));
+                self.loop_yank_z.push(diag.yank_z);
+            }
+            self.push_edge(source, target, outcome, checked, diag.yank_z);
+        }
+        self.loop_diagnostics.push(diag);
     }
 
     /// Total nonlinear error of the current factor graph at the best estimate
@@ -1076,7 +1293,7 @@ impl GscPgo {
                 key_pose.translation_global,
             );
             diag.outcome = "throttle_backlog";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
         }
     }
 
@@ -1098,7 +1315,7 @@ impl GscPgo {
                 let last_time = self.key_poses[last_source].time;
                 if current_time - last_time < self.config.min_loop_detect_duration {
                     diag.outcome = "throttle_min_duration";
-                    self.loop_diagnostics.push(diag);
+                    self.record_search(diag);
                     return;
                 }
             }
@@ -1109,7 +1326,7 @@ impl GscPgo {
             if let Some(last_search) = self.last_loop_search_time {
                 if current_time - last_search < self.config.loop_search_min_interval {
                     diag.outcome = "throttle_search_interval";
-                    self.loop_diagnostics.push(diag);
+                    self.record_search(diag);
                     return;
                 }
             }
@@ -1129,14 +1346,14 @@ impl GscPgo {
                 && diag.descriptor_structure < self.config.min_descriptor_std as f32
             {
                 diag.outcome = "no_structure";
-                self.loop_diagnostics.push(diag);
+                self.record_search(diag);
                 return;
             }
             if self.config.loop_min_occupancy > 0
                 && diag.descriptor_occupancy < self.config.loop_min_occupancy
             {
                 diag.outcome = "low_occupancy";
-                self.loop_diagnostics.push(diag);
+                self.record_search(diag);
                 return;
             }
         }
@@ -1159,7 +1376,7 @@ impl GscPgo {
         }
         if loop_idx < 0 {
             diag.outcome = "no_candidate";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
         let loop_idx = loop_idx as usize;
@@ -1180,7 +1397,7 @@ impl GscPgo {
             && (cur_idx.abs_diff(loop_idx) as u64) < self.config.loop_min_id_gap
         {
             diag.outcome = "id_gap_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
@@ -1199,7 +1416,7 @@ impl GscPgo {
             && (sc_best / sc_second) as f64 > self.config.loop_max_lowe_ratio
         {
             diag.outcome = "lowe_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
@@ -1208,7 +1425,7 @@ impl GscPgo {
             && diag.candidate_distance > self.config.loop_candidate_max_distance_m
         {
             diag.outcome = "distance_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
@@ -1278,7 +1495,7 @@ impl GscPgo {
         let min_points = self.config.loop_icp_min_points as usize;
         if min_points > 0 && (source_cloud.len() < min_points || target_cloud.len() < min_points) {
             diag.outcome = "icp_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
         self.timing.submap_s += t0.elapsed().as_secs_f64();
@@ -1319,13 +1536,13 @@ impl GscPgo {
             && (degeneracy_min as f64) < self.config.loop_min_degeneracy
         {
             diag.outcome = "degeneracy_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
         if !icp.converged || icp.fitness > self.config.loop_score_thresh {
             diag.outcome = "icp_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
@@ -1368,12 +1585,19 @@ impl GscPgo {
         diag.yank_rotation_deg =
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
 
+        self.score_candidate(&mut diag);
+        if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
+            diag.outcome = "yank_confidence_reject";
+            self.record_search(diag);
+            return;
+        }
+
         if self.config.loop_max_yank_rotation_deg > 0.0
             && diag.candidate_distance < self.config.loop_yank_gate_max_distance_m
             && diag.yank_rotation_deg > self.config.loop_max_yank_rotation_deg
         {
             diag.outcome = "yank_reject";
-            self.loop_diagnostics.push(diag);
+            self.record_search(diag);
             return;
         }
 
@@ -1388,7 +1612,7 @@ impl GscPgo {
         };
 
         diag.outcome = "accepted";
-        self.loop_diagnostics.push(diag);
+        self.record_search(diag);
         self.commit_loop_pair(pair);
     }
 
@@ -1409,6 +1633,8 @@ impl GscPgo {
             active_in_isam2: !unvetted,
             gnc_vote_streak: 0,
         });
+        self.loop_applied.push(false);
+        self.loop_out_votes.push((0, false));
         self.cache_pairs.push(pair);
     }
 
@@ -1655,6 +1881,19 @@ impl GscPgo {
         self.staged_constraint_factors.clear();
         self.location_closure = false;
         self.reseeded = false;
+        if has_closure {
+            for index in 0..self.committed_loops.len() {
+                let edge = &self.committed_loops[index];
+                if edge.active_in_isam2 && !self.loop_applied[index] {
+                    self.loop_applied[index] = true;
+                    let (source, target) = (edge.source_id, edge.target_id);
+                    let confidence = edge.gnc_weight
+                        * self.loop_fit_confidence.get(index).copied().unwrap_or(1.0);
+                    let yank_z = self.loop_yank_z.get(index).copied().unwrap_or(f64::NAN);
+                    self.push_edge(source, target, LoopEdgeState::Applied, confidence, yank_z);
+                }
+            }
+        }
 
         // Approach B: remember each newly-inserted loop factor's iSAM2 index so a
         // background GNC classification can later remove it if it is an outlier.
@@ -1726,6 +1965,9 @@ impl GscPgo {
     /// schedule counts keyframes, not time, so a replay gives the same graph however fast the
     /// machine is. Returns whether the keyframe poses changed.
     pub fn step_gnc(&mut self) -> bool {
+        if !self.config.loop_gnc_deterministic {
+            return self.poll_gnc();
+        }
         let due = self
             .gnc_due_at
             .is_some_and(|due_at| self.key_poses.len() >= due_at);
@@ -1734,6 +1976,17 @@ impl GscPgo {
             let keyframes = self.key_poses.len();
             let delay = (self.config.loop_gnc_apply_after_fraction * keyframes as f64).ceil();
             self.dispatch_gnc(keyframes + (delay as usize).max(1));
+        }
+        folded
+    }
+
+    /// Nondeterministic GNC (`loop_gnc_deterministic` off): fold the outstanding solve if it has
+    /// finished, then dispatch the next if there is work, never waiting. Call it often (every
+    /// worker pass); returns whether the keyframe poses changed.
+    pub fn poll_gnc(&mut self) -> bool {
+        let folded = self.gnc_due_at.is_some() && self.fold_gnc(false);
+        if self.gnc_due_at.is_none() && self.gnc_has_work() {
+            self.dispatch_gnc(self.key_poses.len());
         }
         folded
     }
@@ -1813,8 +2066,42 @@ impl GscPgo {
         };
         let mut changed = false;
         let confirmations = self.config.loop_gnc_confirmations.max(1);
+        let mut edges: Vec<(usize, usize, LoopEdgeState, f64, f64)> = Vec::new();
         for (edge_index, weight) in result.loop_weights.iter().enumerate() {
             let loop_edge = &mut self.committed_loops[edge_index];
+            let fit = self
+                .loop_fit_confidence
+                .get(edge_index)
+                .copied()
+                .unwrap_or(1.0);
+            let yank_z = self
+                .loop_yank_z
+                .get(edge_index)
+                .copied()
+                .unwrap_or(f64::NAN);
+            edges.push((
+                loop_edge.source_id,
+                loop_edge.target_id,
+                LoopEdgeState::Vote,
+                *weight * fit,
+                yank_z,
+            ));
+            let out_votes = &mut self.loop_out_votes[edge_index];
+            if *weight < LOOP_GNC_INLIER_THRESHOLD && !loop_edge.active_in_isam2 {
+                out_votes.0 += 1;
+                if out_votes.0 >= confirmations && !out_votes.1 {
+                    out_votes.1 = true;
+                    edges.push((
+                        loop_edge.source_id,
+                        loop_edge.target_id,
+                        LoopEdgeState::Rejected,
+                        *weight * fit,
+                        yank_z,
+                    ));
+                }
+            } else {
+                *out_votes = (0, false);
+            }
             let accepted = *weight >= LOOP_GNC_INLIER_THRESHOLD;
             loop_edge.gnc_vote_streak = if accepted != loop_edge.active_in_isam2 {
                 loop_edge.gnc_vote_streak + 1
@@ -1829,14 +2116,31 @@ impl GscPgo {
                         self.pending_removals.push(factor_index);
                     }
                     loop_edge.active_in_isam2 = false;
+                    self.loop_applied[edge_index] = false;
+                    self.loop_out_votes[edge_index] = (0, true);
                 } else {
                     self.accepted_loop_inserts.push(edge_index);
                 }
                 in_graph = !in_graph;
                 changed = true;
+                let state = if in_graph {
+                    LoopEdgeState::Accepted
+                } else {
+                    LoopEdgeState::Rejected
+                };
+                edges.push((
+                    loop_edge.source_id,
+                    loop_edge.target_id,
+                    state,
+                    *weight * fit,
+                    yank_z,
+                ));
             }
             // A rebuild keeps exactly the loops in the graph once this fold is done.
             loop_edge.gnc_weight = if in_graph { 1.0 } else { 0.0 };
+        }
+        for (source, target, state, confidence, yank_z) in edges {
+            self.push_edge(source, target, state, confidence, yank_z);
         }
         if changed {
             self.reseed_isam2_from_gnc(&result.poses);
@@ -2110,6 +2414,58 @@ mod tests {
             noise: NoiseModel::diagonal_variances(&[score; 6]),
         });
         pgo.smooth_and_update();
+    }
+
+    /// A search's diagnostics for a candidate that passed every gate.
+    fn passed_search(pgo: &GscPgo, source_id: usize, target_id: usize) -> LoopCandidateDiag {
+        let source = &pgo.key_poses()[source_id];
+        let target = &pgo.key_poses()[target_id];
+        let mut diag = LoopCandidateDiag::new(source_id, source.time, source.translation_global);
+        diag.outcome = "accepted";
+        diag.target_id = target_id as i64;
+        diag.target_time = target.time;
+        diag.target_xyz = target.translation_global;
+        diag.scan_context_best = 0.2;
+        diag.icp_fitness = 0.05;
+        diag
+    }
+
+    #[test]
+    fn a_loop_edge_is_proposed_before_gnc_judges_it_and_applied_after_it_is_accepted() {
+        let mut pgo = GscPgo::new(Config::default());
+        drive_biased(&mut pgo, 0..STEPS_PER_LAP + 1, LARGE_YAW_BIAS);
+        let diag = passed_search(&pgo, STEPS_PER_LAP, 0);
+        pgo.record_search(diag);
+        close(&mut pgo, STEPS_PER_LAP, 0, [0.0; 3]);
+        let diag = passed_search(&pgo, STEPS_PER_LAP / 2, 0);
+        pgo.record_search(diag);
+        close(&mut pgo, STEPS_PER_LAP / 2, 0, [0.5, 0.0, 0.0]);
+        assert!(pgo.finish_gnc());
+        let life = |source: usize| -> Vec<LoopEdgeState> {
+            pgo.loop_edge_events()
+                .iter()
+                .filter(|e| {
+                    e.source_id == source && e.target_id == 0 && e.state != LoopEdgeState::Vote
+                })
+                .map(|e| e.state)
+                .collect()
+        };
+        use LoopEdgeState::*;
+        assert_eq!(
+            life(STEPS_PER_LAP),
+            vec![Proposed, Committed, Accepted, Applied]
+        );
+        assert_eq!(life(STEPS_PER_LAP / 2), vec![Proposed, Committed, Rejected]);
+        let votes = pgo
+            .loop_edge_events()
+            .iter()
+            .filter(|e| e.state == Vote)
+            .count();
+        assert!(votes >= 2 * pgo.config().loop_gnc_confirmations.max(1) as usize);
+        assert!(pgo
+            .loop_edge_events()
+            .iter()
+            .all(|e| (0.0..=1.0).contains(&e.confidence)));
     }
 
     #[test]

@@ -115,6 +115,10 @@ class PGOConfig(NativeModuleConfig):
     # be rotated, so a large ICP rotation disagreement flags a structural-alias false match.
     # Reject when yank rotation exceeds this many degrees. 0 disables the gate entirely.
     loop_max_yank_rotation_deg: float = 0.0
+    # Reject a loop whose match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) is
+    # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of loops
+    # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.loops.jsonl).
+    loop_yank_gate: bool = False
     loop_yank_gate_max_distance_m: float = 0.0
 
     # Minimum keyframe-index separation for a loop closure. A closure only corrects
@@ -162,6 +166,9 @@ class PGOConfig(NativeModuleConfig):
     # Consecutive GNC solves that must agree before a loop enters or leaves the graph, so a verdict
     # one solve gives and the next takes back never moves the map.
     loop_gnc_confirmations: int = 2
+    # False folds a GNC verdict as soon as its solve finishes, keyframes or not (a robot standing
+    # still at a loop still gets the closure); True keeps the keyframe schedule so replays repeat.
+    loop_gnc_deterministic: bool = True
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False
@@ -203,6 +210,9 @@ class GscPGO(NativeModule):
     # pose_graph and loop_closure_event as packed PointCloud2 records, for fast-reform consumers.
     pose_graph_records: Out[PointCloud2]
     loop_closure_records: Out[PointCloud2]
+    # each loop candidate's lifecycle (proposed, gated, GNC votes, accepted, rejected, applied) as
+    # packed records with both keyframes' current positions and a confidence, for drawing loop edges
+    loop_edges: Out[PointCloud2]
     correction: Out[
         TFMessage
     ]  # i know, kinda redundant, but makes visuals much easier to make and is low-cost

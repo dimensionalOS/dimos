@@ -20,7 +20,7 @@
 use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dimos_gsc_pgo::gsc_pgo::KeyPoseWithCloud;
+use dimos_gsc_pgo::gsc_pgo::{KeyPoseWithCloud, LoopEdgeEvent, LOOP_EDGE_RECORD_BYTES};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::msgs::{
     DeltaTransform, Edge, Graph3D, GraphDelta3D, Node3D, PoseStamped as WirePose,
@@ -434,6 +434,35 @@ pub fn build_loop_closure_records(
         .copied()
         .collect();
     record_cloud(&fields, data, frame_id, ts)
+}
+
+const LOOP_EDGE_FIELDS: [(&str, u8); 12] = [
+    ("x", F32),
+    ("y", F32),
+    ("z", F32),
+    ("target_x", F32),
+    ("target_y", F32),
+    ("target_z", F32),
+    ("source_id", PointField::UINT32 as u8),
+    ("target_id", PointField::UINT32 as u8),
+    ("state", PointField::UINT32 as u8),
+    ("confidence", F32),
+    ("yank_z", F32),
+    ("ts", PointField::FLOAT64 as u8),
+];
+
+/// loop_edges as packed records, one per lifecycle event (see `LoopEdgeEvent`).
+pub fn build_loop_edge_records(
+    events: &[LoopEdgeEvent],
+    key_poses: &[KeyPoseWithCloud],
+    ts: f64,
+    frame_id: &str,
+) -> PointCloud2 {
+    let mut data = Vec::with_capacity(events.len() * LOOP_EDGE_RECORD_BYTES);
+    for event in events {
+        event.put_record(&mut data, key_poses);
+    }
+    record_cloud(&LOOP_EDGE_FIELDS, data, frame_id, ts)
 }
 
 /// The `from_pcl` wire layout (x/y/z/intensity float32, 16-byte points).
