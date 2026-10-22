@@ -208,6 +208,45 @@ without starting a new task episode. Graders must retain both, plus simulation
 time, rather than treating every scene edit as another trial. Internal transport
 `FrameMetadata.episode_id` carries that invalidation generation.
 
+## Rolling Mid360
+
+Use `Mid360` as a `Lidar.model` and attach its IMU to the same named site:
+
+```python skip
+from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
+from dimos.sim2.sensors.imu.spec import Imu
+from dimos.sim2.sensors.lidar.spec import Lidar
+
+lidar = Lidar(
+    "lidar", "mid360_link", Mid360,
+    imu=Imu("lidar_imu", "mid360_link"),
+    self_occlusion=True,
+    truth_outputs=False,
+)
+```
+
+`raw_pointcloud` carries sensor-frame returns, nanosecond offsets and channel
+IDs. `imu_raw` is in SI units, at 200 Hz by default. Wire these to current
+`PointLio.lidar_raw` and `PointLio.imu_raw`; use zero extrinsic translation when
+the simulated IMU and laser are colocated. Do not connect ground-truth pose or
+the corrected `pointcloud` to the estimator. Point-LIO does not yet expose a
+filter reset: restart it after resetting, teleporting or pausing its robot.
+Resume preserves the physical state and motor-enable state but begins a new
+observation generation, discarding pre-pause commands and acquisition history.
+
+The scanner fires 200,000 points/s continuously across scan boundaries.
+`downsample` retains complete four-channel groups and their original timestamps.
+Range noise and grazing-angle dropout can be disabled independently without
+changing the firing pattern. Those returns are an approximation, not a measured
+reflectivity/material model. Ray casting uses moving scene/robot geometry at
+acquisition time; raw scans retain motion distortion. Missing snapshot intervals
+drop a scan rather than replacing it with an instantaneous one.
+
+The Fourier implementation is shared with main's Mid360 model. The small
+`mid360_pattern` LFS asset retains the earlier G1-capture frequencies, which
+differ from the Go2 fit in `go2_sim`. The Go2 empirical mount-occlusion mask is
+not applied to arbitrary robots.
+
 ## Transport and tests
 
 `device.poll()` returns typed `Measurement` values without requiring a Module,
@@ -282,8 +321,25 @@ uv run pytest -m self_hosted dimos/sim2  # Requires a working native OpenGL rend
 uv run mypy --follow-imports=silent dimos/sim2
 ```
 
-Tests use small generated MJCFs without asset downloads. Coverage includes two
+Default tests use small generated MJCFs without asset downloads. Coverage includes two
 robots, complete PD commands, gripper units, exclusive writers, spawned and
 independent-process readers, stale feedback/commands, reset races, scene edits,
 RGB-D/raycast output, and a real headless DimOS deployment using Zenoh.
 These are core integration checks, not robot-policy or loaded-performance results.
+
+The explicit native canary builds current main's Point-LIO binary and drives a
+0.6 m linear stage from the ordinary device client. It checks the estimator
+against independently read truth, with and without a 640x480 RGB-D worker:
+
+```bash
+cargo build --release --locked --bin pointlio_native \
+  --manifest-path dimos/hardware/sensors/lidar/pointlio/rust/Cargo.toml
+uv run pytest dimos/sim2/sensors/lidar/test_mid360.py -m native_e2e \
+  -o junit_family=legacy --junitxml=/tmp/sim2-mid360-native.xml
+```
+
+This requires the calibration asset and native OpenGL for the camera case.
+Set `SIM2_POINTLIO_BINARY` for an externally built executable. The JUnit
+`sim2_mid360_evidence` property records rates, frame age and pose errors.
+This synthetic-room check is not validation of G1/Go2 locomotion, hardware
+sensor equivalence, or a complex-scene performance claim.

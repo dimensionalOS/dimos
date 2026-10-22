@@ -23,7 +23,7 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
+from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
 from dimos.utils.data import get_data
 
 

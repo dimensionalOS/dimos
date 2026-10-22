@@ -54,9 +54,9 @@ from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.controllers.locomotion.policy import CONTROL_DT, Go2Policy, load_policy
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.robot.unitree.go2.simulation.reference import LeggedGo2, apply_fitted_physics, go2_spec
+from dimos.sim2.sensors.lidar.models.mid360.pattern import POINT_RATE
+from dimos.sim2.sensors.lidar.models.mid360.returns import SimMid360
 from dimos.simulation.scenes.procedural import Family, Scene, generate
-from dimos.simulation.sensors.mid360.lidar import SimMid360
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.utils.logging_config import setup_logger
 

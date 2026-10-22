@@ -18,8 +18,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.simulation.sensors.mid360.lidar import OcclusionMap, SimMid360
-from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
+from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
+from dimos.sim2.sensors.lidar.models.mid360.returns import OcclusionMap, SimMid360
 from dimos.utils.data import get_data
 
 pytestmark = pytest.mark.self_hosted
