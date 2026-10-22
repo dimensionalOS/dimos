@@ -70,7 +70,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
@@ -205,9 +205,10 @@ class ConnectionModule(Module, ABC):
     both: the deadman cannot fire and no later command is handled until it
     returns.
 
-    Frames: an Imu reading is stamped with the module's ``frame_id`` (from
-    its config, class name by default), a PoseStamped with ``odom_frame_id``;
-    both take the config's ``frame_id_prefix``.
+    Frames: an odometry pose is in ``odom``, an IMU in ``imu``, a measured
+    base speed in ``base``. With several robots on one bus, give each module
+    a ``frame_id_prefix`` (its robot's name) and its frames become
+    ``go2b/odom`` and so on, so readers can tell the robots apart.
 
     To close the hardware connection when the module stops, override ``stop``
     and close it after calling ``super().stop()``, which halts the robot first.
@@ -216,8 +217,6 @@ class ConnectionModule(Module, ABC):
     config: ConnectionConfig
 
     dedicated_worker: ClassVar[bool] = True
-    odom_frame_id: ClassVar[str] = "odom"
-    """The frame a PoseStamped reading is given in. Override on the driver."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -421,15 +420,15 @@ class ConnectionModule(Module, ABC):
                 )
         if PoseStamped in reported:
             base = self._part(description, ResourceKind.BASE)
-            pose = functools.partial(pose_from_values, base=base, frame_id=self._odom_frame())
+            pose = functools.partial(pose_from_values, base=base, frame_id=self._frame("odom"))
             outputs.append(_Output(self.outputs[reported[PoseStamped]], pose))
-        if Twist in reported:
+        if TwistStamped in reported:
             base = self._part(description, ResourceKind.BASE)
-            speed = functools.partial(_measured_twist, base)
-            outputs.append(_Output(self.outputs[reported[Twist]], speed))
+            speed = functools.partial(_measured_twist, base, frame_id=self._frame("base"))
+            outputs.append(_Output(self.outputs[reported[TwistStamped]], speed))
         if Imu in reported:
             imu = self._part(description, ResourceKind.SENSOR)
-            imu_msg = functools.partial(imu_from_values, sensor=imu, frame_id=self.frame_id)
+            imu_msg = functools.partial(imu_from_values, sensor=imu, frame_id=self._frame("imu"))
             outputs.append(_Output(self.outputs[reported[Imu]], imu_msg))
         return outputs
 
@@ -551,9 +550,10 @@ class ConnectionModule(Module, ABC):
         self._late = 0
         self._late_logged_at = now
 
-    def _odom_frame(self) -> str:
+    def _frame(self, name: str) -> str:
+        """A reading's frame: ``name``, behind the config's ``frame_id_prefix`` if set."""
         prefix = self.config.frame_id_prefix
-        return f"{prefix}/{self.odom_frame_id}" if prefix else self.odom_frame_id
+        return f"{prefix}/{name}" if prefix else name
 
     def _part(self, description: ControlDescription, kind: ResourceKind) -> str:
         """The full name of the robot's one part of a kind, e.g. "go2/base"."""
@@ -585,6 +585,11 @@ class ConnectionModule(Module, ABC):
         return type(self).__name__
 
 
-def _measured_twist(base: str, values: Values, ts: float | None = None) -> Twist:
-    """A base's measured speed as a Twist, which carries no time."""
-    return twist_from_values(values, base)
+def _measured_twist(
+    base: str, values: Values, ts: float | None = None, *, frame_id: str
+) -> TwistStamped:
+    """A base's measured speed, stamped with when it was read and the base's frame."""
+    twist = twist_from_values(values, base)
+    return TwistStamped(
+        ts if ts is not None else time.time(), frame_id, linear=twist.linear, angular=twist.angular
+    )

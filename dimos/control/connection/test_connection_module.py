@@ -38,6 +38,7 @@ from dimos.control.contract.validate import DescriptionError
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -148,7 +149,7 @@ class BodyAndBase(FakeArm):
     motor_command: In[MotorCommandArray]
     base_command: In[Twist]
     odom: Out[PoseStamped]
-    base_velocity: Out[Twist]
+    base_velocity: Out[TwistStamped]
     imu: Out[Imu]
 
 
@@ -363,16 +364,16 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     assert isinstance(imu, Imu)
     assert (imu.orientation.w, imu.angular_velocity.z, imu.linear_acceleration.z) == (1.0, 0.3, 9.8)
     # Frames: the module's own for the IMU, the odometry frame for the pose.
-    assert imu.frame_id == "PushedBodyAndBase"
+    assert imu.frame_id == "imu"
     assert odom.frame_id == "odom"
 
 
 def test_reading_frames_follow_the_module_config(rig: Callable[..., Rig]) -> None:
-    r = rig(PushedBodyAndBase, frame_id="pelvis", frame_id_prefix="r1")
+    r = rig(PushedBodyAndBase, frame_id_prefix="r1")
     r.module.publish_state(BODY_AND_BASE_READINGS)
     [imu] = r.sent("imu")
     [odom] = r.sent("odom")
-    assert imu.frame_id == "r1/pelvis"
+    assert imu.frame_id == "r1/imu"
     assert odom.frame_id == "r1/odom"
 
 
@@ -382,6 +383,8 @@ def test_the_mock_base_reports_the_speed_it_was_last_told(rig: Callable[..., Rig
     assert wait_until(
         lambda: any(t.linear.x == 0.5 and t.angular.z == 0.2 for t in r.sent("base_velocity"))
     )
+    speed = r.sent("base_velocity")[-1]
+    assert isinstance(speed, TwistStamped) and speed.frame_id == "base"
 
 
 def test_joints_of_other_robots_are_ignored(rig: Callable[..., Rig]) -> None:

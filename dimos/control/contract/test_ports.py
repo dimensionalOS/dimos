@@ -38,6 +38,7 @@ from dimos.control.contract.presets import GripperSpec
 from dimos.control.contract.validate import DescriptionError, validate_description
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -246,7 +247,7 @@ def test_pose_twist_and_imu_outputs_add_what_the_base_and_sensor_report() -> Non
     described = control_description(
         BaseConfig(),
         {"cmd_vel": Twist},
-        {"odom": PoseStamped, "speed": Twist, "imu": Imu},
+        {"odom": PoseStamped, "speed": TwistStamped, "imu": Imu},
     )
     base = described.resource("base")
     imu = described.resource("imu")
@@ -266,7 +267,7 @@ def test_pose_twist_and_imu_outputs_add_what_the_base_and_sensor_report() -> Non
 
 def test_a_base_may_only_report() -> None:
     described = control_description(
-        ConnectionConfig(source="cart"), {}, {"odom": PoseStamped, "speed": Twist}
+        ConnectionConfig(source="cart"), {}, {"odom": PoseStamped, "speed": TwistStamped}
     )
     [base] = described.resources
     assert base.command_interfaces == ()
@@ -342,5 +343,5 @@ def test_port_specs_are_the_spec_fields_in_declaration_order(model: RobotModel) 
 def test_reading_ports_find_each_reading_by_message_under_any_name() -> None:
     found = reading_ports({"anything": JointState, "where": PoseStamped, "image": str})
     assert found == {JointState: "anything", PoseStamped: "where"}
-    with pytest.raises(ValueError, match="both report Twist"):
-        reading_ports({"a": Twist, "b": Twist})
+    with pytest.raises(ValueError, match="both report TwistStamped"):
+        reading_ports({"a": TwistStamped, "b": TwistStamped})

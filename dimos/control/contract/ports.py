@@ -34,7 +34,7 @@ type alone, under any name:
   ``Out[JointState]``   the position, speed and effort of every joint a port
                         drives (a gripper reports its position only)
   ``Out[PoseStamped]``  where the base is: x, y and yaw
-  ``Out[Twist]``        how fast the base is going: vx, vy and wz
+  ``Out[TwistStamped]`` how fast the base is going: vx, vy and wz
   ``Out[Imu]``          an orientation sensor called "imu"
 
 A module reports each of these on one port at most, and has one base.
@@ -71,6 +71,7 @@ from dimos.control.contract.presets import (
 from dimos.control.contract.validate import validate_description
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -84,7 +85,7 @@ if TYPE_CHECKING:
 BASE_NAME = "base"
 
 #: The messages an output port may report readings with.
-READING_MESSAGES: tuple[type, ...] = (JointState, PoseStamped, Twist, Imu)
+READING_MESSAGES: tuple[type, ...] = (JointState, PoseStamped, TwistStamped, Imu)
 
 
 class PortSpec(BaseConfig):
@@ -267,7 +268,7 @@ def control_description(
             f"MotorPort drives any"
         )
     base_state = (
-        *(TWIST_INTERFACES if Twist in reported else ()),
+        *(TWIST_INTERFACES if TwistStamped in reported else ()),
         *(POSE_INTERFACES if PoseStamped in reported else ()),
     )
     base_commands = TWIST_INTERFACES if base_field is not None else ()
