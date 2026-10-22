@@ -30,16 +30,24 @@ from numpy.typing import NDArray
 
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
-    DEPTH_CAMERA_FOV,
+    GO2_LIDAR_HALF_WIDTH,
+    LIDAR_ELEVATION_RANGES,
     LIDAR_FPS,
+    LIDAR_N_AZIMUTH,
+    LIDAR_N_ELEVATION,
     LIDAR_RESOLUTION,
+    MAX_RANGE,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
+from dimos.simulation.mujoco.raycast_lidar import (
+    EmbreeLidar,
+    scan_directions,
+    voxel_down_sample,
+)
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -75,7 +83,7 @@ def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
 
     Shadow-mapping a mesh-heavy scene can cost 4x per render on integrated
     GPUs, which pins the whole sim below realtime. The video camera renders at
-    VIDEO_FPS and shares the loop with physics and three depth cameras, so a
+    VIDEO_FPS and shares the loop with physics, lidar and the viewer, so a
     shadowed render that eats a large slice of the frame budget cannot keep up.
     """
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
@@ -129,7 +137,15 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
     mujoco.mj_forward(model, data)
 
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
-    lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
+    site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
+    if site_id < 0:
+        raise ValueError(f"Missing lidar site in {robot_name}")
+    elevation_min, elevation_max = LIDAR_ELEVATION_RANGES[robot_name]
+    directions_local = scan_directions(
+        LIDAR_N_AZIMUTH, elevation_min, elevation_max, LIDAR_N_ELEVATION
+    )
+
+    lidar = EmbreeLidar(model, data, site_id, directions_local)
 
     person_position_controller = PersonPositionController(model)
 
@@ -147,25 +163,10 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         )
         model.light_active[narrow_spots] = 0
 
-    lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
-    lidar_right_camera_id = mujoco.mj_name2id(
-        model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
-    )
-
-    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
-        camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
-
-        # Create renderers
-        rgb_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_renderer.enable_depth_rendering()
-
-        depth_left_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_left_renderer.enable_depth_rendering()
-
-        depth_right_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_right_renderer.enable_depth_rendering()
-
+    with (
+        viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer,
+        mujoco.Renderer(model, height=VIDEO_HEIGHT, width=VIDEO_WIDTH) as rgb_renderer,
+    ):
         scene_option = mujoco.MjvOption()
 
         # Timing control
@@ -218,55 +219,21 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
                 shm.write_video(pixels)
                 last_video_time = current_time
 
-            # Lidar/depth rendering
+            # Cast synchronously so physics cannot change data during the scan.
             if current_time - last_lidar_time >= lidar_interval:
-                # Render all depth cameras
-                depth_renderer.update_scene(data, camera=lidar_camera_id, scene_option=scene_option)
-                depth_front = depth_renderer.render()
-
-                depth_left_renderer.update_scene(
-                    data, camera=lidar_left_camera_id, scene_option=scene_option
-                )
-                depth_left = depth_left_renderer.render()
-
-                depth_right_renderer.update_scene(
-                    data, camera=lidar_right_camera_id, scene_option=scene_option
-                )
-                depth_right = depth_right_renderer.render()
-
-                shm.write_depth(depth_front, depth_left, depth_right)
-
-                # Process depth images into lidar message
-                all_points = []
-                cameras_data = [
-                    (
-                        depth_front,
-                        data.cam_xpos[lidar_camera_id],
-                        data.cam_xmat[lidar_camera_id].reshape(3, 3),
-                    ),
-                    (
-                        depth_left,
-                        data.cam_xpos[lidar_left_camera_id],
-                        data.cam_xmat[lidar_left_camera_id].reshape(3, 3),
-                    ),
-                    (
-                        depth_right,
-                        data.cam_xpos[lidar_right_camera_id],
-                        data.cam_xmat[lidar_right_camera_id].reshape(3, 3),
-                    ),
-                ]
-
-                for depth_image, camera_pos, camera_mat in cameras_data:
-                    points = depth_image_to_point_cloud(
-                        depth_image, camera_pos, camera_mat, fov_degrees=DEPTH_CAMERA_FOV
+                cast_start = time.perf_counter()
+                if robot_name == "unitree_go1":
+                    points = lidar.cast_box(data, GO2_LIDAR_HALF_WIDTH)
+                else:
+                    points = lidar.cast(data, MAX_RANGE)
+                if last_lidar_time == 0.0:
+                    logger.debug(
+                        "Lidar ray cast",
+                        duration_ms=(time.perf_counter() - cast_start) * 1e3,
+                        rays=len(directions_local),
                     )
-                    if points.size > 0:
-                        all_points.append(points)
-
-                if all_points:
-                    points = voxel_down_sample(np.vstack(all_points), LIDAR_RESOLUTION)
-                    shm.write_lidar(points, time.time())
-
+                points = voxel_down_sample(points, LIDAR_RESOLUTION)
+                shm.write_lidar(points, time.time())
                 last_lidar_time = current_time
 
             # Control simulation speed

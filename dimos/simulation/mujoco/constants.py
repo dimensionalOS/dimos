@@ -18,15 +18,25 @@ from pathlib import Path
 VIDEO_WIDTH = 640
 VIDEO_HEIGHT = 360
 VIDEO_CAMERA_FOV = 45  # MuJoCo default FOV for head_camera (degrees)
-DEPTH_CAMERA_FOV = 160
 
-# Depth camera range/filtering constants
+# Lidar range/filtering constants
 MAX_RANGE = 3
 MIN_RANGE = 0.2
 MAX_HEIGHT = 1.2
 
 # Lidar constants
 LIDAR_RESOLUTION = 0.05
+# The recorded Go2 WebRTC voxel maps span 128 x 128 cells at 5 cm.
+GO2_LIDAR_HALF_WIDTH = 3.2
+# Dense elevation sampling closes the gaps between ground rings near the map's edge.
+LIDAR_N_AZIMUTH = 720
+LIDAR_N_ELEVATION = 480
+LIDAR_ELEVATION_RANGES = {
+    # Mid-360: the shallow lower bound leaves the nearby floor out of view.
+    "unitree_g1": (-7.0, 52.0),
+    # Unitree L1: 90 degrees, tilted down from the head mount.
+    "unitree_go1": (-80.0, 10.0),
+}
 
 # Simulation timing constants
 VIDEO_FPS = 20
