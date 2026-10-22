@@ -33,7 +33,7 @@ use crate::gtsam::{symbol_key, FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{
     self, cloud_degeneracy, icp_point_to_point, transform_cloud, voxel_downsample, IcpParams,
-    PointCloud,
+    KdTree, PointCloud,
 };
 use crate::scan_context;
 
@@ -200,10 +200,12 @@ pub struct LoopCandidateDiag {
     pub yank_rotation_deg: f64,
     /// The inputs and outputs of the yank / confidence gate (`loop_yank_gate`), recorded for every
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
-    /// sigma_* = 1.4826 x the median yank of the candidates ICP scored before it (NaN before any);
-    /// yank_z = hypot(yank_rotation_deg / sigma_rotation_deg, yank_translation / sigma_translation_m)
+    /// yank_drift_scale = sqrt(keyframe gap) with `loop_yank_per_sqrt_gap`, else 1;
+    /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
+    /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
     /// (0 before any); each factor is its metric normalized by its own gate and clamped to [0, 1];
-    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2).
+    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `loop_yank_gate_width`.
+    pub yank_drift_scale: f64,
     pub sigma_rotation_deg: f64,
     pub sigma_translation_m: f64,
     pub yank_z: f64,
@@ -212,6 +214,17 @@ pub struct LoopCandidateDiag {
     pub degeneracy_factor: f64,
     pub confidence: f64,
     pub required_confidence: f64,
+    /// Extended ICP (`loop_extended_icp_max_keyframes`), recorded when it ran (0 / NaN otherwise):
+    /// the source keyframes stacked into the last round, both clouds' sizes, the source points
+    /// within the correspondence distance of the target for the single scan and the extended
+    /// clouds, the extended ICP's fitness, and the confidence that evidence gives.
+    pub extended_keyframes: usize,
+    pub extended_source_points: usize,
+    pub extended_target_points: usize,
+    pub single_inliers: usize,
+    pub extended_inliers: usize,
+    pub extended_fitness: f64,
+    pub extended_confidence: f64,
 }
 
 impl LoopCandidateDiag {
@@ -237,6 +250,7 @@ impl LoopCandidateDiag {
             icp_translation_norm: f64::NAN,
             yank_translation: f64::NAN,
             yank_rotation_deg: f64::NAN,
+            yank_drift_scale: f64::NAN,
             sigma_rotation_deg: f64::NAN,
             sigma_translation_m: f64::NAN,
             yank_z: f64::NAN,
@@ -245,6 +259,13 @@ impl LoopCandidateDiag {
             degeneracy_factor: f64::NAN,
             confidence: f64::NAN,
             required_confidence: f64::NAN,
+            extended_keyframes: 0,
+            extended_source_points: 0,
+            extended_target_points: 0,
+            single_inliers: 0,
+            extended_inliers: 0,
+            extended_fitness: f64::NAN,
+            extended_confidence: f64::NAN,
         }
     }
 }
@@ -369,11 +390,28 @@ pub struct Config {
     /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `LoopCandidateDiag`). A small yank needs
     /// little confidence, a large one needs a near-perfect match. The inputs are recorded either way.
     pub loop_yank_gate: bool,
+    /// k in the yank gate's 1 - exp(-yank_z^2 / 2k^2): how many sigmas of yank before a near-perfect match is required.
+    pub loop_yank_gate_width: f64,
+    /// Measure yank against the drift odometry could have built up between the loop's ends: divide
+    /// it by sqrt(keyframe gap) before scaling (on huge_loop this ranks loops that help above loops
+    /// that hurt at AUC 0.82 vs 0.70). Off = the plain yank.
+    pub loop_yank_per_sqrt_gap: bool,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
     /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
     pub loop_icp_dump_dir: String,
+    /// With `loop_yank_gate`, a candidate whose single-scan confidence is too low for its yank gets
+    /// a second look on more data instead of an outright reject: seeded with the first ICP, the
+    /// source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
+    /// keyframes near the matched one in time that those land within `loop_search_radius` of.
+    /// Inliers are source points within sqrt(`loop_score_thresh`) of the target after ICP.
+    /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
+    /// good as the single scan's confidence times how well the overlap held up (extended inlier
+    /// fraction / single inlier fraction, at most 1): confidence = 1 - (1 - c_round)^checks.
+    /// (Mean squared fitness is not used: the stacked clouds see places the other side never did.)
+    /// The first round that clears the gate is kept, and its transform becomes the loop. 0 = off.
+    pub loop_extended_icp_max_keyframes: usize,
     /// Minimum keyframe-index separation between the two ends of a loop closure.
     /// A closure only corrects drift accumulated over the trajectory between the
     /// pair; a near-in-sequence pair spans negligible drift, so a "closure" there
@@ -475,7 +513,10 @@ impl Default for Config {
             loop_max_yank_rotation_deg: 0.0,
             loop_yank_gate_max_distance_m: 0.0,
             loop_yank_gate: false,
+            loop_yank_gate_width: 1.0,
+            loop_yank_per_sqrt_gap: true,
             loop_icp_dump_dir: String::new(),
+            loop_extended_icp_max_keyframes: 0,
             loop_min_id_gap: 0,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
@@ -610,8 +651,8 @@ pub struct GscPgo {
     /// Per committed loop never in the graph: consecutive GNC votes against it, and whether that
     /// has been reported as a rejection (an edge GNC turns down without ever taking it in).
     loop_out_votes: Vec<(u64, bool)>,
-    /// Rotation (deg) and translation (m) yank of every candidate ICP has scored, the scale new
-    /// yanks are measured against. Every scored candidate, not just committed ones: a scale taken
+    /// Rotation (deg) and translation (m) yank of every candidate ICP has scored (per sqrt keyframe
+    /// gap with `loop_yank_per_sqrt_gap`), the scale new yanks are measured against. Every scored candidate, not just committed ones: a scale taken
     /// only from loops the gate let through would shrink with each rejection and reject the rest.
     scored_yanks: Vec<(f64, f64)>,
     /// Per committed loop: its yank_z and confidence (which scales its GNC votes'), for its
@@ -745,14 +786,24 @@ impl GscPgo {
             values.sort_by(f64::total_cmp);
             (1.4826 * values[values.len() / 2]).max(f64::EPSILON)
         };
+        // odometry drift is a random walk, so the yank a correct loop needs grows with sqrt(keyframes between its ends)
+        let drift = if self.config.loop_yank_per_sqrt_gap {
+            (diag.source_id as f64 - diag.target_id as f64)
+                .abs()
+                .max(1.0)
+                .sqrt()
+        } else {
+            1.0
+        };
+        diag.yank_drift_scale = drift;
         if self.scored_yanks.is_empty() {
             diag.yank_z = 0.0;
         } else {
             diag.sigma_rotation_deg = robust_scale(self.scored_yanks.iter().map(|y| y.0).collect());
             diag.sigma_translation_m =
                 robust_scale(self.scored_yanks.iter().map(|y| y.1).collect());
-            diag.yank_z = (diag.yank_rotation_deg / diag.sigma_rotation_deg)
-                .hypot(diag.yank_translation / diag.sigma_translation_m);
+            diag.yank_z = (diag.yank_rotation_deg / drift / diag.sigma_rotation_deg)
+                .hypot(diag.yank_translation / drift / diag.sigma_translation_m);
         }
         let unit = |v: f64| {
             if v.is_finite() {
@@ -778,9 +829,153 @@ impl GscPgo {
                 1.0
             };
         diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
-        diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / 2.0).exp();
-        self.scored_yanks
-            .push((diag.yank_rotation_deg, diag.yank_translation));
+        let width = self.config.loop_yank_gate_width.max(f64::EPSILON);
+        diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / (2.0 * width * width)).exp();
+        self.scored_yanks.push((
+            diag.yank_rotation_deg / drift,
+            diag.yank_translation / drift,
+        ));
+    }
+
+    /// Global-frame cloud of keyframes `ids`, voxel-downsampled at the submap resolution.
+    fn stacked_cloud(&self, ids: impl Iterator<Item = usize>) -> PointCloud {
+        let mut cloud = PointCloud::new();
+        for k in ids {
+            let key_pose = &self.key_poses[k];
+            if let Some(body_cloud) = &key_pose.body_cloud {
+                cloud.extend(transform_cloud(
+                    body_cloud,
+                    &key_pose.rotation_global,
+                    &key_pose.translation_global,
+                ));
+            }
+        }
+        if self.config.submap_resolution > 0.0 {
+            cloud = voxel_downsample(&cloud, self.config.submap_resolution);
+        }
+        cloud
+    }
+
+    /// See `Config::loop_extended_icp_max_keyframes`. Returns the extended ICP of the first round
+    /// whose confidence clears `diag.required_confidence`, or None.
+    fn extended_icp(
+        &self,
+        cur_idx: usize,
+        loop_idx: usize,
+        source_cloud: &PointCloud,
+        target_cloud: &PointCloud,
+        first: &IcpResult,
+        diag: &mut LoopCandidateDiag,
+    ) -> Option<IcpResult> {
+        let max_keyframes = self.config.loop_extended_icp_max_keyframes;
+        if max_keyframes < 2 || !first.converged {
+            return None;
+        }
+        let max_distance = self.config.loop_icp_max_correspondence_m;
+        // a point overlaps when it is within the RMS distance the ICP score gate allows (fitness is a mean squared distance)
+        let inliers = |source: &PointCloud, target: &PointCloud, icp: &IcpResult| {
+            let tree = KdTree::build(target);
+            let limit = self.config.loop_score_thresh as f32;
+            transform_cloud(source, &icp.rotation, &icp.translation)
+                .iter()
+                .filter(|p| matches!(tree.nearest(p), Some((_, d)) if d <= limit))
+                .count()
+        };
+        let single = inliers(source_cloud, target_cloud, first);
+        diag.single_inliers = single;
+        if single == 0 {
+            return None;
+        }
+        let params = IcpParams {
+            max_iterations: self.config.loop_icp_max_iterations as usize,
+            max_correspondence_distance: max_distance,
+            fitness_max_distance: if self.config.loop_icp_inlier_fitness {
+                max_distance
+            } else {
+                0.0
+            },
+            ..IcpParams::default()
+        };
+        let half_range = self.config.loop_submap_half_range.max(0) as usize;
+        let radius = self.config.loop_search_radius;
+        let mut keyframes = 2;
+        while keyframes <= max_keyframes {
+            // never stack source keyframes into the stretch the target side is drawn from
+            let window = half_range + keyframes;
+            let source_first = cur_idx.saturating_sub(keyframes).max(loop_idx + window + 1);
+            if source_first >= cur_idx {
+                return None;
+            }
+            // where the first ICP puts each stacked source keyframe
+            let placed: Vec<Vec3> = (source_first..=cur_idx)
+                .map(|k| {
+                    mat3::add(
+                        &mat3::mat_vec(&first.rotation, &self.key_poses[k].translation_global),
+                        &first.translation,
+                    )
+                })
+                .collect();
+            let target_ids =
+                loop_idx.saturating_sub(window)..=(loop_idx + window).min(source_first - 1);
+            let near = |j: usize| {
+                j.abs_diff(loop_idx) <= half_range
+                    || placed.iter().any(|p| {
+                        mat3::norm(&mat3::sub(p, &self.key_poses[j].translation_global)) < radius
+                    })
+            };
+            let source = self.stacked_cloud(source_first..=cur_idx);
+            let target = self.stacked_cloud(target_ids.filter(|&j| near(j)));
+            let icp = icp_point_to_point(
+                &source,
+                &target,
+                &first.rotation,
+                &first.translation,
+                &params,
+            );
+            if !self.config.loop_icp_dump_dir.is_empty() {
+                dump_icp_inputs(
+                    &self.config.loop_icp_dump_dir,
+                    cur_idx,
+                    loop_idx,
+                    &source,
+                    &target,
+                    &icp,
+                    &format!("_x{keyframes}"),
+                );
+            }
+            let extended = if icp.converged {
+                inliers(&source, &target, &icp)
+            } else {
+                0
+            };
+            let held_up = ((extended as f64 / source.len().max(1) as f64)
+                / (single as f64 / source_cloud.len() as f64))
+                .min(1.0);
+            let per_scan = diag.confidence * held_up;
+            // evidence = -ln(1 - confidence); the gate compares it to z^2 / 2k^2 without rounding to 1
+            let evidence = -(1.0 - per_scan).ln() * extended as f64 / single as f64;
+            let width = self.config.loop_yank_gate_width.max(f64::EPSILON);
+            let required = diag.yank_z * diag.yank_z / (2.0 * width * width);
+            let confidence = 1.0 - (-evidence).exp();
+            diag.extended_keyframes = cur_idx - source_first + 1;
+            diag.extended_source_points = source.len();
+            diag.extended_target_points = target.len();
+            diag.extended_inliers = extended;
+            diag.extended_fitness = icp.fitness;
+            diag.extended_confidence = if confidence.is_finite() {
+                confidence.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if !icp.converged {
+                return None;
+            }
+            if evidence >= required {
+                return Some(icp);
+            }
+            keyframes *= 2;
+        }
+        None
     }
 
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
@@ -1525,7 +1720,15 @@ impl GscPgo {
         );
         self.timing.icp_s += t0.elapsed().as_secs_f64();
         if !self.config.loop_icp_dump_dir.is_empty() {
-            dump_icp_inputs(&self.config.loop_icp_dump_dir, cur_idx, loop_idx, &source_cloud, &target_cloud, &icp);
+            dump_icp_inputs(
+                &self.config.loop_icp_dump_dir,
+                cur_idx,
+                loop_idx,
+                &source_cloud,
+                &target_cloud,
+                &icp,
+                "",
+            );
         }
         diag.icp_converged = icp.converged;
         diag.icp_fitness = icp.fitness;
@@ -1555,7 +1758,7 @@ impl GscPgo {
             return;
         }
 
-        let score = icp.fitness;
+        let mut score = icp.fitness;
         let rotation_refined =
             mat3::mat_mul(&icp.rotation, &self.key_poses[cur_idx].rotation_global);
         let translation_refined = mat3::add(
@@ -1563,8 +1766,8 @@ impl GscPgo {
             &icp.translation,
         );
         let loop_rotation_transpose = mat3::transpose(&self.key_poses[loop_idx].rotation_global);
-        let rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
-        let translation_offset = mat3::mat_vec(
+        let mut rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
+        let mut translation_offset = mat3::mat_vec(
             &loop_rotation_transpose,
             &mat3::sub(
                 &translation_refined,
@@ -1596,9 +1799,37 @@ impl GscPgo {
 
         self.score_candidate(&mut diag);
         if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
-            diag.outcome = "yank_confidence_reject";
-            self.record_search(diag);
-            return;
+            let Some(extended) = self.extended_icp(
+                cur_idx,
+                loop_idx,
+                &source_cloud,
+                &target_cloud,
+                &icp,
+                &mut diag,
+            ) else {
+                diag.outcome = "yank_confidence_reject";
+                self.record_search(diag);
+                return;
+            };
+            // the loop measurement comes from the extended alignment, which saw more of both places
+            let rotation_refined =
+                mat3::mat_mul(&extended.rotation, &self.key_poses[cur_idx].rotation_global);
+            let translation_refined = mat3::add(
+                &mat3::mat_vec(
+                    &extended.rotation,
+                    &self.key_poses[cur_idx].translation_global,
+                ),
+                &extended.translation,
+            );
+            rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
+            translation_offset = mat3::mat_vec(
+                &loop_rotation_transpose,
+                &mat3::sub(
+                    &translation_refined,
+                    &self.key_poses[loop_idx].translation_global,
+                ),
+            );
+            score = extended.fitness;
         }
 
         if self.config.loop_max_yank_rotation_deg > 0.0
@@ -2339,6 +2570,7 @@ fn dump_icp_inputs(
     source: &PointCloud,
     target: &PointCloud,
     icp: &IcpResult,
+    suffix: &str,
 ) {
     let mut bytes = Vec::with_capacity(8 + 12 * (source.len() + target.len()) + 105);
     bytes.extend_from_slice(&(source.len() as u32).to_le_bytes());
@@ -2358,7 +2590,7 @@ fn dump_icp_inputs(
     }
     bytes.extend_from_slice(&icp.fitness.to_le_bytes());
     bytes.push(icp.converged as u8);
-    let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}.icp"));
+    let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}{suffix}.icp"));
     if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
         eprintln!("loop_icp_dump_dir: could not write {}: {e}", path.display());
     }

@@ -99,7 +99,10 @@ pub struct Config {
     pub loop_max_lowe_ratio: f64,
     pub loop_max_yank_rotation_deg: f64,
     pub loop_yank_gate: bool,
+    pub loop_yank_gate_width: f64,
+    pub loop_yank_per_sqrt_gap: bool,
     pub loop_icp_dump_dir: String,
+    pub loop_extended_icp_max_keyframes: usize,
     pub loop_yank_gate_max_distance_m: f64,
     pub loop_min_id_gap: u64,
 
@@ -192,7 +195,10 @@ impl Config {
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate: self.loop_yank_gate,
+            loop_yank_gate_width: self.loop_yank_gate_width,
+            loop_yank_per_sqrt_gap: self.loop_yank_per_sqrt_gap,
             loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
+            loop_extended_icp_max_keyframes: self.loop_extended_icp_max_keyframes,
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,
@@ -819,13 +825,15 @@ impl Worker {
         let mut lines = String::new();
         for d in &diagnostics[*written..] {
             lines += &format!(
-                "{{\"outcome\":\"{}\",\"source_id\":{},\"source_time\":{},\"target_id\":{},\"target_time\":{},\"scan_context_best\":{},\"lowe_ratio\":{},\"candidate_distance\":{},\"degeneracy_min\":{},\"icp_fitness\":{},\"yank_rotation_deg\":{},\"yank_translation\":{},\"sigma_rotation_deg\":{},\"sigma_translation_m\":{},\"yank_z\":{},\"scan_context_factor\":{},\"icp_factor\":{},\"degeneracy_factor\":{},\"confidence\":{},\"required_confidence\":{}}}\n",
+                "{{\"outcome\":\"{}\",\"source_id\":{},\"source_time\":{},\"target_id\":{},\"target_time\":{},\"scan_context_best\":{},\"lowe_ratio\":{},\"candidate_distance\":{},\"degeneracy_min\":{},\"icp_fitness\":{},\"yank_rotation_deg\":{},\"yank_translation\":{},\"yank_drift_scale\":{},\"sigma_rotation_deg\":{},\"sigma_translation_m\":{},\"yank_z\":{},\"scan_context_factor\":{},\"icp_factor\":{},\"degeneracy_factor\":{},\"confidence\":{},\"required_confidence\":{},\"extended_keyframes\":{},\"extended_source_points\":{},\"extended_target_points\":{},\"single_inliers\":{},\"extended_inliers\":{},\"extended_fitness\":{},\"extended_confidence\":{}}}\n",
                 d.outcome, d.source_id, number(d.source_time), d.target_id, number(d.target_time),
                 number(d.scan_context_best as f64), number(d.lowe_ratio as f64), number(d.candidate_distance),
                 number(d.degeneracy_min as f64), number(d.icp_fitness), number(d.yank_rotation_deg),
-                number(d.yank_translation), number(d.sigma_rotation_deg), number(d.sigma_translation_m),
+                number(d.yank_translation), number(d.yank_drift_scale), number(d.sigma_rotation_deg), number(d.sigma_translation_m),
                 number(d.yank_z), number(d.scan_context_factor), number(d.icp_factor),
                 number(d.degeneracy_factor), number(d.confidence), number(d.required_confidence),
+                d.extended_keyframes, d.extended_source_points, d.extended_target_points, d.single_inliers,
+                d.extended_inliers, number(d.extended_fitness), number(d.extended_confidence),
             );
         }
         use std::io::Write;
