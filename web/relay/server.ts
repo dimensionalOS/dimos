@@ -8,10 +8,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Auth } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
 import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts";
-import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RtcHub } from "./rtc.ts";
-import { RobotSession, ViewerSession } from "./session.ts";
+import { forceGc, RobotSession, ViewerSession } from "./session.ts";
 
 export interface RelayOptions {
   /**
@@ -92,6 +91,22 @@ export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
 export const MAX_IDLE_TIMEOUT_MS = 15_000;
 export const KEEP_ALIVE_INTERVAL_MS = 3_000;
 const EPHEMERAL_PORT_ATTEMPTS = 10;
+
+// Registry housekeeping (publish timeouts) period.
+const TICK_MS = 500;
+// Forced garbage collection period. A robot sends every frame on its own
+// one-shot stream, and on Deno 2.6.10 a finished stream's slot in this
+// connection's incoming-stream budget returns only when its wrapper is
+// finalized (the relay can neither FIN nor reset its send half before
+// that), so without a collection a robot's burst wedges in aioquic once
+// the budget is spent. With viewer streams persistent there are only a
+// second's worth of finished robot streams to collect, so the pause stays
+// at its ~2 ms floor (gcMs in /api/stats).
+const GC_INTERVAL_MS = 1000;
+// Incoming bidirectional streams per connection, far above a second of any
+// robot's frames so the collection period never rate-limits a robot (quinn
+// defaults to 100). Viewers open one, their control stream.
+const INCOMING_BIDI_STREAMS = 10_000;
 
 /** What the listeners serve: the ephemeral certificate or the operator's. */
 interface ServedCert {
@@ -193,10 +208,30 @@ export function installUnhandledRejectionGuard(): void {
   // timeout; without this guard the relay dies ~30 s after a tab closes.
   if ((globalThis as { __dimosRejectionGuard?: boolean }).__dimosRejectionGuard) return;
   (globalThis as { __dimosRejectionGuard?: boolean }).__dimosRejectionGuard = true;
+  // A teardown rejects one promise per dead stream (thousands at scale):
+  // log the first of each burst and a count for the rest.
+  let suppressed = 0;
+  let lastLogAt = 0;
   globalThis.addEventListener("unhandledrejection", (e) => {
-    console.log("[relay] unhandled rejection (ignored):", (e.reason as Error)?.message ?? e.reason);
     e.preventDefault();
+    const now = Date.now();
+    if (now - lastLogAt < 1000) {
+      suppressed++;
+      return;
+    }
+    lastLogAt = now;
+    const more = suppressed > 0 ? ` (+${suppressed} more in the last second)` : "";
+    suppressed = 0;
+    console.log(
+      `[relay] unhandled rejection (ignored): ${(e.reason as Error)?.message ?? e.reason}${more}`,
+    );
   });
+}
+
+/** Process-level figures for /api/stats: memory (Deno.memoryUsage, bytes)
+ * and uptime, for soak runs watching for growth. */
+function processStats(startedAt: number): Record<string, number> {
+  return { uptimeMs: Date.now() - startedAt, ...Deno.memoryUsage() };
 }
 
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
@@ -305,6 +340,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       alpnProtocols: ["h3"],
       maxIdleTimeout: MAX_IDLE_TIMEOUT_MS,
       keepAliveInterval: KEEP_ALIVE_INTERVAL_MS,
+      maxConcurrentBidirectionalStreams: INCOMING_BIDI_STREAMS,
       ...(options.congestionControl !== undefined
         ? { congestionControl: options.congestionControl }
         : {}),
@@ -329,20 +365,17 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  // Offers reap stale latest streams opportunistically, but an idle input
-  // stops offering; this interval bounds an idle stream's lifetime to just
-  // under 2x the stale window. The forced GC is what actually ends a reaped
-  // stream on Deno 2.6.10: abort() never reaches QUIC, the
-  // stream's FIN goes out when its wrapper is finalized, and without a GC
-  // per tick the viewer's uni-stream credit comes back only when V8 happens
-  // to collect - seconds to tens of seconds of frozen video. gc() exists
-  // only under --v8-flags=--expose-gc (relay_run_cmd passes it).
-  const reapTimer = setInterval(() => {
-    registry.reapAll(Date.now());
-    (globalThis as { gc?: () => void }).gc?.();
-  }, LATEST_STALE_MS);
-  // A pending reap must not keep the Deno process alive after shutdown().
-  Deno.unrefTimer(reapTimer);
+  const startedAt = Date.now();
+  const tickTimer = setInterval(() => registry.tick(Date.now()), TICK_MS);
+  const gcTimer = setInterval(() => forceGc(registry), GC_INTERVAL_MS);
+  // Pending timers must not keep the Deno process alive after shutdown().
+  Deno.unrefTimer(tickTimer);
+  Deno.unrefTimer(gcTimer);
+  const statsResponse = (headers?: HeadersInit): Response =>
+    Response.json(
+      { ...(registry.stats() as Record<string, unknown>), process: processStats(startedAt) },
+      { headers },
+    );
 
   (async () => {
     for await (const incoming of listener) {
@@ -379,7 +412,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       return Response.json(info, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
-      if (auth === null) return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      if (auth === null) return statsResponse(LOCAL_CORS);
       // Operator tooling only: a bearer viewer token, and no CORS header.
       if (!auth.bearerOk(req.headers.get("authorization"))) {
         return new Response("unauthorized", {
@@ -387,7 +420,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
           headers: { "www-authenticate": "Bearer" },
         });
       }
-      return Response.json(registry.stats());
+      return statsResponse();
     }
     if (url.pathname === "/sdk.js") {
       // Never falls through to a static root: a missing bundle must yield the
@@ -431,7 +464,8 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
-      clearInterval(reapTimer);
+      clearInterval(tickTimer);
+      clearInterval(gcTimer);
       hub?.dispose();
       for (const wt of sessions) {
         try {

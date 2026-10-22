@@ -106,3 +106,20 @@ def test_jpeg_bytes_do_not_depend_on_the_pixel_layout(img: Image) -> None:
     rgba = Image(data=np.zeros((4, 6, 4), dtype=np.uint8), format=ImageFormat.RGBA)
     with pytest.warns(UserWarning):
         assert rgba.to_jpeg_bytes()[:2] == b"\xff\xd8"  # converts through to_rgb()
+
+
+@pytest.mark.skipif_no_turbojpeg
+def test_jpeg_source_bytes_survive_decode_and_pickle(img: Image) -> None:
+    # An image decoded from a JPEG LCM message keeps the JPEG it came from,
+    # across a pickle (the pickled transports), and sheds it on any copy or
+    # conversion, whose pixels may no longer match it.
+    import pickle
+
+    encoded = img.lcm_jpeg_encode(quality=80)
+    decoded = Image.lcm_decode(encoded)
+    assert decoded.jpeg is not None and decoded.jpeg[:2] == b"\xff\xd8"
+    assert pickle.loads(pickle.dumps(decoded)).jpeg == decoded.jpeg
+    assert decoded.copy().jpeg is None
+    assert decoded.to_bgr().jpeg is None
+    assert img.jpeg is None
+    assert decoded == pickle.loads(pickle.dumps(decoded))  # jpeg is not identity

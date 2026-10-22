@@ -402,7 +402,10 @@ async def test_stats_reflect_traffic(
     assert odom["sent"] >= 1
     assert odom["bytesOut"] >= 2
     # A healthy reliable channel never resets anything.
-    assert (odom["aborted"], odom["expired"], odom["inflight"]) == (0, 0, 0)
+    assert (odom["stalled"], odom["writing"]) == (0, False)
+    # The module's shared relay has seen other tests' deliberate resets.
+    assert isinstance(stats["framesIncomplete"], int)
+    assert stats["process"]["rss"] > 0
 
 
 async def test_duplicate_robot_id_is_terminal_until_first_disconnects(
@@ -484,9 +487,10 @@ async def test_malformed_robot_frame_is_dropped(
 
 
 async def test_latest_writer_resets_stale_stream(robot: RelayClient, viewer: RelayClient) -> None:
-    """The writer auto-resets an in-flight stream when a newer frame is waiting."""
+    """The writer resets its oldest in-flight stream when the in-flight budget
+    is full, that stream is stale, and a newer frame is waiting."""
     await attach(robot, viewer, ["cam"])
-    writer = robot.latest_writer("cam", stale_after=0.02)
+    writer = robot.latest_writer("cam", stale_after=0.02, max_in_flight=1)
     # 8 MiB can't flush + ACK within stale_after, so it stays in flight.
     writer.offer(b"\xcd" * (8 * 1024 * 1024))
     # Wait until the pump has begun sending the big frame.
@@ -508,6 +512,33 @@ async def test_latest_writer_resets_stale_stream(robot: RelayClient, viewer: Rel
     assert writer.resets >= 1, "the stale stream was never reset"
     # The relay survived the reset.
     assert await robot.ping() < 5.0
+
+
+async def test_latest_writer_sends_frames_back_to_back(
+    robot: RelayClient, viewer: RelayClient
+) -> None:
+    """Up to MAX_IN_FLIGHT frames ride the wire at once: a burst of small
+    frames all arrive with no frame shed and no reset (one-in-flight would
+    have waited an ACK round trip between each, shedding the burst)."""
+    await attach(robot, viewer, ["cam"])
+    writer = robot.latest_writer("cam", stale_after=0.5)
+    n = writer.max_in_flight
+    assert n >= 2
+    for i in range(n):
+        writer.offer(i.to_bytes(4, "little"))
+        # The pump sends each before the next offer lands; the ACK of the
+        # first is not back by then (loopback ACKs are delayed up to 25 ms).
+        for _ in range(200):
+            if writer.sent == i + 1:
+                break
+            await asyncio.sleep(0.001)
+        assert writer.sent == i + 1
+    frames = await collect_until(
+        viewer, lambda fs: len({f.header.seq for f in fs if f.header.ch == "cam"}) >= n
+    )
+    markers = sorted(int.from_bytes(bytes(f.payload[:4]), "little") for f in frames)
+    assert markers == list(range(n))
+    assert (writer.sent, writer.dropped, writer.resets) == (n, 0, 0)
 
 
 async def test_close_signal_stops_writer_and_wakes_waiter(own_relay: RelayProcess) -> None:

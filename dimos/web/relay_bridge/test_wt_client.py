@@ -19,7 +19,7 @@ failure path directly.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
@@ -87,6 +87,7 @@ class StubSession:
         self.answer_pings = True
         self.pong_waiters: dict[int, asyncio.Future[Pong]] = {}
         self.failed: str | None = None
+        self.progress_waits = 0
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         # Real encode so a non-serializable meta raises here, exactly as the
@@ -103,6 +104,10 @@ class StubSession:
         self.resets.append(stream_id)
         self.in_flight.discard(stream_id)
         return True
+
+    async def wait_delivery_progress(self, timeout: float) -> None:
+        self.progress_waits += 1
+        await asyncio.sleep(min(timeout, 0.002))
 
     async def wait_closed(self) -> None:
         await self.closed.wait()
@@ -208,7 +213,7 @@ async def delivery_writer(
     mocker.patch.object(delivery_session, "send_frame", side_effect=send_frame)
     mocker.patch.object(delivery_session, "wait_delivery_progress", side_effect=wait_progress)
     client = RelayClient("https://relay.test", "robot", delivery_session, ctx=None)
-    writer = client.latest_writer("cam", stale_after=10.0)
+    writer = client.latest_writer("cam", stale_after=10.0, max_in_flight=1)
     try:
         yield writer, sent, waiting
     finally:
@@ -223,9 +228,9 @@ async def test_mailbox_sends_only_newest_frame_on_delivery_notification(
     writer.offer(b"f0")
     stream_id, payload = await asyncio.wait_for(sent.get(), timeout=1)
     assert payload == b"f0"
-    await asyncio.wait_for(waiting.get(), timeout=1)
     for i in range(1, 6):
         writer.offer(b"f%d" % i)
+    await asyncio.wait_for(waiting.get(), timeout=1)
 
     sender = delivery_session._quic._streams[stream_id].sender
     sender.on_data_delivery(QuicDeliveryState.ACKED, 0, sender._buffer_stop, fin=True)
@@ -241,12 +246,11 @@ async def test_mailbox_sends_only_newest_frame_on_delivery_notification(
 async def test_replacement_wakes_stalled_sender_and_preserves_deadline(
     delivery_writer, stale_after: float
 ) -> None:
-    writer, sent, waiting = delivery_writer
+    writer, sent, _ = delivery_writer
     writer.stale_after = stale_after
     started = time.monotonic()
     writer.offer(b"old")
     await asyncio.wait_for(sent.get(), timeout=1)
-    await asyncio.wait_for(waiting.get(), timeout=1)
     # Even an expired frame stays in flight until there is a replacement.
     assert writer.resets == 0
     writer.offer(b"new")
@@ -262,11 +266,11 @@ async def test_session_failure_wakes_delivery_waiters_and_stops_sender(
     writer, sent, waiting = delivery_writer
     writer.offer(b"old")
     stream_id, _ = await asyncio.wait_for(sent.get(), timeout=1)
+    writer.offer(b"new")
     await asyncio.wait_for(waiting.get(), timeout=1)
     waiter = asyncio.create_task(delivery_session.wait_delivered(stream_id, timeout=None))
     try:
         await asyncio.wait_for(waiting.get(), timeout=1)
-        writer.offer(b"new")
         delivery_session.fail_session("test close")
         assert await asyncio.wait_for(waiter, timeout=1) is False
         await asyncio.wait_for(writer._task, timeout=1)
@@ -281,13 +285,96 @@ async def test_session_failure_wakes_delivery_waiters_and_stops_sender(
 async def test_stopping_sender_cancels_delivery_waiter(
     delivery_session: SessionProtocol, delivery_writer
 ) -> None:
-    writer, _, waiting = delivery_writer
+    writer, sent, waiting = delivery_writer
     writer.offer(b"pending")
+    await asyncio.wait_for(sent.get(), timeout=1)
+    writer.offer(b"replacement")
     await asyncio.wait_for(waiting.get(), timeout=1)
     writer.stop()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(writer._task, timeout=1)
     assert delivery_session._delivery_waiters == []
+
+
+async def _spin(cond: Callable[[], bool], timeout: float = 2.5) -> None:
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.005)
+
+
+async def test_latest_writer_keeps_max_in_flight_streams_on_the_wire() -> None:
+    # Without ACKs, three frames go out back to back (the budget), the
+    # fourth waits for ACK progress, and an ACK of the oldest frees a slot.
+    session = StubSession()
+    acked: set[int] = set()
+    session.stream_in_flight = lambda sid: sid not in acked  # type: ignore[method-assign]
+    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    assert writer.max_in_flight == wt_client.MAX_IN_FLIGHT == 3
+    try:
+        for i in range(3):
+            writer.offer(b"f%d" % i)
+            await _spin(lambda want=i + 1: writer.sent == want)
+        writer.offer(b"f3")
+        await asyncio.sleep(0.03)
+        assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
+        assert writer.in_flight() == 3 and writer.dropped == 0
+        assert session.progress_waits > 0  # waiting on ACKs, not polling blindly
+
+        acked.add(101)  # the first stream id the stub handed out
+        await _spin(lambda: writer.sent == 4)
+        assert [p for _, p in session.sent_frames][-1] == b"f3"
+        assert writer.in_flight() == 3 and writer.resets == 0
+    finally:
+        writer.stop()
+
+
+async def test_latest_writer_resets_the_oldest_stale_stream_when_full() -> None:
+    # A full budget with nothing ACKed: the oldest stream is reset once it
+    # is stale_after old and a newer frame waits, never earlier.
+    session = StubSession()
+    session.stream_in_flight = lambda sid: sid not in session.resets  # type: ignore[method-assign]
+    writer = _client(session).latest_writer("cam", stale_after=0.05, max_in_flight=2)
+    try:
+        writer.offer(b"f0")
+        await _spin(lambda: writer.sent == 1)
+        writer.offer(b"f1")
+        await _spin(lambda: writer.sent == 2)
+        writer.offer(b"f2")
+        await asyncio.sleep(0.02)
+        assert writer.sent == 2 and session.resets == []  # too young to reset
+        await _spin(lambda: writer.sent == 3)
+        assert session.resets == [101]  # the oldest stream, exactly once
+        assert writer.resets == 1
+        assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
+    finally:
+        writer.stop()
+
+
+async def test_reliable_frames_are_bounded_by_unacked_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wt_client, "RELIABLE_MAX_IN_FLIGHT", 4)
+    warnings: list[str] = []
+    monkeypatch.setattr(wt_client.logger, "warning", warnings.append)
+    session = StubSession()
+    acked: set[int] = set()
+    session.stream_in_flight = lambda sid: sid not in acked and sid not in session.resets  # type: ignore[method-assign]
+    client = _client(session)
+    ids = [client.send_frame("odom", b"%d" % i) for i in range(4)]
+    assert session.resets == []
+    client.send_frame("odom", b"4")  # the 5th unacked frame: the oldest is reset
+    assert session.resets == [ids[0]]
+    assert client.reliable_dropped == {"odom": 1}
+    assert len(warnings) == 1 and "4 frames unacknowledged" in warnings[0]
+
+    acked.update(ids)  # everything older is delivered: no more resets
+    client.send_frame("odom", b"5")
+    client.send_frame("odom", b"6")
+    assert session.resets == [ids[0]]
+    client.send_frame("cam", b"x", delivery="latest")  # latest frames are not bounded here
+    assert len(session.sent_frames) == 8
 
 
 async def test_keepalive_fails_the_session_after_unanswered_pings(

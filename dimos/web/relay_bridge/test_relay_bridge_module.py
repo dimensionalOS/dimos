@@ -290,6 +290,29 @@ def test_sampling_gate_never_exceeds_the_rate_on_average() -> None:
     ]
 
 
+def test_jpeg_source_bytes_are_forwarded_without_re_encoding(monkeypatch) -> None:
+    # A frame that arrived as JPEG goes out as it came; the encoder never runs.
+    from dimos.web.relay_bridge import builtin_codecs
+
+    calls = {"n": 0}
+    real = Image.to_jpeg_bytes
+
+    def spy(self: Image, quality: int = 75) -> bytes:
+        calls["n"] += 1
+        return real(self, quality=quality)
+
+    monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
+    pixels = Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+    arrived = Image.lcm_decode(pixels.lcm_jpeg_encode(quality=60))  # one encode, the producer's
+    encodes = calls["n"]
+    out = builtin_codecs.encode_jpeg(arrived, {"quality": 90})
+    assert out.payload == arrived.jpeg
+    assert out.meta == {"w": 12, "h": 8}
+    assert calls["n"] == encodes  # forwarded, not encoded again
+    assert builtin_codecs.encode_jpeg(pixels, {"quality": 90}).payload[:2] == b"\xff\xd8"
+    assert calls["n"] == encodes + 1
+
+
 def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
     # The ticket-mandated spy: encode work must not happen without viewers,
     # independent of the module.encoded bookkeeping.

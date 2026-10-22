@@ -53,8 +53,8 @@ Every other stream needs a `Channel` declaration. It becomes a port typed with t
 
 The relay keeps the bridge informed of which channels have at least one subscribed viewer. The bridge encodes and sends a channel only while that holds: it subscribes to the stream when the first viewer arrives and unsubscribes when the last one leaves. Replayable channels (`resend_on_subscribe`, and the built-in `global_costmap`) also keep a raw-message cache, so they stay subscribed to their stream without viewers, but nothing is encoded for them. Two settings shape what crosses the wire:
 
-- `delivery`: `reliable` channels arrive in order and complete (the relay queues per viewer and drops a viewer that cannot keep up). `latest` channels keep only the newest frame and shed stale ones on the way. Video and maps are `latest`.
-- `max_hz`: an rx channel is sampled at this rate, so messages that arrive faster are skipped. With `paced=True` the bridge spaces sends instead: every message goes out, one per interval, in order, which suits event streams like chat where a burst must arrive complete. `resend_on_subscribe=True` replays the last message to the first viewer that subscribes, which suits state streams that publish rarely (a map, a path). A second viewer on a channel that is already flowing waits for the next publish.
+- `delivery`: `reliable` channels arrive in order and complete (the relay queues per viewer and drops a viewer that cannot keep up). `latest` channels keep only the newest frame and shed stale ones on the way: the bridge keeps up to three frames in flight to the relay and the relay one pending frame per viewer. Video and maps are `latest`.
+- `max_hz`: an rx channel is sampled at this rate, so messages that arrive faster are skipped. The sampling tolerates arrival jitter, so a 30 Hz camera through a 30 Hz cap passes every frame. With `paced=True` the bridge spaces sends instead: every message goes out, one per interval, in order, which suits event streams like chat where a burst must arrive complete. `resend_on_subscribe=True` replays the last message to the first viewer that subscribes, which suits state streams that publish rarely (a map, a path). A second viewer on a channel that is already flowing waits for the next publish.
 
 <details>
 <summary>diagram source</summary>
@@ -207,6 +207,7 @@ When the manifest has no teleop channel, teleop messages are ignored.
 ## Connection behaviour
 
 - The bridge fetches `/api/info` on every connect and retries every 2 s. A restarted relay (new QUIC port, new certificate) is transparent, and subscriptions are re-established after each reconnect. At startup it gives up after four failed attempts.
-- A bridge killed without a clean close keeps its robot id registered on the relay until the relay's 30 s idle timeout. A restart inside that window waits for the conflict to clear (up to 45 s) instead of failing.
+- The bridge offers the relay a 10 s QUIC idle timeout and pings it every 3 s once registered; three unanswered pings, an ICMP error on its socket (the relay process is gone) or the idle timeout end the session and start a reconnect.
+- A bridge killed without a clean close keeps its robot id registered on the relay until that 10 s idle timeout. A restart inside that window waits for the conflict to clear (up to 45 s) instead of failing.
 - A wrong or missing key on a relay with an auth file fails with `auth_failed`, logged once. The bridge stops instead of retrying.
 - With a local relay, the bridge starts the relay process (downloading Deno on first use and building the web bundles when they are stale), waits for its ready line, and opens the browser.

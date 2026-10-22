@@ -220,40 +220,32 @@ async function nextOfType(next: () => Promise<Msg>, t: Msg["t"], what: string): 
   return msg;
 }
 
-// Test that one suspended viewer must cost only itself. Its stale streams are
-// reset ("aborted, not queued") while the healthy viewer keeps receiving fresh
-// frames at full rate. This is also the permanent proof that reaping keeps
-// working against real quinn streams.
+// One suspended viewer must cost only itself: its latest write stalls once
+// its stream window is full (counted as `stalled`, never more than one frame
+// queued behind it) while the healthy viewer keeps receiving fresh frames at
+// full rate.
 //
 // MUST RUN FIRST in this file: a preceding test's teardown churn (or plain CPU
-// starvation, e.g. a 2-CPU CI runner) lets a relay reset race Deno's preamble
-// read of a not-yet-accepted incoming uni stream - the client-side analog of
-// README bug 10. The client's accept glue then errors or silently hangs, its
-// stream credit freezes at ~100, and the healthy viewer starves. Not fixable
-// from test code (no client-side raw-QuicConn API), so wedged rounds are
-// retried - but only on the wedge's own signatures. Any other failure, or 4
-// wedged rounds, still fails: a relay regression cannot hide behind the retries.
+// starvation, e.g. a 2-CPU CI runner) can leave Deno's client-side accept
+// glue wedged (the client-side analog of README bug 10) and the healthy
+// viewer starved. Not fixable from test code, so wedged rounds are retried,
+// but only on the wedge's own signature. Any other failure, or 4 wedged
+// rounds, still fails: a relay regression cannot hide behind the retries.
 Deno.test({
-  name: "a viewer that stops reading is reset, not queued; others keep full rate",
+  name: "a viewer that stops reading stalls alone; others keep full rate",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
   for (let attempt = 1;; attempt++) {
-    const round: RoundState = { glueDeath: null, lastInflight: NaN };
+    const round: RoundState = { glueDeath: null };
     try {
       await runBackpressureRound(round);
       return;
     } catch (e) {
-      // Wedged = accept loop errored, or inflight froze at exactly 1: the
-      // never-reaped unaccepted carrier, only frozen client credit does that.
-      const wedged = round.glueDeath !== null || round.lastInflight === 1;
-      if (!wedged || attempt >= 4) throw e;
+      if (round.glueDeath === null || attempt >= 4) throw e;
       console.log(
-        `[test] round ${attempt} hit the Deno incoming-uni wedge (` +
-          (round.glueDeath !== null
-            ? `accept loop died: ${round.glueDeath}`
-            : "accept loop hung: carrier stuck unaccepted") +
-          "); retrying",
+        `[test] round ${attempt} hit the Deno incoming-uni wedge (accept loop died: ` +
+          `${round.glueDeath}); retrying`,
       );
       // 5 s matters: the dead round's churn re-arms the race if we go sooner.
       await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -263,7 +255,6 @@ Deno.test({
 
 interface RoundState {
   glueDeath: unknown; // healthy accept-loop error, recorded pre-teardown only
-  lastInflight: number; // healthy inflight as last seen by the reap poll
 }
 
 /** One backpressure round against a fresh relay; fills `round` so the
@@ -271,17 +262,6 @@ interface RoundState {
 async function runBackpressureRound(round: RoundState): Promise<void> {
   const relay = await startRelay({ port: 0 });
   const httpBase = `http://127.0.0.1:${relay.httpPort}`;
-  // The healthy viewer is the one that accepted the most sends.
-  const fetchHealthyInflight = async (): Promise<number> => {
-    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
-    const channels = (stats.perViewer as {
-      channels: Record<string, { sent: number; inflight: number }>;
-    }[])
-      .map((v) => v.channels.color_image)
-      .filter((c) => c !== undefined)
-      .sort((a, b) => b.sent - a.sent);
-    return channels[0]?.inflight ?? -1;
-  };
   const clients: WebTransport[] = [];
   let tearingDown = false;
   try {
@@ -325,40 +305,47 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     const stalled = await attachViewer("stalled");
     void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
 
-    const payload = new Uint8Array(8 * 1024).fill(9);
-    const fetchStalled = async () => {
+    // 64 KiB frames fill the stalled viewer's stream window (quinn's default
+    // 1.25 MB) within a second of frames.
+    const payload = new Uint8Array(64 * 1024).fill(9);
+    type Out = { stalled: number; queued: number; sent: number; writing: boolean };
+    const fetchOut = async (): Promise<Out[]> => {
       const stats = await (await fetch(`${httpBase}/api/stats`)).json();
-      const viewers = stats.perViewer as {
-        channels: Record<string, { aborted: number; queued: number; sent: number }>;
-      }[];
-      // The stalled viewer is the one whose acceptance count froze.
-      return viewers
+      return (stats.perViewer as { channels: Record<string, Out> }[])
         .map((v) => v.channels.color_image)
         .filter((c) => c !== undefined)
-        .sort((a, b) => a.sent - b.sent)[0];
+        .sort((a, b) => a.sent - b.sent); // the stalled viewer accepts fewer
     };
 
-    // Pump frames until the stalled viewer's stale streams are being reset
-    // under backpressure. Onset needs its uni-stream credit (~100) exhausted
-    // plus one LATEST_STALE_MS window, so give it a generous frame budget.
+    // Pump frames until the stalled viewer's write is wedged in its full
+    // stream window (writing, far behind) or was accepted late at least
+    // once (stalled).
     let lastSeq = 0;
-    let stalledStats = await fetchStalled();
-    for (let seq = 1; seq <= 1200; seq++) {
+    let out: Out[] = [];
+    for (let seq = 1; seq <= 600; seq++) {
       await sendRobotFrame(
         robot,
         { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
         payload,
       );
       lastSeq = seq;
-      if (seq % 50 === 0) {
-        stalledStats = await fetchStalled();
-        if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
+      if (seq % 25 === 0) {
+        out = await fetchOut();
+        const slow = out[0];
+        if (slow !== undefined && (slow.stalled >= 1 || (slow.writing && slow.sent < seq - 50))) {
+          break;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert(stalledStats !== undefined, "stalled viewer never got a policy");
-    assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
-    assert(stalledStats.queued <= 1, `latest queue must stay 0|1, got ${stalledStats.queued}`);
+    assert(out.length === 2, "both viewers need a policy");
+    const [slow, fast] = out;
+    assert(
+      slow.stalled >= 1 || slow.writing,
+      `expected the stalled viewer to stall, got ${JSON.stringify(slow)}`,
+    );
+    assert(slow.queued <= 1, `latest queue must stay 0|1, got ${slow.queued}`);
+    assert(fast.sent > slow.sent, `healthy ${fast.sent} should outpace stalled ${slow.sent}`);
 
     // The healthy viewer kept receiving fresh frames the whole time: drain its
     // queue and require a seq from the era after the stalled viewer wedged.
@@ -368,27 +355,6 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
     }
     assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
-
-    // The input has quiesced, so no newer offer will reap the healthy viewer's
-    // last accepted stream: only the relay's periodic reap timer can return it
-    // (against real quinn streams).
-    const reapDeadline = Date.now() + 5000;
-    let healthyInflight = -1;
-    while (Date.now() < reapDeadline) {
-      healthyInflight = await fetchHealthyInflight();
-      round.lastInflight = healthyInflight;
-      if (healthyInflight === 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
-  } catch (e) {
-    // A wedge during pump/drain dies before the reap poll but leaves the
-    // same stuck-carrier signature; settle one stale window, then probe.
-    if (round.glueDeath === null && Number.isNaN(round.lastInflight)) {
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      round.lastInflight = await fetchHealthyInflight().catch(() => NaN);
-    }
-    throw e;
   } finally {
     tearingDown = true;
     for (const wt of clients) {
@@ -401,7 +367,6 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     await relay.shutdown();
   }
 }
-
 Deno.test({
   name: "relay loopback e2e",
   // QUIC endpoint + WT sessions keep background ops alive past shutdown();
@@ -718,15 +683,17 @@ Deno.test({
     );
     assertEquals(viewerStats.subs, ["odom"]);
     assertEquals(viewerStats.channels.odom.sent, 3);
-    // Reset counters and rates (T5): a healthy reliable channel never resets.
+    // A healthy reliable channel never stalls and is idle between frames.
     assertEquals(viewerStats.channels.odom.delivery, "reliable");
-    assertEquals(viewerStats.channels.odom.aborted, 0);
-    assertEquals(viewerStats.channels.odom.expired, 0);
-    assertEquals(viewerStats.channels.odom.inflight, 0);
+    assertEquals(viewerStats.channels.odom.stalled, 0);
+    assertEquals(viewerStats.channels.odom.writing, false);
     assert(viewerStats.channels.odom.bytesOut > 0);
     assertEquals(typeof viewerStats.channels.odom.fps, "number");
     assert(stats.perRobot[ROBOT.id].channels.odom.bytesIn > 0);
     assertEquals(typeof stats.perRobot[ROBOT.id].channels.odom.bps, "number");
+    assertEquals(stats.framesIncomplete, 0);
+    assertEquals(stats.streamCreditStalls, 0);
+    assert(stats.process.rss > 0 && stats.process.heapUsed > 0 && stats.process.uptimeMs >= 0);
   });
 
   /** Expect one robot hello attempt to be rejected with `code` + close. */

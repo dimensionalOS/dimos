@@ -142,6 +142,12 @@ _ENCODE_ERROR_LOG_S = 5.0
 # reaching a robot (relay errors to robots are handshake-only), so an offer
 # the relay never answers is rebuilt and re-sent with backoff.
 _RTC_ANSWER_TIMEOUT_S = 15.0
+
+# Encodings whose live frames are encoded on a worker thread (latest wins,
+# one encode per channel at a time) instead of the transport thread, as
+# the replay on subscribe already is: a voxel map takes up to seconds, and on
+# the transport thread it stalled every channel sharing that LCM thread.
+_OFF_THREAD_ENCODINGS = frozenset({"voxels.zlib.v1"})
 _RTC_RETRY_BASE_S = 2.0
 _RTC_RETRY_MAX_S = 30.0
 
@@ -196,6 +202,11 @@ class _Session:
     # that finishes after the counter moved lost to a live frame and is
     # dropped.
     replay_fence: dict[str, int] = field(default_factory=dict)
+    # Live frames of heavy channels (_OFF_THREAD_ENCODINGS) waiting for a
+    # worker-thread encode, newest wins, and the one task per channel
+    # draining them (strong refs, as for replays).
+    encode_pending: dict[str, Any] = field(default_factory=dict)
+    encodes: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     rtc_channels: frozenset[str] = frozenset()
     # The latest rtc_ice: the relay re-mints TURN credentials hourly.
     ice_servers: list[IceServer] = field(default_factory=list)
@@ -992,14 +1003,50 @@ class RelayBridgeModule(Module):
                 self.encoded[spec.ch] += 1
             return
         assert sender is not None
+        loop = self._loop
+        if spec.encoding in _OFF_THREAD_ENCODINGS:
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(self._queue_encode, session, spec, sender, msg)
+            return
         encoded = self._run_encoder(spec, msg)
         if encoded is None:
             return
         payload, meta = encoded
         self.encoded[spec.ch] += 1
-        loop = self._loop
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(self._offer, session, sender, payload, meta)
+
+    def _queue_encode(
+        self, session: _Session, spec: RuntimeChannelSpec, sender: Sender, msg: Any
+    ) -> None:
+        """Loop callback: park a heavy channel's newest live message for its
+        worker-thread encode (a message still waiting is replaced) and make
+        sure the channel's encode task runs."""
+        if session.retired.is_set() or self._session is not session:
+            return
+        session.encode_pending[spec.ch] = msg
+        task = session.encodes.get(spec.ch)
+        if task is None or task.done():
+            session.encodes[spec.ch] = asyncio.create_task(
+                self._encode_pending(session, spec, sender)
+            )
+
+    async def _encode_pending(
+        self, session: _Session, spec: RuntimeChannelSpec, sender: Sender
+    ) -> None:
+        """Encode the channel's parked messages one at a time, newest first
+        after each, until none waits. The counter and the offer move together
+        on the loop, so the replay fence (see _replay_cached) sees a live
+        encode exactly when its frame can reach the mailbox."""
+        while not session.retired.is_set():
+            msg = session.encode_pending.pop(spec.ch, None)
+            if msg is None:
+                return
+            encoded = await asyncio.to_thread(self._run_encoder, spec, msg)
+            if encoded is None:
+                continue
+            self.encoded[spec.ch] += 1
+            self._offer(session, sender, *encoded)
 
     def _report_stall(self, session: _Session, ch: str) -> None:
         """Loop callback: the track went unfed past the SFU's track lifetime
@@ -1065,6 +1112,11 @@ class RelayBridgeModule(Module):
         target.replays.clear()
         for ch, task in replays.items():
             await _cancel_task(task, f"{ch} replay")
+        encodes = dict(target.encodes)
+        target.encodes.clear()
+        target.encode_pending.clear()
+        for ch, task in encodes.items():
+            await _cancel_task(task, f"{ch} encode")
         # The connect task owns the SFU peer and closes it when cancelled.
         await _cancel_task(target.rtc_task, "WebRTC connect")
         target.rtc_task = None
