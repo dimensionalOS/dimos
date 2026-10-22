@@ -4,8 +4,8 @@ Additive VQA families that consume Dan `Localization` outputs without changing
 Dan localize, existing image/point-cloud primitives, or existing image-path
 families.
 
-Evidence adapter: `dimos/evals/vqa/primitives/localize_scene.py`  
-Sector policy: [`ego-spatial-sectors.md`](ego-spatial-sectors.md)  
+Evidence adapter: `dimos/evals/vqa/primitives/localize_scene.py`
+Sector policy: [`ego-spatial-sectors.md`](ego-spatial-sectors.md)
 Usage: `docs/usage/vqa.md` (`--with-localize`)
 
 ---
