@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 
 use dimos_gsc_pgo::gsc_pgo::{
     CloudWithPose, CommittedLoop, Config as PgoConfig, GscPgo, LoopCandidateDiag, PoseWithTime,
+    LOOP_EDGE_RECORD_BYTES,
 };
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
@@ -69,6 +70,7 @@ struct EvalConfig {
     loop_max_lowe_ratio: f64,
     loop_candidate_max_distance_m: f64,
     loop_max_yank_rotation_deg: f64,
+    loop_yank_gate: bool,
     loop_yank_gate_max_distance_m: f64,
     loop_min_id_gap: u64,
 
@@ -100,6 +102,7 @@ struct EvalConfig {
     loop_gnc_inlier_probability: f64,
     loop_gnc_apply_after_fraction: f64,
     loop_gnc_confirmations: u64,
+    loop_gnc_deterministic: bool,
 
     use_location_constraints: bool,
 
@@ -139,6 +142,7 @@ impl Default for EvalConfig {
             loop_max_lowe_ratio: 0.0,
             loop_candidate_max_distance_m: 0.0,
             loop_max_yank_rotation_deg: 0.0,
+            loop_yank_gate: false,
             loop_yank_gate_max_distance_m: 0.0,
             loop_min_id_gap: 0,
             subtract_odom_from_cloud: false,
@@ -166,6 +170,7 @@ impl Default for EvalConfig {
             loop_gnc_inlier_probability: 0.95,
             loop_gnc_apply_after_fraction: 0.05,
             loop_gnc_confirmations: 2,
+            loop_gnc_deterministic: true,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
@@ -199,6 +204,7 @@ impl EvalConfig {
             loop_min_degeneracy: self.loop_min_degeneracy,
             loop_max_lowe_ratio: self.loop_max_lowe_ratio,
             loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
+            loop_yank_gate: self.loop_yank_gate,
             loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
             loop_min_id_gap: self.loop_min_id_gap,
             loop_robust_kernel: self.loop_robust_kernel,
@@ -218,6 +224,7 @@ impl EvalConfig {
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
             loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
             loop_gnc_confirmations: self.loop_gnc_confirmations,
+            loop_gnc_deterministic: self.loop_gnc_deterministic,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
@@ -264,6 +271,14 @@ struct LoopDiag {
     icp_translation_norm: f64,
     yank_translation: f64,
     yank_rotation_deg: f64,
+    sigma_rotation_deg: f64,
+    sigma_translation_m: f64,
+    yank_z: f64,
+    scan_context_factor: f64,
+    icp_factor: f64,
+    degeneracy_factor: f64,
+    confidence: f64,
+    required_confidence: f64,
 }
 
 /// A committed loop's ICP-refined relative pose (target frame -> source), so an
@@ -316,6 +331,14 @@ impl From<&LoopCandidateDiag> for LoopDiag {
             icp_translation_norm: diag.icp_translation_norm,
             yank_translation: diag.yank_translation,
             yank_rotation_deg: diag.yank_rotation_deg,
+            sigma_rotation_deg: diag.sigma_rotation_deg,
+            sigma_translation_m: diag.sigma_translation_m,
+            yank_z: diag.yank_z,
+            scan_context_factor: diag.scan_context_factor,
+            icp_factor: diag.icp_factor,
+            degeneracy_factor: diag.degeneracy_factor,
+            confidence: diag.confidence,
+            required_confidence: diag.required_confidence,
         }
     }
 }
@@ -555,6 +578,15 @@ fn run() -> Result<(), String> {
         ),
         None => None,
     };
+    // Loop-edge events as packed records (`<path>.edges`), written as they happen.
+    let mut edges = match &args.event_dump {
+        Some(path) => Some(
+            std::fs::File::create(format!("{}.edges", path.display()))
+                .map_err(|e| format!("create edge dump: {e}"))?,
+        ),
+        None => None,
+    };
+    let mut edges_written = 0usize;
     let started = Instant::now();
     for scan in &scans {
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
@@ -615,11 +647,17 @@ fn run() -> Result<(), String> {
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
         }
+        if let Some(edges) = &mut edges {
+            write_loop_edges(edges, &pgo, &mut edges_written)?;
+        }
     }
     pgo.finish_gnc();
     if let Some(events) = &mut events {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         write_pose_changes(events, &pgo, &mut published, false, ts)?;
+    }
+    if let Some(edges) = &mut edges {
+        write_loop_edges(edges, &pgo, &mut edges_written)?;
     }
     if let Some(path) = &args.event_dump {
         write_keyframes(path, &pgo)?;
@@ -710,6 +748,27 @@ fn run() -> Result<(), String> {
 /// A keyframe pose change smaller than this waits to add up, as in the module.
 const POSE_CHANGE_M: f64 = 1e-3;
 const POSE_CHANGE_RAD: f64 = 1e-4;
+
+/// Append the loop-edge events since the last call as packed records.
+fn write_loop_edges(
+    file: &mut std::fs::File,
+    pgo: &GscPgo,
+    written: &mut usize,
+) -> Result<(), String> {
+    use std::io::Write;
+    let events = &pgo.loop_edge_events()[*written..];
+    if events.is_empty() {
+        return Ok(());
+    }
+    let mut data = Vec::with_capacity(events.len() * LOOP_EDGE_RECORD_BYTES);
+    for event in events {
+        event.put_record(&mut data, pgo.key_poses());
+    }
+    file.write_all(&data)
+        .map_err(|e| format!("write edge dump: {e}"))?;
+    *written += events.len();
+    Ok(())
+}
 
 /// Append, as the module's loop_closure_records would, every keyframe's pose
 /// change since `published` when a loop closed or any keyframe moved:
