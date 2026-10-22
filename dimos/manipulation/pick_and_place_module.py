@@ -34,7 +34,6 @@ from dimos.manipulation.grasp_verification import (
     grasp_failure,
     open_failure,
 )
-from dimos.manipulation.grasping.contact_filter import drop_touching, scene_obstacles
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.gripper_contact import GripperContactModel
@@ -269,11 +268,11 @@ class PickAndPlaceModule(Module):
                 self._contact_models[tip] = GripperContactModel(
                     robot.model.load(), robot.gripper, tip
                 )
-            kept = drop_touching(
-                self._contact_models[tip],
+            kept = self._contact_models[tip].keep_clear(
                 candidates,
                 pointcloud,
-                scene_obstacles(scene, pointcloud, tips),
+                scene,
+                tips,
                 self.config.grasp_contact_margin,
                 self.config.grasp_obstacle_margin,
             )

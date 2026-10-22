@@ -34,15 +34,20 @@ from scipy.spatial.transform import Rotation
 import trimesh
 
 from dimos.manipulation.planning.spec.gripper import GripperSpec
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.robot.assets.model import (
     CollisionDescription,
     JointDescription,
     LinkDescription,
     LoadedRobotModel,
 )
+from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
+
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # Object points are thinned to one per cube of this edge (metres) before the
 # check: fine enough for a margin of a few millimetres, and it bounds the work.
@@ -50,6 +55,15 @@ _TARGET_CELL = 0.0025
 # Rays cast to decide whether a point is inside a link's shape; an odd count, so
 # a ray grazing an edge is outvoted.
 _INSIDE_RAYS = 3
+# How far (metres) beyond the object's points scene points are kept: farther
+# than any part of the gripper reaches from a grasp on the object.
+_REACH = 0.25
+# Scene points this close (metres) to a gripper's tool tip are that gripper: the
+# wrist camera sees its own fingers.
+_GRIPPER_SELF_RADIUS = 0.15
+# Scene points this close (metres) to the object's points are the object's own
+# edge left outside its mask.
+_TARGET_EDGE = 0.01
 
 
 @dataclass(frozen=True)
@@ -152,6 +166,37 @@ class GripperContactModel:
         """A link's pose in the tool tip's frame at one pose of the close (0 is open), 4x4."""
         return self._tip_from_link[step][link]
 
+    def keep_clear(
+        self,
+        candidates: GraspCandidateArray,
+        target: PointCloud2,
+        scene: PointCloud2,
+        tips: Sequence[Vector3],
+        contact_margin: float,
+        obstacle_margin: float,
+    ) -> GraspCandidateArray:
+        """The grasps whose gripper touches the object only at its contact patches and clears the scene.
+
+        Args:
+            candidates: Grasps, in the frame of the points.
+            target: The object's points, metres.
+            scene: Camera points with the object masked out, metres, same frame.
+            tips: Where each gripper's tool tip is now, metres, same frame; scene
+                points near them are the robot's own gripper and are ignored.
+            contact_margin: Closer than this (metres) to the object is a touch.
+            obstacle_margin: Closer than this (metres) to a scene point is an overlap.
+        """
+        poses = np.asarray([pose_to_matrix(c.pose) for c in candidates.candidates])
+        clear = self.check(
+            poses.reshape((-1, 4, 4)),
+            target.points_f32(),
+            scene_obstacles(scene, target, tips),
+            contact_margin,
+            obstacle_margin,
+        )
+        kept = [c for c, ok in zip(candidates.candidates, clear, strict=True) if ok]
+        return GraspCandidateArray(candidates.header, kept)
+
     def check(
         self,
         grasps: NDArray[np.float64],
@@ -252,6 +297,40 @@ class GripperContactModel:
         # R^T (p - t) for each point and the grasp it belongs to.
         local = np.einsum("kji,kj->ki", rotations[owner], points[indices] - translations[owner])
         return owner, local
+
+
+def scene_obstacles(
+    scene: PointCloud2, target: PointCloud2, tips: Sequence[Vector3]
+) -> NDArray[np.float64]:
+    """The scene points around an object that a gripper grasping it must keep clear of.
+
+    Args:
+        scene: Camera points with the object masked out, metres, in the object's frame.
+        target: The object's points, metres.
+        tips: Where each gripper's tool tip is, metres, same frame; points near
+            them are the robot's own gripper and are dropped.
+
+    Returns the points within reach of the object, less the robot's grippers
+    and the object's own edge, shape (N, 3), metres.
+    """
+    points = _xyz(scene)
+    own = _xyz(target)
+    keep = np.zeros(len(points), dtype=np.bool_)
+    if len(own):
+        low, high = own.min(axis=0) - _REACH, own.max(axis=0) + _REACH
+        keep = np.all((points >= low) & (points <= high), axis=1)
+    for tip in tips:
+        keep &= np.linalg.norm(points - tip.to_numpy(), axis=1) > _GRIPPER_SELF_RADIUS
+    points = points[keep]
+    if len(own) and len(points):
+        distance, _ = cKDTree(own).query(points)
+        points = points[distance > _TARGET_EDGE]
+    return points
+
+
+def _xyz(cloud: PointCloud2) -> NDArray[np.float64]:
+    points = np.asarray(cloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    return points[np.all(np.isfinite(points), axis=1)]
 
 
 def _ancestors(parent_joint: Mapping[str, JointDescription], link: str) -> list[str]:

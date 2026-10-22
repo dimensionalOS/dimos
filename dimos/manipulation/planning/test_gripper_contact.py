@@ -26,8 +26,10 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.planning.gripper_contact import GripperContactModel, scene_obstacles
 from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel
 
 CONTACT_MARGIN = 0.005
@@ -332,3 +334,34 @@ def test_gripper_spec_steps_from_open_to_closed() -> None:
     )
     with pytest.raises(ValueError, match="same joints"):
         GripperSpec(contact_patches=spec.contact_patches, open_joints={"drive": 0.0})
+
+
+TABLE_Z = 0.745
+
+
+def _cloud(*points: tuple[float, float, float]) -> PointCloud2:
+    return PointCloud2.from_numpy(
+        np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
+    )
+
+
+def _xyz(points: np.ndarray) -> set[tuple[float, float, float]]:
+    return {tuple(round(float(v), 3) for v in p) for p in points}
+
+
+def test_the_scene_keeps_what_is_near_the_object_but_not_on_it() -> None:
+    # A can whose lowest seen point is 5 mm above the table.
+    target = _cloud(*((0.5, 0.0, TABLE_Z + z) for z in (0.005, 0.05, 0.08)))
+    table = [(0.5 + dx, dy, TABLE_Z) for dx in (-0.1, -0.05, 0.05, 0.1) for dy in (-0.1, 0.0, 0.1)]
+    neighbour = (0.6, 0.0, TABLE_Z + 0.05)
+    scene = _cloud(
+        *table,
+        neighbour,
+        (0.5, 0.008, TABLE_Z + 0.05),  # the can's own edge, missed by its mask: dropped
+        (0.5, 0.0, TABLE_Z + 0.25),  # the robot's own finger near its tool tip: dropped
+        (1.2, 0.0, TABLE_Z),  # out of the gripper's reach: dropped
+    )
+
+    found = scene_obstacles(scene, target, [Vector3(0.5, 0.0, TABLE_Z + 0.3)])
+
+    assert _xyz(found) == _xyz(np.asarray([*table, neighbour], dtype=np.float32))

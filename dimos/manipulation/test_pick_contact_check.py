@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.gripper_contact import GripperContactModel
 
 # The pick-and-place unit tests' arm and cup, and their fixtures.
 from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
@@ -46,6 +47,7 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
     """The gripper's shape on the arm's tool tip; its check says which grasps pass."""
     module.config.robot = MagicMock()
     model = MagicMock()
+    model.keep_clear.side_effect = lambda *args: GripperContactModel.keep_clear(model, *args)
     module._contact_models["tool"] = model
     scene: Any = module._scene
     scene.get_full_scene_pointcloud.return_value = _table()
