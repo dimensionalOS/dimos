@@ -156,7 +156,7 @@ def test_iface_shorthand_becomes_a_zenoh_endpoint() -> None:
 def test_a_listener_on_an_interface_without_ipv4_is_refused() -> None:
     daemon = HostDaemon(HostConfig(listen="tcp/0.0.0.0:7447#iface=nope"), host_id="h", revision="r")
     with pytest.raises(ValueError, match="'nope' has no IPv4"):
-        _ = daemon.client_endpoint
+        daemon.client_endpoint  # noqa: B018
 
 
 def test_start_is_idempotent(host_setup: dict[str, Any]) -> None:

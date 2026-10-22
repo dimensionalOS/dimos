@@ -16,7 +16,7 @@ authentication or encryption yet.
 
 On every machine, in a checkout of the same commit:
 
-```sh
+```sh skip
 dimos host config listen=iface/tailscale0 connect=tcp/100.64.0.2:7447    # reachable on tailscale, linked to one other Host
 dimos host install --start                                               # a systemd service, started now and at login
 dimos host doctor                                                        # checks the setup; --fix repairs what it can
@@ -25,7 +25,7 @@ dimos host doctor                                                        # check
 `connect` names any one Host already set up; Hosts tell each other about the rest. Then on your
 machine, [write a distributed blueprint](/docs/usage/distributed/blueprints.md) and run it:
 
-```sh
+```sh skip
 dimos host ls                  # the Hosts this one can see
 dimos run go2-nav-hosted       # Ctrl-C stops every fragment
 ```
@@ -92,7 +92,7 @@ With autodiscovery on, Hosts listening on a LAN that carries multicast also scou
 their own group (`224.0.0.224:7449`) and link. Anyone on that network can join, so keep it for
 networks you trust:
 
-```sh
+```sh skip
 dimos host config autodiscovery=true     # false turns it back off
 dimos host restart
 ```
@@ -100,7 +100,7 @@ dimos host restart
 Otherwise, link Hosts by address. Only the machines others dial need to listen on the
 network; a laptop that only dials out can stay on its own machine:
 
-```sh
+```sh skip
 # GPU box, 10.0.0.20, and the Go2's Jetson, 10.0.0.30: listen on the network
 dimos host install --start --config listen=tcp/0.0.0.0
 

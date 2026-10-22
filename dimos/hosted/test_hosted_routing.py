@@ -104,7 +104,7 @@ class Sink(Module):
         path.with_suffix(".tmp").replace(path)
 
 
-class Provider(Module):
+class Adder(Module):
     @rpc
     def add(self, a: int, b: int) -> int:
         return a + b
@@ -114,7 +114,7 @@ class Consumer(Module):
     """Calls its provider's RPC once started and leaves the answer on disk."""
 
     config: SinkConfig
-    provider: Provider
+    provider: Adder
 
     async def main(self) -> AsyncIterator[None]:
         loop = asyncio.get_running_loop()
@@ -253,7 +253,7 @@ def test_a_module_ref_calls_its_provider_on_another_host(
     result = tmp_path / "answer.txt"
     # Pinned apart on purpose: a chatty pair is kept together by pinning both sides alike.
     app = autoconnect(
-        Provider.blueprint().hosted(host="edge"),
+        Adder.blueprint().hosted(host="edge"),
         Consumer.blueprint(result_path=str(result)).hosted(host="base"),
     ).global_config(n_workers=1)
 
@@ -261,7 +261,7 @@ def test_a_module_ref_calls_its_provider_on_another_host(
     with deployed(
         app, root, run_id="refs-1", local_host_id="base-id", descriptors=descriptors
     ) as placement:
-        assert placement == {"provider": "edge", "consumer": "base"}
+        assert placement == {"adder": "edge", "consumer": "base"}
         deadline = time.monotonic() + 30.0
         while not result.exists() and time.monotonic() < deadline:
             time.sleep(0.05)

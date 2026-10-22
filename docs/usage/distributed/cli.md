@@ -37,7 +37,7 @@ reads; `dimos host config` alone shows them. Run `dimos host restart` after chan
 
 By default a Host listens only on this machine. Open it with zenoh endpoints or interfaces:
 
-```sh
+```sh skip
 dimos host config listen=iface/wlan0                     # wlan0's addresses, port 7447
 dimos host config listen=tcp/127.0.0.1:7447,iface/eth0   # loopback first, then eth0
 ```
@@ -47,6 +47,6 @@ The Host's own fragments dial the first one.
 On a Go2, `go2-nav` and `go2-dds` dial the Host router on `tcp/127.0.0.1:7447`. Keep it first and
 add the Jetson's robot-side interface, which the Go2 forwards 7447 to:
 
-```sh
+```sh skip
 dimos host install --start --config listen=tcp/127.0.0.1:7447,iface/enP8p1s0
 ```

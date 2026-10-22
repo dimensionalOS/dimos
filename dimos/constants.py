@@ -33,7 +33,8 @@ _USER_RUN = Path(f"/run/user/{os.getuid()}") if hasattr(os, "getuid") else None
 if os.environ.get("XDG_RUNTIME_DIR"):
     RUNTIME_DIR = Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
 elif sys.platform == "darwin":
-    RUNTIME_DIR = Path(os.confstr("CS_DARWIN_USER_TEMP_DIR")) / "dimos"
+    # _CS_DARWIN_USER_TEMP_DIR from <unistd.h>. os.confstr_names doesn't list it.
+    RUNTIME_DIR = Path(os.confstr(65537)) / "dimos"
 elif _USER_RUN is not None and _USER_RUN.is_dir():
     RUNTIME_DIR = _USER_RUN / "dimos"
 else:
