@@ -151,7 +151,7 @@ def imu_resource(name: str = "imu") -> Resource:
     )
 
 
-def _model_limit(joint: JointDescription, interface: Interface) -> Limits | None:
+def model_limit(joint: JointDescription, interface: Interface) -> Limits | None:
     """The robot model's limit on one thing a joint is told, or ``None``.
 
     A missing bound is never read as "no limit", which would let the joint be
@@ -183,6 +183,11 @@ def _model_limit(joint: JointDescription, interface: Interface) -> Limits | None
     return Limits(-bound, bound)
 
 
+def movable_joints(model: RobotModel) -> list[JointDescription]:
+    """The joints of a model that can be driven: those that turn or slide, in the model's order."""
+    return [joint for joint in model.load().joints if joint.type in _UNITS_BY_URDF_TYPE]
+
+
 def model_joints(
     source: str,
     model: RobotModel,
@@ -202,7 +207,7 @@ def model_joints(
     """
     loaded = model.load()
     if joints is None:
-        chosen = [joint for joint in loaded.joints if joint.type in _UNITS_BY_URDF_TYPE]
+        chosen = movable_joints(model)
     else:
         chosen = []
         for name in joints:
@@ -230,7 +235,7 @@ def model_joints(
                 )
             units[interface] = kind_units[interface]
         for interface in command:
-            limit = _model_limit(joint, interface)
+            limit = model_limit(joint, interface)
             if limit is not None:
                 limits[Key.of(source, joint.name, interface)] = limit
         resources.append(
