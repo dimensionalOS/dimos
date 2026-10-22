@@ -149,8 +149,8 @@ dataset/
   cases.jsonl
   labels.jsonl
   assets/
-    frame-000100.png          # single-frame families
-    clips/<case-id>/…         # ego memory clips (first sighting → question)
+    frame-000100.png          # single-frame families (presence, count, …)
+    clips/<case-id>/…         # memory-clip families (ego, cross-view)
   audit/
     run.json
     frame-000100/
@@ -160,8 +160,15 @@ dataset/
       labels.json
 ```
 
-Each public case uses exactly one of `image`, `clip`, or `clips`. Ego cases use `clip`
-with a stated relative time span; image-only families still use `image`.
+Each public case uses exactly one modality: `image`, `clip`, or `clips`.
+
+- **Single-frame** (`image`): image-only families. Evaluated with `ImageFile`.
+- **One short clip** (`clip`): ego-spatial memory. The clip spans **first sighting of the
+  referent through the question time**; the question text states the relative
+  `t=0.0s … t=duration` window. Evaluated with `ImageClip` → MemoryStore `clip` stream.
+- **Two short clips** (`clips`): cross-view identity. Each sighting gets a short dense
+  clip (fully encoded; not a long video sparsely subsampled to 8 frames). Streams are
+  named `first_clip` / `second_clip`; the question names each span.
 
 `cases.jsonl` and `assets/` are public evaluation inputs. `labels.jsonl` and `audit/` contain private
 answers, evidence, rejected proposals, source indices, and timestamps.
@@ -173,5 +180,7 @@ dimos evals vqa run ~/.local/state/dimos/datasets/vqa/calibrated-recording-frame
   --model gpt-4o-mini
 ```
 
-`QuestionAnswer` encodes clip streams from the MemoryStore environment. Results land under
-`~/.local/state/dimos/evals/run-*/`.
+The default agent (`QuestionAnswer`) encodes every frame in each clip stream when the clip
+length is at most `frames_per_stream` (default 8). Generation keeps clips at or under that
+budget and always includes required anchors (first spot + query for ego; both sightings for
+cross-view). Results land under `~/.local/state/dimos/evals/run-*/`.

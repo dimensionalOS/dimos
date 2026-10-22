@@ -873,8 +873,9 @@ def test_generate_dataset_cross_view_writes_cases(
     monkeypatch.setattr(
         "dimos.evals.vqa.generate.collect_query_instances",
         lambda _query, _hits, _answers: {
-            "aaaa1111": (_view("aaaa1111", 1.0), _view("aaaa1111", 5.0)),
-            "bbbb2222": (_view("bbbb2222", 2.0),),
+            # Timestamps must lie inside the localize window (from_s + duration).
+            "aaaa1111": (_view("aaaa1111", 20.0), _view("aaaa1111", 40.0)),
+            "bbbb2222": (_view("bbbb2222", 25.0),),
         },
     )
 
@@ -891,10 +892,13 @@ def test_generate_dataset_cross_view_writes_cases(
 
     assert result.output == output
     assert len(result.cases) >= 1
+    assert all(case.clips is not None and case.image is None for case in result.cases)
     assert (output / "cases.jsonl").is_file()
     assert (output / "labels.jsonl").is_file()
     assert (output / "audit" / "run.json").is_file()
-    assert any((output / "assets").glob("*.jpg"))
+    assert any((output / "assets" / "clips").rglob("manifest.json"))
+    question = result.cases[0].question
+    assert "first_clip" in question and "second_clip" in question
 
 
 def _patch_cross_view_localize(
@@ -903,7 +907,16 @@ def _patch_cross_view_localize(
     time_range: tuple[float, float] = (0.0, 10.0),
     lidar: object | None = None,
 ) -> None:
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
     from dimos.perception.localize.tools.tool_localize import GO2_PARAMS
+
+    class _Obs:
+        def __init__(self, ts: float) -> None:
+            rgb = np.full((32, 32, 3), 40, dtype=np.uint8)
+            self.ts = ts
+            self.data = Image.from_numpy(
+                rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts
+            )
 
     class _Store:
         def start(self) -> None:
@@ -911,6 +924,12 @@ def _patch_cross_view_localize(
 
         def stop(self) -> None:
             return None
+
+        def stream(self, _name: str, _type: object = None) -> list[_Obs]:
+            lo, hi = time_range
+            step = max((hi - lo) / 40.0, 0.25)
+            ts_values = [lo + i * step for i in range(int((hi - lo) / step) + 1)]
+            return [_Obs(ts) for ts in ts_values]
 
     class _Rig:
         def __init__(self) -> None:

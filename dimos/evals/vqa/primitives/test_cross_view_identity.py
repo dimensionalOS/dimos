@@ -103,14 +103,22 @@ def test_answer_and_stack() -> None:
     from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
 
     same = IdentityPair(query="storage box", left=left, right=right, same_object=True)
-    answered = answer_cross_view_same_object(same)
+    answered = answer_cross_view_same_object(
+        same, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+    )
     assert answered.answer == "yes"
+    assert "first_clip" in answered.question and "t=0.0s" in answered.question
     stacked = stack_pair_image(left.image, right.image)
     assert stacked.to_rgb().data.shape[1] > left.image.to_rgb().data.shape[1]
 
     other = _view(instance_id="b", bbox=centered, ts=5.0)
     diff = IdentityPair(query="storage box", left=left, right=other, same_object=False)
-    assert answer_cross_view_same_object(diff).answer == "no"
+    assert (
+        answer_cross_view_same_object(
+            diff, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        ).answer
+        == "no"
+    )
 
 
 def test_answer_rejects_bad_framing() -> None:
@@ -120,7 +128,9 @@ def test_answer_rejects_bad_framing() -> None:
     good = _view(instance_id="a", bbox=(70.0, 70.0, 130.0, 130.0), ts=4.0)
     pair = IdentityPair(query="storage box", left=bad, right=good, same_object=True)
     with pytest.raises(InsufficientEvidenceError):
-        answer_cross_view_same_object(pair)
+        answer_cross_view_same_object(
+            pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        )
 
 
 def test_filter_instance_views_drops_weak_pool() -> None:
@@ -197,12 +207,16 @@ def test_pair_case_id_and_answer_mismatched_ids() -> None:
     right = _view(instance_id="b", bbox=centered, ts=4.0)
     bad_same = IdentityPair(query="box", left=left, right=right, same_object=True)
     with pytest.raises(InsufficientEvidenceError, match="mismatched instance"):
-        answer_cross_view_same_object(bad_same)
+        answer_cross_view_same_object(
+            bad_same, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        )
 
     twin = _view(instance_id="a", bbox=centered, ts=5.0)
     bad_diff = IdentityPair(query="box", left=left, right=twin, same_object=False)
     with pytest.raises(InsufficientEvidenceError, match="identical instance"):
-        answer_cross_view_same_object(bad_diff)
+        answer_cross_view_same_object(
+            bad_diff, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        )
 
     ok = IdentityPair(query="box", left=left, right=twin, same_object=True)
     assert pair_case_id(ok, 0).startswith("xview-box-same-")
@@ -214,4 +228,6 @@ def test_pair_case_id_and_answer_mismatched_ids() -> None:
         same_object=True,
     )
     with pytest.raises(InsufficientEvidenceError, match="same category"):
-        answer_cross_view_same_object(mismatched_query)
+        answer_cross_view_same_object(
+            mismatched_query, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        )

@@ -142,9 +142,10 @@ EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
 CROSS_VIEW_SAME_OBJECT_FAMILY = FamilySpec(
     name="cross_view_same_object",
     description=(
-        "Ask whether the named category in image A and image B is the same physical "
-        "instance. Generated from Dan localize multi-view traces (not image-only authoring). "
-        "Both views must pass center/size framing gates on the original full frames."
+        "Ask whether the named category in two short dense memory clips (first_clip / "
+        "second_clip) is the same physical instance. Each clip states its relative "
+        "t=0..duration span; generated from Dan localize multi-view traces. Both "
+        "sightings must pass center/size framing gates on the original full frames."
     ),
 )
 AVAILABLE_FAMILIES = (

@@ -316,8 +316,18 @@ def stack_pair_image(left: Image, right: Image) -> Image:
     return Image.from_opencv(canvas, frame_id=left.frame_id, ts=ts)
 
 
-def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
-    """Deterministic yes/no from instance_id equality (already encoded in pair)."""
+def answer_cross_view_same_object(
+    pair: IdentityPair,
+    *,
+    first_clip_duration_s: float,
+    second_clip_duration_s: float,
+) -> FamilyAnswer:
+    """Deterministic yes/no from instance_id equality (already encoded in pair).
+
+    ``first_clip`` / ``second_clip`` are short dense MemoryStore streams; the
+    question names each clip's relative ``[0, duration]`` span so the agent is
+    not asked to search an unspecified long video.
+    """
     if pair.left.query.casefold() != pair.right.query.casefold():
         raise InsufficientEvidenceError("cross-view pair requires the same category query")
     if not sighting_framing_ok(pair.left) or not sighting_framing_ok(pair.right):
@@ -331,13 +341,20 @@ def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
         raise InsufficientEvidenceError("same-object pair has mismatched instance ids")
     if (not pair.same_object) and pair.left.instance_id == pair.right.instance_id:
         raise InsufficientEvidenceError("different-object pair has identical instance ids")
+    if first_clip_duration_s < 0 or second_clip_duration_s < 0:
+        raise InsufficientEvidenceError("cross-view clip durations must be non-negative")
 
     answer = "yes" if pair.same_object else "no"
     category = pair.query
+    from dimos.evals.vqa.clip import format_clip_span
+
+    first_span = format_clip_span(first_clip_duration_s)
+    second_span = format_clip_span(second_clip_duration_s)
     return FamilyAnswer(
         question=(
-            f"Looking at image A and image B, is the {category} the same physical object "
-            f"instance in both images?"
+            f"Stream first_clip covers {first_span} and stream second_clip covers "
+            f"{second_span}. Is the {category} the same physical object instance in "
+            f"both clips?"
         ),
         choices=("yes", "no"),
         answer=answer,
@@ -357,6 +374,8 @@ def answer_cross_view_same_object(pair: IdentityPair) -> FamilyAnswer:
             "semantic_score_right": pair.right.semantic_score,
             "n_views_left": pair.left.n_views,
             "n_views_right": pair.right.n_views,
+            "first_clip_duration_s": first_clip_duration_s,
+            "second_clip_duration_s": second_clip_duration_s,
             "center_max_offset": CENTER_MAX_OFFSET,
             "min_area_frac": MIN_AREA_FRAC,
         },

@@ -31,9 +31,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.clip import (
+    DEFAULT_CLIP_RADIUS_S,
     clip_duration_s,
+    dense_clip_around,
     ego_memory_clip,
     format_clip_span,
+    observations_in_window,
     write_image_clip,
 )
 from dimos.evals.vqa.contracts import (
@@ -70,7 +73,6 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
     collect_query_instances,
     pair_case_id,
     propose_identity_pairs,
-    stack_pair_image,
 )
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.localize_scene import LocalizeSceneEvidence
@@ -212,8 +214,11 @@ class VqaGenerationConfig(BaseModel):
 class PublicCase(BaseModel):
     """One evaluator-facing multiple-choice VQA case.
 
-    Exactly one visual modality: ``image`` (single-frame), ``clip`` (ego memory),
-    or ``clips`` (cross-view short dense pair).
+    Exactly one visual modality:
+
+    * ``image`` — single-frame families (presence, count, …) via ``ImageFile``
+    * ``clip`` — one short dense MemoryStore clip (ego history)
+    * ``clips`` — two+ short dense clips as separate streams (cross-view)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -482,11 +487,8 @@ def generate_frames_dataset(
 
 
 def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult:
-    """Localize with traces → pair → write the same on-disk VQA layout."""
+    """Localize with traces → pair → write memory-clip VQA layout."""
     from dimos.memory.cli.dataset import open_dataset
-    from dimos.perception.localize.dandetect import DanDetector
-    from dimos.perception.localize.localize import LocalizeTrace, embed_index
-    from dimos.perception.localize.rig import Rig, window_tf
     from dimos.perception.localize.tools.tool_localize import GO2_PARAMS, PRESETS, parse_params
 
     output = request.output_directory()
@@ -499,38 +501,62 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
     store = open_dataset(request.dataset)
     store.start()
     try:
-        rig = Rig.from_store(store)
-        lo, hi = rig.time_range()
-        after = lo + request.from_s
-        before = lo + request.from_s + request.duration_s if request.duration_s is not None else hi
-        if before <= after:
-            raise ValueError("localize window before must be greater than after")
-        rig.tf = window_tf(store, after, before)
-        if rig.lidar is not None:
-            rig.lidar = rig.lidar.after(after).before(before)
-
-        queries = [str(q).strip() for q in request.queries if str(q).strip()]
-        traces = [LocalizeTrace() for _ in queries]
-        with DanDetector("siglip", "owlv2", "edgetam") as dan:
-            embedded = embed_index(rig, dan.embedder, after, before)
-            results = dan.localize(queries, index=embedded, rig=rig, params=params, traces=traces)
-
-        all_pairs: list[IdentityPair] = []
-        n_instances = 0
-        for query, hits, trace in zip(queries, results, traces, strict=True):
-            logger.info(f"cross-view {query!r}: {len(hits)} verified hit(s)")
-            by_id = collect_query_instances(query, hits, list(trace.answers))
-            n_instances += len(by_id)
-            pairs = propose_identity_pairs(by_id, min_views=request.min_views)
-            logger.info(f"cross-view {query!r}: {len(pairs)} pair proposal(s)")
-            all_pairs.extend(pairs)
+        return _write_cross_view_cases(request, store, output, params)
+    except Exception:
+        if output.exists():
+            shutil.rmtree(output)
+        raise
     finally:
         store.stop()
+
+
+def _write_cross_view_cases(
+    request: GenerationRequest,
+    store: object,
+    output: Path,
+    params: object,
+) -> GenerationResult:
+    from dimos.perception.localize.dandetect import DanDetector
+    from dimos.perception.localize.localize import LocalizeTrace, embed_index
+    from dimos.perception.localize.rig import Rig, window_tf
+
+    rig = Rig.from_store(store)
+    lo, hi = rig.time_range()
+    after = lo + request.from_s
+    before = lo + request.from_s + request.duration_s if request.duration_s is not None else hi
+    if before <= after:
+        raise ValueError("localize window before must be greater than after")
+    rig.tf = window_tf(store, after, before)
+    if rig.lidar is not None:
+        rig.lidar = rig.lidar.after(after).before(before)
+
+    queries = [str(q).strip() for q in request.queries if str(q).strip()]
+    traces = [LocalizeTrace() for _ in queries]
+    with DanDetector("siglip", "owlv2", "edgetam") as dan:
+        embedded = embed_index(rig, dan.embedder, after, before)
+        results = dan.localize(queries, index=embedded, rig=rig, params=params, traces=traces)
+
+    all_pairs: list[IdentityPair] = []
+    n_instances = 0
+    for query, hits, trace in zip(queries, results, traces, strict=True):
+        logger.info(f"cross-view {query!r}: {len(hits)} verified hit(s)")
+        by_id = collect_query_instances(query, hits, list(trace.answers))
+        n_instances += len(by_id)
+        pairs = propose_identity_pairs(by_id, min_views=request.min_views)
+        logger.info(f"cross-view {query!r}: {len(pairs)} pair proposal(s)")
+        all_pairs.extend(pairs)
+
+    # One pass over color_image for short dense clips around each sighting.
+    color_frames = observations_in_window(
+        list(store.stream("color_image", Image)),
+        after - DEFAULT_CLIP_RADIUS_S,
+        before + DEFAULT_CLIP_RADIUS_S,
+    )
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         staging = Path(temporary)
-        (staging / "assets").mkdir(parents=True, exist_ok=True)
+        (staging / "assets" / "clips").mkdir(parents=True, exist_ok=True)
         (staging / "audit").mkdir(parents=True, exist_ok=True)
         cases: list[PublicCase] = []
         labels: list[PrivateLabel] = []
@@ -538,9 +564,18 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
         rejected = 0
 
         for pair_index, pair in enumerate(all_pairs):
+            case_id = pair_case_id(pair, pair_index)
             try:
-                answered = answer_cross_view_same_object(pair)
-            except InsufficientEvidenceError as exc:
+                first_frames, _ = dense_clip_around(color_frames, pair.left.timestamp)
+                second_frames, _ = dense_clip_around(color_frames, pair.right.timestamp)
+                first_dur = clip_duration_s(first_frames)
+                second_dur = clip_duration_s(second_frames)
+                answered = answer_cross_view_same_object(
+                    pair,
+                    first_clip_duration_s=first_dur,
+                    second_clip_duration_s=second_dur,
+                )
+            except (InsufficientEvidenceError, ValueError) as exc:
                 rejected += 1
                 audit_rows.append(
                     {
@@ -552,17 +587,22 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
                 )
                 continue
 
-            case_id = pair_case_id(pair, pair_index)
-            image = stack_pair_image(pair.left.image, pair.right.image)
-            rel = f"assets/{case_id}.jpg"
-            image_path = staging / rel
-            image_path.parent.mkdir(parents=True, exist_ok=True)
-            if not image.save(str(image_path)):
-                raise RuntimeError(f"failed to write cross-view image: {image_path}")
+            first_rel = f"assets/clips/{case_id}/first"
+            second_rel = f"assets/clips/{case_id}/second"
+            write_image_clip(
+                staging / first_rel,
+                first_frames,
+                anchors=(pair.left.timestamp,),
+            )
+            write_image_clip(
+                staging / second_rel,
+                second_frames,
+                anchors=(pair.right.timestamp,),
+            )
             cases.append(
                 PublicCase(
                     id=case_id,
-                    image=rel,
+                    clips=(first_rel, second_rel),
                     question=answered.question,
                     choices=answered.choices,
                 )
@@ -573,6 +613,8 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
                     "status": "answered",
                     "case_id": case_id,
                     "answer": answered.model_dump(mode="json"),
+                    "first_clip_duration_s": first_dur,
+                    "second_clip_duration_s": second_dur,
                 }
             )
 
@@ -581,7 +623,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
 
         _write_jsonl(
             staging / "cases.jsonl",
-            [case.model_dump(mode="json") for case in cases],
+            [case.model_dump(mode="json", exclude_none=True) for case in cases],
         )
         _write_jsonl(
             staging / "labels.jsonl",
@@ -607,6 +649,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
         shutil.move(str(staging), str(output))
 
     return GenerationResult(output=output, cases=tuple(cases))
+
 
 
 def _generate_frame(
