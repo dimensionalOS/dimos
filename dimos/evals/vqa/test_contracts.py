@@ -840,6 +840,231 @@ def test_generation_request_rejects_time_window_without_query() -> None:
         GenerationRequest(dataset="go2_short", image_index=0, from_s=1.0)
 
 
+def test_generate_dataset_cross_view_writes_cases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    def _image(ts: float) -> Image:
+        rgb = np.full((200, 200, 3), 40, dtype=np.uint8)
+        return Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts)
+
+    def _view(instance_id: str, ts: float) -> SightingView:
+        return SightingView(
+            query="storage box",
+            instance_id=instance_id,
+            image=_image(ts),
+            bbox=(70.0, 70.0, 130.0, 130.0),
+            confidence=0.7,
+            timestamp=ts,
+            n_views=5,
+            semantic_score=0.7,
+        )
+
+    class _Stream:
+        def after(self, _t: float) -> _Stream:
+            return self
+
+        def before(self, _t: float) -> _Stream:
+            return self
+
+    _patch_cross_view_localize(monkeypatch, time_range=(10.0, 110.0), lidar=_Stream())
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.collect_query_instances",
+        lambda _query, _hits, _answers: {
+            "aaaa1111": (_view("aaaa1111", 1.0), _view("aaaa1111", 5.0)),
+            "bbbb2222": (_view("bbbb2222", 2.0),),
+        },
+    )
+
+    output = tmp_path / "cross-view"
+    output.mkdir()  # empty pre-existing dir exercises replace/rmtree
+    result = generate_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            queries=("storage box",),
+            min_views=3,
+            duration_s=60.0,
+            output=output,
+        )
+    )
+
+    assert result.output == output
+    assert len(result.cases) >= 1
+    assert (output / "cases.jsonl").is_file()
+    assert (output / "labels.jsonl").is_file()
+    assert (output / "audit" / "run.json").is_file()
+    assert any((output / "assets").glob("*.jpg"))
+
+
+def _patch_cross_view_localize(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    time_range: tuple[float, float] = (0.0, 10.0),
+    lidar: object | None = None,
+) -> None:
+    from dimos.perception.localize.tools.tool_localize import GO2_PARAMS
+
+    class _Store:
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _Rig:
+        def __init__(self) -> None:
+            self.lidar = lidar
+            self.tf = object()
+
+        @classmethod
+        def from_store(cls, _store: object) -> _Rig:
+            return cls()
+
+        def time_range(self) -> tuple[float, float]:
+            return time_range
+
+    class _Dan:
+        embedder = object()
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> _Dan:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def localize(self, queries: list[str], **_kwargs: object) -> list[list[object]]:
+            return [[] for _ in queries]
+
+    monkeypatch.setattr("dimos.memory.cli.dataset.open_dataset", lambda _name: _Store())
+    monkeypatch.setattr("dimos.perception.localize.rig.Rig", _Rig)
+    monkeypatch.setattr("dimos.perception.localize.rig.window_tf", lambda *_a, **_k: object())
+    monkeypatch.setattr("dimos.perception.localize.dandetect.DanDetector", _Dan)
+    monkeypatch.setattr(
+        "dimos.perception.localize.localize.embed_index", lambda *_a, **_k: object()
+    )
+    monkeypatch.setattr(
+        "dimos.perception.localize.tools.tool_localize.parse_params",
+        lambda *_a, **_k: (GO2_PARAMS, {"min_views": 2}),
+    )
+
+
+def test_generate_dataset_cross_view_rejects_empty_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_cross_view_localize(monkeypatch, lidar=None)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.collect_query_instances",
+        lambda *_a, **_k: {},
+    )
+
+    with pytest.raises(ValueError, match="no answerable pairs"):
+        generate_dataset(
+            GenerationRequest(
+                dataset="recording.db",
+                queries=("chair",),
+                output=tmp_path / "empty-cross-view",
+            )
+        )
+
+
+def test_generate_dataset_cross_view_rejects_bad_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # from_s past the recording end → after >= hi when duration_s is unset.
+    _patch_cross_view_localize(monkeypatch, time_range=(5.0, 6.0))
+    with pytest.raises(ValueError, match="before must be greater"):
+        generate_dataset(
+            GenerationRequest(
+                dataset="recording.db",
+                queries=("chair",),
+                from_s=2.0,
+                output=tmp_path / "bad-window",
+            )
+        )
+
+
+def test_generate_dataset_cross_view_audits_rejected_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair, SightingView
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    def _image(ts: float) -> Image:
+        rgb = np.full((200, 200, 3), 40, dtype=np.uint8)
+        return Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts)
+
+    good = SightingView(
+        query="box",
+        instance_id="aaaa1111",
+        image=_image(1.0),
+        bbox=(70.0, 70.0, 130.0, 130.0),
+        confidence=0.7,
+        timestamp=1.0,
+        n_views=5,
+        semantic_score=0.7,
+    )
+    bad = SightingView(
+        query="box",
+        instance_id="aaaa1111",
+        image=_image(5.0),
+        bbox=(0.0, 0.0, 20.0, 20.0),
+        confidence=0.7,
+        timestamp=5.0,
+        n_views=5,
+        semantic_score=0.7,
+    )
+    ok_right = SightingView(
+        query="box",
+        instance_id="aaaa1111",
+        image=_image(8.0),
+        bbox=(70.0, 70.0, 130.0, 130.0),
+        confidence=0.7,
+        timestamp=8.0,
+        n_views=5,
+        semantic_score=0.7,
+    )
+
+    _patch_cross_view_localize(monkeypatch)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.collect_query_instances",
+        lambda *_a, **_k: {"aaaa1111": (good,)},
+    )
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.propose_identity_pairs",
+        lambda *_a, **_k: (
+            IdentityPair(query="box", left=good, right=bad, same_object=True),
+            IdentityPair(query="box", left=good, right=ok_right, same_object=True),
+        ),
+    )
+
+    result = generate_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            queries=("box",),
+            output=tmp_path / "reject-mix",
+        )
+    )
+    assert len(result.cases) == 1
+    audit = json.loads((tmp_path / "reject-mix" / "audit" / "pairs.json").read_text())
+    assert any(row["status"] == "rejected" for row in audit)
+    assert any(row["status"] == "answered" for row in audit)
+
+
+def test_answer_question_rejects_cross_view_on_frame_path() -> None:
+    image = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8))
+    with pytest.raises(InsufficientEvidenceError, match="generate_dataset with --query"):
+        answer_question(
+            QuestionProposal(family="cross_view_same_object", object_names=("box",)),
+            image,
+            _TestVlModel(),
+        )
+
+
 def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
     with pytest.raises(ValidationError):

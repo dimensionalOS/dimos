@@ -531,6 +531,7 @@ def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         staging = Path(temporary)
         (staging / "assets").mkdir(parents=True, exist_ok=True)
+        (staging / "audit").mkdir(parents=True, exist_ok=True)
         cases: list[PublicCase] = []
         labels: list[PrivateLabel] = []
         audit_rows: list[dict[str, object]] = []

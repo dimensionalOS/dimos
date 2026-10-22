@@ -22,10 +22,13 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
     SightingView,
     answer_cross_view_same_object,
     bbox_framing_ok,
+    collect_query_instances,
     filter_instance_views,
     instance_pool_ok,
+    pair_case_id,
     propose_identity_pairs,
     stack_pair_image,
+    views_from_localize,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
@@ -127,3 +130,53 @@ def test_filter_instance_views_drops_weak_pool() -> None:
         _view(instance_id="a", bbox=centered, ts=2.0, n_views=1, score=0.9),
     )
     assert filter_instance_views(weak) == ()
+
+
+def test_views_from_localize_and_collect_query_instances() -> None:
+    from types import SimpleNamespace
+
+    centered = (70.0, 70.0, 130.0, 130.0)
+    hit = SimpleNamespace(instance_id="inst-1", n_views=4, semantic_score=0.8)
+    sighting = SimpleNamespace(image=_image(ts=3.0), bbox=centered, confidence=0.55)
+    views = views_from_localize("chair", hit, [sighting])
+    assert len(views) == 1
+    assert views[0].instance_id == "inst-1"
+    assert views[0].query == "chair"
+
+    # Bad bbox length is skipped.
+    bad = SimpleNamespace(image=_image(ts=4.0), bbox=(1.0, 2.0), confidence=0.9)
+    assert views_from_localize("chair", hit, [bad]) == ()
+
+    by_id = collect_query_instances("chair", [hit], [[sighting]])
+    assert list(by_id) == ["inst-1"]
+
+    with pytest.raises(ValueError, match="trace length mismatch"):
+        collect_query_instances("chair", [hit], [])
+
+
+def test_pair_case_id_and_answer_mismatched_ids() -> None:
+    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
+
+    centered = (70.0, 70.0, 130.0, 130.0)
+    left = _view(instance_id="a", bbox=centered, ts=1.0)
+    right = _view(instance_id="b", bbox=centered, ts=4.0)
+    bad_same = IdentityPair(query="box", left=left, right=right, same_object=True)
+    with pytest.raises(InsufficientEvidenceError, match="mismatched instance"):
+        answer_cross_view_same_object(bad_same)
+
+    twin = _view(instance_id="a", bbox=centered, ts=5.0)
+    bad_diff = IdentityPair(query="box", left=left, right=twin, same_object=False)
+    with pytest.raises(InsufficientEvidenceError, match="identical instance"):
+        answer_cross_view_same_object(bad_diff)
+
+    ok = IdentityPair(query="box", left=left, right=twin, same_object=True)
+    assert pair_case_id(ok, 0).startswith("xview-box-same-")
+
+    mismatched_query = IdentityPair(
+        query="box",
+        left=left,
+        right=_view(instance_id="a", bbox=centered, ts=6.0, query="table"),
+        same_object=True,
+    )
+    with pytest.raises(InsufficientEvidenceError, match="same category"):
+        answer_cross_view_same_object(mismatched_query)
