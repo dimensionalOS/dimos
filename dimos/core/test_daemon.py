@@ -314,6 +314,18 @@ class TestForkDaemon:
         write_daemon_status(write_fd, {"ok": True})
         os.close(write_fd)
 
+    def test_stdout_is_writable_after_redirect_to_devnull(self):
+        # A worker started after the daemon detached (load, restart) flushes stdout first.
+        code = (
+            "import sys\n"
+            "from dimos.core.daemon import redirect_stdio_to_devnull\n"
+            "redirect_stdio_to_devnull()\n"
+            "print('after detach')\n"
+            "sys.stdout.flush()\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
+        assert result.returncode == 0
+
 
 class TestSignalHandler:
     """Signal callbacks request shutdown without running cleanup reentrantly."""
