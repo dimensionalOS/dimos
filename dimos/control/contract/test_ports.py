@@ -34,7 +34,6 @@ from dimos.control.contract.ports import (
     port_specs,
     reading_ports,
 )
-from dimos.control.contract.presets import GripperSpec
 from dimos.control.contract.validate import DescriptionError, validate_description
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -74,7 +73,7 @@ class ArmConfig(ConnectionConfig):
 
 
 class ArmWithVelocityConfig(ArmConfig):
-    velocity_command: JointPort = JointPort(interface=Interface.VELOCITY, joints=["j1"])
+    velocity_command: JointPort = JointPort(interface=Interface.VELOCITY)
 
 
 class BodyConfig(ConnectionConfig):
@@ -89,8 +88,8 @@ class BaseConfig(ConnectionConfig):
 
 class ArmOnBaseConfig(ConnectionConfig):
     source: str = "r1"
-    position_command: JointPort = JointPort(joints=["j3", "j1"])
-    motor_command: MotorPort = MotorPort(joints=["j1", "j2"])
+    position_command: JointPort = JointPort()
+    motor_command: MotorPort = MotorPort()
     cmd_vel: TwistPort = TwistPort(range=RANGE)
 
 
@@ -129,54 +128,10 @@ def test_a_joint_on_two_ports_becomes_one_joint_that_takes_both(model: RobotMode
         {},
     )
     assert described.joint_names() == ("arm/j1", "arm/j2", "arm/j3")
-    j1 = described.resource("j1")
-    j2 = described.resource("j2")
-    assert j1 is not None and j2 is not None
-    assert j1.command_interfaces == (Interface.POSITION, Interface.VELOCITY)
-    assert j2.command_interfaces == (Interface.POSITION,)
+    for joint in described.resources:
+        assert joint.command_interfaces == (Interface.POSITION, Interface.VELOCITY)
+        assert joint.units[Interface.VELOCITY] is Unit.RAD_PER_S
     assert described.limits["arm/j1/velocity"] == Limits(-2.0, 2.0)
-    assert "arm/j2/velocity" not in described.limits
-
-
-def test_a_gripper_is_one_more_joint_with_its_own_unit_and_range(model: RobotModel) -> None:
-    config = ArmConfig(
-        model=model,
-        position_command=JointPort(gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.085)),
-    )
-    described = control_description(config, {"position_command": JointState}, {"js": JointState})
-    gripper = described.resource("gripper")
-    assert gripper is not None
-    assert gripper.kind is ResourceKind.JOINT
-    assert gripper.units == {Interface.POSITION: Unit.M}
-    # It reports its opening only.
-    assert gripper.state_interfaces == (Interface.POSITION,)
-    assert described.limits["arm/gripper/position"] == Limits(0.0, 0.085)
-
-
-def test_a_gripper_needs_a_position_port(model: RobotModel) -> None:
-    config = ArmConfig(
-        model=model,
-        position_command=JointPort(
-            interface=Interface.VELOCITY, gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.1)
-        ),
-    )
-    with pytest.raises(ValueError, match="gripper is told a position"):
-        control_description(config, {"position_command": JointState}, {})
-
-
-def test_a_joint_port_override_replaces_the_model_limit_for_that_joint(
-    model: RobotModel,
-) -> None:
-    config = ArmConfig(
-        model=model, position_command=JointPort(limit_overrides={"j2": Limits(-0.5, 0.5)})
-    )
-    described = control_description(config, {"position_command": JointState}, {})
-    assert described.limits["arm/j2/position"] == Limits(-0.5, 0.5)
-    assert described.limits["arm/j1/position"] == Limits(-1.0, 1.0)
-
-    config = ArmConfig(model=model, position_command=JointPort(limit_overrides={"j9": Limits()}))
-    with pytest.raises(ValueError, match="'j9', which is not on this port"):
-        control_description(config, {"position_command": JointState}, {})
 
 
 def test_a_motor_port_tells_each_joint_five_things(model: RobotModel) -> None:
@@ -197,28 +152,21 @@ def test_a_motor_port_tells_each_joint_five_things(model: RobotModel) -> None:
     assert "g1/j1/kp" not in described.limits
 
 
-def test_a_motor_port_override_names_the_joint_and_what_is_limited(model: RobotModel) -> None:
-    config = BodyConfig(
-        model=model, motor_command=MotorPort(limit_overrides={"j1/velocity": Limits(-0.1, 0.1)})
-    )
-    described = control_description(config, {"motor_command": MotorCommandArray}, {})
-    assert described.limits["g1/j1/velocity"] == Limits(-0.1, 0.1)
-
-    for bad in ("j1", "j9/velocity", "j1/speed"):
-        config = BodyConfig(model=model, motor_command=MotorPort(limit_overrides={bad: Limits()}))
-        with pytest.raises(ValueError, match="<joint>/<interface>"):
-            control_description(config, {"motor_command": MotorCommandArray}, {})
-
-
-def test_a_motor_ports_joints_come_first_in_its_order(model: RobotModel) -> None:
+def test_a_joint_port_and_a_motor_port_drive_the_same_joints(model: RobotModel) -> None:
     described = control_description(
         ArmOnBaseConfig(model=model),
         {"position_command": JointState, "motor_command": MotorCommandArray, "cmd_vel": Twist},
         {},
     )
     assert described.joint_names() == ("r1/j1", "r1/j2", "r1/j3")
-    j3 = described.resource("j3")
-    assert j3 is not None and j3.command_interfaces == (Interface.POSITION,)
+    for joint in (r for r in described.resources if r.kind is ResourceKind.JOINT):
+        assert joint.command_interfaces == (
+            Interface.POSITION,
+            Interface.VELOCITY,
+            Interface.EFFORT,
+            Interface.KP,
+            Interface.KD,
+        )
 
 
 def test_a_twist_port_drives_one_base_with_clamped_symmetric_limits() -> None:

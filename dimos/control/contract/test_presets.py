@@ -20,9 +20,8 @@ rebuilds one through its preset and checks they match exactly. The arm and
 body are rebuilt from small robot models that say the same things.
 
 The rest cover what each preset decides: which joints an arm or body takes
-from its robot model and with what limits, that a gripper and an orientation
-sensor are added as asked, and that a base is one part whose speed limits
-clamp.
+from its robot model and with what limits, that an orientation sensor is
+added as asked, and that a base is one part whose speed limits clamp.
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ from dimos.control.contract.conftest import ARM_JOINTS, G1_JOINTS
 from dimos.control.contract.description import ControlDescription, Limits, ResourceKind
 from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.presets import (
-    GripperSpec,
     imu_resource,
     manipulator_description,
     pd_joint_description,
@@ -67,6 +65,24 @@ def model_from(tmp_path: Path, urdf: str, name: str = "robot") -> RobotModel:
     return RobotModel.from_file(path)
 
 
+def chain_urdf(name: str, joints: Sequence[tuple[str, str, str]]) -> str:
+    """A robot whose joints follow one after another, as URDF text.
+
+    Args:
+        name: The robot's name.
+        joints: One ``(name, type, limit)`` per joint, in order: its URDF
+            kind, e.g. "revolute", and the attributes of its ``<limit>`` tag,
+            e.g. 'lower="-1.0" upper="1.0" velocity="2.0" effort="3.0"'.
+    """
+    links = "".join(f'<link name="link{i}"/>' for i in range(len(joints) + 1))
+    chain = "".join(
+        f'<joint name="{joint}" type="{joint_type}"><parent link="link{i}"/>'
+        f'<child link="link{i + 1}"/><limit {limit}/></joint>'
+        for i, (joint, joint_type, limit) in enumerate(joints)
+    )
+    return f'<robot name="{name}">{links}{chain}</robot>'
+
+
 def chain_model(
     tmp_path: Path, name: str, joints: Sequence[str], limit: str, joint_type: str = "revolute"
 ) -> RobotModel:
@@ -79,20 +95,20 @@ def chain_model(
             'lower="-1.0" upper="1.0" velocity="2.0" effort="3.0"'.
         joint_type: The URDF kind of every joint, e.g. "revolute" or "fixed".
     """
-    links = "".join(f'<link name="link{i}"/>' for i in range(len(joints) + 1))
-    chain = "".join(
-        f'<joint name="{joint}" type="{joint_type}"><parent link="link{i}"/>'
-        f'<child link="link{i + 1}"/><limit {limit}/></joint>'
-        for i, joint in enumerate(joints)
-    )
-    return model_from(tmp_path, f'<robot name="{name}">{links}{chain}</robot>', name)
+    urdf = chain_urdf(name, [(joint, joint_type, limit) for joint in joints])
+    return model_from(tmp_path, urdf, name)
 
 
 @pytest.fixture
 def arm_model(tmp_path: Path) -> RobotModel:
-    """The conftest arm's seven joints, with the limits written out there."""
-    limit = 'lower="-3.14" upper="3.14" velocity="1.0" effort="50.0"'
-    return chain_model(tmp_path, "arm", ARM_JOINTS, limit)
+    """The conftest arm's joints and gripper, with the limits written out there."""
+    turning = 'lower="-3.14" upper="3.14" velocity="1.0" effort="50.0"'
+    sliding = 'lower="0.0" upper="0.085" velocity="0.2" effort="50.0"'
+    joints = [
+        *((joint, "revolute", turning) for joint in ARM_JOINTS),
+        ("gripper", "prismatic", sliding),
+    ]
+    return model_from(tmp_path, chain_urdf("arm", joints), "arm")
 
 
 @pytest.fixture
@@ -105,10 +121,7 @@ def g1_model(tmp_path: Path) -> RobotModel:
 def preset_arm(model: RobotModel) -> ControlDescription:
     """The conftest arm, built through the preset."""
     return manipulator_description(
-        model,
-        source="arm",
-        state=(Interface.POSITION, Interface.EFFORT),
-        gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.085),
+        model, source="arm", state=(Interface.POSITION, Interface.EFFORT)
     )
 
 
@@ -174,12 +187,6 @@ def test_an_arm_is_told_position_and_velocity_unless_it_says_otherwise(
     assert "arm/joint1/velocity" not in only.limits
 
 
-def test_an_override_for_a_name_the_arm_is_not_told_is_an_error(arm_model: RobotModel) -> None:
-    overrides = {Key.of("arm", "joint99", Interface.POSITION): Limits(-1.0, 1.0)}
-    with pytest.raises(DescriptionError, match="joint99"):
-        manipulator_description(arm_model, source="arm", limit_overrides=overrides)
-
-
 def test_an_arm_refuses_a_command_past_a_limit(arm_model: RobotModel) -> None:
     refused = validate_command(
         preset_arm(arm_model), command({"arm/joint1/position": 9.0}), last_sequence=None
@@ -187,20 +194,12 @@ def test_an_arm_refuses_a_command_past_a_limit(arm_model: RobotModel) -> None:
     assert isinstance(refused, Rejected) and refused.reason == "limit"
 
 
-def test_a_gripper_keeps_its_own_unit_and_range(arm_model: RobotModel) -> None:
-    described = manipulator_description(
-        arm_model,
-        source="arm",
-        gripper=GripperSpec(name="hand", unit=Unit.NORMALIZED, lo=0.0, hi=1.0),
-    )
-    assert described.unit_of("arm/hand/position") is Unit.NORMALIZED
-    assert described.limits["arm/hand/position"] == Limits(0.0, 1.0)
-    assert "arm/hand" in described.joint_names()
-
-
-def test_an_arm_with_no_joints_or_nothing_to_command_raises(arm_model: RobotModel) -> None:
+def test_an_arm_with_no_joints_or_nothing_to_command_raises(
+    tmp_path: Path, arm_model: RobotModel
+) -> None:
+    statue = chain_model(tmp_path, "statue", ["neck"], "", joint_type="fixed")
     with pytest.raises(ValueError, match="no joints"):
-        manipulator_description(arm_model, source="arm", joints=())
+        manipulator_description(statue, source="arm")
     with pytest.raises(ValueError, match="nothing to command"):
         manipulator_description(arm_model, source="arm", command=())
 
@@ -330,60 +329,35 @@ def test_by_default_every_joint_that_moves_is_driven_in_model_order(tmp_path: Pa
     assert arm.joint_names() == ("arm/shoulder", "arm/spinner", "arm/slider")
 
 
-def test_joints_picks_and_reorders_the_models_joints(tmp_path: Path) -> None:
-    arm = manipulator_description(
-        model_from(tmp_path, TOY_URDF), source="arm", joints=["slider", "shoulder"]
-    )
-    assert arm.joint_names() == ("arm/slider", "arm/shoulder")
-
-
 def test_an_arm_takes_its_limits_from_its_model(tmp_path: Path) -> None:
-    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["shoulder"])
+    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm")
+    # The arm is not told an effort, so the model's effort limits have no place.
     assert arm.limits == {
         "arm/shoulder/position": Limits(-1.5, 2.5),
         "arm/shoulder/velocity": Limits(-3.0, 3.0),
+        "arm/spinner/velocity": Limits(-10.0, 10.0),
+        "arm/slider/position": Limits(0.0, 0.4),
+        "arm/slider/velocity": Limits(-0.2, 0.2),
     }
-    # The arm is not told an effort, so the model's effort limit has no place.
-    assert "arm/shoulder/effort" not in arm.limits
 
 
 def test_a_body_takes_its_effort_limits_from_its_model(tmp_path: Path) -> None:
-    body = pd_joint_description(model_from(tmp_path, TOY_URDF), source="toy", joints=["shoulder"])
+    body = pd_joint_description(model_from(tmp_path, TOY_URDF), source="toy")
     assert body.limits["toy/shoulder/effort"] == Limits(-40.0, 40.0)
     assert "toy/shoulder/kp" not in body.limits
 
 
 def test_a_prismatic_joint_is_measured_in_metres(tmp_path: Path) -> None:
-    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["slider"])
+    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm")
     assert arm.unit_of("arm/slider/position") is Unit.M
     assert arm.unit_of("arm/slider/velocity") is Unit.M_PER_S
     assert arm.unit_of("arm/slider/effort") is Unit.N
 
 
 def test_a_joint_that_spins_freely_gets_no_position_limit(tmp_path: Path) -> None:
-    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["spinner"])
+    arm = manipulator_description(model_from(tmp_path, TOY_URDF), source="arm")
     assert "arm/spinner/position" not in arm.limits
     assert arm.limits["arm/spinner/velocity"] == Limits(-10.0, 10.0)
-
-
-def test_limit_overrides_replace_only_their_own_names(tmp_path: Path) -> None:
-    slower = {"arm/shoulder/velocity": Limits(-0.5, 0.5)}
-    arm = manipulator_description(
-        model_from(tmp_path, TOY_URDF), source="arm", limit_overrides=slower
-    )
-    assert arm.limits["arm/shoulder/velocity"] == Limits(-0.5, 0.5)
-    assert arm.limits["arm/shoulder/position"] == Limits(-1.5, 2.5)
-    assert arm.limits["arm/spinner/velocity"] == Limits(-10.0, 10.0)
-
-
-def test_a_joint_missing_from_the_model_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="not in the robot model"):
-        manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["elbow"])
-
-
-def test_a_fixed_joint_cannot_be_driven(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="cannot be driven"):
-        manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["mount"])
 
 
 @pytest.mark.parametrize(
@@ -398,57 +372,7 @@ def test_a_model_unclear_about_a_limit_raises(tmp_path: Path, broken: str, match
     # Reading a missing bound as "no limit" would let the joint go anywhere.
     model = model_from(tmp_path, TOY_URDF.replace(broken, "", 1))
     with pytest.raises(ValueError, match=match):
-        manipulator_description(model, source="arm", joints=["shoulder"])
-
-
-# An arm whose model includes its gripper's two fingers, as many arm URDFs do.
-# The right finger copies the left one (a "mimic" joint).
-ARM_WITH_FINGERS_URDF = """<?xml version="1.0"?>
-<robot name="arm_with_fingers">
-  <link name="base"/>
-  <link name="upper"/>
-  <link name="hand"/>
-  <link name="left"/>
-  <link name="right"/>
-  <joint name="shoulder" type="revolute">
-    <parent link="base"/>
-    <child link="upper"/>
-    <limit lower="-1.5" upper="1.5" velocity="2.0" effort="40.0"/>
-  </joint>
-  <joint name="wrist" type="revolute">
-    <parent link="upper"/>
-    <child link="hand"/>
-    <limit lower="-2.0" upper="2.0" velocity="2.0" effort="20.0"/>
-  </joint>
-  <joint name="left_finger" type="prismatic">
-    <parent link="hand"/>
-    <child link="left"/>
-    <limit lower="0.0" upper="0.04" velocity="0.1" effort="10.0"/>
-  </joint>
-  <joint name="right_finger" type="prismatic">
-    <parent link="hand"/>
-    <child link="right"/>
-    <limit lower="0.0" upper="0.04" velocity="0.1" effort="10.0"/>
-    <mimic joint="left_finger"/>
-  </joint>
-</robot>
-"""
-
-
-def test_an_arm_whose_model_has_fingers_names_its_joints(tmp_path: Path) -> None:
-    model = model_from(tmp_path, ARM_WITH_FINGERS_URDF)
-    # By default each finger would be driven as one more arm joint.
-    every = manipulator_description(model, source="arm")
-    assert "arm/left_finger" in every.joint_names()
-    assert "arm/right_finger" in every.joint_names()
-    # Naming the arm's joints leaves the fingers to a gripper with one opening.
-    arm = manipulator_description(
-        model,
-        source="arm",
-        joints=["shoulder", "wrist"],
-        gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.08),
-    )
-    assert arm.joint_names() == ("arm/shoulder", "arm/wrist", "arm/gripper")
+        manipulator_description(model, source="arm")
 
 
 #: The G1 shipped in this repo, to check the presets against a model nobody
@@ -471,7 +395,7 @@ def test_the_in_repo_g1_drives_every_joint_that_moves() -> None:
 
 
 def test_the_in_repo_g1_gets_its_limits_from_its_model() -> None:
-    body = pd_joint_description(g1_leg_model(), source="g1", joints=G1_LEG)
+    body = pd_joint_description(g1_leg_model(), source="g1")
     assert body.limits["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798)
     assert body.limits["g1/left_hip_pitch/velocity"] == Limits(-32.0, 32.0)
     assert body.limits["g1/left_hip_pitch/effort"] == Limits(-88.0, 88.0)
@@ -481,7 +405,7 @@ def test_the_in_repo_g1_gets_its_limits_from_its_model() -> None:
 
 
 def test_the_in_repo_g1_refuses_a_command_past_its_model_limit() -> None:
-    body = pd_joint_description(g1_leg_model(), source="g1", joints=G1_LEG)
+    body = pd_joint_description(g1_leg_model(), source="g1")
     assert not isinstance(
         validate_command(body, command({"g1/left_knee/position": 1.0}), last_sequence=None),
         Rejected,

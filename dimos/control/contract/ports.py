@@ -31,8 +31,7 @@ one ``ControlDescription`` the rest of the control stack works with::
 Readings need no spec. Each output port says what it reports by its message
 type alone, under any name:
 
-  ``Out[JointState]``   the position, speed and effort of every joint a port
-                        drives (a gripper reports its position only)
+  ``Out[JointState]``   the position, speed and effort of every joint
   ``Out[PoseStamped]``  where the base is: x, y and yaw
   ``Out[Twist]``        how fast the base is going: vx, vy and wz
   ``Out[Imu]``          an orientation sensor called "imu"
@@ -46,8 +45,6 @@ from collections.abc import Mapping
 import math
 from typing import TYPE_CHECKING, ClassVar
 
-from pydantic import Field
-
 from dimos.control.contract.convert import (
     JOINT_STATE_FIELDS,
     MOTOR_INTERFACES,
@@ -60,11 +57,10 @@ from dimos.control.contract.description import (
     Resource,
     ResourceKind,
 )
-from dimos.control.contract.keys import SEPARATOR, Interface, Key
+from dimos.control.contract.keys import Interface, Key
 from dimos.control.contract.presets import (
     BASE_POSE_UNITS,
     BASE_TWIST_UNITS,
-    GripperSpec,
     imu_resource,
     model_joints,
 )
@@ -78,7 +74,6 @@ from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.control.connection.connection_module import ConnectionConfig
-    from dimos.robot.assets.model import RobotModel
 
 #: The one part a base is: it is driven as a whole, not as wheels.
 BASE_NAME = "base"
@@ -114,50 +109,33 @@ class TwistPort(PortSpec):
 
 
 class JointPort(PortSpec):
-    """A JointState input that tells some joints where to be or how fast to turn.
+    """A JointState input that tells the joints where to be or how fast to turn.
+
+    It drives every joint of the robot model that can move, in the model's
+    order, within the model's limits.
 
     Attributes:
         interface: Which JointState field the port reads: position, velocity
             or effort. The other fields of a message are ignored.
-        joints: Which of the model's joints it drives, in this order. ``None``
-            for every joint in the model that can move, in the model's order.
-        gripper: A gripper to add as one more joint with a single opening
-            value, or ``None`` for none. Only on a position port.
-        limit_overrides: Limits by joint name, each replacing the model's
-            limit for that joint on this port, e.g. to turn slower than the
-            hardware allows.
     """
 
     message: ClassVar[type] = JointState
 
     interface: Interface = Interface.POSITION
-    joints: list[str] | None = None
-    gripper: GripperSpec | None = None
-    limit_overrides: dict[str, Limits] = Field(default_factory=dict)
 
 
 class MotorPort(PortSpec):
-    """A MotorCommandArray input that tells some joints where to go and how
+    """A MotorCommandArray input that tells the joints where to go and how
     stiffly to hold it.
 
-    Each joint is told a target position, speed and effort, and the stiffness
-    (``kp``) and damping (``kd``) to pull towards them with, all in every
-    message. The message has no names: it lists the joints in the order the
-    description does, which is this port's order.
-
-    Attributes:
-        joints: Which of the model's joints it drives, in the order the
-            message lists them. ``None`` for every joint in the model that can
-            move, in the model's order.
-        limit_overrides: Limits by joint and what is limited, written
-            "<joint>/<interface>", e.g. ``{"left_knee/velocity": Limits(-5, 5)}``.
-            Each replaces the model's limit for that one number.
+    It drives every joint of the robot model that can move, within the
+    model's limits. Each joint is told a target position, speed and effort,
+    and the stiffness (``kp``) and damping (``kd``) to pull towards them
+    with, all in every message. The message has no names: it lists the
+    joints in the model's order.
     """
 
     message: ClassVar[type] = MotorCommandArray
-
-    joints: list[str] | None = None
-    limit_overrides: dict[str, Limits] = Field(default_factory=dict)
 
 
 def port_specs(config: ConnectionConfig) -> dict[str, PortSpec]:
@@ -198,25 +176,25 @@ def control_description(
     inputs: Mapping[str, type],
     outputs: Mapping[str, type],
 ) -> ControlDescription:
-    """Describe a robot from its driver's config and ports.
+    """Describe a robot from its connection module's config and ports.
 
-    Joints are listed in the order the ports first list them, a MotorPort's
-    first, since a MotorCommandArray relies on that order. A joint driven by
-    two ports becomes one joint that accepts both.
+    A joint port or motor port drives every joint of the model that can move,
+    in the model's order. A joint driven by two ports becomes one joint that
+    accepts both.
 
     Args:
-        config: The driver's config: the robot's name, model and rates, and a
+        config: The module's config: the robot's name, model and rates, and a
             port spec field for each command input.
-        inputs: The driver's input ports, name to message type.
-        outputs: The driver's output ports, name to message type. Ports of
+        inputs: The module's input ports, name to message type.
+        outputs: The module's output ports, name to message type. Ports of
             other message types are ignored.
 
     Raises:
         ValueError: If a spec field has no input port of its name carrying its
             message, a joint port has no model to read, a module has two
             bases or two motor ports, two outputs report the same kind of
-            reading, a spec names a joint the model does not have, or an
-            override names a joint not on its port.
+            reading, no joint of the model can move, or the model is unclear
+            about a limit.
         DescriptionError: If the finished description breaks a rule.
     """
     source = config.source
@@ -230,8 +208,7 @@ def control_description(
     limits: dict[str, Limits] = {}
     base_field: str | None = None
     motor_field: str | None = None
-    ordered = sorted(specs.items(), key=lambda item: not isinstance(item[1], MotorPort))
-    for field, spec in ordered:
+    for field, spec in specs.items():
         if isinstance(spec, TwistPort):
             if base_field is not None:
                 raise ValueError(
@@ -251,9 +228,18 @@ def control_description(
                     f"{motor_field!r} and {field!r} are both motor ports; a module has one"
                 )
             motor_field = field
-            resources, port_limits = _motor_joints(source, config.model, field, spec, joint_state)
+            resources, port_limits = model_joints(
+                source, config.model, joint_state, MOTOR_INTERFACES
+            )
         elif isinstance(spec, JointPort):
-            resources, port_limits = _port_joints(source, config.model, field, spec, joint_state)
+            if spec.interface not in JOINT_STATE_FIELDS:
+                raise ValueError(
+                    f"{field!r}: a JointState carries {', '.join(JOINT_STATE_FIELDS)}, "
+                    f"not {spec.interface}"
+                )
+            resources, port_limits = model_joints(
+                source, config.model, joint_state, (spec.interface,)
+            )
         else:
             raise TypeError(f"config field {field!r}: unknown port spec {type(spec).__name__}")
         for resource in resources:
@@ -326,63 +312,6 @@ def _twist_limits(source: str, field: str, spec: TwistPort) -> dict[str, Limits]
             raise ValueError(f"{field!r}: the range for {axis} must be 0 or more, got {top}")
         limits[Key.of(source, BASE_NAME, axis)] = Limits(-top, top, clamp=True)
     return limits
-
-
-def _port_joints(
-    source: str,
-    model: RobotModel,
-    field: str,
-    spec: JointPort,
-    state: tuple[Interface, ...],
-) -> tuple[list[Resource], dict[str, Limits]]:
-    if spec.interface not in JOINT_STATE_FIELDS:
-        raise ValueError(
-            f"{field!r}: a JointState carries {', '.join(JOINT_STATE_FIELDS)}, not {spec.interface}"
-        )
-    resources, limits = model_joints(source, model, spec.joints, state, (spec.interface,))
-    if spec.gripper is not None:
-        if spec.interface != Interface.POSITION:
-            raise ValueError(
-                f"{field!r}: a gripper is told a position, so it cannot sit on a "
-                f"{spec.interface} port"
-            )
-        gripper = spec.gripper
-        resources.append(
-            Resource(
-                name=gripper.name,
-                kind=ResourceKind.JOINT,
-                state_interfaces=(Interface.POSITION,) if state else (),
-                command_interfaces=(Interface.POSITION,),
-                units={Interface.POSITION: gripper.unit},
-            )
-        )
-        limits[Key.of(source, gripper.name, Interface.POSITION)] = Limits(gripper.lo, gripper.hi)
-    on_port = {resource.name for resource in resources}
-    for joint, limit in spec.limit_overrides.items():
-        if joint not in on_port:
-            raise ValueError(f"{field!r}: limit override for {joint!r}, which is not on this port")
-        limits[Key.of(source, joint, spec.interface)] = limit
-    return resources, limits
-
-
-def _motor_joints(
-    source: str,
-    model: RobotModel,
-    field: str,
-    spec: MotorPort,
-    state: tuple[Interface, ...],
-) -> tuple[list[Resource], dict[str, Limits]]:
-    resources, limits = model_joints(source, model, spec.joints, state, MOTOR_INTERFACES)
-    on_port = {resource.name for resource in resources}
-    for name, limit in spec.limit_overrides.items():
-        joint, _, interface = name.partition(SEPARATOR)
-        if joint not in on_port or interface not in MOTOR_INTERFACES:
-            raise ValueError(
-                f"{field!r}: limit override {name!r} must be '<joint>/<interface>' for a joint "
-                f"on this port and one of {', '.join(MOTOR_INTERFACES)}"
-            )
-        limits[Key.of(source, joint, interface)] = limit
-    return resources, limits
 
 
 def _merge(into: dict[str, Resource], new: Resource) -> None:

@@ -14,21 +14,21 @@
 
 """Ready-made descriptions for the three kinds of hardware we drive.
 
-Every robot driver has to describe itself before anything will talk to it.
-Writing that out by hand is long and easy to get subtly wrong, so these three
-functions build it in one call::
+Every connection module has to describe itself before anything will talk to
+it. Writing that out by hand is long and easy to get subtly wrong, so these
+three functions build it in one call::
 
     manipulator_description(XARM7_MODEL, source="arm")
 
-  ``manipulator_description``  an arm, optionally with a gripper
+  ``manipulator_description``  an arm
   ``pd_joint_description``     a body whose joints are held in place by
                                stiffness and damping, such as a humanoid
   ``twist_base_description``   something that drives around on the floor
 
-The arm and body presets start from the robot's model (its URDF, loaded as
-a ``RobotModel``) and read its joints, their units and their limits from it.
-Arguments only pick joints or replace a limit. A robot with no URDF builds its
-``ControlDescription`` by hand.
+The arm and body presets read every joint that can move, its units and its
+limits from the robot's model (its URDF, loaded as a ``RobotModel``). A
+gripper is a joint of the model like any other. A robot with no URDF builds
+its ``ControlDescription`` by hand.
 
 Each one checks its own result before handing it back, so a description built
 this way is always a valid one.
@@ -37,7 +37,7 @@ this way is always a valid one.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from dimos.control.contract.description import (
@@ -52,9 +52,7 @@ from dimos.control.contract.validate import validate_description
 if TYPE_CHECKING:
     from dimos.robot.assets.model import JointDescription, RobotModel
 
-#: The unit of each joint interface, for a revolute joint and a prismatic
-#: one. A gripper is the exception: it sets its own, because some are
-#: measured in metres and some in a 0-to-1 fraction of fully open.
+#: The unit of each joint interface, for a revolute joint and a prismatic one.
 _REVOLUTE: Mapping[str, Unit] = {
     Interface.POSITION: Unit.RAD,
     Interface.VELOCITY: Unit.RAD_PER_S,
@@ -113,27 +111,6 @@ BASE_POSE_UNITS: Mapping[str, Unit] = {
 }
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class GripperSpec:
-    """A gripper to add to an arm.
-
-    Grippers do not agree on how to measure how open they are: some report
-    metres between the fingers, some a fraction from 0 to 1. So each one
-    states its own unit and range. For a gripper with a single opening value.
-
-    Attributes:
-        name: What to call it, e.g. "gripper".
-        unit: How its opening is measured.
-        lo: The smallest value it accepts, in that unit.
-        hi: The largest value it accepts, in that unit.
-    """
-
-    name: str = "gripper"
-    unit: Unit
-    lo: float
-    hi: float
-
-
 def imu_resource(name: str = "imu") -> Resource:
     """An orientation sensor, to hand to a preset in ``sensors``.
 
@@ -186,41 +163,33 @@ def _model_limit(joint: JointDescription, interface: Interface) -> Limits | None
 def model_joints(
     source: str,
     model: RobotModel,
-    joints: Sequence[str] | None,
     state: Sequence[Interface],
     command: Sequence[Interface],
 ) -> tuple[list[Resource], dict[str, Limits]]:
-    """Build each joint from the robot model, and the model's limits on what it is told.
+    """Every joint of the robot model that can move, with the model's limits on what it is told.
+
+    Joints come in the model's order. A fixed, floating or planar joint is
+    skipped.
 
     Args:
         source: The robot's name, the first part of each key.
         model: Where the joints, their units and their limits come from.
-        joints: Which joints to use, in this order. ``None`` for every joint
-            in the model that can move, in the model's order.
         state: What each joint reports.
         command: What each joint is told. Only these get limits.
+
+    Raises:
+        ValueError: If no joint can move, an interface has no preset unit, or
+            the model is unclear about a limit a commanded joint needs.
     """
     loaded = model.load()
-    if joints is None:
-        chosen = [joint for joint in loaded.joints if joint.type in _UNITS_BY_URDF_TYPE]
-    else:
-        chosen = []
-        for name in joints:
-            joint = loaded.get_joint(name)
-            if joint is None:
-                raise ValueError(f"joint {name!r} is not in the robot model")
-            chosen.append(joint)
-    if not chosen:
+    joints = [joint for joint in loaded.joints if joint.type in _UNITS_BY_URDF_TYPE]
+    if not joints:
         raise ValueError(f"{source!r} has no joints to drive")
 
     resources: list[Resource] = []
     limits: dict[str, Limits] = {}
-    for joint in chosen:
-        kind_units = _UNITS_BY_URDF_TYPE.get(joint.type)
-        if kind_units is None:
-            raise ValueError(
-                f"joint {joint.name!r} is {joint.type} in the robot model, so it cannot be driven"
-            )
+    for joint in joints:
+        kind_units = _UNITS_BY_URDF_TYPE[joint.type]
         units: dict[str, Unit] = {}
         for interface in dict.fromkeys((*state, *command)):
             if interface not in kind_units:
@@ -249,40 +218,28 @@ def manipulator_description(
     model: RobotModel,
     *,
     source: str,
-    joints: Sequence[str] | None = None,
     state: Sequence[Interface] = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
     command: Sequence[Interface] = (Interface.POSITION, Interface.VELOCITY),
-    gripper: GripperSpec | None = None,
     sensors: Sequence[Resource] = (),
-    limit_overrides: Mapping[str, Limits] | None = None,
     state_rate_hz: float = 100.0,
     deadman_timeout_s: float = 0.1,
 ) -> ControlDescription:
-    """Describe an arm from its robot model, optionally with a gripper on the end.
+    """Describe an arm from its robot model.
 
-    The joints, their units (from whether each turns or slides) and their
-    limits all come from the model. A command past a limit is refused.
+    Every joint that can move is driven, in the model's order, within the
+    model's limits; a gripper is one of them. A command past a limit is
+    refused.
 
     Args:
         model: The arm's robot model.
-        source: Short name for this arm. Every name it reports starts with
-            it, e.g. "arm". Two arms built from the same model need different
-            names.
-        joints: Which of the model's joints to drive, in the order the
-            hardware lists them. ``None`` for every joint that can move, in
-            the model's order. Pass it when the model has joints this arm does
-            not drive one by one, such as a gripper's fingers.
+        source: Short name for this arm, the first part of every name it
+            reports, e.g. "arm". Two arms built from the same model need
+            different names.
         state: What each joint reports. Leave out anything it cannot measure,
             rather than having it report zeros that look like real readings.
         command: What each joint can be told: position, velocity, or both.
-            Each gets the model's limit.
-        gripper: A gripper to add as one more part with a single opening
-            value, or ``None`` for none.
         sensors: Sensors to report alongside the joints, e.g.
             ``[imu_resource()]``.
-        limit_overrides: Limits by full name, such as "arm/joint1/velocity",
-            each replacing the model's limit for that name only, e.g. to drive
-            slower than the hardware allows.
         state_rate_hz: How many times a second the arm reports.
         deadman_timeout_s: How long it goes without a command, in seconds,
             before it stops itself.
@@ -291,32 +248,18 @@ def manipulator_description(
         A complete, checked description of the arm.
 
     Raises:
-        ValueError: If there are no joints, nothing to command, a joint not in
-            the model or one that cannot move, an interface whose unit this
-            function does not know, or a model unclear about one of its limits.
-        DescriptionError: If the finished description breaks a rule, such as
-            an override for a name the arm is not told.
+        ValueError: If nothing is commanded, no joint can move, an interface
+            has no preset unit, or the model is unclear about a limit.
+        DescriptionError: If the finished description breaks a rule.
     """
     if not command:
         raise ValueError(f"manipulator {source!r} declares nothing to command")
 
-    resources, limits = model_joints(source, model, joints, state, command)
-    if gripper is not None:
-        resources.append(
-            Resource(
-                name=gripper.name,
-                kind=ResourceKind.JOINT,
-                state_interfaces=(Interface.POSITION,),
-                command_interfaces=(Interface.POSITION,),
-                units={Interface.POSITION: gripper.unit},
-            )
-        )
-        limits[Key.of(source, gripper.name, Interface.POSITION)] = Limits(gripper.lo, gripper.hi)
-
+    resources, limits = model_joints(source, model, state, command)
     description = ControlDescription(
         source=source,
         resources=(*resources, *sensors),
-        limits=limits | dict(limit_overrides or {}),
+        limits=limits,
         state_rate_hz=state_rate_hz,
         deadman_timeout_s=deadman_timeout_s,
     )
@@ -328,31 +271,23 @@ def pd_joint_description(
     model: RobotModel,
     *,
     source: str,
-    joints: Sequence[str] | None = None,
     sensors: Sequence[Resource] = (),
-    limit_overrides: Mapping[str, Limits] | None = None,
     state_rate_hz: float = 500.0,
     deadman_timeout_s: float = 0.05,
 ) -> ControlDescription:
     """Describe a body whose joints are held by stiffness and damping, from its robot model.
 
-    Used for humanoids and similar robots. Each joint is told a target
-    position, speed and force, and two numbers that say how hard to pull
-    towards them: ``kp`` (stiffness) and ``kd`` (damping). All five are sent
-    in every command. The joints, their units and their position, speed and
-    force limits come from the model. A command past a limit is refused.
+    Used for humanoids and similar robots. Every joint that can move is told
+    a target position, speed and force, and two numbers that say how hard to
+    pull towards them: ``kp`` (stiffness) and ``kd`` (damping). All five are
+    sent in every command. The joints come in the model's order, within the
+    model's limits. A command past a limit is refused.
 
     Args:
         model: The body's robot model.
         source: Short name for this body, e.g. "g1".
-        joints: Which of the model's joints to drive, in the order the
-            hardware lists them. The order is how commands line up with the
-            right motors. ``None`` for every joint that can move, in the
-            model's order.
         sensors: Sensors to report alongside the joints, e.g.
             ``[imu_resource()]``.
-        limit_overrides: Limits by full name, such as "g1/left_knee/position",
-            each replacing the model's limit for that name only.
         state_rate_hz: How many times a second the body reports.
         deadman_timeout_s: How long it goes without a command, in seconds,
             before it stops itself.
@@ -361,16 +296,15 @@ def pd_joint_description(
         A complete, checked description of the body.
 
     Raises:
-        ValueError: If there are no joints, a joint not in the model or one
-            that cannot move, or a model unclear about one of its limits.
-        DescriptionError: If the finished description breaks a rule, such as
-            an override for a name the body is not told.
+        ValueError: If no joint can move, or the model is unclear about a
+            limit.
+        DescriptionError: If the finished description breaks a rule.
     """
-    resources, limits = model_joints(source, model, joints, _PD_STATE, _PD_COMMAND)
+    resources, limits = model_joints(source, model, _PD_STATE, _PD_COMMAND)
     description = ControlDescription(
         source=source,
         resources=(*resources, *sensors),
-        limits=limits | dict(limit_overrides or {}),
+        limits=limits,
         state_rate_hz=state_rate_hz,
         deadman_timeout_s=deadman_timeout_s,
     )

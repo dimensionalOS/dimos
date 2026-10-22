@@ -176,21 +176,24 @@ FAKE_ARM_JOINTS: tuple[str, ...] = tuple(f"joint{i}" for i in range(1, 8))
 
 
 @functools.cache
-def fake_arm_model() -> RobotModel:
-    """A model of seven turning joints, joint1 to joint7, one after another.
+def fake_arm_model(joints: tuple[str, ...] = FAKE_ARM_JOINTS) -> RobotModel:
+    """A model of turning joints one after another: joint1 to joint7 unless told otherwise.
 
     Each may be told to go anywhere within one turn either side of 0 (radians),
     at up to 2 rad/s and 50 Nm.
+
+    Args:
+        joints: The joint names, in order.
     """
     limit = 'lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"'
-    links = "".join(f'<link name="link{i}"/>' for i in range(len(FAKE_ARM_JOINTS) + 1))
-    joints = "".join(
+    links = "".join(f'<link name="link{i}"/>' for i in range(len(joints) + 1))
+    chain = "".join(
         f'<joint name="{joint}" type="revolute"><parent link="link{i}"/>'
         f'<child link="link{i + 1}"/><limit {limit}/></joint>'
-        for i, joint in enumerate(FAKE_ARM_JOINTS)
+        for i, joint in enumerate(joints)
     )
     path = Path(tempfile.mkdtemp(prefix="fake_arm_")) / "fake_arm.urdf"
-    path.write_text(f'<robot name="fake_arm">{links}{joints}</robot>')
+    path.write_text(f'<robot name="fake_arm">{links}{chain}</robot>')
     return RobotModel.from_file(path)
 
 
