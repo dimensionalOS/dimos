@@ -4,7 +4,7 @@
 support are incomplete. Existing code continues to use `dimos.msgs`.
 
 `setup.py` reads the definitions in `packages/dimos-generated` and calls
-`dimos-cdrgen==0.1.1`. The wheel contains `dimos.messages`, schemas, and native
+`dimos-cdrgen==0.1.2`. The wheel contains `dimos.messages`, schemas, and native
 source code. The examples use these installed files.
 
 The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs and
@@ -48,7 +48,7 @@ inputs live under `packages/dimos-generated` in the checkout.
 Install CMake and Rust/Cargo, then reuse the same environment:
 
 ```sh skip
-uv pip install --python .venv-msg-review/bin/python 'dimos-cdrgen[native]==0.1.1'
+uv pip install --python .venv-msg-review/bin/python 'dimos-cdrgen[native]==0.1.2'
 .venv-msg-review/bin/python -I examples/message-package/demo_native.py
 ```
 
@@ -84,7 +84,7 @@ CI is required to install or run them.
 Use a Python environment with the published generator and test tools:
 
 ```sh skip
-uv pip install 'dimos-cdrgen==0.1.1' numpy build pytest pytest-asyncio pytest-env
+uv pip install 'dimos-cdrgen==0.1.2' numpy build pytest pytest-asyncio pytest-env
 python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
 ```
 

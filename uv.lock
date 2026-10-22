@@ -1860,13 +1860,13 @@ version = "0.0.15"
 source = { editable = "." }
 default-groups = ["tests"]
 dependencies = [
-    { name = "dimos-cdrgen" },
     { name = "annotation-protocol" },
     { name = "attrs" },
     { name = "bleak" },
     { name = "cbor2" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
+    { name = "dimos-cdrgen" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
@@ -2537,7 +2537,6 @@ docs = ">=3.11"
 
 [package.metadata]
 requires-dist = [
-    { name = "dimos-cdrgen", specifier = "==0.1.1" },
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
     { name = "aioquic", marker = "extra == 'web'", specifier = "==1.3.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
@@ -2564,6 +2563,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
+    { name = "dimos-cdrgen", specifier = "==0.1.2" },
     { name = "dimos-lcm", specifier = ">=0.1.6" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2710,7 +2710,7 @@ lint = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.1" },
+    { name = "dimos-cdrgen", specifier = "==0.1.2" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
@@ -2780,7 +2780,7 @@ tests = [
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.1" },
+    { name = "dimos-cdrgen", specifier = "==0.1.2" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
@@ -2839,7 +2839,7 @@ tests-self-hosted = [
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.1" },
+    { name = "dimos-cdrgen", specifier = "==0.1.2" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
@@ -2892,7 +2892,7 @@ tests-self-hosted = [
 
 [[package]]
 name = "dimos-cdrgen"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "empy" },
@@ -2902,9 +2902,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/74/fff6dcefc9591dd179b50931eda73f24f1b9673c1971099506e115bf33cc/dimos_cdrgen-0.1.1.tar.gz", hash = "sha256:a529745a35954f0725ad9479a0346917756447b194fa1509c3336d3eb4e86385", size = 76682, upload-time = "2026-10-19T22:29:59.807Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/0a/ad00b03760da952948ad0a0782d49b6d0f2f465f6f2b59b865994155180c/dimos_cdrgen-0.1.2.tar.gz", hash = "sha256:5a767df0364fc32bccc286b48f204317ec8278d04fc9b9ee6a3d7fb9653b7ebf", size = 77745, upload-time = "2026-10-22T20:38:14.584Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/05/cb085e18549a5eced615840b2f607a9c342a8a49c69012964f0568aa309b/dimos_cdrgen-0.1.1-py3-none-any.whl", hash = "sha256:f85923440196a3028dbd974a913b0ef9320eb12b57770f722e96bc1645a351a2", size = 71015, upload-time = "2026-10-19T22:29:58.404Z" },
+    { url = "https://files.pythonhosted.org/packages/29/9f/a4fe6f8ea4dcafd3001c868ebbc751bb0af83aecb1fe6523765c12cdedba/dimos_cdrgen-0.1.2-py3-none-any.whl", hash = "sha256:9857c8cc40de58b03f94cb81e7d27ae3caac98101c96cdaa2965413a332e685f", size = 71122, upload-time = "2026-10-22T20:38:13.048Z" },
 ]
 
 [[package]]

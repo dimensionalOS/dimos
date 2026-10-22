@@ -2,7 +2,7 @@
 requires = [
     "setuptools>=70",
     "wheel",
-    "dimos-cdrgen[prepare]==0.1.1",
+    "dimos-cdrgen[prepare]==0.1.2",
     "pydantic>=2,<3",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
@@ -108,7 +108,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "dimos-cdrgen==0.1.1",
+    "dimos-cdrgen==0.1.2",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",
@@ -432,7 +432,7 @@ project-deps = [
 ]
 
 tests = [
-    "dimos-cdrgen==0.1.1",
+    "dimos-cdrgen==0.1.2",
     "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
@@ -492,7 +492,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
-    "dimos-cdrgen==0.1.1",
+    "dimos-cdrgen==0.1.2",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",

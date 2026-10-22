@@ -84,7 +84,7 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     venv.EnvBuilder(with_pip=True).create(environment)
     python = str(environment / "bin/python")
     pip = [python, "-m", "pip", "install", "--no-index", "--find-links", str(wheelhouse)]
-    run(*pip, "dimos-cdrgen==0.1.1", "setuptools>=70", "wheel", "pybind11", cwd=tmp_path)
+    run(*pip, "dimos-cdrgen==0.1.2", "setuptools>=70", "wheel", "pybind11", cwd=tmp_path)
     if mode == "git":
         root = Path(__file__).resolve().parents[2]
         head = run("git", "rev-parse", "HEAD", cwd=root).strip()
@@ -118,12 +118,12 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     definition.write_text("std_msgs/Header header\nfloat64 value\n")
     (project / "pyproject.toml").write_text(
         """[build-system]
-requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.1", "dimos==0.0.14"]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.2", "dimos==0.0.14"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "external-reading"
 version = "0.1.0"
-dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.1"]
+dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.2"]
 [tool.dimos.messages]
 python-module = "my_robot.messages"
 [tool.dimos.messages.dependencies]

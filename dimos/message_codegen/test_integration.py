@@ -60,12 +60,12 @@ def test_installed_message_consumer(tmp_path: Path) -> None:
     source.parent.mkdir(parents=True)
     source.write_text("int32 value\n")
     (project / "pyproject.toml").write_text("""[build-system]
-requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.1"]
+requires = ["setuptools>=77", "wheel", "dimos-cdrgen==0.1.2"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "dimos-cdr-consumer"
 version = "0.1.0"
-dependencies = ["dimos-cdrgen==0.1.1"]
+dependencies = ["dimos-cdrgen==0.1.2"]
 [tool.dimos.messages]
 source = "interfaces"
 """)
