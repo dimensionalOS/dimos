@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 import os
 from pathlib import Path
 import platform
@@ -37,8 +37,12 @@ logger = setup_logger()
 Tagger = Callable[[], dict[str, str]]
 
 
-class Tag(StrEnum):
+class Tag(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     """Numeric Host tags for ``hosted(minimum=..., prefer=...)``; any other tag works by name."""
+
+    # hosted() keys minimum by str(tag), so it must be the value, as with StrEnum.
+    def __str__(self) -> str:
+        return self.value
 
     # A Jetson's shared memory does not count.
     gpu_mem = "gpu_mem_gb"
