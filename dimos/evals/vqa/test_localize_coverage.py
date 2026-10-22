@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 from pydantic import ValidationError
 import pytest
 
@@ -35,7 +34,6 @@ from dimos.evals.vqa.localize_coverage import (
     coverage_cell,
     select_localize_coverage_ids,
 )
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 def test_coverage_cell_maps_selectors() -> None:
@@ -231,7 +229,6 @@ def test_generation_request_rejects_coverage_k_without_localize() -> None:
 
 
 def test_apply_localize_coverage_budget_keeps_image_path_cases() -> None:
-    image = Image(data=np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)
     localize_cases = tuple(
         PublicCase(
             id=f"frame-000001-chair-ego_fore_aft-{i}" if i else "frame-000001-chair-ego_fore_aft",
@@ -265,7 +262,7 @@ def test_apply_localize_coverage_budget_keeps_image_path_cases() -> None:
     )
     frame = _GeneratedFrame(
         index=1,
-        image=image,
+        image_ts=0.0,
         cases=cases,
         labels=labels,
         audit_rows=audit_rows,

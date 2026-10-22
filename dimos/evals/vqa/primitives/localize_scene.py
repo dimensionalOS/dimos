@@ -54,6 +54,7 @@ RANGE_MAX_M = 5.0
 HEIGHT_MARGIN_M = 0.15
 NEXT_TO_MAX_RANGE_M = 1.50
 NEXT_TO_UNIQUENESS_MARGIN_M = 0.35
+NEAREST_UNIQUENESS_MARGIN_M = 0.35
 _NEXT_TO_TOKEN = " next to "
 
 # left/right kept for legacy audit parsing only — not proposed or resolved.
@@ -184,11 +185,20 @@ def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeIns
         return hits[0]
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {parsed.category!r}")
-    # nearest
-    return min(
-        hits,
-        key=lambda inst: math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)),
+    ranked = sorted(
+        (
+            (math.hypot(*robot_relative_xy(scene, inst.position_world_xyz)), inst)
+            for inst in hits
+        ),
+        key=lambda row: row[0],
     )
+    best_dist, best = ranked[0]
+    if len(ranked) >= 2 and ranked[1][0] - best_dist < NEAREST_UNIQUENESS_MARGIN_M:
+        raise InsufficientEvidenceError(
+            f"nearest {parsed.category!r} is ambiguous: top hits differ by less than "
+            f"{NEAREST_UNIQUENESS_MARGIN_M} m"
+        )
+    return best
 
 
 def _horizontal_distance_m(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -339,12 +349,23 @@ def ego_turn_to(scene: LocalizeSceneEvidence, referent: str) -> EgoTurn:
     return "left" if theta_deg > 0 else "right"
 
 
-def any_ahead(scene: LocalizeSceneEvidence, category: str) -> bool:
-    """Whether any verified instance of ``category`` lies in the ahead cone."""
+def instances_in_ahead_cone(
+    scene: LocalizeSceneEvidence, category: str
+) -> tuple[LocalizeInstanceEvidence, ...]:
+    """Verified instances of ``category`` that lie in the ahead cone."""
     hits = instances_named(scene, category)
     if not hits:
         raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
-    return any(_in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz)) for inst in hits)
+    return tuple(
+        inst
+        for inst in hits
+        if _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz))
+    )
+
+
+def any_ahead(scene: LocalizeSceneEvidence, category: str) -> bool:
+    """Whether any verified instance of ``category`` lies in the ahead cone."""
+    return bool(instances_in_ahead_cone(scene, category))
 
 
 def higher_object(scene: LocalizeSceneEvidence, object_a: str, object_b: str) -> str:

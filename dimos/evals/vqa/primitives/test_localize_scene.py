@@ -130,6 +130,33 @@ def test_resolve_nearest_picks_closest_instance() -> None:
     assert fore_aft_of(scene, "nearest chair") == "ahead"
 
 
+def test_resolve_nearest_rejects_equal_distance_tie() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="ambiguous"):
+        resolve_referent(scene, "nearest chair")
+
+
+def test_resolve_nearest_rejects_within_uniqueness_margin() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.2, 0.0, 0.0)),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="ambiguous"):
+        resolve_referent(scene, "nearest chair")
+
+
+def test_resolve_nearest_keeps_clear_winner() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.5, 0.0, 0.0)),
+    )
+    nearest = resolve_referent(scene, "nearest chair")
+    assert nearest.position_world_xyz == (1.0, 0.0, 0.0)
+
+
 def test_resolve_rejects_left_right_referents() -> None:
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 1.2, 0.0)),

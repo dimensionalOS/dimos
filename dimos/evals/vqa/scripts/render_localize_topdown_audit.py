@@ -63,6 +63,28 @@ def _obj_key(name: str, x: float, y: float) -> tuple[object, ...]:
     return (round(x, 1), round(y, 1), name.casefold())
 
 
+def _evidence_xyz_rows(evidence: dict[str, object]) -> list[tuple[str, tuple[float, float, float]]]:
+    """Collect (name, xyz) from fore/aft, turn, height_order, and any-ahead evidence."""
+    rows: list[tuple[str, tuple[float, float, float]]] = []
+    if "position_world_xyz" in evidence:
+        xyz = tuple(float(v) for v in evidence["position_world_xyz"][:3])  # type: ignore[index]
+        name = str(evidence.get("category") or evidence.get("object_name") or "?")
+        rows.append((name, xyz))
+    for nested in evidence.get("objects") or []:
+        if not isinstance(nested, dict) or "position_world_xyz" not in nested:
+            continue
+        xyz = tuple(float(v) for v in nested["position_world_xyz"][:3])
+        name = str(nested.get("choice") or nested.get("object_name") or evidence.get("object_name") or "?")
+        rows.append((name, xyz))
+    for nested in evidence.get("instances") or []:
+        if not isinstance(nested, dict) or "position_world_xyz" not in nested:
+            continue
+        xyz = tuple(float(v) for v in nested["position_world_xyz"][:3])
+        name = str(evidence.get("category") or evidence.get("object_name") or "?")
+        rows.append((name, xyz))
+    return rows
+
+
 def _collect_objects(full_audit: Path) -> list[dict[str, object]]:
     objs: dict[tuple[object, ...], dict[str, object]] = {}
     for gt_path in sorted(full_audit.glob("frame-*/ground_truth.json")):
@@ -70,12 +92,11 @@ def _collect_objects(full_audit: Path) -> list[dict[str, object]]:
             if row.get("status") != "answered":
                 continue
             evidence = (row.get("answer") or {}).get("evidence") or {}
-            if not isinstance(evidence, dict) or "position_world_xyz" not in evidence:
+            if not isinstance(evidence, dict):
                 continue
-            xyz = tuple(float(v) for v in evidence["position_world_xyz"][:3])
-            name = str(evidence.get("category") or evidence.get("object_name") or "?")
-            key = _obj_key(name, xyz[0], xyz[1])
-            objs[key] = {"name": name, "x": xyz[0], "y": xyz[1], "z": xyz[2], "key": key}
+            for name, xyz in _evidence_xyz_rows(evidence):
+                key = _obj_key(name, xyz[0], xyz[1])
+                objs[key] = {"name": name, "x": xyz[0], "y": xyz[1], "z": xyz[2], "key": key}
     return sorted(objs.values(), key=lambda row: (str(row["name"]).casefold(), row["x"], row["y"]))
 
 
@@ -109,15 +130,14 @@ def _frame_object_ids(
         if row.get("status") != "answered":
             continue
         evidence = (row.get("answer") or {}).get("evidence") or {}
-        if not isinstance(evidence, dict) or "position_world_xyz" not in evidence:
+        if not isinstance(evidence, dict):
             continue
-        xyz = tuple(float(v) for v in evidence["position_world_xyz"][:3])
-        name = str(evidence.get("category") or evidence.get("object_name") or "?")
-        index = key_to_index.get(_obj_key(name, xyz[0], xyz[1]))
-        if index is None or index in seen:
-            continue
-        seen.add(index)
-        ids.append(index)
+        for name, xyz in _evidence_xyz_rows(evidence):
+            index = key_to_index.get(_obj_key(name, xyz[0], xyz[1]))
+            if index is None or index in seen:
+                continue
+            seen.add(index)
+            ids.append(index)
     return ids
 
 
@@ -173,22 +193,20 @@ def _collect_frame_meta(
         family = _family(case["id"])
         evidence = _evidence_for_question(full_audit, frame, case["question"])
         obj_ids: list[int] = []
-        if evidence and "position_world_xyz" in evidence:
-            xyz = tuple(float(v) for v in evidence["position_world_xyz"][:3])
-            name = str(evidence.get("category") or evidence.get("object_name") or "?")
-            index = key_to_index.get(_obj_key(name, xyz[0], xyz[1]))
-            if index is not None:
-                obj_ids.append(index)
-        elif evidence and family == "ego_any_fore_aft":
-            category = str(evidence.get("category") or evidence.get("object_name") or "").casefold()
-            obj_ids = [
-                index
-                for index in frame_objs.get(frame, [])
-                if index_category.get(index) == category
-            ]
-        elif family == "height_order" and evidence:
-            # Prefer explicit xyz rows if present; else leave empty (frame fallback).
-            pass
+        if evidence:
+            for name, xyz in _evidence_xyz_rows(evidence):
+                index = key_to_index.get(_obj_key(name, xyz[0], xyz[1]))
+                if index is not None and index not in obj_ids:
+                    obj_ids.append(index)
+            if not obj_ids and family == "ego_any_fore_aft":
+                category = str(
+                    evidence.get("category") or evidence.get("object_name") or ""
+                ).casefold()
+                obj_ids = [
+                    index
+                    for index in frame_objs.get(frame, [])
+                    if index_category.get(index) == category
+                ]
         questions.append(
             {
                 "id": case["id"],
@@ -594,8 +612,8 @@ def render(
   <div>
     <h1>Top-down VQA audit — {html.escape(dataset.name)}</h1>
     <p>
-      costmap {width}×{height} @ {float(grid_msg.resolution):.3f}m ·
-      objects {len(objects)} · frames {len(frames)} · questions {len(questions)} ·
+      costmap {width}x{height} @ {float(grid_msg.resolution):.3f}m /
+      objects {len(objects)} / frames {len(frames)} / questions {len(questions)} /
       robots drawn {sum(1 for f in frames if f in robots)}
     </p>
   </div>
@@ -753,7 +771,7 @@ def main() -> None:
         "--full-audit",
         type=Path,
         default=None,
-        help="Audit tree with localize evidence (defaults to sibling *_full/audit)",
+        help="Audit tree with localize evidence (defaults to <dataset>/audit)",
     )
     parser.add_argument(
         "--output",
@@ -761,10 +779,7 @@ def main() -> None:
         default=None,
     )
     args = parser.parse_args()
-    full_audit = args.full_audit
-    if full_audit is None:
-        sibling = args.dataset.parent / "vqa_aa5f_localize_full" / "audit"
-        full_audit = sibling if sibling.exists() else args.dataset / "audit"
+    full_audit = args.full_audit if args.full_audit is not None else args.dataset / "audit"
     output = args.output or (args.dataset / "audit_topdown.html")
     path = render(
         recording=args.recording,

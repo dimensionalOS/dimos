@@ -31,10 +31,11 @@ from dimos.evals.vqa.contracts import (
 )
 from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeSceneEvidence,
-    any_ahead,
     ego_turn_to,
     fore_aft_of,
     higher_object,
+    instances_in_ahead_cone,
+    instances_named,
     parse_referent,
     resolve_referent,
     robot_relative_xy,
@@ -100,7 +101,7 @@ EGO_FORE_AFT_FAMILY = FamilySpec(
     name="ego_fore_aft",
     description=(
         "Ask whether one localized referent is ahead of or behind the robot body "
-        "(ahead/behind cones: |bearing| ≤ 45° / ≥ 135°, range 0.5–5 m; sides rejected). "
+        "(ahead/behind cones: |bearing| <= 45 deg / >= 135 deg, range 0.5-5 m; sides rejected). "
         "Prefer bare names for unique objects, 'nearest <object>', or "
         "'<object> next to <landmark>'. Do not use left/right <object> referents. "
         "Do not infer fore/aft from the image."
@@ -124,8 +125,8 @@ EGO_TURN_FAMILY = FamilySpec(
     description=(
         "Ask whether the robot should turn left, turn right, turn around, or is already facing "
         "one localized referent: bare unique name, nearest <object>, or "
-        "'<object> next to <landmark>'. Ahead means |bearing| ≤ 45° in the robot yaw frame; "
-        "behind is turn around. Do not use left/right <object> referents — that leaks the turn "
+        "'<object> next to <landmark>'. Ahead means |bearing| <= 45 deg in the robot yaw frame; "
+        "behind is turn around. Do not use left/right <object> referents - that leaks the turn "
         "answer. Do not infer bearing from the image alone."
     ),
     requires_localize=True,
@@ -134,7 +135,7 @@ EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
     name="ego_any_fore_aft",
     description=(
         "Ask whether any verified instance of a category lies in the ahead cone "
-        "(|bearing| ≤ 45°, 0.5–5 m). Use a bare category name. Do not infer from the image alone."
+        "(|bearing| <= 45 deg, 0.5-5 m). Use a bare category name. Do not infer from the image alone."
     ),
     requires_localize=True,
 )
@@ -581,7 +582,10 @@ def _answer_ego_any_fore_aft(
             "next-to referent"
         )
     bare = parsed.category
-    answer = "yes" if any_ahead(localize_scene, bare) else "no"
+    hits = instances_named(localize_scene, bare)
+    ahead = instances_in_ahead_cone(localize_scene, bare)
+    ahead_xyz = {inst.position_world_xyz for inst in ahead}
+    answer = "yes" if ahead else "no"
     return FamilyAnswer(
         question=f"Is there any verified {bare} ahead of the robot?",
         choices=("yes", "no"),
@@ -593,5 +597,15 @@ def _answer_ego_any_fore_aft(
             "answer_rule": "exists_instance_in_ahead_cone_45",
             "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
             "robot_yaw_rad": localize_scene.robot_yaw_rad,
+            "instances": cast(
+                "JsonValue",
+                [
+                    {
+                        "position_world_xyz": list(inst.position_world_xyz),
+                        "in_ahead_cone": inst.position_world_xyz in ahead_xyz,
+                    }
+                    for inst in hits
+                ],
+            ),
         },
     )

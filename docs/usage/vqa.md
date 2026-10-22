@@ -106,8 +106,14 @@ Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m
 `|θ| ≤ 45°`, behind `|θ| ≥ 135°`, sides rejected for fore/aft; `ego_turn` answers
 left / right / ahead / **turn around**. See `experience/ego-spatial-sectors.md`.
 
+These families are **pose-grounded**: answers come from verified 3D instances +
+`base_link`, not from pixels in the published RGB alone. A referent may be behind
+the robot or outside the camera FOV. Image-only models are expected to fail those
+cases; that is intentional for measuring ego-spatial capability, not a labeling bug.
+
 Left/right ``<category>`` referents are not proposed (awkward English in the question text;
 multi-instance disambiguation uses nearest / next-to instead).
+`nearest` rejects ties closer than 0.35 m so the answer does not depend on hit order.
 
 Published localize cases are budgeted to at most **K=5 per frame**. Selection
 round-robins `(family, selector)` types across frames so every frame with ego

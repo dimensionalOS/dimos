@@ -198,8 +198,10 @@ class GenerationFrame:
 
 @dataclass(frozen=True)
 class _GeneratedFrame:
+    """Per-frame generation result. Image bytes are written immediately and not retained."""
+
     index: int
-    image: Image
+    image_ts: float
     cases: tuple[PublicCase, ...]
     labels: tuple[PrivateLabel, ...]
     audit_rows: tuple[dict[str, object], ...]
@@ -319,8 +321,10 @@ def generate_frames_dataset(
         rejected_count = 0
         used_family_names: set[str] = set()
         for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
-            _write_frame(staging, frame)
+            frame, image = _generate_frame(
+                source, author, detector, range_estimator, mask_estimator
+            )
+            _write_frame(staging, frame, image)
             generated_frames.append(frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
@@ -376,7 +380,7 @@ def _generate_frame(
     detector: VlModel,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
-) -> _GeneratedFrame:
+) -> tuple[_GeneratedFrame, Image]:
     image_index = source.index
     image = source.image
     # Empty verified-hit scenes must not expose localize families (author would propose
@@ -447,13 +451,16 @@ def _generate_frame(
         PrivateLabel(id=case.id, answer=answer.answer)
         for case, answer in zip(cases, answers, strict=True)
     )
-    return _GeneratedFrame(
-        index=image_index,
-        image=image,
-        cases=cases,
-        labels=labels,
-        audit_rows=tuple(audit_rows),
-        families=tuple(families),
+    return (
+        _GeneratedFrame(
+            index=image_index,
+            image_ts=float(image.ts),
+            cases=cases,
+            labels=labels,
+            audit_rows=tuple(audit_rows),
+            families=tuple(families),
+        ),
+        image,
     )
 
 
@@ -561,14 +568,14 @@ def _prepare_output(output: Path) -> None:
         raise FileExistsError(f"VQA output directory is not empty: {output}")
 
 
-def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
+def _write_frame(output: Path, frame: _GeneratedFrame, image: Image) -> None:
     (output / "assets").mkdir(parents=True, exist_ok=True)
     frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)
 
     image_name = f"assets/frame-{frame.index:06d}.png"
     image_path = output / image_name
-    if not frame.image.save(str(image_path)):
+    if not image.save(str(image_path)):
         raise RuntimeError(f"failed to write VQA image: {image_path}")
 
     case_rows = [case.model_dump(mode="json") for case in frame.cases]
@@ -581,7 +588,7 @@ def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
         {
             "frame_index": frame.index,
             "image": image_name,
-            "timestamp": frame.image.ts,
+            "timestamp": frame.image_ts,
             "question_count": len(frame.cases),
             "rejected_question_count": sum(
                 row.get("status") == "rejected" for row in frame.audit_rows
