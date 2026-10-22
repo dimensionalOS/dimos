@@ -1,5 +1,5 @@
 // Payload decoder registry. resolve(spec) finds a manifest channel's decoder:
-// a registered encoding id, the *.json.vN convention, or a *.lcm.v1 decoder
+// a registered encoding id, the *.json.vN convention, or a *.lcm.v1/*.cdr.v1 decoder
 // compiled from the schema the robot put in the channel's params. An encoding
 // without a decoder is not an error: the channel renders as "unsupported"
 // (forward compatibility with newer bridges). Binary decoders (h264.v1, ...)
@@ -9,6 +9,7 @@
 
 import type { ChannelSpec, FrameHeader } from "@dimos/shared";
 import { TRACK_ENCODING } from "@dimos/shared/manifest";
+import { CDR_ENCODING_RE, cdrDecoderFor, isCdrSchema } from "./cdr.ts";
 import { costmapDecoder } from "./costmap.ts";
 import { jpegDecoder } from "./jpeg.ts";
 import { jsonDecoder } from "./json.ts";
@@ -27,6 +28,7 @@ export class DecoderRegistry {
   #decoders = new Map<string, Decoder>();
   // Compiled *.lcm.v1 decoders per adopted manifest record (null: params.lcm
   // unusable); entries die with the manifest object that carried them.
+  #cdr = new WeakMap<ChannelSpec, Decoder | null>();
   #lcm = new WeakMap<ChannelSpec, Decoder | null>();
 
   /** Duplicate registration is an error unless `replace` is set. */
@@ -52,6 +54,17 @@ export class DecoderRegistry {
   resolve(spec: ChannelSpec): Decoder | undefined {
     const known = this.get(spec.encoding);
     if (known !== undefined) return known;
+    if (CDR_ENCODING_RE.test(spec.encoding)) {
+      if (!isCdrSchema(spec.params.cdr) || spec.encoding !== `${spec.params.cdr.type}.cdr.v1`) {
+        return undefined;
+      }
+      let compiled = this.#cdr.get(spec);
+      if (compiled === undefined) {
+        compiled = cdrDecoderFor(spec.params.cdr);
+        this.#cdr.set(spec, compiled);
+      }
+      return compiled ?? undefined;
+    }
     if (!LCM_ENCODING_RE.test(spec.encoding)) return undefined;
     let compiled = this.#lcm.get(spec);
     if (compiled === undefined) {
