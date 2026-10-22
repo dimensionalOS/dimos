@@ -163,7 +163,7 @@ impl Default for EvalConfig {
             loop_refinement_max_passes: 200,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.99,
+            loop_gnc_inlier_probability: 0.95,
             loop_gnc_apply_after_fraction: 0.05,
             loop_gnc_confirmations: 2,
             use_location_constraints: false,
