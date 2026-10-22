@@ -44,6 +44,7 @@ from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.constants import (
+    GOOGLE_THINKING_LEVELS,
     NO_DIMOS_GUIDANCE,
     PASSTHROUGH_ENV,
     PROVIDERS,
@@ -337,6 +338,11 @@ class PiAdapter(Agent):
             excluded_keywords=self.config.excluded_keywords,
             ignored_paths=(str(paths.workspace), str(paths.config)),
             max_tool_seconds=self.config.max_tool_seconds,
+            google_thinking_level=(
+                GOOGLE_THINKING_LEVELS[self.config.thinking]
+                if self.config.provider == "google"
+                else None
+            ),
         )
         extensions = paths.config / "extensions"
         extensions.mkdir(parents=True, exist_ok=True)

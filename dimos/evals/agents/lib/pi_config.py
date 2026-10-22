@@ -24,7 +24,7 @@ from pydantic.alias_generators import to_camel
 
 from dimos.constants import CACHE_DIR, CONFIG_DIR
 
-Provider = Literal["openai", "anthropic"]
+Provider = Literal["openai", "anthropic", "google"]
 Thinking = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
@@ -49,6 +49,9 @@ class RuntimeConfig(BaseModel):
     excluded_keywords: tuple[str, ...] = ()
     ignored_paths: tuple[str, ...] = ()
     max_tool_seconds: float | None = Field(default=None, gt=0)
+    # Gemini thinkingLevel set on every Google request. Pi only sends one for the Gemini 3
+    # models it knows; for newer ids it sends no thinking config at all.
+    google_thinking_level: Literal["LOW", "MEDIUM", "HIGH"] | None = None
 
 
 class ToolPolicyState(BaseModel):
