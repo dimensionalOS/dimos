@@ -128,9 +128,7 @@ def test_answer_rejects_bad_framing() -> None:
     good = _view(instance_id="a", bbox=(70.0, 70.0, 130.0, 130.0), ts=4.0)
     pair = IdentityPair(query="storage box", left=bad, right=good, same_object=True)
     with pytest.raises(InsufficientEvidenceError):
-        answer_cross_view_same_object(
-            pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8
-        )
+        answer_cross_view_same_object(pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8)
 
 
 def test_filter_instance_views_drops_weak_pool() -> None:

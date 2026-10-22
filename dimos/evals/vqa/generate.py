@@ -651,7 +651,6 @@ def _write_cross_view_cases(
     return GenerationResult(output=output, cases=tuple(cases))
 
 
-
 def _generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
