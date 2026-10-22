@@ -46,6 +46,32 @@ def generate(
         max=1,
         help="Drop frames at or below this brightness before QualityWindow (requires --quality-window)",
     ),
+    query: list[str] | None = typer.Option(
+        None,
+        "--query",
+        help=(
+            "Cross-view mode: object category to localize (repeatable). "
+            "Omits the single-frame family bucket; emits cross_view_same_object pairs."
+        ),
+    ),
+    from_s: float = typer.Option(
+        0.0,
+        "--from",
+        help="Cross-view mode: start offset into the recording (seconds)",
+    ),
+    duration: float | None = typer.Option(
+        None,
+        help="Cross-view mode: how much of the recording to use (seconds)",
+    ),
+    params: str = typer.Option(
+        "go2",
+        help='Cross-view mode: localize params preset or JSON, e.g. go2 or {"base":"go2"}',
+    ),
+    min_views: int = typer.Option(
+        3,
+        min=1,
+        help="Cross-view mode: minimum distinct camera poses per identity instance",
+    ),
     output: Path | None = typer.Option(
         None,
         help="Destination directory; must be absent or empty",
@@ -85,7 +111,12 @@ def generate(
         ),
     ),
 ) -> None:
-    """Generate questions for one image or an indexed image range."""
+    """Generate a standalone VQA dataset.
+
+    Without ``--query``, runs the single-frame family bucket over selected
+    color_image indices. With ``--query``, runs Dan localize and writes
+    ``cross_view_same_object`` cases instead.
+    """
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
         GenerationRequest,
@@ -106,63 +137,16 @@ def generate(
             localize_queries=tuple(localize_query),
             localize_pad_s=localize_pad,
             localize_coverage_k=localize_coverage_k,
+            queries=tuple(query or ()),
+            from_s=from_s,
+            duration_s=duration,
+            params=params,
+            min_views=min_views,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
-
-
-@app.command("generate-cross-view")
-def generate_cross_view(
-    dataset: str = typer.Argument(help="Memory recording with color_image, camera_info, tf, lidar"),
-    query: list[str] = typer.Option(
-        ...,
-        "--query",
-        help="Object category to localize (repeatable), e.g. --query 'storage box'",
-    ),
-    start: float = typer.Option(0.0, "--from", help="Start offset into the recording (seconds)"),
-    duration: float | None = typer.Option(None, help="How much of the recording to use (seconds)"),
-    params: str = typer.Option(
-        "go2",
-        help='Localize params preset or JSON, e.g. go2 or {"base":"go2","accept_score":0.4}',
-    ),
-    min_views: int = typer.Option(
-        3,
-        min=1,
-        help="Minimum distinct camera poses for an instance to enter the identity pool",
-    ),
-    output: Path | None = typer.Option(None, help="Destination directory; must be absent or empty"),
-) -> None:
-    """Generate same/different object identity cases from Dan localize multi-view traces.
-
-    Sampling is instance-centric (not stride frames). Each view must pass center/size
-    framing on the original full image; rejected pairs are dropped, not cropped.
-    """
-    from dimos.evals.vqa.cross_view_generate import (
-        CrossViewGenerationRequest,
-        generate_cross_view_dataset,
-    )
-
-    try:
-        result = generate_cross_view_dataset(
-            CrossViewGenerationRequest(
-                dataset=dataset,
-                queries=tuple(query),
-                output=output,
-                start_s=start,
-                duration_s=duration,
-                params_preset=params,
-                min_views=min_views,
-            )
-        )
-    except (ValueError, IndexError, OSError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    typer.echo(
-        f"Generated {len(result.cases)} cross-view case(s) in {result.output} "
-        f"(instances={result.n_instances_considered}, "
-        f"pairs={result.n_pairs_proposed}, rejected={result.n_rejected})"
-    )
 
 
 @app.command("run")

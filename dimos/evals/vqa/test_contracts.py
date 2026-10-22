@@ -823,6 +823,23 @@ def test_generation_request_defaults_output_under_state_directory() -> None:
     assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-frames"
 
 
+def test_generation_request_cross_view_mode_defaults_output_suffix() -> None:
+    request = GenerationRequest(dataset="recordings/go2_short.db", queries=("storage box",))
+
+    assert request.cross_view
+    assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-cross-view"
+
+
+def test_generation_request_rejects_mixing_frame_and_cross_view() -> None:
+    with pytest.raises(ValidationError, match="cross-view"):
+        GenerationRequest(dataset="go2_short", start=0, stop=10, queries=("chair",))
+
+
+def test_generation_request_rejects_time_window_without_query() -> None:
+    with pytest.raises(ValidationError, match="from_s/duration_s"):
+        GenerationRequest(dataset="go2_short", image_index=0, from_s=1.0)
+
+
 def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
     with pytest.raises(ValidationError):

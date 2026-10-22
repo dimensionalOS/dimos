@@ -38,6 +38,7 @@ def test_vqa_cli_exposes_generate_and_run() -> None:
     assert result.exit_code == 0
     assert "generate" in output
     assert "run" in output
+    assert "generate-cross-view" not in output
 
 
 def test_vqa_generate_cli_declares_single_image_input() -> None:
@@ -57,6 +58,10 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--localize-pad" in output
     # Rich may truncate the long flag name in the help table.
     assert "localize-cover" in output
+    assert "--query" in output
+    assert "--from" in output
+    assert "--params" in output
+    assert "--min-views" in output
     assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
@@ -341,6 +346,57 @@ def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatc
     assert result.exit_code != 0
     assert "dataset has no 'tf' stream" in result.output
     assert "Traceback" not in result.output
+
+
+def test_vqa_generate_cli_accepts_cross_view_query(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--query",
+            "storage box",
+            "--query",
+            "chair",
+            "--from",
+            "10",
+            "--duration",
+            "30",
+            "--params",
+            "go2",
+            "--min-views",
+            "4",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            queries=("storage box", "chair"),
+            from_s=10.0,
+            duration_s=30.0,
+            params="go2",
+            min_views=4,
+            output=tmp_path,
+        )
+    ]
 
 
 def test_vqa_run_cli_formats_dataset_errors(

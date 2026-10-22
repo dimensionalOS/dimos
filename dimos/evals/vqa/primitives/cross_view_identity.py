@@ -152,6 +152,25 @@ def views_from_localize(
     return tuple(rows)
 
 
+def collect_query_instances(
+    query: str,
+    hits: list[Any],
+    answer_groups: list[Any],
+) -> dict[str, tuple[SightingView, ...]]:
+    """instance_id → SightingView tuple for one localize query."""
+    if len(hits) != len(answer_groups):
+        raise ValueError(
+            f"localize trace length mismatch for {query!r}: "
+            f"{len(hits)} hits vs {len(answer_groups)} answer groups"
+        )
+    by_id: dict[str, tuple[SightingView, ...]] = {}
+    for hit, sightings in zip(hits, answer_groups, strict=True):
+        views = views_from_localize(query, hit, list(sightings))
+        if views:
+            by_id[hit.instance_id] = views
+    return by_id
+
+
 def filter_instance_views(views: tuple[SightingView, ...]) -> tuple[SightingView, ...]:
     """Keep framing-OK sightings from a high-certainty instance."""
     if not views:
@@ -182,7 +201,7 @@ def _pick_same_pairs(
     candidates.sort(key=lambda row: -row[0])
     pairs: list[IdentityPair] = []
     used: set[float] = set()
-    for gap, left, right in candidates:
+    for _gap, left, right in candidates:
         if len(pairs) >= max_pairs:
             break
         # Prefer spreading timestamps: skip if both already used heavily.
@@ -235,7 +254,7 @@ def propose_identity_pairs(
             kept[instance_id] = filtered
 
     same: list[IdentityPair] = []
-    for instance_id, views in kept.items():
+    for _instance_id, views in kept.items():
         if len(views) >= 2:
             same.extend(_pick_same_pairs(views))
 

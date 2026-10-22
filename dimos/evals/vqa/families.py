@@ -226,7 +226,7 @@ def answer_question(
         return _answer_ego_any_fore_aft(proposal, localize_scene)
     if proposal.family == "cross_view_same_object":
         raise InsufficientEvidenceError(
-            "cross_view_same_object is produced by generate_cross_view_dataset, "
+            "cross_view_same_object is produced by generate_dataset with --query, "
             "not the per-frame image author path"
         )
     raise ValueError(f"unsupported VQA family: {proposal.family}")

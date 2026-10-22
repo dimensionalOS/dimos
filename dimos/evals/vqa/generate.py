@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
@@ -64,14 +64,24 @@ from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrameUnavailableError,
     select_quality_indices,
 )
+from dimos.evals.vqa.primitives.cross_view_identity import (
+    answer_cross_view_same_object,
+    collect_query_instances,
+    pair_case_id,
+    propose_identity_pairs,
+    stack_pair_image,
+)
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.localize_scene import LocalizeSceneEvidence
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.localize_recording import LocalizeWindowResult
     from dimos.models.vl.base import VlModel
+
+logger = setup_logger()
 
 _UNORDERED_FAMILIES = frozenset(
     family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
@@ -79,7 +89,16 @@ _UNORDERED_FAMILIES = frozenset(
 
 
 class GenerationRequest(BaseModel):
-    """Single-frame or range selection from a recorded Memory dataset."""
+    """Generate a standalone VQA dataset from a Memory recording.
+
+    Two modes share this request:
+
+    * **Frame mode** (default): ``image_index`` or ``start``/``stop`` selects
+      color_image frames; the image author proposes the single-frame family
+      bucket (presence, distance, …).
+    * **Cross-view mode**: non-empty ``queries`` runs Dan localize and emits
+      ``cross_view_same_object`` pairs. Frame-index fields must be omitted.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -96,9 +115,37 @@ class GenerationRequest(BaseModel):
     localize_pad_s: float = Field(default=10.0, gt=0)
     # None = default K when with_localize; 0 = disable coverage budget (publish all).
     localize_coverage_k: int | None = Field(default=None, ge=0)
+    queries: tuple[NonEmptyString, ...] = ()
+    from_s: float = Field(default=0.0, ge=0.0)
+    duration_s: float | None = Field(default=None, gt=0.0)
+    params: str = "go2"
+    min_views: int = Field(default=3, ge=1)
+
+    @property
+    def cross_view(self) -> bool:
+        return bool(self.queries)
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
+        frame_fields = (
+            self.image_index is not None
+            or self.start is not None
+            or self.stop is not None
+            or self.stride is not None
+            or self.quality_window is not None
+            or self.min_brightness is not None
+        )
+        if self.queries:
+            if frame_fields:
+                raise ValueError(
+                    "cross-view generation (--query) cannot combine with "
+                    "image_index/start/stop/stride/quality_window"
+                )
+            if self.with_localize or self.localize_queries or self.localize_coverage_k is not None:
+                raise ValueError("cross-view generation (--query) cannot combine with --with-localize")
+            return self
+        if self.from_s != 0.0 or self.duration_s is not None:
+            raise ValueError("from_s/duration_s require cross-view mode (--query)")
         if self.localize_queries and not self.with_localize:
             raise ValueError("localize_queries requires with_localize=True")
         if self.localize_coverage_k is not None and not self.with_localize:
@@ -112,7 +159,7 @@ class GenerationRequest(BaseModel):
                 )
             return self
         if self.start is None or self.stop is None:
-            raise ValueError("provide image_index or both start and stop")
+            raise ValueError("provide image_index, start/stop, or --query for cross-view")
         if self.stop <= self.start:
             raise ValueError("stop must be greater than start")
         if self.quality_window is not None and self.stride is not None:
@@ -122,6 +169,8 @@ class GenerationRequest(BaseModel):
         return self
 
     def frame_indices(self) -> range:
+        if self.cross_view:
+            raise ValueError("frame_indices is only valid in frame mode")
         if self.image_index is not None:
             return range(self.image_index, self.image_index + 1)
         assert self.start is not None and self.stop is not None
@@ -130,7 +179,8 @@ class GenerationRequest(BaseModel):
     def output_directory(self) -> Path:
         if self.output is not None:
             return self.output.expanduser()
-        return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-frames"
+        suffix = "cross-view" if self.cross_view else "frames"
+        return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-{suffix}"
 
 
 def resolve_generation_frame_indices(
@@ -237,7 +287,14 @@ def generate_dataset(
     request: GenerationRequest,
     config: VqaGenerationConfig | None = None,
 ) -> GenerationResult:
-    """Generate a standalone dataset from selected Memory images."""
+    """Generate a standalone dataset from a Memory recording.
+
+    Dispatches to the single-frame family bucket or ``cross_view_same_object``
+    when ``request.queries`` is set.
+    """
+    if request.cross_view:
+        return _generate_cross_view_dataset(request)
+
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
@@ -421,6 +478,127 @@ def generate_frames_dataset(
         if output.exists():
             shutil.rmtree(output)
         raise
+
+
+def _generate_cross_view_dataset(request: GenerationRequest) -> GenerationResult:
+    """Localize with traces → pair → write the same on-disk VQA layout."""
+    from dimos.memory.cli.dataset import open_dataset
+    from dimos.perception.localize.dandetect import DanDetector
+    from dimos.perception.localize.localize import LocalizeTrace, embed_index
+    from dimos.perception.localize.rig import Rig, window_tf
+    from dimos.perception.localize.tools.tool_localize import GO2_PARAMS, PRESETS, parse_params
+
+    output = request.output_directory()
+    _prepare_output(output)
+
+    base, fields = parse_params(request.params, PRESETS.get("go2", GO2_PARAMS))
+    params = replace(base, **fields) if fields else base
+    params = replace(params, min_views=request.min_views)
+
+    store = open_dataset(request.dataset)
+    store.start()
+    try:
+        rig = Rig.from_store(store)
+        lo, hi = rig.time_range()
+        after = lo + request.from_s
+        before = lo + request.from_s + request.duration_s if request.duration_s is not None else hi
+        if before <= after:
+            raise ValueError("localize window before must be greater than after")
+        rig.tf = window_tf(store, after, before)
+        if rig.lidar is not None:
+            rig.lidar = rig.lidar.after(after).before(before)
+
+        queries = [str(q).strip() for q in request.queries if str(q).strip()]
+        traces = [LocalizeTrace() for _ in queries]
+        with DanDetector("siglip", "owlv2", "edgetam") as dan:
+            index = embed_index(rig, dan.embedder, after, before)
+            results = dan.localize(queries, index=index, rig=rig, params=params, traces=traces)
+
+        all_pairs = []
+        n_instances = 0
+        for query, hits, trace in zip(queries, results, traces, strict=True):
+            logger.info(f"cross-view {query!r}: {len(hits)} verified hit(s)")
+            by_id = collect_query_instances(query, hits, list(trace.answers))
+            n_instances += len(by_id)
+            pairs = propose_identity_pairs(by_id)
+            logger.info(f"cross-view {query!r}: {len(pairs)} pair proposal(s)")
+            all_pairs.extend(pairs)
+    finally:
+        store.stop()
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
+        staging = Path(temporary)
+        (staging / "assets").mkdir(parents=True, exist_ok=True)
+        cases: list[PublicCase] = []
+        labels: list[PrivateLabel] = []
+        audit_rows: list[dict[str, object]] = []
+        rejected = 0
+
+        for index, pair in enumerate(all_pairs):
+            try:
+                answered = answer_cross_view_same_object(pair)
+            except InsufficientEvidenceError as exc:
+                rejected += 1
+                audit_rows.append(
+                    {
+                        "status": "rejected",
+                        "reason": str(exc),
+                        "query": pair.query,
+                        "same_object": pair.same_object,
+                    }
+                )
+                continue
+
+            case_id = pair_case_id(pair, index)
+            image = stack_pair_image(pair.left.image, pair.right.image)
+            rel = f"assets/{case_id}.jpg"
+            image.save(str(staging / rel))
+            cases.append(
+                PublicCase(
+                    id=case_id,
+                    image=rel,
+                    question=answered.question,
+                    choices=answered.choices,
+                )
+            )
+            labels.append(PrivateLabel(id=case_id, answer=answered.answer))
+            audit_rows.append(
+                {
+                    "status": "answered",
+                    "case_id": case_id,
+                    "answer": answered.model_dump(mode="json"),
+                }
+            )
+
+        if not cases:
+            raise ValueError("cross-view generation produced no answerable pairs")
+
+        _write_jsonl(
+            staging / "cases.jsonl",
+            [case.model_dump(mode="json") for case in cases],
+        )
+        _write_jsonl(
+            staging / "labels.jsonl",
+            [label.model_dump(mode="json") for label in labels],
+        )
+        _write_json(
+            staging / "audit" / "run.json",
+            {
+                "generation": request.model_dump(mode="json", exclude={"output"}),
+                "families": ["cross_view_same_object"],
+                "n_instances_considered": n_instances,
+                "n_pairs_proposed": len(all_pairs),
+                "question_count": len(cases),
+                "rejected_question_count": rejected,
+            },
+        )
+        _write_json(staging / "audit" / "pairs.json", audit_rows)
+        if output.exists():
+            shutil.rmtree(output)
+        shutil.move(str(staging), str(output))
+
+    return GenerationResult(output=output, cases=tuple(cases))
 
 
 def _generate_frame(
