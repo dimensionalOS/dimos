@@ -49,6 +49,13 @@ export const LATEST_STALL_MS = 500;
 // on any link acknowledges well inside 10 s.
 export const ACK_BUDGET = 2;
 export const ACK_TIMEOUT_MS = 10_000;
+// The budget grows with what the viewer's acks show it delivers, so a long
+// round trip does not cap a fast link at two frames per round trip (150 ms
+// of RTT held cellular video at 9 fps where BBR carried 30): up to
+// ACK_BUDGET_MAX frames, never more than ACK_BUDGET_AGE_S worth of the
+// viewer's delivery rate, so the backlog stays under that age.
+export const ACK_BUDGET_MAX = 10;
+export const ACK_BUDGET_AGE_S = 0.5;
 
 // One decoder for every robot frame header (fatal so corrupt UTF-8 drops the
 // frame rather than routing a mangled channel name).
@@ -64,6 +71,11 @@ export interface ViewerSink {
   /** The one stream the viewer's small reliable channels share, opened on
    * first use at `order` and kept for the session: a policy never aborts it. */
   sharedStream(order: number): Promise<FrameWriter>;
+  /** Hand back a channel's stream with no write in flight, for the viewer's
+   * next channel at that order (frames carry `ch`, receivers route by it).
+   * Deno 2.6.10 cannot end a stream before its wrapper is finalized, so an
+   * abandoned one keeps its native state for the connection's life. */
+  releaseStream(order: number, writer: FrameWriter): void;
   kick(reason: string): void;
 }
 
@@ -112,6 +124,8 @@ export interface ChannelPolicy {
   writing(): boolean;
   /** Latest frames written and not yet acknowledged by the viewer. */
   unacked(): number;
+  /** How many may be (ACK_BUDGET, more for a viewer delivering fast). */
+  budget(): number;
   /** Frames released by the ack timeout instead of an ack. */
   ackTimeouts: number;
   /** Frames the viewer's acks released, and frames shed at the pending
@@ -217,9 +231,10 @@ export class TokenBucket {
  *
  * Acceptance is not delivery: `write()` resolves when quinn took the bytes
  * into the stream's send window. The viewer's acks (v8) are the delivery
- * signal: a frame is written only while fewer than ACK_BUDGET written frames
- * await their ack, so the backlog on a slow link is bounded by frames, not
- * by the window. A viewer that stops reading (a suspended tab) therefore
+ * signal: a frame is written only while fewer than the budget's worth of
+ * written frames await their ack (ACK_BUDGET, growing with the viewer's
+ * delivery rate to ACK_BUDGET_MAX), so the backlog on a slow link is bounded
+ * by frames, not by the window. A viewer that stops reading (a suspended tab) therefore
  * holds at most that many frames; the write itself stalls (counted as
  * `stalled`) only once the window is full. One stream per channel instead of
  * one per frame: Deno 2.6.10 never resets or ends a stream before its
@@ -240,6 +255,7 @@ export class LatestChannel implements ChannelPolicy {
   lastAckAtMs = 0;
   #pending: { bytes: Uint8Array; seq: number } | null = null;
   #unacked: { seq: number; at: number }[] = [];
+  #budget = ACK_BUDGET;
   #writing = false;
   #writer: FrameWriter | null = null;
   #disposed = false;
@@ -263,6 +279,10 @@ export class LatestChannel implements ChannelPolicy {
 
   unacked(): number {
     return this.#unacked.length;
+  }
+
+  budget(): number {
+    return this.#budget;
   }
 
   offer(bytes: Uint8Array, seq: number): void {
@@ -289,11 +309,16 @@ export class LatestChannel implements ChannelPolicy {
   }
 
   tick(nowMs: number): void {
+    const before = this.#budget;
+    this.#budget = Math.min(
+      ACK_BUDGET_MAX,
+      Math.max(ACK_BUDGET, Math.floor(this.delivered.snapshot(nowMs).fps * ACK_BUDGET_AGE_S)),
+    );
     const live = this.#unacked.filter((u) => nowMs - u.at < this.#ackTimeoutMs);
-    if (live.length === this.#unacked.length) return;
-    this.ackTimeouts += this.#unacked.length - live.length;
+    const expired = this.#unacked.length - live.length;
+    this.ackTimeouts += expired;
     this.#unacked = live;
-    this.#drain();
+    if (expired > 0 || this.#budget > before) this.#drain();
   }
 
   dispose(): void {
@@ -303,24 +328,29 @@ export class LatestChannel implements ChannelPolicy {
     this.#disposed = true;
     this.#pending = null;
     this.#unacked.length = 0;
-    this.#writer?.abort().catch(() => {});
+    const writer = this.#writer;
     this.#writer = null;
+    if (writer === null) return;
+    // A write still in flight settles later on a stream nobody should
+    // reuse; an idle stream carries the viewer's next channel.
+    if (this.#writing) writer.abort().catch(() => {});
+    else this.sink.releaseStream(LATEST_SEND_ORDER, writer);
   }
 
   #drain(): void {
     if (this.#writing || this.#disposed) return;
-    if (this.#pending === null || this.#unacked.length >= ACK_BUDGET) return;
+    if (this.#pending === null || this.#unacked.length >= this.#budget) return;
     this.#writing = true;
     (async () => {
       const writer = this.#writer ??= await this.sink.openStream(LATEST_SEND_ORDER);
       if (this.#disposed) {
-        // dispose() ran while the stream was opening and saw no writer to
-        // abort; release the stream here.
-        writer.abort().catch(() => {});
+        // dispose() ran while the stream was opening and saw no writer;
+        // nothing was written, so the stream serves the next channel.
+        this.sink.releaseStream(LATEST_SEND_ORDER, writer);
         this.#writer = null;
         return;
       }
-      while (this.#pending && this.#unacked.length < ACK_BUDGET) {
+      while (this.#pending && this.#unacked.length < this.#budget) {
         const { bytes, seq } = this.#pending;
         this.#pending = null;
         const started = this.#now();
@@ -399,6 +429,10 @@ export class ReliableChannel implements ChannelPolicy {
     return 0;
   }
 
+  budget(): number {
+    return 0; // reliable frames are not budgeted
+  }
+
   ack(_seq: number): void {
     // reliable frames are not acked
   }
@@ -428,11 +462,16 @@ export class ReliableChannel implements ChannelPolicy {
     this.#disposed = true;
     this.#fifo.length = 0;
     this.#bytes = 0;
-    // Abort, not close: a closed stream cannot be aborted, and both
-    // receivers treat the end of the stream as end-of-stream either way.
-    // The shared stream outlives the channel.
-    if (!this.#shared) this.#writer?.abort().catch(() => {});
+    const writer = this.#writer;
     this.#writer = null;
+    // The shared stream outlives the channel. A stream of the channel's own
+    // goes back to the viewer for its next channel unless a write is still
+    // in flight, which settles later on a stream nobody should reuse (abort,
+    // not close: a closed stream cannot be aborted, and both receivers treat
+    // the end of the stream as end-of-stream either way).
+    if (writer === null || this.#shared) return;
+    if (this.#writing) writer.abort().catch(() => {});
+    else this.sink.releaseStream(RELIABLE_SEND_ORDER, writer);
   }
 
   #drain(): void {
@@ -444,9 +483,10 @@ export class ReliableChannel implements ChannelPolicy {
           ? this.sink.sharedStream(RELIABLE_SEND_ORDER)
           : this.sink.openStream(RELIABLE_SEND_ORDER));
       if (this.#disposed) {
-        // dispose() ran while the stream was opening and saw no writer to
-        // abort; release the stream here.
-        if (!this.#shared) writer.abort().catch(() => {});
+        // dispose() ran while the stream was opening and saw no writer;
+        // nothing was written, so a stream of the channel's own serves the
+        // next channel.
+        if (!this.#shared) this.sink.releaseStream(RELIABLE_SEND_ORDER, writer);
         this.#writer = null;
         return;
       }

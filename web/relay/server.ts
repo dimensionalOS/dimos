@@ -57,8 +57,12 @@ export interface RelayOptions {
    * "throughput" is Cubic, "low-latency" is BBR. Deno's default is Cubic,
    * which on a lossy link (1% loss at 150 ms RTT) collapses to well under
    * 1 Mbit/s; BBR keeps the rate up at the cost of filling the bottleneck
-   * queue and crowding out Cubic flows sharing it. An A/B knob until one
-   * wins in the field.
+   * queue and crowding out Cubic flows sharing it. BBR is the default: on
+   * the benchmark's cellular profile (75 ms, 1% loss, 10 Mbit/s) it carried
+   * 9 fps of video at 0.27 s of age where Cubic carried 2 fps at 1.9 s, and
+   * on the poor link (150 ms, 3% loss, 2 Mbit/s) 2.7 fps at 1 s against
+   * 0.5 fps at 9 s, with the pose latency no worse; "throughput" opts back
+   * into Cubic.
    */
   congestionControl?: "throughput" | "low-latency";
   /**
@@ -329,9 +333,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       maxIdleTimeout: MAX_IDLE_TIMEOUT_MS,
       keepAliveInterval: KEEP_ALIVE_INTERVAL_MS,
       maxConcurrentBidirectionalStreams: INCOMING_BIDI_STREAMS,
-      ...(options.congestionControl !== undefined
-        ? { congestionControl: options.congestionControl }
-        : {}),
+      congestionControl: options.congestionControl ?? "low-latency",
     });
   } catch (e) {
     hub?.dispose();

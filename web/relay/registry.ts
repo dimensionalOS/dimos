@@ -1020,6 +1020,7 @@ export class Registry {
             stalled: p.stalled,
             writing: p.writing(),
             unacked: p.unacked(),
+            budget: p.budget(),
             ackTimeouts: p.ackTimeouts,
             bytesOut: p.bytesOut,
             ...p.rate.snapshot(now),

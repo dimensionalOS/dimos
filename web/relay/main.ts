@@ -83,9 +83,7 @@ if (args["sdk-dir"] !== undefined) {
 if (args["rtc-file"] !== undefined) {
   console.log("[relay] WebRTC video through the Cloudflare Realtime SFU: on");
 }
-if (congestion !== undefined) {
-  console.log(`[relay] congestion control: ${congestion === "low-latency" ? "BBR" : "Cubic"}`);
-}
+console.log(`[relay] congestion control: ${congestion === "throughput" ? "Cubic" : "BBR"}`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {
     Deno.addSignalListener(signal, async () => {
