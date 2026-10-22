@@ -122,6 +122,26 @@ def test_readings_come_from_the_output_ports_alone(model: RobotModel) -> None:
     assert other == silent
 
 
+def test_joint_feedback_does_not_require_a_raw_joint_command_port(model):
+    described = control_description(
+        BaseConfig(model=model),
+        {"cmd_vel": Twist},
+        {"encoders": JointState, "orientation": Imu},
+    )
+    joints = [r for r in described.resources if r.kind is ResourceKind.JOINT]
+    assert [r.name for r in joints] == list(JOINTS)
+    assert all(r.state_interfaces == ALL_STATE and not r.command_interfaces for r in joints)
+    assert set(described.command_keys()) == {"go2/base/vx", "go2/base/vy", "go2/base/wz"}
+
+
+def test_a_read_only_joint_device_has_no_commands(model):
+    described = control_description(
+        ConnectionConfig(source="reader", model=model), {}, {"encoders": JointState}
+    )
+    assert described.joint_names() == ("reader/j1", "reader/j2", "reader/j3")
+    assert described.command_keys() == ()
+
+
 def test_a_joint_on_two_ports_becomes_one_joint_that_takes_both(model: RobotModel) -> None:
     described = control_description(
         ArmWithVelocityConfig(model=model),

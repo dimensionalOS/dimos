@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!-- A seven-joint arm for MockConnectionModule: every joint turns, may be
+     told to go anywhere within one turn either side of 0, and has the same
+     speed and effort limits. -->
+<robot name="mock_arm">
+  <link name="link0"/>
+  <link name="link1"/>
+  <link name="link2"/>
+  <link name="link3"/>
+  <link name="link4"/>
+  <link name="link5"/>
+  <link name="link6"/>
+  <link name="link7"/>
+  <joint name="joint1" type="revolute">
+    <parent link="link0"/>
+    <child link="link1"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint3" type="revolute">
+    <parent link="link2"/>
+    <child link="link3"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint4" type="revolute">
+    <parent link="link3"/>
+    <child link="link4"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint5" type="revolute">
+    <parent link="link4"/>
+    <child link="link5"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint6" type="revolute">
+    <parent link="link5"/>
+    <child link="link6"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+  <joint name="joint7" type="revolute">
+    <parent link="link6"/>
+    <child link="link7"/>
+    <limit lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"/>
+  </joint>
+</robot>

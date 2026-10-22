@@ -36,6 +36,32 @@ python -m dimos.manipulation.control.coordinator_client
 
 ## Core Concepts
 
+### Connection Modules
+
+`dimos run coordinator-mock-connection` runs the stream-based path. The
+coordinator discovers `ConnectionModule.describe_control()`: one derived
+`ControlDescription`, the connection session, resolved command-port specs, and
+reading-port names/types. Drivers still define their model and ports in config;
+they do not hand-write a second robot description.
+
+The coordinator subclass declares `<source>_<driver-port>` streams, and the
+blueprint remaps the driver's streams to them. Names such as `cmd_vel`,
+`encoders`, or `drive` are not inferred from a naming convention inside the
+coordinator. Joint ports keep their declared subsets and order.
+
+PD joints require `motor_gains={source: WholeBodyConfig(kp=..., kd=...)}` in
+the motor port's order. Each tick sends one complete `MotorCommandArray`
+(`q`, `dq`, `tau`, `kp`, `kd`), including idle holds. A motor port takes
+precedence over joint ports for the same joints; two overlapping joint ports
+for the same interface are rejected. Read-only joint feedback needs a model,
+not a dummy command port.
+
+Every required reading must remain fresh; continued IMU traffic cannot keep
+stale joint feedback alive. Restart, explicit hold invalidation, and estop
+release wait for new feedback before commanding. The connection's deadman
+and any independent device watchdog still apply. `halt_robot()` requests a
+driver halt, not a hardware-rated emergency stop.
+
 ### Tick Loop
 Single deterministic loop at 100Hz:
 1. **Read** - Get joint positions from all hardware

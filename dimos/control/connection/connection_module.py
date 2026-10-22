@@ -29,6 +29,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import functools
+import math
 import threading
 import time
 from typing import Any, ClassVar
@@ -54,11 +55,13 @@ from dimos.control.contract.keys import SEPARATOR
 from dimos.control.contract.ports import (
     JointPort,
     MotorPort,
+    PortSpec,
     TwistPort,
     control_description,
     port_specs,
     reading_ports,
 )
+from dimos.control.contract.presets import model_joints
 from dimos.control.contract.validate import (
     FrameRejectedError,
     Rejected,
@@ -121,8 +124,9 @@ class ConnectionConfig(ModuleConfig):
     Attributes:
         source: The robot's name, and the first part of every key, e.g. "go2".
         model: The robot's model (its URDF), which gives a joint port its
-            joints, their units and their limits. ``None`` for a robot that
-            has no joint ports.
+            joints, their units and their limits. Also supplies read-only
+            joint feedback when there is no joint command port. ``None`` for
+            a robot that neither commands nor reports joints.
         state_rate_hz: How many times a second ``read_state`` is called.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
@@ -163,6 +167,20 @@ class ConnectionStatus:
     last_error: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ConnectionDescription:
+    """The derived control contract and its actual ports, for remote discovery.
+
+    Joint lists are resolved from the model before crossing the process boundary.
+    The coordinator needs no model files or driver configuration to route messages.
+    """
+
+    session_id: str
+    description: ControlDescription
+    command_ports: dict[str, PortSpec]
+    reading_ports: dict[type, str]
+
+
 class ConnectionModule(Module, ABC):
     """A robot driver. Subclass it, give it a config, declare its ports, fill in four methods.
 
@@ -199,6 +217,9 @@ class ConnectionModule(Module, ABC):
     Deadman: once a command has been accepted, if no other is accepted within
     ``deadman_timeout_s``, ``halt`` is called once. The next accepted command
     starts the deadman again.
+
+    Halting on request: the ``halt_robot`` RPC calls ``halt`` at once. The
+    coordinator calls it on an emergency stop.
 
     ``write`` and ``halt`` never run at the same time. Commands and the
     deadman share the module's event loop, so a ``write`` that hangs stops
@@ -262,6 +283,23 @@ class ConnectionModule(Module, ABC):
             )
         return self._description
 
+    @rpc
+    def describe_control(self) -> ConnectionDescription:
+        """Describe the configured robot and ports, without opening its hardware."""
+        description = self.description
+        commands = port_specs(self.config)
+        for name, spec in commands.items():
+            if isinstance(spec, (JointPort, MotorPort)):
+                assert self.config.model is not None  # Validated by description.
+                joints, _ = model_joints(self.config.source, self.config.model, spec.joints, (), ())
+                commands[name] = spec.model_copy(update={"joints": [r.name for r in joints]})
+        return ConnectionDescription(
+            session_id=self._session_id,
+            description=description,
+            command_ports=commands,
+            reading_ports=reading_ports({name: port.type for name, port in self.outputs.items()}),
+        )
+
     @abstractmethod
     def connect(self) -> None:
         """Open the connection to the hardware.
@@ -272,17 +310,19 @@ class ConnectionModule(Module, ABC):
         """
 
     @abstractmethod
-    def read_state(self) -> Values:
+    def read_state(self) -> Values | ControlValues:
         """The robot's latest readings, or an empty dict if nothing new has arrived.
 
         Keys are full keys such as ``"arm/joint1/position"``, each value in
         its key's unit, and every key the description lists must be present.
         A driver whose SDK delivers readings in a callback returns an empty
         dict here and calls ``publish_state`` from the callback instead.
+        Return ControlValues to preserve the device's acquisition timestamp;
+        an unstamped dict is stamped when read_state returns.
         """
 
     @abstractmethod
-    def write(self, values: Values) -> None:
+    def write(self, values: Values, *, source_ts: float | None = None) -> None:
         """Send one checked command to the hardware.
 
         Send and return, servo-style: never wait for a motion to finish; its
@@ -294,6 +334,8 @@ class ConnectionModule(Module, ABC):
         Args:
             values: Named values from one message, e.g.
                 ``{"arm/joint1/position": 0.3}``, already within their limits.
+            source_ts: Original command timestamp, or receipt time for an
+                unstamped input. Never replace this with forwarding time.
         """
 
     @abstractmethod
@@ -302,7 +344,7 @@ class ConnectionModule(Module, ABC):
 
         Must be safe to call any number of times, including before any
         command. Called when commands stop arriving, after a failed ``write``,
-        and when the module stops.
+        when ``halt_robot`` is called, and when the module stops.
         """
 
     @rpc
@@ -353,7 +395,22 @@ class ConnectionModule(Module, ABC):
                 last_error=self._last_error,
             )
 
-    def publish_state(self, values: Mapping[str, float]) -> None:
+    @rpc
+    def halt_robot(self) -> bool:
+        """Stop the robot moving now, by calling the driver's ``halt``.
+
+        Waits for a ``write`` in progress to finish first. Does nothing before
+        the hardware is connected or once the module has stopped. Later
+        commands are still obeyed: whoever sends them must stop sending.
+
+        Returns:
+            True if ``halt`` ran and did not raise. False if it raised (the
+            error is in ``status``), or the hardware is not connected.
+        """
+        logger.warning(f"{self._label}: halt requested")
+        return self._halt()
+
+    def publish_state(self, values: Mapping[str, float] | ControlValues) -> None:
         """Publish one set of readings on the output ports.
 
         The readings must carry exactly the keys the description lists; a set
@@ -366,22 +423,27 @@ class ConnectionModule(Module, ABC):
         """
         if self._stop_event.is_set():
             return
-        now = time.time()
         description = self.description
         try:
             # validate_state takes a ControlValues; this one never leaves the
             # process.
-            frame = ControlValues(
-                description.source, now, 0, 0, list(values), list(values.values())
+            frame = (
+                values
+                if isinstance(values, ControlValues)
+                else ControlValues(
+                    description.source, time.time(), 0, 0, list(values), list(values.values())
+                )
             )
+            if not math.isfinite(frame.source_ts):
+                raise ValueError("non-finite acquisition timestamp")
             checked = validate_state(description, frame)
         except (ValueError, FrameRejectedError) as error:
             self._report(f"bad readings: {error}")
             return
         for output in self._outputs:
-            output.port.publish(output.build(checked, ts=now))
+            output.port.publish(output.build(checked, ts=frame.source_ts))
         with self._lock:
-            self._last_state_time = now
+            self._last_state_time = frame.source_ts
 
     def _plan_inputs(self, description: ControlDescription) -> list[_Listener]:
         """One subscription per port spec in the config."""
@@ -434,8 +496,8 @@ class ConnectionModule(Module, ABC):
         return outputs
 
     def _listen(self, listener: _Listener) -> DisposableBase:
-        """Pass this robot's values from each message on the listener's port to
-        ``_apply``, newest message only.
+        """Pass this robot's values from each message on ``port`` to ``_apply``,
+        newest message only. ``convert(message, argument)`` gives the values.
 
         A JointState names its joints, so one naming none of this robot's is
         dropped before it can displace one that does. Handling runs on the
@@ -446,7 +508,8 @@ class ConnectionModule(Module, ABC):
         def carries_mine(msg: Any) -> bool:
             return not isinstance(msg, JointState) or any(n.startswith(prefix) for n in msg.name)
 
-        async def handle(msg: Any) -> None:
+        async def handle(stamped: tuple[Any, float]) -> None:
+            msg, received_at = stamped
             try:
                 values = listener.convert(msg, listener.argument)
             except ValueError as error:
@@ -454,15 +517,22 @@ class ConnectionModule(Module, ABC):
                 return
             mine = {key: value for key, value in values.items() if key.startswith(prefix)}
             if mine:
-                self._apply(mine)
+                self._apply(
+                    mine, source_ts=getattr(msg, "timestamp", getattr(msg, "ts", received_at))
+                )
 
         return self.process_observable(
-            listener.port.pure_observable().pipe(ops.filter(carries_mine)), handle
+            listener.port.pure_observable().pipe(
+                ops.filter(carries_mine), ops.map(lambda msg: (msg, time.time()))
+            ),
+            handle,
         )
 
-    def _apply(self, values: Values) -> None:
+    def _apply(self, values: Values, *, source_ts: float | None = None) -> None:
         description = self.description
         try:
+            if source_ts is not None and not math.isfinite(source_ts):
+                raise ValueError("non-finite command timestamp")
             # validate_command takes a ControlValues; this one never leaves the
             # process. Typed messages carry no sequence number, so order is
             # not checked.
@@ -484,7 +554,7 @@ class ConnectionModule(Module, ABC):
             with self._hardware_lock:
                 if not self._connected:
                     return
-                self.write(result.values)
+                self.write(result.values, source_ts=source_ts)
         except Exception as error:
             self._report(f"write failed: {type(error).__name__}: {error}")
             self._cancel_deadman()
@@ -504,20 +574,22 @@ class ConnectionModule(Module, ABC):
         self._deadman = None
         logger.warning(f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting")
         self._halt()
-        # Set only once halted, so a status that says it fired means the robot was told to stop.
         with self._lock:
             self._deadman_fired = True
 
-    def _halt(self) -> None:
+    def _halt(self) -> bool:
+        """Call ``halt`` if connected. True if it ran and did not raise."""
         with self._hardware_lock:
-            if self._connected:
-                self._call_halt()
+            return self._connected and self._call_halt()
 
-    def _call_halt(self) -> None:
+    def _call_halt(self) -> bool:
+        """Call ``halt``. True if it did not raise; a failure goes to ``status``."""
         try:
             self.halt()
         except Exception as error:
             self._report(f"halt failed: {type(error).__name__}: {error}")
+            return False
+        return True
 
     def _state_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz

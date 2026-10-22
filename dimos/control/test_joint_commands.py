@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, JointState as JointReading
+from dimos.control.connection.source import ConnectionSource
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
@@ -137,3 +138,39 @@ def test_coordinator_wires_joint_state_command_output():
             )
         finally:
             coordinator.stop()
+
+
+@pytest.mark.parametrize(
+    ("mode", "ready", "expected"),
+    [
+        (ControlMode.POSITION, True, [[1.2]]),
+        (ControlMode.SERVO_POSITION, True, [[1.2]]),
+        (ControlMode.POSITION, False, []),
+        (ControlMode.VELOCITY, True, []),
+    ],
+)
+def test_connection_position_intent_is_recorded_without_changing_dispatch(
+    mocker, mode, ready, expected
+):
+    source = mocker.Mock(spec=ConnectionSource)
+    source.joint_names = ["arm/joint1", "arm/joint2"]
+    source.ready_for_control.return_value = ready
+    source.command.return_value = {"arm/joint1/position": 1.2}
+    messages = []
+    publish = mocker.Mock()
+    tick = TickLoop(
+        tick_rate=100,
+        hardware={},
+        hardware_lock=threading.Lock(),
+        tasks={},
+        task_lock=threading.Lock(),
+        joint_to_hardware={},
+        connections={"arm": source},
+        command_callback=publish,
+        publish_command_callback=messages.append,
+    )
+    commands = {"arm": ({"arm/joint1": 1.2}, mode)}
+    tick._write_all_hardware(commands)
+    tick._write_all_connections(commands)
+    assert [message.position for message in messages] == expected
+    assert publish.call_count == int(ready)

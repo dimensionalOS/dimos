@@ -32,7 +32,8 @@ Readings need no spec. Each output port says what it reports by its message
 type alone, under any name:
 
   ``Out[JointState]``   the position, speed and effort of every joint a port
-                        drives (a gripper reports its position only)
+                        drives (a gripper reports its position only); without
+                        a joint command port, every movable model joint
   ``Out[PoseStamped]``  where the base is: x, y and yaw
   ``Out[Twist]``        how fast the base is going: vx, vy and wz
   ``Out[Imu]``          an orientation sensor called "imu"
@@ -262,10 +263,11 @@ def control_description(
 
     resources = list(joints.values())
     if JointState in reported and not resources:
-        raise ValueError(
-            f"output port {reported[JointState]!r} reports joints, but no JointPort or "
-            f"MotorPort drives any"
-        )
+        if config.model is None:
+            raise ValueError(
+                f"output port {reported[JointState]!r} reports joints, but no model is configured"
+            )
+        resources, _ = model_joints(source, config.model, None, joint_state, ())
     base_state = (
         *(TWIST_INTERFACES if Twist in reported else ()),
         *(POSE_INTERFACES if PoseStamped in reported else ()),
