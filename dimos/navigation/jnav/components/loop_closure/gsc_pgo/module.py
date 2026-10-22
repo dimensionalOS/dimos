@@ -118,7 +118,7 @@ class PGOConfig(NativeModuleConfig):
     # Reject a loop whose match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) is
     # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of loops
     # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.loops.jsonl).
-    loop_yank_gate: bool = False
+    loop_yank_gate: bool = True
     # k in the yank gate's required confidence 1 - exp(-yank_z^2 / 2k^2)
     loop_yank_gate_width: float = 1.0
     # Divide yank by sqrt(keyframe gap) before scaling: odometry drift grows as a random walk between the loop's ends
@@ -126,7 +126,7 @@ class PGOConfig(NativeModuleConfig):
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     loop_icp_dump_dir: str = ""
     # With loop_yank_gate: re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
-    loop_extended_icp_max_keyframes: int = 0
+    loop_extended_icp_max_keyframes: int = 16
     loop_yank_gate_max_distance_m: float = 0.0
 
     # Minimum keyframe-index separation for a loop closure. A closure only corrects
