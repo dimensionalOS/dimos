@@ -130,13 +130,25 @@ def test_concurrent_stops_let_main_tear_down():
     # The teardown holds the loop lock, so the second stop queues behind it
     # instead of closing the module (and stopping its loop) underneath it.
     assert m._loop_lock.locked()
-    second = threading.Thread(target=m.stop, daemon=True)
+
+    second_stopping = threading.Event()
+    second_saw_teardown = False
+
+    def second_stop() -> None:
+        nonlocal second_saw_teardown
+        second_stopping.set()
+        m.stop()
+        second_saw_teardown = m.torn_down
+
+    second = threading.Thread(target=second_stop, daemon=True)
     second.start()
+    assert second_stopping.wait(timeout=5)
     release.set_result(None)
     first.join(timeout=5)
     second.join(timeout=5)
     assert not first.is_alive() and not second.is_alive()
     assert m.torn_down is True
+    assert second_saw_teardown is True
 
 
 class NoYieldMain(Module):
