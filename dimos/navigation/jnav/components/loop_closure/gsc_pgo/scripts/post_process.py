@@ -22,8 +22,9 @@ Two-stage solve turns drifty odometry into a ground-truth trajectory:
   2. ICP loop closures between spatially-close / temporally-distant lidar submaps anchor
      local geometry, then re-solve.
 
-Outputs written back into the recording db: <odom>_corrected, <lidar>_corrected,
-tf_deformation_nodes_corrected, pose_graph, and raycast-accumulated maps; plus an
+Outputs written back into the recording db: odometry_corrected, <lidar>_corrected,
+tf_deformation_nodes_corrected, pose_graph, <lidar>_accumulated (raw) and global_map_corrected
+(the raycast-accumulated corrected map); plus an
 aggregated <lidar>_corrected.pc2.lcm and a comparison rrd opened in rerun.
 
 --db is the recording .db file; its parent dir is where the .pc2.lcm outputs land. Camera
@@ -349,7 +350,7 @@ def main() -> None:
             store, f"pose_graph{args.suffix}", keyframe_times, estimate, args.world_frame
         )
 
-        corrected_odom_out = f"{odom_stream}{args.corrected_suffix}{args.suffix}"
+        corrected_odom_out = f"odometry{args.corrected_suffix}{args.suffix}"
         if args.write_odom:
             write_corrected_odom(
                 store,
@@ -401,6 +402,7 @@ def main() -> None:
                         args.world_frame,
                         args.accum_voxel,
                         args.accum_max_range,
+                        out_stream=f"global_map{args.corrected_suffix}{args.suffix}",
                     )
                 else:
                     print(

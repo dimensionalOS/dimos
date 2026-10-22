@@ -313,7 +313,8 @@ def build(
     corrected_lidars = sorted(
         stream_name
         for stream_name in streams
-        if "_corrected" in stream_name and stream_name.endswith("_accumulated")
+        if stream_name.startswith("global_map_corrected")
+        or ("_corrected" in stream_name and stream_name.endswith("_accumulated"))
     )
     print("corrected accumulated lidar streams:", corrected_lidars)
 

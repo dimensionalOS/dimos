@@ -233,8 +233,11 @@ def write_corrected_lidar(
     started = time.time()
     scan_count = 0
     for observation in store.stream(lidar_stream, PointCloud2):
-        scan_count += 1
         ts = float(observation.ts)
+        # A scan from before the first odometry sample has no pose to place it by.
+        if ts < odom_times[0]:
+            continue
+        scan_count += 1
         correction = interpolate_correction(keyframe_times, corrections, ts)
         raw_pose = pose3_from_xyzquat(odom_rows[nearest_index(odom_times, ts)][1:])
         points = world_points(observation)
@@ -336,10 +339,12 @@ def raycast_accumulate(
     world_frame: str,
     voxel: float,
     max_range: float,
+    out_stream: str | None = None,
 ) -> None:
-    """Raycast ``in_stream`` into one ``<in_stream>_accumulated`` cloud, carving free space
-    along every ray so dynamic objects and registration ghosts get cleared, not smeared."""
-    out_stream = f"{in_stream}_accumulated"
+    """Raycast ``in_stream`` into one cloud (``out_stream``, default ``<in_stream>_accumulated``),
+    carving free space along every ray so dynamic objects and registration ghosts get cleared,
+    not smeared."""
+    out_stream = out_stream or f"{in_stream}_accumulated"
     # imported here: needs the dimos_voxel_ray_tracing native ext, absent on plain CI runners
     from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 
@@ -352,7 +357,14 @@ def raycast_accumulate(
         if not len(raw_points):
             continue
         scan_frame = observation.data.frame_id
-        transform = store_tf.get(world_frame, scan_frame, float(observation.ts), None)
+        try:
+            transform = store_tf.get(world_frame, scan_frame, float(observation.ts), None)
+        except LookupError:
+            # Scans from before the tf starts (the odometry begins after the first scan) have no
+            # pose; once one is placed, a failed lookup is a broken tree and stays an error.
+            if scan_count == 0:
+                continue
+            raise
         rotation = np.asarray(transform.rotation.to_rotation_matrix(), float).reshape(3, 3)
         origin = (
             float(transform.translation.x),

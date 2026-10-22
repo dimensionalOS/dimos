@@ -32,7 +32,6 @@ import tempfile
 import time
 from typing import Any
 
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
