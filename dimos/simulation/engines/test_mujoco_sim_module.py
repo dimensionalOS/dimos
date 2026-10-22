@@ -23,6 +23,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.message_utils.geometry import vector_array
+from dimos.message_utils.time import to_seconds
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
@@ -158,14 +160,14 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module._publish_tf(10.0, frame)
 
         color_tf, depth_tf, camera_link_tf = messages[-1].transforms
-        assert color_tf.frame_id == "link7"
+        assert color_tf.header.frame_id == "link7"
         assert color_tf.child_frame_id == "wrist_camera_color_optical_frame"
-        assert np.allclose(color_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
-        assert depth_tf.frame_id == "link7"
+        assert np.allclose(vector_array(color_tf.transform.translation), [0.0, 0.0, 1.0])
+        assert depth_tf.header.frame_id == "link7"
         assert depth_tf.child_frame_id == "wrist_camera_depth_optical_frame"
-        assert camera_link_tf.frame_id == "link7"
+        assert camera_link_tf.header.frame_id == "link7"
         assert camera_link_tf.child_frame_id == "wrist_camera_link"
-        assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+        assert np.allclose(vector_array(camera_link_tf.transform.translation), [0.0, 0.0, 1.0])
     finally:
         module.stop()
 
@@ -205,9 +207,9 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
         ]
         assert children[3:] == ["apple"]
         apple = messages[-1].transforms[3]
-        assert apple.frame_id == "world"
-        assert apple.ts == pytest.approx(time.time(), abs=5.0)
-        assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])
+        assert apple.header.frame_id == "world"
+        assert to_seconds(apple.header.stamp) == pytest.approx(time.time(), abs=5.0)
+        assert np.allclose(vector_array(apple.transform.translation), [0.4, 0.08, 0.17])
     finally:
         module.stop()
 
@@ -377,13 +379,13 @@ def test_publish_loop_stamps_messages_with_frame_timestamp() -> None:
         _run_publish_loop(module, frame_ts)
         module._publish_camera_info()
 
-        assert [img.ts for img in color] == frame_ts
-        assert [img.ts for img in depth] == frame_ts
-        assert [msg.transforms[0].ts for msg in tf] == frame_ts
+        assert [to_seconds(img.header.stamp) for img in color] == frame_ts
+        assert [to_seconds(img.header.stamp) for img in depth] == frame_ts
+        assert [to_seconds(msg.transforms[0].header.stamp) for msg in tf] == frame_ts
         # camera_info rides the latest frame's sim clock, not wall time.
-        assert info[-1].ts == frame_ts[-1]
-        assert module.get_color_camera_info().ts == frame_ts[-1]
-        assert module.get_depth_camera_info().ts == frame_ts[-1]
+        assert to_seconds(info[-1].header.stamp) == frame_ts[-1]
+        assert to_seconds(module.get_color_camera_info().header.stamp) == frame_ts[-1]
+        assert to_seconds(module.get_depth_camera_info().header.stamp) == frame_ts[-1]
     finally:
         module.stop()
 

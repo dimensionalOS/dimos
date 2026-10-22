@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import math
 import threading
-import time
 from typing import Any
 
 from pydantic import Field
@@ -32,10 +31,12 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.message_utils.time import header_now
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.driver import transform_message
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -182,7 +183,8 @@ class G1TfPublisher(Module):
                 ChannelFactoryInitialize(0)
         except Exception as e:
             logger.warning(
-                f"ChannelFactoryInitialize failed - publishing rest-pose waist only: {e}"
+                f"ChannelFactoryInitialize failed - publishing rest-pose waist only: {e}",
+                exc_info=True,
             )
             return None
         subscriber = ChannelSubscriber("rt/lowstate", LowState_)
@@ -212,8 +214,6 @@ class G1TfPublisher(Module):
             with self._waist_lock:
                 waist_yaw, waist_roll, waist_pitch = self._waist
             transforms = mount_transforms(waist_yaw, waist_roll, waist_pitch)
-            now = time.time()
-            for transform in transforms:
-                transform.ts = now
-            self.tf.publish(TFMessage(*transforms))
+            stamp = header_now().stamp
+            self.tf.publish(TFMessage([transform_message(value, stamp) for value in transforms]))
             await asyncio.sleep(period)

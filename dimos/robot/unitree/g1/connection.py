@@ -21,12 +21,23 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.messages.geometry_msgs.msg import Twist as CdrTwist
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def _driver_twist(value: Twist | CdrTwist) -> Twist:
+    if isinstance(value, CdrTwist):
+        return Twist(
+            linear=Vector3(value.linear.x, value.linear.y, value.linear.z),
+            angular=Vector3(value.angular.x, value.angular.y, value.angular.z),
+        )
+    return value
 
 
 class G1Config(ModuleConfig):
@@ -62,7 +73,7 @@ class G1ConnectionBase(Module, ABC):
 
     @rpc
     @abstractmethod
-    def move(self, twist: Twist, duration: float = 0.0) -> None: ...
+    def move(self, twist: Twist | CdrTwist, duration: float = 0.0) -> None: ...
 
     @rpc
     @abstractmethod
@@ -71,7 +82,7 @@ class G1ConnectionBase(Module, ABC):
 
 class G1Connection(G1ConnectionBase):
     config: G1Config
-    cmd_vel: In[Twist]
+    cmd_vel: In[CdrTwist]
     connection: UnitreeWebRTCConnection | None = None
 
     @rpc
@@ -104,9 +115,9 @@ class G1Connection(G1ConnectionBase):
         super().stop()
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0) -> None:
+    def move(self, twist: Twist | CdrTwist, duration: float = 0.0) -> None:
         assert self.connection is not None
-        self.connection.move(twist, duration)
+        self.connection.move(_driver_twist(twist), duration)
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:

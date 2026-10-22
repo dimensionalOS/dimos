@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from copy import deepcopy
 import functools
 import threading
 from typing import Any
@@ -20,17 +21,21 @@ from typing import Any
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import TransportBackend
-from dimos.core.transport import PubSubTransport
-from dimos.core.transport_factory import make_transport
+from dimos.core.transport import LCMTransport, PubSubTransport
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped as CdrPoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
@@ -58,8 +63,10 @@ class DimSimConnection:
         self.config = config
         self._transport_backend = transport
         self._dimsim_process: DimSimProcess = DimSimProcess(config)
-        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
+        self._odom_transport: PubSubTransport[CdrPoseStamped] = LCMTransport(
+            "/odom", CdrPoseStamped
+        )
+        self._tf_transport: PubSubTransport[TFMessage] = LCMTransport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
         self._first_odom = threading.Event()
 
@@ -84,7 +91,8 @@ class DimSimConnection:
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
             self._unsubscribe_odom = None
-            self._odom_transport.stop()
+        self._odom_transport.stop()
+        self._tf_transport.stop()
         self._dimsim_process.stop()
 
     @functools.cache
@@ -137,43 +145,32 @@ class DimSimConnection:
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 
-    def _handle_odom(self, msg: PoseStamped) -> None:
+    def _handle_odom(self, msg: CdrPoseStamped) -> None:
         self._first_odom.set()
-        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
+        self._tf_transport.publish(TFMessage(_odom_to_tf(msg)))
 
 
-def _odom_to_tf(odom: PoseStamped) -> list[Transform]:
-    """Build transform chain from odometry pose.
-
-    Transform tree: world -> base_link -> {camera_link -> camera_optical, lidar_link}
-    """
-    camera_link = Transform(
-        translation=Vector3(0.3, 0.0, 0.0),  # camera 30cm forward
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-        ts=odom.ts,
-    )
-
-    camera_optical = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-        frame_id="camera_link",
-        child_frame_id="camera_optical",
-        ts=odom.ts,
-    )
-
-    lidar_link = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="lidar_link",
-        ts=odom.ts,
-    )
-
+def _odom_to_tf(odom: CdrPoseStamped) -> list[TransformStamped]:
+    """Keep the existing world/base/camera/lidar mounts with exact source time."""
+    stamp = odom.header.stamp
+    p, q = odom.pose.position, odom.pose.orientation
     return [
-        Transform.from_pose("base_link", odom),
-        camera_link,
-        camera_optical,
-        lidar_link,
+        TransformStamped(
+            deepcopy(odom.header), "base_link", Transform(Vector3(p.x, p.y, p.z), deepcopy(q))
+        ),
+        TransformStamped(
+            Header(deepcopy(stamp), "base_link"),
+            "camera_link",
+            Transform(Vector3(0.3, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        TransformStamped(
+            Header(deepcopy(stamp), "camera_link"),
+            "camera_optical",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(-0.5, 0.5, -0.5, 0.5)),
+        ),
+        TransformStamped(
+            Header(deepcopy(stamp), "base_link"),
+            "lidar_link",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
     ]

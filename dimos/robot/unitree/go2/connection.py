@@ -34,6 +34,29 @@ from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import (
+    Point as CdrPoint,
+    Pose as CdrPose,
+    PoseStamped as CdrPoseStamped,
+    Quaternion as CdrQuaternion,
+    Transform as CdrTransform,
+    TransformStamped as CdrTransformStamped,
+    Twist as CdrTwist,
+    Vector3 as CdrVector3,
+)
+from dimos.messages.sensor_msgs.msg import (
+    CameraInfo as CdrCameraInfo,
+    Image as CdrImage,
+    PointCloud2 as CdrCloud,
+)
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.msgs.driver import (
+    camera_info_message as _camera_info_message,
+    cloud_message as _cloud_message,
+    image_message,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -42,7 +65,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
@@ -309,7 +331,7 @@ class ReplayConnection(CompositeResource):
             finally:
                 client.stop()
         except Exception:
-            logger.error("Failed to request coordinator shutdown", exc_info=True)
+            logger.exception("Failed to request coordinator shutdown")
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
@@ -342,23 +364,20 @@ class ReplayConnection(CompositeResource):
         return {"status": "ok", "message": "Fake publish"}
 
 
-_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
-
-
 class GO2Connection(Module, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
-    cmd_vel: In[Twist]
-    pointcloud: Out[PointCloud2]
-    odom: Out[PoseStamped]
-    lidar: Out[PointCloud2]
-    color_image: Out[Image]
-    camera_info: Out[CameraInfo]
+    cmd_vel: In[CdrTwist]
+    pointcloud: Out[CdrCloud]
+    odom: Out[CdrPoseStamped]
+    lidar: Out[CdrCloud]
+    color_image: Out[CdrImage]
+    camera_info: Out[CdrCameraInfo]
     tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
-    camera_info_static: CameraInfo = _camera_info_static()
+    camera_info_static: CdrCameraInfo = _camera_info_message(_camera_info_static())
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
 
@@ -384,14 +403,19 @@ class GO2Connection(Module, Camera, Pointcloud):
         )
 
         if hasattr(self.connection, "camera_info_static"):
-            self.camera_info_static = self.connection.camera_info_static
+            self.camera_info_static = _camera_info_message(self.connection.camera_info_static)
 
-        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+        if self.config.frame_id_prefix and self.camera_info_static.header.frame_id:
             # Copy so the class-level default is not mutated.
-            self.camera_info_static = copy.copy(self.camera_info_static)
-            self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
+            self.camera_info_static = copy.deepcopy(self.camera_info_static)
+            self.camera_info_static.header.frame_id = _prefixed(
+                self.config.frame_id_prefix, self.camera_info_static.header.frame_id
             )
+
+    def _publish_image(self, image: Image) -> None:
+        message = image_message(image)
+        message.header.frame_id = _prefixed(self.config.frame_id_prefix, message.header.frame_id)
+        self.color_image.publish(message)
 
     @rpc
     def start(self) -> None:
@@ -400,18 +424,18 @@ class GO2Connection(Module, Camera, Pointcloud):
             return
         self.connection.start()
 
-        def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
-            self.color_image.publish(image)
-
         if self.config.lidar:
-            self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+            self.register_disposable(
+                self.connection.lidar_stream()
+                .pipe(ops.map(_cloud_message))
+                .subscribe(self.lidar.publish)
+            )
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         if self.config.camera:
-            self.register_disposable(self.connection.video_stream().subscribe(onimage))
+            self.register_disposable(self.connection.video_stream().subscribe(self._publish_image))
             self._camera_info_thread = Thread(
                 target=self.publish_camera_info,
                 daemon=True,
@@ -443,7 +467,9 @@ class GO2Connection(Module, Camera, Pointcloud):
         try:
             self.liedown()
         except Exception:
-            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
+            logger.warning(
+                "liedown on stop failed (link already down?) — continuing teardown", exc_info=True
+            )
 
         if self.connection:
             try:
@@ -486,18 +512,44 @@ class GO2Connection(Module, Camera, Pointcloud):
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-            self.tf.publish(TFMessage(*transforms))
+            self.tf.publish(
+                TFMessage(
+                    [
+                        CdrTransformStamped(
+                            Header(time_from_seconds(transform.ts), transform.frame_id),
+                            transform.child_frame_id,
+                            CdrTransform(
+                                CdrVector3(*transform.translation),
+                                CdrQuaternion(*transform.rotation),
+                            ),
+                        )
+                        for transform in transforms
+                    ]
+                )
+            )
         if self.odom.transport:
-            self.odom.publish(msg)
+            self.odom.publish(
+                CdrPoseStamped(
+                    Header(time_from_seconds(msg.ts), msg.frame_id),
+                    CdrPose(CdrPoint(*msg.position), CdrQuaternion(*msg.orientation)),
+                )
+            )
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
+            info = copy.deepcopy(self.camera_info_static)
+            info.header.stamp = time_from_seconds(time.time())
+            self.camera_info.publish(info)
             time.sleep(1.0)
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+    def move(self, twist: CdrTwist | Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
+        if isinstance(twist, CdrTwist):
+            twist = Twist(
+                linear=Vector3(twist.linear.x, twist.linear.y, twist.linear.z),
+                angular=Vector3(twist.angular.x, twist.angular.y, twist.angular.z),
+            )
         return self.connection.move(twist, duration)
 
     @rpc

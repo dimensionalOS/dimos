@@ -24,9 +24,8 @@ import threading
 from typing import Any
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils.geometry import quaternion_euler
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -141,7 +140,11 @@ class TransportTwistAdapter:
 
     def _on_odom(self, msg: PoseStamped) -> None:
         with self._lock:
-            self._latest_odom = [msg.x, msg.y, msg.yaw]
+            self._latest_odom = [
+                msg.pose.position.x,
+                msg.pose.position.y,
+                quaternion_euler(msg.pose.orientation)[2],
+            ]
 
 
 def transport_lcm_factory(**kwargs: Any) -> TransportTwistAdapter:

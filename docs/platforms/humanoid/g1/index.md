@@ -235,3 +235,25 @@ If the viewer keeps crashing for you, there are two options for now:
 - [Unitree Developer Docs](https://support.unitree.com/home/en/developer)
 - [Sport Mode Services](https://support.unitree.com/home/en/developer/sports_services)
 - [Unitree SDK2 Python](https://github.com/unitreerobotics/unitree_sdk2_python)
+
+
+### CDR stream regression checks
+
+On the CDR proposal, simulator camera, calibration, cloud, odometry, IMU and TF
+ports expose generated values from `dimos.messages`. The internal projection,
+voxel and controller math stays behind explicit adapters. G1's custom costmap,
+path and odometry viewers accept these same wire values.
+
+From a configured development checkout with its simulation dependencies:
+
+```sh
+DIMOS_TRANSPORT=lcm LCM_DEFAULT_URL=memq:// uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/simulation/engines/test_cdr_streams.py
+```
+
+This runs a bounded real CPU MuJoCo model defined inside the test, checks CDR
+odom/IMU over LCM memq and loopback Zenoh, and verifies physics/publisher threads
+and shared memory are cleaned up. Additional cases feed a deterministic RGBD
+frame through the existing projection/downsample math and check canonical
+camera/cloud/calibration fields and custom Rerun geometry. It needs no robot,
+policy weights, external scenes, GPU rendering or display. Actual XR/hardware
+operation and full rendered-scene acceptance are separate checks.

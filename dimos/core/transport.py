@@ -25,6 +25,7 @@ from typing import (
     cast,
 )
 
+from dimos_cdrgen.registry import message_types
 import numpy as np
 
 from dimos.core.stream import Stream, Transport
@@ -199,11 +200,11 @@ class ROSTransport(PubSubTransport[DimosMsg]):
     _ros: DimosROS | None = None
 
     def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
-        # TODO: Revisit generated-message adapters; ROS also uses CDR encoding.
-        if hasattr(msg_type, "__msgtype__") and describe_message(msg_type).encoding == "cdr":
-            raise TypeError(
-                "Generated messages require a ROS type adapter; raw CDR is not a ROS message"
-            )
+        # Generated values require a canonical registry identity and a ROS type adapter.
+        if hasattr(msg_type, "__msgtype__"):
+            name = getattr(msg_type, "__msgtype__", None)
+            if not isinstance(name, str) or message_types().get(name) is not msg_type:
+                raise TypeError("ROS transport requires a registry-owned generated message class")
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
@@ -211,9 +212,11 @@ class ROSTransport(PubSubTransport[DimosMsg]):
         self._kwargs = kwargs
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (ROSTransport, (self.topic.topic, self.topic.msg_type))
+        return (partial(ROSTransport, **self._kwargs), (self.topic.topic, self.topic.msg_type))
 
     def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
+        if not isinstance(msg, self.topic.msg_type):
+            raise TypeError("Message does not match the ROS transport declared type")
         if self._ros is None:
             self.start()
             assert self._ros is not None  # for type narrowing

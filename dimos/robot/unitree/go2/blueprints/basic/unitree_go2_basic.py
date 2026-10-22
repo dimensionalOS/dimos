@@ -23,7 +23,11 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.message_utils.occupancy import occupancy_view
+from dimos.msgs.geometry_msgs.Pose import Pose as NumericalPose
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as NumericalGrid
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, generated_archetypes
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
@@ -32,30 +36,32 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Twist import Twist
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-    from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.msgs.std_msgs.Float32 import Float32
+    from dimos.messages.dimos_msgs.msg import LineSegments3D
+    from dimos.messages.geometry_msgs.msg import PoseArray, PoseStamped, Twist
+    from dimos.messages.nav_msgs.msg import OccupancyGrid
+    from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
+    from dimos.messages.std_msgs.msg import Float32
     from dimos.visualization.rerun.bridge import RerunData, RerunMulti
 
 
 def _convert_camera_info(camera_info: CameraInfo) -> RerunData:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame="camera_optical",
-    )
+    return [("/world/color_image", camera_pinhole(camera_info))]
 
 
 def _convert_global_map(grid: PointCloud2) -> Archetype:
-    return grid.to_rerun(bottom_cutoff=0)
+    return cloud_archetype(grid, bottom_cutoff=0)
 
 
 def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
-    return grid.to_rerun(
+    # Reuse the existing numerical texture renderer behind an explicit value adapter.
+    p, q = grid.info.origin.position, grid.info.origin.orientation
+    numerical = NumericalGrid(
+        grid=occupancy_view(grid),
+        resolution=grid.info.resolution,
+        origin=NumericalPose(p.x, p.y, p.z, q.x, q.y, q.z, q.w),
+        frame_id=grid.header.frame_id,
+    )
+    return numerical.to_rerun(
         colormap="Accent",
         z_offset=0.015,
         opacity=0.2,
@@ -66,7 +72,10 @@ def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
 def _convert_pgo_keyframes(keyframes: PoseArray) -> RerunMulti:
     import rerun as rr
 
-    positions = keyframes.positions()
+    positions = np.asarray(
+        [[pose.position.x, pose.position.y, pose.position.z] for pose in keyframes.poses],
+        dtype=np.float32,
+    ).reshape(-1, 3)
     return [
         ("world/pgo/keyframes", rr.Points3D(positions, colors=[[255, 0, 0]], radii=[0.025])),
         ("world/pgo/path", rr.LineStrips3D([positions], colors=[[255, 255, 255]], radii=[0.01])),
@@ -76,7 +85,13 @@ def _convert_pgo_keyframes(keyframes: PoseArray) -> RerunMulti:
 def _convert_pgo_loops(edges: LineSegments3D) -> RerunMulti:
     import rerun as rr
 
-    segments = edges.segments.astype(np.float32)
+    segments = np.asarray(
+        [
+            [[edge.start.x, edge.start.y, edge.start.z], [edge.end.x, edge.end.y, edge.end.z]]
+            for edge in edges.segments
+        ],
+        dtype=np.float32,
+    ).reshape(-1, 2, 3)
     strips = rr.LineStrips3D(segments, colors=[[231, 76, 60]], radii=[0.008])
     return [("world/pgo/loops", strips)]
 
@@ -90,10 +105,12 @@ def _plot_telemetry(name: str, msg: Float32) -> RerunMulti:
 def _plot_odom(odom: PoseStamped) -> RerunMulti:
     import rerun as rr
 
+    entries = generated_archetypes(odom, "world/odom")
+    assert entries is not None
     return [
-        ("world/odom", odom.to_rerun()),
-        ("plots/odom/x", rr.Scalars(odom.x)),
-        ("plots/odom/y", rr.Scalars(odom.y)),
+        *entries,
+        ("plots/odom/x", rr.Scalars(odom.pose.position.x)),
+        ("plots/odom/y", rr.Scalars(odom.pose.position.y)),
     ]
 
 
