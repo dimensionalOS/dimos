@@ -64,7 +64,7 @@ def _view(
 def test_bbox_framing_rejects_corner_and_tiny() -> None:
     assert bbox_framing_ok((70, 70, 130, 130), 200, 200)
     assert not bbox_framing_ok((0, 0, 20, 20), 200, 200)  # corner + tiny
-    assert not bbox_framing_ok((10, 70, 50, 130), 200, 200)  # off-center
+    assert not bbox_framing_ok((5, 70, 40, 130), 200, 200)  # far off-center
 
 
 def test_instance_pool_requires_views_score_and_min_conf() -> None:
@@ -76,7 +76,7 @@ def test_instance_pool_requires_views_score_and_min_conf() -> None:
 
 def test_filter_and_propose_same_and_diff_pairs() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
-    # Timestamps ≥ MIN_PAIR_TIME_GAP_S (8s) apart to model revisits.
+    # Same-instance revisits ≥ MIN_SAME_PAIR_TIME_GAP_S (8s); diff only needs >1s.
     a = (
         _view(instance_id="a", bbox=centered, ts=1.0),
         _view(instance_id="a", bbox=centered, ts=10.0),
@@ -84,7 +84,7 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
     )
     b = (
         _view(instance_id="b", bbox=centered, ts=3.0, score=0.62),
-        _view(instance_id="b", bbox=centered, ts=15.0, score=0.62),
+        _view(instance_id="b", bbox=centered, ts=5.5, score=0.62),
     )
     # Corner-only instance should vanish from same-pair pool.
     corner = (_view(instance_id="c", bbox=(0.0, 0.0, 25.0, 25.0), ts=4.0, score=0.9),)

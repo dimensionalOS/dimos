@@ -31,9 +31,10 @@ from dimos.evals.vqa.contracts import FamilyAnswer, InsufficientEvidenceError
 from dimos.msgs.sensor_msgs.Image import Image
 
 # Framing gates (normalized image coords). Both views must pass.
-CENTER_MAX_OFFSET = 0.25  # |cx-0.5| and |cy-0.5|
-MIN_AREA_FRAC = 0.03
-MAX_AREA_FRAC = 0.45
+# Slightly looser than desk-scale: Go2 room shots rarely park the referent dead-center.
+CENTER_MAX_OFFSET = 0.35  # |cx-0.5| and |cy-0.5|
+MIN_AREA_FRAC = 0.02
+MAX_AREA_FRAC = 0.50
 EDGE_MARGIN_FRAC = 0.02
 
 # Instance pool gates (localize Localization + sighting confidences).
@@ -44,8 +45,12 @@ MIN_SIGHTING_CONF = 0.25
 # Pair sampling — prefer temporally separated revisits over near-duplicate views.
 MAX_SAME_PAIRS_PER_INSTANCE = 2
 MAX_DIFF_PAIRS_PER_QUERY = 8
-# Same physical object seen again after leaving / returning (not co-visible frames).
-MIN_PAIR_TIME_GAP_S = 8.0
+# Same-instance: revisit after leaving (not near-duplicate co-visible frames).
+MIN_SAME_PAIR_TIME_GAP_S = 8.0
+# Different-instance: only avoid the same full frame (co-visible A/B → ambiguous "no").
+MIN_DIFF_PAIR_TIME_GAP_S = 1.0
+# Back-compat alias used by answer_cross_view_same_object for either band.
+MIN_PAIR_TIME_GAP_S = MIN_DIFF_PAIR_TIME_GAP_S
 
 
 @dataclass(frozen=True)
@@ -196,7 +201,7 @@ def _pick_same_pairs(
     views: tuple[SightingView, ...],
     *,
     max_pairs: int = MAX_SAME_PAIRS_PER_INSTANCE,
-    min_gap_s: float = MIN_PAIR_TIME_GAP_S,
+    min_gap_s: float = MIN_SAME_PAIR_TIME_GAP_S,
 ) -> list[IdentityPair]:
     """Prefer first↔last revisit pairs (largest time gap) for same-instance identity."""
     ordered = sorted(views, key=lambda v: v.timestamp)
@@ -227,7 +232,7 @@ def _pick_diff_pairs(
     by_instance: dict[str, tuple[SightingView, ...]],
     *,
     max_pairs: int = MAX_DIFF_PAIRS_PER_QUERY,
-    min_gap_s: float = MIN_PAIR_TIME_GAP_S,
+    min_gap_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
 ) -> list[IdentityPair]:
     ids = sorted(by_instance)
     if len(ids) < 2:
@@ -335,10 +340,11 @@ def answer_cross_view_same_object(
         raise InsufficientEvidenceError("cross-view pair requires the same category query")
     if not sighting_framing_ok(pair.left) or not sighting_framing_ok(pair.right):
         raise InsufficientEvidenceError("one or both views fail center/size framing gates")
-    if abs(pair.right.timestamp - pair.left.timestamp) < MIN_PAIR_TIME_GAP_S:
+    min_gap = MIN_SAME_PAIR_TIME_GAP_S if pair.same_object else MIN_DIFF_PAIR_TIME_GAP_S
+    if abs(pair.right.timestamp - pair.left.timestamp) < min_gap:
         raise InsufficientEvidenceError(
-            f"cross-view pair needs ≥{MIN_PAIR_TIME_GAP_S:g}s between views "
-            "(same-frame A/B would be ambiguous)"
+            f"cross-view {'same' if pair.same_object else 'diff'} pair needs "
+            f"≥{min_gap:g}s between views"
         )
     if pair.same_object and pair.left.instance_id != pair.right.instance_id:
         raise InsufficientEvidenceError("same-object pair has mismatched instance ids")
