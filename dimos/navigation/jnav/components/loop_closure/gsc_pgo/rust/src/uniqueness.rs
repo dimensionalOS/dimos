@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Stage 1, uniqueness: is this scan distinctive enough to place, in O(scan). Universal uniqueness is
-//! measured on the scan alone: how many scan-context cells it fills (`connection_discovery`'s
+//! measured on the scan alone: how many scan-context cells it fills (`similarity_discovery`'s
 //! descriptor occupancy) and its geometric degeneracy here. Current-map uniqueness (how unlike the
 //! rest of the map it is) is not measured yet.
 

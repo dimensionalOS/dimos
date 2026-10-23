@@ -20,7 +20,7 @@
 //! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
 //!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
 //!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
-//!   loop_edges (each loop candidate's lifecycle), and the optional debug_global_map cloud. Loop
+//!   loop_edges (each loop candidate's lifecycle). Loop
 //!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
 //!   runtime via a captured Handle.
 
@@ -33,7 +33,6 @@ use dimos_gsc_pgo::gsc_pgo::{
     CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, PoseWithTime,
 };
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::pointcloud::{self, PointCloud};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
@@ -42,8 +41,8 @@ use lcm_msgs::tf2_msgs::TFMessage;
 mod utils;
 use tracing::{error, info, warn};
 use utils::{
-    build_loop_closure_records, build_loop_edge_records, build_odometry, build_pointcloud2,
-    build_pose_graph_records, build_tf_message, extract_xyz,
+    build_loop_closure_records, build_loop_edge_records, build_odometry, build_pose_graph_records,
+    build_tf_message, extract_xyz,
 };
 
 // A keyframe pose change smaller than this waits to add up before it is sent.
@@ -53,111 +52,67 @@ const POSE_CHANGE_RAD: f64 = 1e-4;
 /// any gap between a replay's scans, so it only fires once the stream pauses or ends.
 const SOLVE_IDLE_FINISH: Duration = Duration::from_secs(3);
 
-#[native_config]
-#[derive(Clone)]
-pub struct Config {
-    /// Output/map frame (named `map_frame` rather than `frame_id` because the
-    /// Python coordinator strips base-config field names — `frame_id` is one —
-    /// from the stdin config dict).
-    pub map_frame: String,
-    /// The corrected edge's child (odom) frame.
-    pub child_frame_id: String,
-    /// Robot body frame.
-    pub body_frame: String,
-
-    // Keyframe detection
-    pub keyframe_min_rotation_degrees: f64,
-    pub keyframe_min_distance_meters: f64,
-
-    // Loop closure
-    pub loop_search_radius: f64,
-    pub loop_time_thresh: f64,
-    pub loop_score_thresh: f64,
-    pub loop_submap_half_range: i32,
-    pub submap_resolution: f64,
-    pub keyframe_voxel_size: f64,
-    pub loop_min_occupancy: i32,
-    pub loop_min_degeneracy: f64,
-    pub loop_yank_gate: bool,
-    pub loop_yank_gate_width: f64,
-    pub loop_yank_per_sqrt_gap: bool,
-    pub loop_icp_dump_dir: String,
-    pub loop_extended_icp_max_keyframes: usize,
-
-    /// Transform world-frame scans to body-frame using the paired odometry.
-    pub subtract_odom_from_cloud: bool,
-
-    // Debug global-map publishing (rate <= 0 disables; see module.py).
-    pub global_map_voxel_size: f64,
-    pub global_map_publish_rate: f64,
-    // Where each pose graph snapshot's keyframes go, for offline checks; empty for never.
-    pub dump_path: String,
-
-    pub scan_context_num_rings: i32,
-    pub scan_context_num_sectors: i32,
-    pub scan_context_max_range_m: f64,
-    pub scan_context_top_k: i32,
-    pub scan_context_match_threshold: f64,
-    pub scan_context_lidar_height_m: f64,
-
-    pub loop_robust_huber_k: f64,
-    pub loop_icp_max_iterations: u64,
-    pub loop_icp_max_correspondence_m: f64,
-
-    pub loop_gnc_var_scale: f64,
-    pub loop_gnc_apply_after_fraction: f64,
-    pub loop_gnc_deterministic: bool,
-    pub loop_gnc_inlier_probability: f64,
-
-    // Anisotropic odometry between-factor
-    pub odom_rot_roll_pitch_var: f64,
-    pub odom_rot_yaw_var: f64,
-    pub odom_trans_xy_var: f64,
-    pub odom_trans_z_var: f64,
-
-    /// Bounded scan FIFO depth (<= 0 = unbounded).
-    pub max_scan_queue: i32,
+/// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
+macro_rules! config {
+    ($($own:ident: $own_type:ty,)* ; $($pgo:ident: $pgo_type:ty,)*) => {
+        #[native_config]
+        #[derive(Clone)]
+        pub struct Config {
+            $(pub $own: $own_type,)*
+            $(pub $pgo: $pgo_type,)*
+        }
+        impl Config {
+            fn pgo(&self) -> PgoConfig {
+                PgoConfig { $($pgo: self.$pgo.clone(),)* loop_record_strain: false, loop_yank_from_strain: false }
+            }
+        }
+    };
 }
 
-impl Config {
-    fn pgo(&self) -> PgoConfig {
-        PgoConfig {
-            keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
-            keyframe_min_distance_meters: self.keyframe_min_distance_meters,
-            loop_search_radius: self.loop_search_radius,
-            loop_time_thresh: self.loop_time_thresh,
-            loop_score_thresh: self.loop_score_thresh,
-            loop_submap_half_range: self.loop_submap_half_range,
-            submap_resolution: self.submap_resolution,
-            keyframe_voxel_size: self.keyframe_voxel_size,
-            loop_min_occupancy: self.loop_min_occupancy,
-            loop_min_degeneracy: self.loop_min_degeneracy,
-            loop_yank_gate: self.loop_yank_gate,
-            loop_yank_gate_width: self.loop_yank_gate_width,
-            loop_yank_per_sqrt_gap: self.loop_yank_per_sqrt_gap,
-            loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
-            loop_record_strain: false,
-            loop_yank_from_strain: false,
-            loop_extended_icp_max_keyframes: self.loop_extended_icp_max_keyframes,
-            loop_robust_huber_k: self.loop_robust_huber_k,
-            loop_icp_max_iterations: self.loop_icp_max_iterations,
-            loop_icp_max_correspondence_m: self.loop_icp_max_correspondence_m,
-            loop_gnc_var_scale: self.loop_gnc_var_scale,
-            loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
-            loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
-            loop_gnc_deterministic: self.loop_gnc_deterministic,
-            odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
-            odom_rot_yaw_var: self.odom_rot_yaw_var,
-            odom_trans_xy_var: self.odom_trans_xy_var,
-            odom_trans_z_var: self.odom_trans_z_var,
-            scan_context_num_rings: self.scan_context_num_rings,
-            scan_context_num_sectors: self.scan_context_num_sectors,
-            scan_context_max_range_m: self.scan_context_max_range_m,
-            scan_context_top_k: self.scan_context_top_k,
-            scan_context_match_threshold: self.scan_context_match_threshold,
-            scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        }
-    }
+config! {
+    // `map_frame`, not `frame_id`: the Python coordinator strips base-config field names from the config
+    map_frame: String,
+    child_frame_id: String,
+    body_frame: String,
+    // where each pose graph snapshot's keyframes go, for offline checks; empty for never
+    dump_path: String,
+    // bounded scan FIFO depth (<= 0 = unbounded)
+    max_scan_queue: i32,
+    // threads loop search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
+    worker_threads: usize,
+    ;
+    keyframe_min_rotation_degrees: f64,
+    keyframe_min_distance_meters: f64,
+    loop_search_radius: f64,
+    loop_score_thresh: f64,
+    loop_submap_half_range: i32,
+    submap_resolution: f64,
+    keyframe_voxel_size: f64,
+    loop_min_occupancy: i32,
+    loop_min_degeneracy: f64,
+    loop_yank_gate: bool,
+    loop_yank_gate_width: f64,
+    loop_yank_per_sqrt_gap: bool,
+    loop_icp_dump_dir: String,
+    loop_extended_icp_max_keyframes: usize,
+    loop_robust_huber_k: f64,
+    loop_icp_max_iterations: u64,
+    loop_icp_max_correspondence_m: f64,
+    loop_gnc_var_scale: f64,
+    loop_gnc_inlier_probability: f64,
+    loop_gnc_apply_after_fraction: f64,
+    loop_gnc_deterministic: bool,
+    loop_cooling: bool,
+    odom_rot_roll_pitch_var: f64,
+    odom_rot_yaw_var: f64,
+    odom_trans_xy_var: f64,
+    odom_trans_z_var: f64,
+    scan_context_num_rings: i32,
+    scan_context_num_sectors: i32,
+    scan_context_max_range_m: f64,
+    scan_context_top_k: i32,
+    scan_context_match_threshold: f64,
+    scan_context_lidar_height_m: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------
@@ -212,10 +167,6 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     loop_edges: Output<PointCloud2>,
 
-    // Debug-only, nothing reads it. Publishing is gated on global_map_publish_rate > 0.
-    #[output(encode = PointCloud2::encode)]
-    debug_global_map: Output<PointCloud2>,
-
     #[config]
     config: Config,
 
@@ -241,7 +192,6 @@ impl GscPgoModule {
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
             loop_edges: self.loop_edges.clone(),
-            global_map: self.debug_global_map.clone(),
             tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
@@ -332,7 +282,6 @@ struct Worker {
     pose_graph: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
     loop_edges: Output<PointCloud2>,
-    global_map: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
@@ -346,6 +295,14 @@ impl Worker {
     }
 
     fn run(self) {
+        // ICP and the solver's factorization run on rayon's global pool
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.config.worker_threads)
+            .thread_name(|i| format!("gsc-worker-{i}"))
+            .build_global()
+        {
+            warn!(error = %e, "could not cap the worker threads");
+        }
         let mut pgo = GscPgo::new(self.config.pgo());
         let frame_id = self.config.map_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
@@ -363,13 +320,6 @@ impl Worker {
         );
         self.publish(&self.tf, &identity, "tf");
 
-        let publish_global_map = self.config.global_map_publish_rate > 0.0;
-        let global_map_interval = if publish_global_map {
-            1.0 / self.config.global_map_publish_rate
-        } else {
-            0.0
-        };
-        let mut last_global_map_time = 0.0f64;
         // Backstop for the Condvar wait so the stop flag is still observed even
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
@@ -406,7 +356,7 @@ impl Worker {
                 let mut state = self.state.lock().expect("state");
                 state.cloud_buffer.pop_front()
             };
-            let Some(mut cloud_with_pose) = cloud_with_pose else {
+            let Some(cloud_with_pose) = cloud_with_pose else {
                 // Idle long enough that the stream has paused or ended: adopt a finished solve
                 // and start the next (non-blocking, so the graph keeps republishing while it runs).
                 // Short gaps between scans never get here, which keeps a replay's graph deterministic.
@@ -440,29 +390,6 @@ impl Worker {
             };
             last_scan_at = std::time::Instant::now();
 
-            // Optionally transform world-frame scan to body-frame:
-            // body = R_odom^T * (world_pts - t_odom).
-            if self.config.subtract_odom_from_cloud {
-                if let Some(cloud) = cloud_with_pose.cloud.take() {
-                    if !cloud.is_empty() {
-                        let rotation_inv = mat3::transpose(&cloud_with_pose.pose.rotation);
-                        let neg_translation = [
-                            -cloud_with_pose.pose.translation[0],
-                            -cloud_with_pose.pose.translation[1],
-                            -cloud_with_pose.pose.translation[2],
-                        ];
-                        let translation_body = mat3::mat_vec(&rotation_inv, &neg_translation);
-                        cloud_with_pose.cloud = Some(Arc::new(pointcloud::transform_cloud(
-                            &cloud,
-                            &rotation_inv,
-                            &translation_body,
-                        )));
-                    } else {
-                        cloud_with_pose.cloud = Some(cloud);
-                    }
-                }
-            }
-
             let cur_time = cloud_with_pose.pose.second;
 
             if !pgo.add_key_pose(&cloud_with_pose) {
@@ -492,20 +419,19 @@ impl Worker {
                 let search = loop_search.take().expect("checked above");
                 pgo.finish_loop_search(search.join().expect("loop search thread panicked"));
             }
-            // The ICP half of a loop search runs on its own thread so scans never wait on it; one at a time,
-            // and never while scans are waiting (skip it rather than fall behind).
+            // Stages 1-2 run here on every keyframe; the best waiting proposal goes to the search thread when it is
+            // free and no scans are waiting.
+            pgo.propose_loop();
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
-            if behind {
-                pgo.skip_loop_search_behind();
-            } else if loop_search.is_some() {
-                pgo.skip_loop_search("search_in_flight");
-            } else if let Some(search) = pgo.begin_loop_search() {
-                loop_search = Some(
-                    std::thread::Builder::new()
-                        .name("gsc-loop-search".into())
-                        .spawn(move || search.run())
-                        .expect("spawn loop search thread"),
-                );
+            if !behind && loop_search.is_none() {
+                if let Some(search) = pgo.begin_loop_search() {
+                    loop_search = Some(
+                        std::thread::Builder::new()
+                            .name("gsc-loop-search".into())
+                            .spawn(move || search.run())
+                            .expect("spawn loop search thread"),
+                    );
+                }
             }
             // a finished solve moves the keyframes (on the keyframe schedule when deterministic)
             let moved = pgo.update(!self.config.loop_gnc_deterministic);
@@ -523,28 +449,6 @@ impl Worker {
             // Pose graph on every keyframe (iSAM2 may have re-optimized prior
             // poses on loop closure). Only GNC-kept loops are published as edges.
             self.publish_graph(&pgo, cur_time, &frame_id);
-
-            // Throttled debug global map.
-            if publish_global_map
-                && cur_time - last_global_map_time >= global_map_interval
-                && !pgo.key_poses().is_empty()
-            {
-                last_global_map_time = cur_time;
-                let mut global_cloud: PointCloud = Vec::new();
-                for kp in pgo.key_poses() {
-                    if let Some(body_cloud) = &kp.body_cloud {
-                        global_cloud.extend(pointcloud::transform_cloud(
-                            body_cloud,
-                            &kp.rotation_global,
-                            &kp.translation_global,
-                        ));
-                    }
-                }
-                let filtered =
-                    pointcloud::voxel_downsample(&global_cloud, self.config.global_map_voxel_size);
-                let msg = build_pointcloud2(&filtered, &frame_id, cur_time);
-                self.publish(&self.global_map, &msg, "debug_global_map");
-            }
         }
     }
 

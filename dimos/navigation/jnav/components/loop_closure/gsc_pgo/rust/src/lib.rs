@@ -16,7 +16,7 @@
 //!
 //! - stage 0 (`gsc_pgo`): keyframes and the threads that keep compute bounded.
 //! - stage 1 `uniqueness`: is this scan distinctive enough to place.
-//! - stage 2 `connection_discovery`: which earlier keyframes it might be (scan context, position).
+//! - stage 2 `similarity_discovery`: which earlier keyframes it might be (scan context, position).
 //! - stage 3 `connection_fit`: how well the two places line up (ICP).
 //! - stage 4 `proportional_confidence`: extended ICP until the evidence matches the yank.
 //! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which loops agree.
@@ -25,10 +25,10 @@
 //! binary `gsc-pgo`) builds behind the default `native` feature.
 
 pub mod big_picture_fit;
-pub mod connection_discovery;
 pub mod connection_fit;
 pub mod gsc_pgo;
 pub mod mat3;
 pub mod pointcloud;
 pub mod proportional_confidence;
+pub mod similarity_discovery;
 pub mod uniqueness;

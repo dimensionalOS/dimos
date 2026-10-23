@@ -73,6 +73,7 @@ fn a_true_loop_closes_the_drift_and_a_false_one_is_rejected() {
     let solution = solve(
         &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
         &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
+        &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
         &odometry_edges,
         &[true_loop, false_loop],
         &SolveConfig {

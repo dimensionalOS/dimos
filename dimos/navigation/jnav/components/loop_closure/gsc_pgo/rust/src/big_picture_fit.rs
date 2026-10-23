@@ -56,10 +56,12 @@ pub struct Solution {
     pub error: f64,
 }
 
-/// Solve for every keyframe's pose from the starting estimate `rotations` / `positions`. Keyframe 0 is held fixed.
+/// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
+/// `positions`; the rest are held where they are (at least one must be, to pin the map).
 pub fn solve(
     rotations: &[Mat3],
     positions: &[Vec3],
+    free: &[bool],
     odometry: &[Edge],
     loops: &[Edge],
     config: &SolveConfig,
@@ -75,7 +77,7 @@ pub fn solve(
             ..*e
         })
         .collect();
-    let pattern = Pattern::new(rotations.len(), odometry.iter().chain(loops));
+    let pattern = Pattern::new(free, odometry.iter().chain(loops));
 
     // GNC with truncated least squares (Yang et al. 2020): start convex (every loop in), then tighten
     // until each loop is clearly in or out. Odometry is always in.
@@ -254,35 +256,28 @@ fn cost(state: &State, odometry: &[Edge], loops: &[Edge], loop_weights: &[f64]) 
             .sum::<f64>()
 }
 
-/// The normal equations' sparsity: 6x6 blocks for keyframes 1.. (keyframe 0 is held fixed), with every
-/// entry's place fixed once, so each iteration only fills values (in `entries` order) instead of re-sorting.
+/// The normal equations' sparsity: a 6x6 block per free keyframe (`slot`, its place among them; held
+/// keyframes have none), with every entry's place fixed once, so each iteration only fills values (in
+/// `blocks` order) instead of re-sorting.
 struct Pattern {
-    n: usize,
+    slot: Vec<Option<usize>>,
+    size: usize,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
     llt: SymbolicLlt<usize>,
 }
 
-/// The keyframe-block pairs (row >= col, both > 0) an edge between `from` and `to` adds to, in fill order.
-fn edge_blocks(from: usize, to: usize) -> impl Iterator<Item = (usize, usize)> {
-    [(from, from), (to, to), (from.max(to), from.min(to))]
-        .into_iter()
-        .filter(|&(a, b)| a > 0 && b > 0)
-}
-
-/// Lower-triangle (row, col) indices of the 6x6 block at keyframes (a, b), shifted past the fixed keyframe 0.
-fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usize, usize)> {
-    (0..6)
-        .flat_map(move |i| (0..6).map(move |j| (i, j, 6 * (a - 1) + i, 6 * (b - 1) + j)))
-        .filter(|&(_, _, r, c)| r >= c)
-}
-
 impl Pattern {
-    fn new<'a>(n: usize, edges: impl Iterator<Item = &'a Edge>) -> Pattern {
-        let size = 6 * (n - 1).max(1);
+    fn new<'a>(free: &[bool], edges: impl Iterator<Item = &'a Edge>) -> Pattern {
+        let mut count = 0;
+        let slot: Vec<Option<usize>> = free
+            .iter()
+            .map(|&f| f.then(|| (count, count += 1).0))
+            .collect();
+        let size = 6 * count.max(1);
         let mut indices: Vec<Pair<usize, usize>> = Vec::new();
         for e in edges {
-            for (a, b) in edge_blocks(e.from, e.to) {
+            for (_, _, a, b) in blocks(&slot, e) {
                 indices.extend(block_entries(a, b).map(|(_, _, r, c)| Pair::new(r, c)));
             }
         }
@@ -293,12 +288,35 @@ impl Pattern {
         let llt =
             SymbolicLlt::try_new(symbolic.as_ref(), Side::Lower).expect("pose graph ordering");
         Pattern {
-            n,
+            slot,
+            size,
             symbolic,
             order,
             llt,
         }
     }
+}
+
+/// The blocks an edge adds to, in fill order: keyframes (a, b) and their slots, slot a >= slot b.
+fn blocks<'a>(
+    slot: &'a [Option<usize>],
+    e: &Edge,
+) -> impl Iterator<Item = (usize, usize, usize, usize)> + 'a {
+    let (low, high) = if slot[e.from] <= slot[e.to] {
+        (e.from, e.to)
+    } else {
+        (e.to, e.from)
+    };
+    [(e.from, e.from), (e.to, e.to), (high, low)]
+        .into_iter()
+        .filter_map(move |(a, b)| Some((a, b, slot[a]?, slot[b]?)))
+}
+
+/// Lower-triangle (row, col) indices of the 6x6 block at slots (a, b).
+fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usize, usize)> {
+    (0..6)
+        .flat_map(move |i| (0..6).map(move |j| (i, j, 6 * a + i, 6 * b + j)))
+        .filter(|&(_, _, r, c)| r >= c)
 }
 
 /// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers
@@ -311,16 +329,12 @@ fn levenberg_marquardt(
     loop_weights: &[f64],
     tolerance: f64,
 ) {
-    let n = pattern.n;
-    if n < 2 {
-        return;
-    }
-    let size = 6 * (n - 1);
+    let size = pattern.size;
     let mut damping = 1e-6;
     let mut current = cost(state, odometry, loops, loop_weights);
     for _ in 0..100 {
         let (mut values, gradient, diagonal) =
-            normal_equations(state, size, odometry, loops, loop_weights);
+            normal_equations(state, pattern, odometry, loops, loop_weights);
         let filled = values.len();
         values.resize(filled + size, 0.0);
         let mut stepped = false;
@@ -343,9 +357,11 @@ fn levenberg_marquardt(
                 rotation: state.rotation.clone(),
                 position: state.position.clone(),
             };
-            for k in 1..n {
-                let delta: Vec<f64> = (0..6).map(|i| step[(6 * (k - 1) + i, 0)]).collect();
-                (trial.rotation[k], trial.position[k]) = state.retract(k, &delta);
+            for (k, slot) in pattern.slot.iter().enumerate() {
+                if let Some(slot) = slot {
+                    let delta: Vec<f64> = (0..6).map(|i| step[(6 * slot + i, 0)]).collect();
+                    (trial.rotation[k], trial.position[k]) = state.retract(k, &delta);
+                }
             }
             let trial_cost = cost(&trial, odometry, loops, loop_weights);
             if trial_cost.is_finite() && trial_cost <= current {
@@ -367,14 +383,14 @@ fn levenberg_marquardt(
 /// diagonal not included), -J^T W r, and J^T W J's diagonal.
 fn normal_equations(
     state: &State,
-    size: usize,
+    pattern: &Pattern,
     odometry: &[Edge],
     loops: &[Edge],
     loop_weights: &[f64],
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let mut values: Vec<f64> = Vec::new();
-    let mut gradient = vec![0.0; size];
-    let mut diagonal = vec![0.0; size];
+    let mut gradient = vec![0.0; pattern.size];
+    let mut diagonal = vec![0.0; pattern.size];
     let weighted = odometry
         .iter()
         .map(|e| (e, 1.0))
@@ -382,10 +398,10 @@ fn normal_equations(
     for (e, w) in weighted {
         let (r, jf, jt) = linearize(e, state);
         let jacobian = |k: usize| if k == e.from { &jf } else { &jt };
-        for (a, b) in edge_blocks(e.from, e.to) {
+        for (a, b, slot_a, slot_b) in blocks(&pattern.slot, e) {
             // the (a, b) block of J^T W J is ja^T W jb
             let (ja, jb) = (jacobian(a), jacobian(b));
-            for (i, j, row, col) in block_entries(a, b) {
+            for (i, j, row, col) in block_entries(slot_a, slot_b) {
                 let v: f64 = (0..6)
                     .map(|k| ja[k][i] * w / e.variances[k] * jb[k][j])
                     .sum();
@@ -396,9 +412,9 @@ fn normal_equations(
             }
         }
         for (k, jk) in [(e.from, &jf), (e.to, &jt)] {
-            if k > 0 {
+            if let Some(slot) = pattern.slot[k] {
                 for i in 0..6 {
-                    gradient[6 * (k - 1) + i] -= (0..6)
+                    gradient[6 * slot + i] -= (0..6)
                         .map(|m| jk[m][i] * w / e.variances[m] * r[m])
                         .sum::<f64>();
                 }
@@ -429,9 +445,11 @@ pub fn strain(
         rotation: rotations.to_vec(),
         position: positions.to_vec(),
     };
-    let pattern = Pattern::new(n, odometry.iter().chain(loops));
-    let size = 6 * (n - 1);
-    let (mut values, _, diagonal) = normal_equations(&state, size, odometry, loops, loop_weights);
+    let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+    let pattern = Pattern::new(&free, odometry.iter().chain(loops));
+    let size = pattern.size;
+    let (mut values, _, diagonal) =
+        normal_equations(&state, &pattern, odometry, loops, loop_weights);
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
     let hessian = SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
         .expect("pose graph hessian");
@@ -442,23 +460,23 @@ pub fn strain(
     // the covariance columns of the loop's two keyframes (keyframe 0 is fixed, so it has none)
     let ends = [candidate.from, candidate.to];
     let mut columns = Mat::<f64>::zeros(size, 12);
-    for (slot, &k) in ends.iter().enumerate() {
-        if k > 0 {
+    for (end, &k) in ends.iter().enumerate() {
+        if let Some(slot) = pattern.slot[k] {
             for i in 0..6 {
-                columns[(6 * (k - 1) + i, 6 * slot + i)] = 1.0;
+                columns[(6 * slot + i, 6 * end + i)] = 1.0;
             }
         }
     }
     llt.solve_in_place_with_conj(Conj::No, columns.as_mut());
     let mut joint = [[0.0; 12]; 12];
-    for (slot_a, &a) in ends.iter().enumerate() {
-        for slot_b in 0..2 {
-            if a > 0 {
-                for i in 0..6 {
-                    for j in 0..6 {
-                        joint[6 * slot_a + i][6 * slot_b + j] =
-                            columns[(6 * (a - 1) + i, 6 * slot_b + j)];
-                    }
+    for (end_a, &a) in ends.iter().enumerate() {
+        let Some(slot) = pattern.slot[a] else {
+            continue;
+        };
+        for end_b in 0..2 {
+            for i in 0..6 {
+                for j in 0..6 {
+                    joint[6 * end_a + i][6 * end_b + j] = columns[(6 * slot + i, 6 * end_b + j)];
                 }
             }
         }
@@ -560,6 +578,8 @@ pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
     due_at: usize,
+    /// The committed loops the solve judged, in its loop order (the rest keep their verdicts).
+    judged: Vec<usize>,
 }
 
 impl GscPgo {
@@ -601,15 +621,83 @@ impl GscPgo {
             self.dispatch_solve();
         }
     }
-    /// Start a solve of every keyframe so far and every committed loop, from the odometry (GNC
-    /// must start from the dead-reckoned chain, not an estimate earlier loops already bent).
+    /// Start a solve of every committed loop from the odometry (GNC must start from the dead-reckoned
+    /// chain, not an estimate earlier loops already bent). With `loop_cooling`, only the keyframes a new
+    /// loop can move by more than one odometry step's noise are free (plus those since the last solve);
+    /// the rest are held where they are, and the loops between two held keyframes keep their verdicts.
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
-        let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_local).collect();
-        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
         let config = &self.config;
-        let odometry = odometry_edges(&self.key_poses, config);
-        let loops = loop_edges(self.committed_loops.iter());
+        let all_loops = loop_edges(self.committed_loops.iter());
+        let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+        if config.loop_cooling {
+            let step = config.odom_trans_xy_var;
+            let variance =
+                position_variance(n, &self.committed_loops[..self.loops_dispatched], step);
+            let solved = self.solving_keyframes;
+            for k in 1..solved.min(n) {
+                free[k] = false;
+            }
+            let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_global).collect();
+            let positions: Vec<Vec3> = self
+                .key_poses
+                .iter()
+                .map(|k| k.translation_global)
+                .collect();
+            for e in &all_loops[self.loops_dispatched..] {
+                let pull = residuals(
+                    &rotations,
+                    &positions,
+                    &[Edge {
+                        variances: [1.0; 6],
+                        ..*e
+                    }],
+                )[0]
+                .sqrt();
+                for k in e.from.min(e.to)..=e.from.max(e.to) {
+                    // a keyframe takes the share of the pull its own looseness leaves it
+                    if pull * variance[k] / (variance[k] + e.variances[3]) > step.sqrt() {
+                        free[k] = k > 0;
+                    }
+                }
+            }
+        }
+        // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
+        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let mut offset = (mat3::identity(), [0.0; 3]);
+        for (k, key_pose) in self.key_poses.iter().enumerate() {
+            if free[k] {
+                rotations.push(mat3::mat_mul(&offset.0, &key_pose.rotation_local));
+                positions.push(mat3::add(
+                    &mat3::mat_vec(&offset.0, &key_pose.translation_local),
+                    &offset.1,
+                ));
+            } else {
+                let rotation = mat3::mat_mul(
+                    &key_pose.rotation_global,
+                    &mat3::transpose(&key_pose.rotation_local),
+                );
+                offset = (
+                    rotation,
+                    mat3::sub(
+                        &key_pose.translation_global,
+                        &mat3::mat_vec(&rotation, &key_pose.translation_local),
+                    ),
+                );
+                rotations.push(key_pose.rotation_global);
+                positions.push(key_pose.translation_global);
+            }
+        }
+        let touches_free = |e: &Edge| free[e.from] || free[e.to];
+        let odometry: Vec<Edge> = odometry_edges(&self.key_poses, config)
+            .into_iter()
+            .filter(touches_free)
+            .collect();
+        let judged: Vec<usize> = (0..all_loops.len())
+            .filter(|&i| touches_free(&all_loops[i]))
+            .collect();
+        let loops: Vec<Edge> = judged.iter().map(|&i| all_loops[i]).collect();
+        let free_count = free.iter().filter(|&&f| f).count();
         let solve_config = SolveConfig {
             gnc_variance_scale: config.loop_gnc_var_scale,
             gnc_inlier_probability: config.loop_gnc_inlier_probability,
@@ -619,16 +707,26 @@ impl GscPgo {
             .name("gsc-pose-graph".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let solution = solve(&rotations, &positions, &odometry, &loops, &solve_config);
+                let solution = solve(
+                    &rotations,
+                    &positions,
+                    &free,
+                    &odometry,
+                    &loops,
+                    &solve_config,
+                );
                 (solution, started.elapsed().as_secs_f64())
             })
             .expect("spawn pose graph thread");
-        let delay = (n as f64 * self.config.loop_gnc_apply_after_fraction).ceil() as usize;
+        // a solve's cost grows with its free keyframes, so its delay does
+        let delay = (free_count as f64 * self.config.loop_gnc_apply_after_fraction).ceil() as usize;
         self.loops_dispatched = self.committed_loops.len();
+        self.solving_keyframes = n;
         self.solving = Some(Solving {
             handle,
             keyframes: n,
             due_at: n + delay.max(1),
+            judged,
         });
     }
     /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
@@ -665,7 +763,22 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        for (index, &weight) in solution.loop_weights.iter().enumerate() {
+        // a loop no solve judged (both ends held) agreed with the map within odometry noise
+        let mut weights: Vec<f64> = self
+            .committed_loops
+            .iter()
+            .map(|l| {
+                if l.gnc_weight.is_nan() {
+                    1.0
+                } else {
+                    l.gnc_weight
+                }
+            })
+            .collect();
+        for (&index, &weight) in solving.judged.iter().zip(&solution.loop_weights) {
+            weights[index] = weight;
+        }
+        for (index, weight) in weights.into_iter().enumerate() {
             let previous = self.committed_loops[index].gnc_weight;
             self.committed_loops[index].gnc_weight = weight;
             if previous == weight {
@@ -722,4 +835,35 @@ pub(crate) fn loop_edges<'a>(loops: impl Iterator<Item = &'a CommittedLoop>) -> 
             variances: [l.score.max(1e-6); 6],
         })
         .collect()
+}
+
+/// Each keyframe's position variance (m²) along the odometry chain from keyframe 0, lowered by every
+/// kept loop: the loop ties its two ends together (at its own variance), and each keyframe between them
+/// is then as loose as the tighter of the two ways back along its ring, from either end, combined in
+/// parallel. Loops in order, so a ring anchored to an earlier one is only as tight as that anchor;
+/// O(ring) per loop.
+pub(crate) fn position_variance(n: usize, loops: &[CommittedLoop], step: f64) -> Vec<f64> {
+    let mut variance: Vec<f64> = (0..n).map(|k| k as f64 * step).collect();
+    let mut order: Vec<&CommittedLoop> = loops.iter().filter(|l| l.gnc_weight > 0.5).collect();
+    order.sort_by_key(|l| l.source_id.max(l.target_id));
+    for l in order {
+        let (t, s) = (l.target_id.min(l.source_id), l.target_id.max(l.source_id));
+        let tie = l.score.max(1e-6);
+        let (vt, vs) = (variance[t], variance[s]);
+        (variance[t], variance[s]) = (vt.min(vs + tie), vs.min(vt + tie));
+        let (vt, vs) = (variance[t], variance[s]);
+        for k in t + 1..s {
+            let (back, forward) = (vt + (k - t) as f64 * step, vs + (s - k) as f64 * step);
+            variance[k] = variance[k].min(back * forward / (back + forward));
+        }
+        // the keyframes after the ring hang off its end
+        for k in s + 1..n {
+            let chained = variance[k - 1] + step;
+            if chained >= variance[k] {
+                break;
+            }
+            variance[k] = chained;
+        }
+    }
+    variance
 }

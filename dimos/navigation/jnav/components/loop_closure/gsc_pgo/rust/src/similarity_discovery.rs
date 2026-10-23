@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Scan Context — polar-binned lidar place-recognition descriptor
+//! Stage 2, similarity discovery: which earlier keyframes this one might be, by Scan Context or by
+//! position. Scan Context is a polar-binned lidar place-recognition descriptor
 //! (inspired by Kim & Kim 2018 and the irapkaist/scancontext reference, MIT).
 //!
 //! Each scan becomes an (n_rings x n_sectors) matrix where cell [i, j] holds
@@ -26,6 +27,8 @@
 //! and structure statistics accumulate in double.
 
 use std::f64::consts::PI;
+
+use crate::mat3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Config {
@@ -104,7 +107,6 @@ impl Descriptor {
 /// Mean per row — the coarse feature used for candidate retrieval.
 pub type RingKey = Vec<f32>;
 /// Mean per column — only used for the optional sector-key alignment.
-pub type SectorKey = Vec<f32>;
 
 /// Build the polar-max-z descriptor for a body-frame scan (points as
 /// `[x, y, z]`, f32 like PCL). Points outside `max_range_m` or at the sensor
@@ -197,22 +199,6 @@ pub fn make_ring_key(descriptor: &Descriptor) -> RingKey {
             sum += descriptor.at(i, j);
         }
         *slot = sum / descriptor.n_sectors as f32;
-    }
-    key
-}
-
-/// Mean per column (over ALL rows, zeros included).
-pub fn make_sector_key(descriptor: &Descriptor) -> SectorKey {
-    let mut key = vec![0.0f32; descriptor.n_sectors];
-    if descriptor.n_rings == 0 {
-        return key;
-    }
-    for (j, slot) in key.iter_mut().enumerate() {
-        let mut sum = 0.0f32;
-        for i in 0..descriptor.n_rings {
-            sum += descriptor.at(i, j);
-        }
-        *slot = sum / descriptor.n_rings as f32;
     }
     key
 }
@@ -355,37 +341,26 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
 }
 
 impl crate::gsc_pgo::GscPgo {
+    /// The newest keyframe a loop may close onto: one older than the source's extended-ICP stack plus
+    /// the target's submap half-width, so the two sides never share clouds (a match there only
+    /// checks odometry against itself).
+    fn newest_loop_target(&self) -> usize {
+        (self.key_poses.len() - 1).saturating_sub(
+            self.config.loop_extended_icp_max_keyframes.max(1)
+                + self.config.loop_submap_half_range.max(0) as usize,
+        )
+    }
     /// Radius search on past key-pose global positions (candidates ascending
-    /// by distance), returning the first far-enough-in-time hit.
+    /// by distance), returning the nearest that is far enough back.
     pub(crate) fn search_by_position(&self) -> i64 {
-        let cur_idx = self.key_poses.len() - 1;
-        let last_item = self.key_poses.last().unwrap();
-        let last = [
-            last_item.translation_global[0] as f32,
-            last_item.translation_global[1] as f32,
-            last_item.translation_global[2] as f32,
-        ];
-        let radius_sq = (self.config.loop_search_radius * self.config.loop_search_radius) as f32;
-        let mut neighbors: Vec<(f32, usize)> = Vec::new();
-        for (i, key_pose) in self.key_poses[..cur_idx].iter().enumerate() {
-            let dx = key_pose.translation_global[0] as f32 - last[0];
-            let dy = key_pose.translation_global[1] as f32 - last[1];
-            let dz = key_pose.translation_global[2] as f32 - last[2];
-            let sq = dx * dx + dy * dy + dz * dz;
-            if sq <= radius_sq {
-                neighbors.push((sq, i));
-            }
-        }
-        if neighbors.is_empty() {
-            return -1;
-        }
-        neighbors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        for &(_, idx) in &neighbors {
-            if (last_item.time - self.key_poses[idx].time).abs() > self.config.loop_time_thresh {
-                return idx as i64;
-            }
-        }
-        -1
+        let here = self.key_poses.last().unwrap().translation_global;
+        self.key_poses[..self.newest_loop_target()]
+            .iter()
+            .map(|k| mat3::norm(&mat3::sub(&k.translation_global, &here)))
+            .enumerate()
+            .filter(|&(_, d)| d <= self.config.loop_search_radius)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(-1, |(i, _)| i as i64)
     }
     /// Scan-context candidate search. Returns (loop_idx or -1,
     /// sector_shift, best, second): the accepted candidate under the match
@@ -401,21 +376,17 @@ impl crate::gsc_pgo::GscPgo {
         }
         let query = self.scan_context_descriptors.last().unwrap();
         let query_key = self.scan_context_ring_keys.last().unwrap();
-        let current_time = self.key_poses.last().unwrap().time;
 
         // Two-stage retrieval: rank by ring-key L2 distance, then score the
         // top-K via column-shifted cosine distance on the full descriptor.
         // TODO: switch to a kd-tree later for O(log n) instead of O(n) — this
         // ring-key ranking is a linear scan (O(N^2) over a run) and won't scale
         // to massive maps.
-        let cur_idx = self.key_poses.len() - 1;
-        let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(cur_idx);
-        for i in 0..cur_idx {
+        let newest = self.newest_loop_target();
+        let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(newest);
+        for i in 0..newest {
             if self.scan_context_descriptors[i].is_empty() {
                 continue;
-            }
-            if (current_time - self.key_poses[i].time).abs() <= self.config.loop_time_thresh {
-                continue; // too recent — not a true loop candidate
             }
             let key = &self.scan_context_ring_keys[i];
             let mut sq = 0.0f32;

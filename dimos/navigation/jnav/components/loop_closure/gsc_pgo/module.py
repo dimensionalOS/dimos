@@ -47,7 +47,6 @@ class PGOConfig(NativeModuleConfig):
 
     # Loop closure knobs
     loop_search_radius: float = 3.0
-    loop_time_thresh: float = 5.0
     loop_score_thresh: float = 0.15
     loop_submap_half_range: int = 5
     submap_resolution: float = 0.1
@@ -60,14 +59,8 @@ class PGOConfig(NativeModuleConfig):
     # 0 disables.
     loop_min_degeneracy: float = 0.05
 
-    # basically only needed because of the go2, and partly b/c we don't have rust tf.get yet
-    subtract_odom_from_cloud: bool = False
-
-    # only use global map for debugging
-    global_map_publish_rate: float = 0.0
     # Where each pose graph snapshot's keyframes go for offline checks (f64 ts, raw xyz+q, corrected xyz+q), empty for never.
     dump_path: str = ""
-    global_map_voxel_size: float = 0.1
 
     scan_context_num_rings: int = 20
     scan_context_num_sectors: int = 60
@@ -111,6 +104,7 @@ class PGOConfig(NativeModuleConfig):
     # False folds a solve in as soon as it finishes, keyframes or not (a robot standing
     # still at a loop still gets the closure); True keeps the keyframe schedule so replays repeat.
     loop_gnc_deterministic: bool = True
+    loop_cooling: bool = False
 
     # "stiffness" in different dimensions.
     # Making roll/pitch stiff is important for mid360. irrelevant for go2 odom
@@ -126,6 +120,8 @@ class PGOConfig(NativeModuleConfig):
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale
     max_scan_queue: int = 5
+    # threads loop search and solves may use, leaving the other cores to the nav stack (0 = every core)
+    worker_threads: int = 2
 
 
 class GscPGO(NativeModule):
@@ -145,8 +141,6 @@ class GscPGO(NativeModule):
     # each loop candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
     # with both keyframes' current positions and a confidence, for drawing loop edges
     loop_edges: Out[PointCloud2]
-    # debug only, gated on global_map_publish_rate > 0
-    debug_global_map: Out[PointCloud2]
 
     @rpc
     def stop(self) -> None:

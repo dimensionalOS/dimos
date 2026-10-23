@@ -254,41 +254,6 @@ pub fn build_loop_edge_records(
     record_cloud(&LOOP_EDGE_FIELDS, data, frame_id, ts)
 }
 
-/// The `from_pcl` wire layout (x/y/z/intensity float32, 16-byte points).
-/// The Rust core's PointCloud carries no intensity, so it's published as 0.
-pub fn build_pointcloud2(points: &[[f32; 3]], frame_id: &str, ts: f64) -> PointCloud2 {
-    let mut data = Vec::with_capacity(points.len() * 16);
-    for p in points {
-        data.extend_from_slice(&p[0].to_le_bytes());
-        data.extend_from_slice(&p[1].to_le_bytes());
-        data.extend_from_slice(&p[2].to_le_bytes());
-        data.extend_from_slice(&0.0f32.to_le_bytes());
-    }
-    let field = |name: &str, offset: i32| PointField {
-        name: name.into(),
-        offset,
-        datatype: PointField::FLOAT32 as u8,
-        count: 1,
-    };
-    let n = points.len() as i32;
-    PointCloud2 {
-        header: make_header(frame_id, ts),
-        height: 1,
-        width: n,
-        fields: vec![
-            field("x", 0),
-            field("y", 4),
-            field("z", 8),
-            field("intensity", 12),
-        ],
-        is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * n,
-        data,
-        is_dense: true,
-    }
-}
-
 #[derive(Debug)]
 pub struct ExtractError(String);
 impl std::fmt::Display for ExtractError {

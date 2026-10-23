@@ -19,7 +19,7 @@
 use std::f32::consts::PI as PI32;
 use std::f64::consts::PI;
 
-use dimos_gsc_pgo::connection_discovery::{
+use dimos_gsc_pgo::similarity_discovery::{
     self, auto_max_range, best_distance, column_cosine_distance, descriptor_occupancy,
     descriptor_structure, make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
 };
@@ -174,7 +174,7 @@ fn structure_occupancy_and_edge_cases() {
     assert_eq!(descriptor_occupancy(&below), 0);
 
     // A 0x0 descriptor (cloud-less node) never matches anything.
-    let none = connection_discovery::Descriptor::empty();
+    let none = similarity_discovery::Descriptor::empty();
     assert!(none.is_empty());
     assert_eq!(column_cosine_distance(&descriptor, &none, 0), 2.0);
 }

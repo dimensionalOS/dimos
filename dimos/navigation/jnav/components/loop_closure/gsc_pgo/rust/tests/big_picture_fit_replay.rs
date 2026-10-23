@@ -38,6 +38,7 @@ fn replay_a_runs_final_graph() {
         rotations.push(mat3::mat_from_quat(&[k[7], k[4], k[5], k[6]]));
         corrected.push([k[8], k[9], k[10]]);
     }
+    let free: Vec<bool> = (0..rotations.len()).map(|k| k > 0).collect();
     let odometry: Vec<Edge> = (1..rotations.len())
         .map(|i| {
             let back = mat3::transpose(&rotations[i - 1]);
@@ -133,6 +134,7 @@ fn replay_a_runs_final_graph() {
         let mut s = solve(
             &rotations,
             &positions,
+            &free,
             &odometry,
             &kept,
             &SolveConfig {
@@ -146,7 +148,14 @@ fn replay_a_runs_final_graph() {
             .collect();
         s
     } else {
-        solve(&rotations, &positions, &odometry, &loops, &solve_config)
+        solve(
+            &rotations,
+            &positions,
+            &free,
+            &odometry,
+            &loops,
+            &solve_config,
+        )
     };
     let agree = solution
         .loop_weights
