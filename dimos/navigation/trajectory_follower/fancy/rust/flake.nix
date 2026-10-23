@@ -7,32 +7,47 @@
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
-    # The sibling local planner crate it builds on (a path dependency in Cargo.toml), pinned like any shared code.
-    dimos-local-planner.url = "github:dimensionalOS/dimos?dir=dimos/navigation/local_planner/rust";
-    dimos-local-planner.inputs.nixpkgs.follows = "nixpkgs";
-    dimos-local-planner.inputs.nix-filter.follows = "nix-filter";
-    dimos-local-planner.inputs.flake-utils.follows = "flake-utils";
-    dimos-local-planner.inputs.crate2nix.follows = "crate2nix";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, dimos-local-planner }:
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-trajectory-follower";
-        here = "navigation/trajectory_follower/fancy/rust";
 
         own = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-        # The two crates at their repo-relative places, so the path dependency resolves.
-        src = pkgs.runCommand "${name}-src" { } ''
-          mkdir -p $out/${here} $out/navigation/local_planner
-          cp -r ${own}/. $out/${here}
-          cp -r ${dimos-local-planner} $out/navigation/local_planner/rust
-        '';
-        generated = crate2nix.tools.${system}.generatedCargoNix {
-          inherit name src;
-          cargoToml = "${here}/Cargo.toml";
+        plannerArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/a9365487b4323151ea85041c6a944b509c0c3268";
+          sha256 = "e339487dd2281980fcde7ab03c46dfd2e274491e0f73e66d9c6cbcaeea8902b2";
         };
+        plannerSource = pkgs.runCommand "dimos-follower-planner-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${plannerArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${plannerSource}/native/message-source.nix" { inherit pkgs; }).source;
+        src = pkgs.runCommand "${name}-cdr-source" { } ''
+          cp -r ${own} $out
+          chmod -R u+w $out
+          mkdir -p $out/sdk
+          cp -r ${plannerSource}/dimos/navigation/local_planner/rust $out/local-planner
+          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-module/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
+          # The source artifacts own workspace roots; do not make them automatic members.
+          substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
+          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          substituteInPlace $out/Cargo.toml \
+            --replace-fail '../../../local_planner/rust' 'local-planner' \
+            --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../../build/message-source/rust' 'messages'
+          substituteInPlace $out/local-planner/Cargo.toml \
+            --replace-fail '../../../../native/rust/dimos-module' '../sdk/dimos-module' \
+            --replace-fail '../../../../build/message-source/rust' '../messages'
+        '';
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {

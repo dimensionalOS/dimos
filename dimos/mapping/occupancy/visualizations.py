@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 from functools import lru_cache
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, overload
 
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
+from dimos.message_utils.image import image_from_array
+from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
+from dimos.messages.sensor_msgs.msg import Image as CdrImage
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -26,38 +32,60 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 Palette: TypeAlias = Literal["rainbow", "turbo"]
 
 
+def _map_image(
+    grid: OccupancyGrid | CdrOccupancyGrid, pixels: NDArray[np.uint8]
+) -> Image | CdrImage:
+    if isinstance(grid, CdrOccupancyGrid):
+        return image_from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
+    return Image(data=pixels, format=ImageFormat.BGR, frame_id=grid.frame_id, ts=grid.ts)
+
+
+@overload
 def visualize_occupancy_grid(
-    occupancy_grid: OccupancyGrid, palette: Palette, path: Path | None = None
-) -> Image:
+    occupancy_grid: CdrOccupancyGrid, palette: Palette, path: Path | CdrPath | None = None
+) -> CdrImage: ...
+
+
+@overload
+def visualize_occupancy_grid(
+    occupancy_grid: OccupancyGrid, palette: Palette, path: Path | CdrPath | None = None
+) -> Image: ...
+
+
+def visualize_occupancy_grid(
+    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
+    palette: Palette,
+    path: Path | CdrPath | None = None,
+) -> Image | CdrImage:
     match palette:
         case "rainbow":
-            bgr_image = rainbow_image(occupancy_grid.grid)
+            bgr_image = rainbow_image(_grid_values(occupancy_grid))
         case "turbo":
-            bgr_image = turbo_image(occupancy_grid.grid)
+            bgr_image = turbo_image(_grid_values(occupancy_grid))
         case _:
             raise NotImplementedError()
 
     if path is not None and len(path.poses) > 0:
         _draw_path(occupancy_grid, bgr_image, path)
 
-    return Image(
-        data=bgr_image,
-        format=ImageFormat.BGR,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return _map_image(occupancy_grid, bgr_image)
 
 
-def _draw_path(occupancy_grid: OccupancyGrid, bgr_image: NDArray[np.uint8], path: Path) -> None:
+def _draw_path(
+    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
+    bgr_image: NDArray[np.uint8],
+    path: Path | CdrPath,
+) -> None:
     import cv2
 
     points = []
     for pose in path.poses:
-        grid_coord = occupancy_grid.world_to_grid([pose.x, pose.y, pose.z])
-        pixel_x = int(grid_coord.x)
-        pixel_y = int(grid_coord.y)
+        position = pose.pose.position if isinstance(pose, CdrPoseStamped) else pose.position
+        x, y = _grid_coordinates(occupancy_grid, position)
+        pixel_x = int(x)
+        pixel_y = int(y)
 
-        if 0 <= pixel_x < occupancy_grid.width and 0 <= pixel_y < occupancy_grid.height:
+        if 0 <= pixel_x < occupancy_grid.info.width and 0 <= pixel_y < occupancy_grid.info.height:
             points.append((pixel_x, pixel_y))
 
     if len(points) > 1:
@@ -109,7 +137,8 @@ def turbo_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
 
     # Map grid values to lookup indices
     # Values: -1 -> 255, 0-100 -> 0-100, clipped to valid range
-    lookup_indices = np.where(grid == -1, 255, np.clip(grid, 0, 100)).astype(np.uint8)
+    lookup_indices = np.clip(grid, 0, 100).astype(np.uint8)
+    lookup_indices[grid == -1] = 255
 
     # Create BGR image using lookup table (vectorized operation)
     return color_lut[lookup_indices]
@@ -140,7 +169,7 @@ def _interpolate_turbo(t: float) -> tuple[int, int, int]:
 
 
 def generate_rgba_texture(
-    grid: OccupancyGrid,
+    grid: _GridT,
     colormap: str | None = None,
     opacity: float = 1.0,
     cost_range: tuple[int, int] | None = None,
@@ -159,6 +188,7 @@ def generate_rgba_texture(
         RGBA numpy array of shape (height, width, 4).
         Note: NOT flipped - caller handles orientation.
     """
+    cells = _grid_values(grid)
     if background is not None:
         bg = background.lstrip("#")
         bg_rgb = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
@@ -166,18 +196,18 @@ def generate_rgba_texture(
         bg_rgb = np.array([0, 0, 0], dtype=np.float32)
 
     if cost_range is not None:
-        in_range_mask = (grid.grid >= cost_range[0]) & (grid.grid <= cost_range[1])
+        in_range_mask = (cells >= cost_range[0]) & (cells <= cost_range[1])
     else:
         in_range_mask = None
 
     if colormap is not None:
         cmap = plt.get_cmap(colormap)
-        grid_float = grid.grid.astype(np.float32)
+        grid_float = cells.astype(np.float32)
 
-        vis = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
+        vis = np.zeros((grid.info.height, grid.info.width, 4), dtype=np.uint8)
 
-        free_mask = grid.grid == 0
-        occupied_mask = grid.grid > 0
+        free_mask = cells == 0
+        occupied_mask = cells > 0
 
         if np.any(free_mask):
             fg = np.array(cmap(0.0)[:3]) * 255
@@ -193,21 +223,21 @@ def generate_rgba_texture(
             vis[occupied_mask, :3] = blended.astype(np.uint8)
             vis[occupied_mask, 3] = 255
 
-        unknown_mask = grid.grid == -1
+        unknown_mask = cells == -1
         vis[unknown_mask] = 0
 
         if in_range_mask is not None:
-            out_of_range = ~in_range_mask & (grid.grid != -1)
+            out_of_range = ~in_range_mask & (cells != -1)
             vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
             vis[out_of_range, 3] = 255
 
         return vis
 
     # Default: Foxglove-style coloring
-    vis = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
+    vis = np.zeros((grid.info.height, grid.info.width, 4), dtype=np.uint8)
 
-    free_mask = grid.grid == 0
-    occupied_mask = grid.grid > 0
+    free_mask = cells == 0
+    occupied_mask = cells > 0
 
     fg_free = np.array([72, 73, 129], dtype=np.float32)
     blended_free = fg_free * opacity + bg_rgb * (1 - opacity)
@@ -215,18 +245,18 @@ def generate_rgba_texture(
     vis[free_mask, 3] = 255
 
     if np.any(occupied_mask):
-        costs = grid.grid[occupied_mask].astype(np.float32)
+        costs = cells[occupied_mask].astype(np.float32)
         factor = (1 - costs / 100).clip(0, 1)
         fg_occ = np.column_stack([72 * factor, 73 * factor, 129 * factor])
         blended_occ = fg_occ * opacity + bg_rgb * (1 - opacity)
         vis[occupied_mask, :3] = blended_occ.astype(np.uint8)
         vis[occupied_mask, 3] = 255
 
-    unknown_mask = grid.grid == -1
+    unknown_mask = cells == -1
     vis[unknown_mask] = 0
 
     if in_range_mask is not None:
-        out_of_range = ~in_range_mask & (grid.grid != -1)
+        out_of_range = ~in_range_mask & (cells != -1)
         vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
         vis[out_of_range, 3] = 255
 

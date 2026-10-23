@@ -25,13 +25,15 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.message_utils.time import NANOSECONDS_PER_SECOND, to_nanoseconds
+from dimos.messages.nav_msgs.msg import Path as CdrPath
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.base import Embodiment
 
 _FAN_EPS = 1e-6  # segment shorter than this is a rotation, not a move
 
 
-def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | None:
+def decode_ceilings(path: Path | CdrPath, lo: float, hi: float) -> NDArray[np.float64] | None:
     """Per-waypoint speed ceiling (m/s) from the stamps; None if unstamped.
 
     Unstamped = flat or non-monotone ts. Fan segments inherit the previous
@@ -40,11 +42,15 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | N
     n = len(path.poses)
     if n < 2:
         return None
-    ts = np.array([p.ts for p in path.poses])
-    dt = np.diff(ts)
+    if isinstance(path, CdrPath):
+        stamps = np.asarray([to_nanoseconds(p.header.stamp) for p in path.poses], dtype=np.int64)
+        dt = np.diff(stamps).astype(np.float64) / NANOSECONDS_PER_SECOND
+        xy = np.asarray([[p.pose.position.x, p.pose.position.y] for p in path.poses])
+    else:
+        dt = np.diff(np.asarray([p.ts for p in path.poses]))
+        xy = np.asarray([[p.position.x, p.position.y] for p in path.poses])
     if np.any(dt < 0) or not np.any(dt > 0):
         return None
-    xy = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
     ds = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     # a config is free to set min above max; ordering here rather than
     # trusting the caller keeps the clip a clip

@@ -17,8 +17,13 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -56,7 +61,9 @@ class PackedVoxels:
         return (vox + np.float32(0.5)) * np.float32(self._voxel_size)
 
     def add_frame(self, frame: PointCloud2) -> None:
-        pts = frame.points_f32()
+        self.add_points(frame.points_f32(), frame.ts)
+
+    def add_points(self, pts: NDArray[np.float32], timestamp: float | None = None) -> None:
         if not len(pts):
             return
         new = np.unique(self._pack(pts))
@@ -84,17 +91,25 @@ class PackedVoxels:
             pos, new = pos[fresh], new[fresh]
         self._keys = np.insert(keys, pos, new)
         if self.stamped:
-            self._ts = np.insert(self._ts, pos, frame.ts)
+            self._ts = np.insert(self._ts, pos, np.nan if timestamp is None else timestamp)
             self._raw = np.insert(self._raw, pos, new)
 
-    def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
+    def reproject(self, place: Callable[[CdrCloud], CdrCloud]) -> None:
         """Move every voxel to where `place` puts its stamped original position."""
         if not self.stamped:
             raise RuntimeError("reproject needs a stamped store")
         if not len(self._keys):
             return
         keys = self._pack(
-            place(PointCloud2.from_numpy(self._centers(self._raw), stamps=self._ts)).points_f32()
+            pointcloud_xyz(
+                place(
+                    pointcloud_from_xyz(
+                        self._centers(self._raw),
+                        header=Header(stamp=time_from_seconds(0), frame_id=""),
+                        stamps=self._ts,
+                    )
+                )
+            )
         )
         order = np.lexsort((-self._ts, keys))  # by key, latest stamp first
         keys, ts, raw = keys[order], self._ts[order], self._raw[order]

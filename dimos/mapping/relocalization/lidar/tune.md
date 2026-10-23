@@ -30,14 +30,14 @@ Given that we know coordinates from which lidar frame was pulled, when relocaliz
 
 The shipped pair was built like this.
 
-Both files are available in LFS so this is only for reproducing them:
+The historical pair is available in LFS. This proposal requires a canonical CDR recording and a regenerated `.pc2.cdr` premap; legacy typed recordings and `.pc2.lcm` maps are not decoded automatically. Use local converted or regenerated inputs for this study. Rebuild the map with:
 
     dimos map global recording_go2_mid360_2026-05-29_4-45pm-PST_corrected \
       --lidar fastlio_lidar --voxel 0.005 --seek 400 --export --no-gui
 
 `--seek 400` does the split: the premap is the walk after 400 s, and probes
 come from before it. `--export` implies `--pgo` and writes
-`./<dataset>.pc2.lcm`. The walk is a loop, so the two halves still cover some
+`./<dataset>.pc2.cdr`. The walk is a loop, so the two halves still cover some
 of the same ground. Without that they would never match.
 
 Register the pair in `DATASETS`:
@@ -45,7 +45,7 @@ Register the pair in `DATASETS`:
 ```python skip
 "go2-sf-area1": Dataset(
     recording="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.db",
-    premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.lcm",
+    premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.cdr",
     window=(0.0, 400.0),   # premap was built from the scans after 400 s so we use lidar frames before then
 ),
 ```

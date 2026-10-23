@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
 
-from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
@@ -24,11 +24,17 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils.geometry import point_distance, yaw
+from dimos.message_utils.occupancy import (
+    CostValues,
+    occupancy_cell_value,
+    occupancy_view,
+    world_to_grid,
+)
+from dimos.message_utils.time import time_from_nanoseconds
+from dimos.messages.geometry_msgs.msg import Point, PoseStamped, Twist
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage
@@ -172,11 +178,21 @@ class GlobalPlanner(Resource):
                 self._goal_reached = arrived
                 self._replan_limiter.reset()
 
-        self.path.on_next(Path())
+        self.path.on_next(self._empty_path())
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
-            self.goal_reached.on_next(Bool(arrived))
+            self.goal_reached.on_next(Bool(data=arrived))
+
+    def _empty_path(self) -> Path:
+        with self._lock:
+            source = self._current_goal or self._current_odom
+        header = (
+            deepcopy(source.header)
+            if source is not None
+            else Header(frame_id="world", stamp=time_from_nanoseconds(0))
+        )
+        return Path(header=header, poses=[])
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -230,9 +246,12 @@ class GlobalPlanner(Resource):
                 continue
 
             if (
-                current_goal.position.distance(current_odom.position) < self._goal_tolerance
+                point_distance(current_goal.pose.position, current_odom.pose.position)
+                < self._goal_tolerance
                 and abs(
-                    angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+                    angle_diff(
+                        yaw(current_goal.pose.orientation), yaw(current_odom.pose.orientation)
+                    )
                 )
                 < self._rotation_tolerance
             ):
@@ -277,7 +296,7 @@ class GlobalPlanner(Resource):
     def _handle_stop_message(self, stop_message: StopMessage) -> None:
         # Note, this runs in the monitoring thread.
 
-        self.path.on_next(Path())
+        self.path.on_next(self._empty_path())
 
         if stop_message == "arrived":
             logger.info("Arrived at goal.")
@@ -302,7 +321,10 @@ class GlobalPlanner(Resource):
         assert current_odom is not None
         assert current_goal is not None
 
-        if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
+        if (
+            point_distance(current_goal.pose.position, current_odom.pose.position)
+            < self._replan_goal_tolerance
+        ):
             self.cancel_goal(arrived=True)
             return
 
@@ -310,7 +332,7 @@ class GlobalPlanner(Resource):
             self.cancel_goal()
             return
 
-        if not self._replan_limiter.can_retry(current_odom.position):
+        if not self._replan_limiter.can_retry(current_odom.pose.position):
             self.cancel_goal()
             return
 
@@ -331,16 +353,18 @@ class GlobalPlanner(Resource):
             logger.warning("Cannot handle goal request: missing odometry.")
             return
 
-        safe_goal = self._find_safe_goal(current_goal.position)
+        safe_goal = self._find_safe_goal(current_goal.pose.position)
 
         if not safe_goal:
             logger.warning(
-                "No safe goal found.", x=round(current_goal.x, 3), y=round(current_goal.y, 3)
+                "No safe goal found.",
+                x=round(current_goal.pose.position.x, 3),
+                y=round(current_goal.pose.position.y, 3),
             )
             self.cancel_goal()
             return
 
-        path = self._find_wide_path(safe_goal, current_odom.position)
+        path = self._find_wide_path(safe_goal, current_odom.pose.position)
 
         if not path:
             logger.warning(
@@ -349,18 +373,18 @@ class GlobalPlanner(Resource):
             self.cancel_goal()
             return
 
-        resampled_path = smooth_resample_path(path, current_goal, 0.1)
+        resampled_path = smooth_resample_path(path, current_goal.pose, 0.1)
 
         self.path.on_next(resampled_path)
 
         self._local_planner.start_planning(resampled_path)
 
-    def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
+    def _find_wide_path(self, goal: Point, robot_pos: Point) -> Path | None:
         #        sizes_to_try: list[float] = [2.2, 1.7, 1.3, 1]
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
-            distance = robot_pos.distance(goal)
+            distance = point_distance(robot_pos, goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
             self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
@@ -372,7 +396,7 @@ class GlobalPlanner(Resource):
         return None
 
     def _clear_robot_footprint(
-        self, costmap: OccupancyGrid, binary: OccupancyGrid, robot_pos: Vector3
+        self, costmap: OccupancyGrid, binary: OccupancyGrid, robot_pos: Point
     ) -> None:
         """Make the cells under the robot passable for planning.
 
@@ -385,32 +409,35 @@ class GlobalPlanner(Resource):
         the raw binary costmap (actually observed obstacle points) stay
         blocked.
         """
-        if binary.grid.shape != costmap.grid.shape or binary.origin != costmap.origin:
+        binary_values = occupancy_view(binary)
+        cost_values = occupancy_view(costmap).copy()
+        if binary_values.shape != cost_values.shape or binary.info.origin != costmap.info.origin:
             # A newer map update raced in between building the two grids;
             # skip clearing rather than misalign cells.
             return
 
-        center = costmap.world_to_grid(robot_pos)
-        center_x, center_y = int(center.x), int(center.y)
-        cells = int(self._robot_rotation_diameter / 2 / costmap.resolution) + 1
+        center = world_to_grid(costmap, robot_pos)
+        center_x, center_y = int(center[0]), int(center[1])
+        cells = int(self._robot_rotation_diameter / 2 / costmap.info.resolution) + 1
 
-        height, width = costmap.grid.shape
+        height, width = cost_values.shape
         y0, y1 = max(0, center_y - cells), min(height, center_y + cells + 1)
         x0, x1 = max(0, center_x - cells), min(width, center_x + cells + 1)
         if y0 >= y1 or x0 >= x1:
             return
 
-        region = costmap.grid[y0:y1, x0:x1]
-        binary_region = binary.grid[y0:y1, x0:x1]
+        region = cost_values[y0:y1, x0:x1]
+        binary_region = binary_values[y0:y1, x0:x1]
         rows, columns = np.ogrid[y0:y1, x0:x1]
         disc = (rows - center_y) ** 2 + (columns - center_x) ** 2 <= cells**2
         clearable = disc & (region >= CostValues.OCCUPIED) & (binary_region < CostValues.OCCUPIED)
         region[clearable] = CostValues.OCCUPIED - 1
+        costmap.data = cost_values.reshape(-1)
 
-    def _find_safe_goal(self, goal: Vector3) -> Vector3 | None:
+    def _find_safe_goal(self, goal: Point) -> Point | None:
         costmap = self._navigation_map.binary_costmap
 
-        if costmap.cell_value(goal) == CostValues.UNKNOWN:
+        if occupancy_cell_value(costmap, goal) == CostValues.UNKNOWN:
             return goal
 
         safe_goal = find_safe_goal(
@@ -426,7 +453,7 @@ class GlobalPlanner(Resource):
             logger.warning("No safe goal found near requested target.")
             return None
 
-        goals_distance = safe_goal.distance(goal)
+        goals_distance = point_distance(safe_goal, goal)
         if goals_distance > 0.2:
             logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
 

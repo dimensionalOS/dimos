@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -74,7 +75,18 @@ class O3dVoxels:
         if pcd.is_empty():
             return
 
-        pts = pcd.point["positions"].to(self._dev, o3c.float32)
+        self._insert_points(pcd.point["positions"].to(self._dev, o3c.float32))
+
+    def add_points(self, points: NDArray[np.float32], _timestamp: float | None = None) -> None:
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
+        if not len(points):
+            return
+        self._insert_points(o3c.Tensor(points, dtype=o3c.float32, device=self._dev))
+
+    def _insert_points(self, pts: o3c.Tensor) -> None:
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         vox = (pts / self._voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
 
@@ -108,7 +120,7 @@ class O3dVoxels:
             value_element_shapes=[o3c.SizeVector([1])],
             device=self._dev,
         )
-        dummy_vals = o3c.Tensor.zeros((xy_keys.shape[0], 1), o3c.uint8, self._dev)
+        dummy_vals = o3c.Tensor.zeros(o3c.SizeVector([xy_keys.shape[0], 1]), o3c.uint8, self._dev)
         xy_hashmap.insert(xy_keys, dummy_vals)
 
         active_indices = self._hashmap.active_buf_indices()
@@ -142,5 +154,6 @@ class O3dVoxels:
 
     def dispose(self) -> None:
         """Free GPU resources."""
-        self.vbg = None
-        self._hashmap = None
+        if self.vbg is not None:
+            self.vbg = None
+            del self._hashmap

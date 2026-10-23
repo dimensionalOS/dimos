@@ -41,7 +41,7 @@ from dimos.memory.utils.progress import progress
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.sensor_msgs.msg import PointCloud2
 
 TIMELINE = "ts"
 
@@ -64,6 +64,8 @@ def _log_clouds(
     """
     import rerun as rr
 
+    from dimos.visualization.rerun.cdr import cloud_archetype
+
     n = total if total is not None else stream.count()
     with progress(n, label) as bar:
         for obs in stream:
@@ -71,7 +73,13 @@ def _log_clouds(
             rr.set_time(TIMELINE, timestamp=obs.ts)
             rr.log(
                 entity,
-                obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+                cloud_archetype(
+                    obs.data,
+                    voxel_size=voxel,
+                    mode=point_mode,
+                    bottom_cutoff=bottom_cutoff,
+                    height_colors=True,
+                ),
             )
 
 
@@ -176,14 +184,14 @@ def main(
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     import rerun as rr
 
+    from dimos.mapping.cli.map import _camera_info_static
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import throttle
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.nav_msgs.Odometry import Odometry
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-    from dimos.robot.unitree.go2.connection import _camera_info_static
+    from dimos.messages.geometry_msgs.msg import PoseStamped
+    from dimos.messages.nav_msgs.msg import Odometry
+    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, image_archetype
 
     src_path = resolve_dataset(dataset)
     store = open_store(src_path)
@@ -201,11 +209,10 @@ def main(
 
         rr.init("dimos map_rrd", recording_id=src_path.stem)
         rr.save(str(out))
-        register_colormap_annotation("turbo")
 
         # Static pinhole on the camera entity; per-frame Transform3D goes on the
         # same entity. Image is the child so it projects through the pinhole.
-        pinhole = cam_info.to_rerun()
+        pinhole = camera_pinhole(cam_info)
         assert not isinstance(pinhole, list)
         rr.log("world/camera", pinhole, static=True)
 
@@ -268,8 +275,12 @@ def main(
                     ).last()
                     rr.log(
                         f"world/{name}_map",
-                        final.data.to_rerun(
-                            voxel_size=voxel / 4, mode=point_mode, bottom_cutoff=bottom_cutoff
+                        cloud_archetype(
+                            final.data,
+                            voxel_size=voxel / 4,
+                            mode=point_mode,
+                            bottom_cutoff=bottom_cutoff,
+                            height_colors=True,
                         ),
                         static=True,
                     )
@@ -339,7 +350,7 @@ def main(
                             translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
                         ),
                     )
-                rr.log("world/camera/image", img_obs.data.to_rerun())
+                rr.log("world/camera/image", image_archetype(img_obs.data))
 
     print(f"wrote {out}")
     if no_gui:

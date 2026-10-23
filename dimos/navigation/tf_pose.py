@@ -19,10 +19,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from dimos.message_utils.geometry import pose_from_transform
+from dimos.message_utils.time import to_nanoseconds
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
     from dimos.protocol.tf.tf import TFLookup
 
 
@@ -48,7 +51,7 @@ class TfPose:
         # The stamp last seen and when it was first seen, on OUR clock: the
         # edge's stamp is the robot's clock, which need not be ours, and what
         # the deadman asks is how long since tf last moved.
-        self._seen: tuple[float, float] | None = None
+        self._seen: tuple[int, float] | None = None
 
     def get(self, world_frame: str) -> PoseStamped | None:
         now = self._clock()
@@ -59,8 +62,9 @@ class TfPose:
             self._next_lookup = now + self.RETRY_PERIOD_S
             self._seen = None
             return None
-        if self._seen is None or self._seen[0] != tf.ts:
-            self._seen = (tf.ts, now)
+        stamp = to_nanoseconds(tf.header.stamp)
+        if self._seen is None or self._seen[0] != stamp:
+            self._seen = (stamp, now)
         if now - self._seen[1] > self.max_age_s:
             return None
-        return tf.to_pose(ts=tf.ts)
+        return pose_from_transform(tf)

@@ -21,9 +21,11 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
+import rerun as rr
 
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.pointcloud import pointcloud_view, pointcloud_xyz
+from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:
@@ -31,8 +33,6 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
 
     from dimos.visualization.rerun.bridge import RerunMulti, VisualOverride
-
-# rerun is imported inside the renderers: it is heavy and only viewers load it.
 
 SURFACE_MAP_ENTITY = "world/surface_map"
 NODES_ENTITY = "world/nodes"
@@ -61,8 +61,6 @@ def surface_points(
     clearance_clamp_m: float,
 ) -> Archetype:
     """Floor cells colored by wall clearance, dropping the ones the robot cannot fit on."""
-    import rerun as rr
-
     passable = clearance >= wall_clearance_m
     pts, clearance = pts[passable], clearance[passable]
     return rr.Points3D(
@@ -74,7 +72,7 @@ def surface_points(
 
 @keyed_by_seq
 def render_surface_region(
-    msg: PointCloud2,
+    msg: PointCloudRegion,
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float,
@@ -85,24 +83,32 @@ def render_surface_region(
     Clearance rides the intensity channel, flat blue without it. Points outside z_band
     (world frame) are dropped, to show one storey of a multi-storey map.
     """
-    seq = msg.seq
-    pts = msg.points_f32()
-    clearance = msg.intensities_f32()
+    cloud = msg.cloud
+    pts = np.asarray(pointcloud_xyz(cloud), dtype=np.float32)
+    records = pointcloud_view(cloud)
+    clearance = (
+        np.asarray(records["intensity"].ravel(), dtype=np.float32)
+        if "intensity" in (records.dtype.names or ())
+        else None
+    )
+    cell: Archetype
     if clearance is None or len(clearance) != len(pts):
         if z_band is not None:
-            msg = msg.filter_by_height(min_height=z_band[0], max_height=z_band[1])
-        cell = msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
+            pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])]
+        cell = (
+            rr.Points3D(pts, colors=[40, 75, 130], radii=voxel_size / 2)
+            if len(pts)
+            else rr.Points3D([])
+        )
     else:
         if z_band is not None:
             keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
             pts, clearance = pts[keep], clearance[keep]
         cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
-    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=True)]
+    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, msg.region_id), cell, static=True)]
 
 
 def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
-    import rerun as rr
-
     if len(pts) == 0:
         return rr.Points3D([])
     lifted = pts.copy()
@@ -111,27 +117,51 @@ def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
-    return graph_nodes(msg.points_f32())
+    return graph_nodes(np.asarray(pointcloud_xyz(msg), dtype=np.float32))
+
+
+def _weighted_lines(strips: NDArray[np.float32], weights: NDArray[np.float64]) -> Archetype:
+    if len(strips) == 0:
+        return rr.LineStrips3D([])
+    positions = strips.astype(np.float32, copy=True)
+    positions[:, :, 2] += GRAPH_Z_LIFT
+    log_weights = np.log10(np.maximum(weights, 1e-6))
+    low, high = float(log_weights.min()), float(log_weights.max())
+    norm = (log_weights - low) / (high - low) if high > low else np.zeros_like(log_weights)
+    red = (255 * norm).astype(np.uint8)
+    green = (255 * (1 - norm)).astype(np.uint8)
+    colors = np.column_stack([red, green, np.full_like(red, 60), np.full_like(red, 220)])
+    return rr.LineStrips3D(positions, colors=colors, radii=0.01)
 
 
 def graph_edges(edges: NDArray[np.float32]) -> Archetype:
-    """Edges as ``[x0, y0, z0, x1, y1, z1, cost]`` rows, colored green to red by cost."""
-    segments = LineSegments3D(
-        segments=edges[:, :6].reshape(-1, 2, 3) if len(edges) else None,
-        weights=edges[:, 6] if len(edges) else None,
+    """Edges as [x0,y0,z0,x1,y1,z1,cost] rows, colored green to red by cost."""
+    return _weighted_lines(
+        edges[:, :6].reshape(-1, 2, 3), np.asarray(edges[:, 6], dtype=np.float64)
     )
-    return render_node_edges(segments)
 
 
 def render_node_edges(msg: LineSegments3D) -> Archetype:
-    return msg.to_rerun(z_offset=GRAPH_Z_LIFT, radii=0.01)
+    points = np.array(
+        [
+            [[edge.start.x, edge.start.y, edge.start.z], [edge.end.x, edge.end.y, edge.end.z]]
+            for edge in msg.segments
+        ],
+        dtype=np.float32,
+    ).reshape(-1, 2, 3)
+    weights = np.array([edge.weight for edge in msg.segments], dtype=np.float64)
+    return _weighted_lines(points, weights)
 
 
 @keyed_by_seq
-def render_edge_region(msg: LineSegments3D) -> RerunMulti:
-    """One cell of the edge corridors on its own static entity."""
+def render_edge_region(msg: LineSegments3DRegion) -> RerunMulti:
+    """One keyed cell of weighted edge corridors, including empty clears."""
     return [
-        RerunEntry(region_entity(NODE_EDGES_ENTITY, msg.seq), render_node_edges(msg), static=True)
+        RerunEntry(
+            region_entity(NODE_EDGES_ENTITY, msg.region_id),
+            render_node_edges(msg.lines),
+            static=True,
+        )
     ]
 
 

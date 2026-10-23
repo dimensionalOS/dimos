@@ -18,8 +18,8 @@
 
 use std::time::Instant;
 
-use dimos_module::nalgebra::{Isometry3, Translation3};
-use dimos_module::{Tf, Transform};
+use dimos_module::nalgebra::Isometry3;
+use dimos_module::{Tf, TransformStamped};
 
 use crate::module::msg::{yaw_of, State};
 
@@ -35,7 +35,7 @@ pub struct BasePose {
 pub struct PoseWatch {
     max_age_s: f64,
     /// The stamp last seen, and when it was first seen.
-    seen: Option<(f64, Instant)>,
+    seen: Option<(i64, Instant)>,
 }
 
 impl PoseWatch {
@@ -47,13 +47,26 @@ impl PoseWatch {
     }
 
     pub fn get(&mut self, tf: &Tf, world: &str, base: &str, now: Instant) -> Option<BasePose> {
-        self.observe(tf.get_latest(world, base).map(edge_of), now)
+        self.observe_nanoseconds(tf.get_latest(world, base).and_then(edge_of), now)
     }
 
     /// The tick's pose off what tf handed back, as `(stamp, transform)`.
     pub fn observe(
         &mut self,
         edge: Option<(f64, Isometry3<f64>)>,
+        now: Instant,
+    ) -> Option<BasePose> {
+        let edge = edge.and_then(|(seconds, iso)| {
+            let ns = (seconds * 1_000_000_000.).round();
+            (ns.is_finite() && ns >= i64::MIN as f64 && ns < i64::MAX as f64)
+                .then_some((ns as i64, iso))
+        });
+        self.observe_nanoseconds(edge, now)
+    }
+
+    pub fn observe_nanoseconds(
+        &mut self,
+        edge: Option<(i64, Isometry3<f64>)>,
         now: Instant,
     ) -> Option<BasePose> {
         let Some((ts, iso)) = edge else {
@@ -77,28 +90,30 @@ impl PoseWatch {
     }
 }
 
-fn edge_of(t: Transform) -> (f64, Isometry3<f64>) {
-    (
-        t.ts,
-        Isometry3::from_parts(Translation3::from(t.translation()), t.rotation()),
-    )
+fn edge_of(t: TransformStamped) -> Option<(i64, Isometry3<f64>)> {
+    Some((
+        dimos_module::tf::nanoseconds(&t.header.stamp).ok()?,
+        dimos_module::tf::isometry(&t).ok()?,
+    ))
 }
 
 pub fn state_of(iso: &Isometry3<f64>) -> State {
     let q = iso.rotation.quaternion();
-    let yaw = yaw_of(&lcm_msgs::geometry_msgs::Quaternion {
-        x: q.i,
-        y: q.j,
-        z: q.k,
-        w: q.w,
-    });
+    let yaw = yaw_of(
+        &dimos_generated_messages::geometry_msgs::msg::quaternion::Quaternion {
+            x: q.i,
+            y: q.j,
+            z: q.k,
+            w: q.w,
+        },
+    );
     [iso.translation.x, iso.translation.y, yaw]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dimos_module::nalgebra::UnitQuaternion;
+    use dimos_module::nalgebra::{Translation3, UnitQuaternion};
     use std::time::Duration;
 
     fn body_at(x: f64, yaw: f64, ts: f64) -> Option<(f64, Isometry3<f64>)> {
@@ -167,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn the_yaw_round_trips_through_the_lcm_quaternion() {
+    fn the_yaw_round_trips_through_the_generated_quaternion() {
         for yaw in [-3.0, -1.0, 0.0, 0.7, 3.0] {
             let iso = Isometry3::from_parts(
                 Translation3::new(0.0, 0.0, 0.0),
@@ -176,5 +191,32 @@ mod tests {
             let got = state_of(&iso);
             assert!((got[2] - yaw).abs() < 1e-12, "yaw {yaw} -> {got:?}");
         }
+    }
+    #[test]
+    fn epoch_nanosecond_progress_refreshes_the_existing_deadman() {
+        let mut watch = PoseWatch::new(2.5);
+        let now = Instant::now();
+        let ns = 1_700_000_000_123_456_789;
+        let first = dimos_module::tf::from_isometry(
+            "world",
+            "base",
+            dimos_module::tf::time_from_nanoseconds(ns).unwrap(),
+            Isometry3::identity(),
+        );
+        assert!(watch
+            .observe_nanoseconds(edge_of(first.clone()), now)
+            .is_some());
+        assert!(watch
+            .observe_nanoseconds(edge_of(first), now + Duration::from_secs(3))
+            .is_none());
+        let fresh = dimos_module::tf::from_isometry(
+            "world",
+            "base",
+            dimos_module::tf::time_from_nanoseconds(ns + 1).unwrap(),
+            Isometry3::identity(),
+        );
+        assert!(watch
+            .observe_nanoseconds(edge_of(fresh), now + Duration::from_secs(3))
+            .is_some());
     }
 }

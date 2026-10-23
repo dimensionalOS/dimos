@@ -20,8 +20,13 @@ import pytest
 
 pytest.importorskip("dimos_mls_planner")
 
+from dimos_cdrgen.registry import encode
+
 from dimos.memory.type.observation import Observation
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.global_planner.mls_planner.transformer import MLSPlan
 
 
@@ -35,7 +40,9 @@ def _obs(
         ts=0.0,
         pose=pose,
         tags={"region_bounds": region_bounds},
-        _data=PointCloud2.from_numpy(points),
+        _data=pointcloud_from_xyz(
+            points, header=Header(frame_id="world", stamp=time_from_nanoseconds(0))
+        ),
     )
 
 
@@ -70,7 +77,9 @@ def test_poseless_obs_is_skipped() -> None:
         ts=0.0,
         pose=None,
         tags={"region_bounds": (0.0, 0.0, 5.0, -1.0, 2.0)},
-        _data=PointCloud2.from_numpy(points),
+        _data=pointcloud_from_xyz(
+            points, header=Header(frame_id="world", stamp=time_from_nanoseconds(0))
+        ),
     )
     posed = _obs(points, pose=(-2.0, -2.0, 1.0), region_bounds=(0.0, 0.0, 5.0, -1.0, 2.0))
 
@@ -106,3 +115,18 @@ def test_no_route_yields_empty_path_with_planned_false() -> None:
 
     assert out.tags["planned"] is False
     assert out.data.poses == []
+
+
+@pytest.mark.parametrize("stamp_ns", [-1, 0, 1700000000123456789])
+def test_generated_path_preserves_input_header_nanoseconds_without_aliasing(stamp_ns):
+    obs = _obs(_flat_floor(), pose=(-2.0, -2.0, 1.0), region_bounds=(0.0, 0.0, 5.0, -1.0, 2.0))
+    obs.data.header.stamp = time_from_nanoseconds(stamp_ns)
+    before = encode(obs.data)
+    [result] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
+    assert len(result.data.poses) >= 2
+    assert to_nanoseconds(result.data.header.stamp) == stamp_ns
+    assert all(p.header == result.data.header for p in result.data.poses)
+    result.data.header.frame_id = "changed"
+    assert obs.data.header.frame_id == "world"
+    assert result.data.poses[0].header.frame_id == "world"
+    assert encode(obs.data) == before

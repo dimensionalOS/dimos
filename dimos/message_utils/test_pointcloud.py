@@ -32,6 +32,7 @@ from dimos.message_utils.pointcloud import (
     pointcloud_rgb,
     pointcloud_stamps,
     pointcloud_view,
+    pointcloud_with_xyz,
     pointcloud_xyz,
     select_points,
     transform_cloud,
@@ -460,3 +461,29 @@ def test_per_point_stamps_reject_wrong_count_or_nonfinite_values(stamps):
             header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             stamps=stamps,
         )
+
+
+def test_per_point_coordinate_replacement_keeps_organized_records(padded_cloud):
+    padded_cloud.header.stamp = Time(sec=1700000000, nanosec=123456789)
+    before = cdr_encode(padded_cloud)
+    result = pointcloud_with_xyz(
+        padded_cloud, pointcloud_xyz(padded_cloud) + np.array([0.5, -1, 2])
+    )
+    np.testing.assert_array_equal(
+        pointcloud_view(result)["tags"], pointcloud_view(padded_cloud)["tags"]
+    )
+    assert result.header == padded_cloud.header
+    assert (result.height, result.width, result.row_step) == (2, 2, 64)
+    assert result.fields == padded_cloud.fields and result.is_bigendian == padded_cloud.is_bigendian
+    np.testing.assert_allclose(
+        pointcloud_xyz(result), [[1.5, 1, 5], [2.5, 3, 8], [3.5, 5, 11], [4.5, 7, 14]]
+    )
+    assert bytes(result.data)[48:64] == bytes(padded_cloud.data)[48:64]
+    assert bytes(result.data)[112:128] == bytes(padded_cloud.data)[112:128]
+    assert cdr_encode(padded_cloud) == before
+
+
+@pytest.mark.parametrize("coordinates", [np.zeros((3, 3)), np.zeros((2, 2, 3))])
+def test_per_point_coordinate_replacement_rejects_wrong_count(padded_cloud, coordinates):
+    with pytest.raises(ValueError, match="shape"):
+        pointcloud_with_xyz(padded_cloud, coordinates)

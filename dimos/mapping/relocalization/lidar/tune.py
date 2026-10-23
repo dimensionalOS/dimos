@@ -34,11 +34,13 @@ you already know which stretch built the premap.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import lru_cache
 from itertools import islice
 import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from dimos_cdrgen.registry import decode
 import numpy as np
 import typer
 
@@ -49,8 +51,17 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.lidar.replay import main as replay_main
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils.pointcloud import (
+    pointcloud_from_xyz,
+    pointcloud_to_open3d,
+    pointcloud_with_xyz,
+    pointcloud_xyz,
+)
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
+from dimos.visualization.rerun.cdr import cloud_archetype
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -190,7 +201,7 @@ DATASETS = {
     # so probes come from before that.
     "go2-sf-area1": Dataset(
         recording="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.db",
-        premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.lcm",
+        premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.cdr",
         # Runs the full stretch before the premap's own scans: 0-250 s is
         # ground the loop revisits after 400 s and the premap therefore
         # holds, while 250-400 s is a one-time excursion it never saw.
@@ -283,7 +294,7 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
     from dimos.memory.store.sqlite import SqliteStore
 
     ds = DATASETS[name]
-    premap = PointCloud2.lcm_decode(get_data(ds.premap).read_bytes())
+    premap = decode(get_data(ds.premap).read_bytes(), PointCloud2)
     store = SqliteStore(path=str(get_data(ds.recording)), must_exist=True)
     store.start()
     return premap, store
@@ -293,13 +304,13 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
 def premap_index(name: str, voxel: float = 0.2) -> Any:
     """The premap thinned for nearest-neighbour queries, built once."""
     premap, _ = fixtures(name)
-    return premap.pointcloud.voxel_down_sample(voxel)
+    return pointcloud_to_open3d(premap).voxel_down_sample(voxel)
 
 
 def premap_distance(name: str, points: np.ndarray) -> np.ndarray:
     """Per-point distance from ``points`` to the nearest premap point."""
-    cloud = PointCloud2.from_numpy(points, frame_id="world", timestamp=0.0)
-    return np.asarray(cloud.pointcloud.compute_point_cloud_distance(premap_index(name)))
+    cloud = pointcloud_from_xyz(points, header=Header(frame_id="world", stamp=time_from_seconds(0)))
+    return np.asarray(pointcloud_to_open3d(cloud).compute_point_cloud_distance(premap_index(name)))
 
 
 def accumulate(
@@ -328,7 +339,7 @@ def accumulate(
 
     mapper = VoxelRayMapper(voxel_size=voxel, max_range=max_range, emit_every=1)
     used = 0
-    last_ts = t0 + start
+    last_header = Header(frame_id="world", stamp=time_from_seconds(t0 + start))
     # A cloud with no pose is skipped, not counted: n_frames is a number of
     # registered scans, which is what the window question is about.
     for obs in islice(frames, n_frames * 4):
@@ -337,15 +348,16 @@ def accumulate(
         if obs.pose_tuple is None:
             continue
         x, y, z = obs.pose_tuple[:3]
-        mapper.add_frame_world(obs.data.points_f32(), (x, y, z))
+        mapper.add_frame_world(np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), (x, y, z))
         used += 1
-        last_ts = obs.ts
+        last_header = deepcopy(obs.data.header)
+        last_header.frame_id = "world"
         if used == n_frames:
             break
     if used < n_frames:
         raise ValueError(f"only {used} of {n_frames} scans had a pose from {start:.0f}s")
 
-    return PointCloud2.from_numpy(mapper.global_map(), frame_id="world", timestamp=last_ts)
+    return pointcloud_from_xyz(mapper.global_map(), header=last_header)
 
 
 @lru_cache(maxsize=512)
@@ -386,7 +398,7 @@ def coverage(name: str, cloud: PointCloud2) -> float:
     whether the aligner answered it: a probe standing where the premap has
     no points cannot be placed by any parameter setting.
     """
-    distances = premap_distance(name, np.asarray(cloud.pointcloud.points))
+    distances = premap_distance(name, pointcloud_xyz(cloud))
     return float((distances < COVERAGE_TOL_M).mean())
 
 
@@ -467,7 +479,7 @@ def identity_error(T: np.ndarray) -> tuple[float, float, float]:
 
 def applied(T: np.ndarray, cloud: PointCloud2) -> np.ndarray:
     """``cloud``'s points where ``T`` puts them."""
-    points: np.ndarray = np.asarray(cloud.pointcloud.points) @ T[:3, :3].T + T[:3, 3]
+    points: np.ndarray = pointcloud_xyz(cloud) @ T[:3, :3].T + T[:3, 3]
     return points
 
 
@@ -495,7 +507,7 @@ def run_probes(
     premap, _ = fixtures(name)
     # The premap's preprocessing depends on the config but not the probe, so
     # it is paid once per trial rather than once per attempt.
-    relocalizer = LidarRelocalizer(premap.pointcloud, config)
+    relocalizer = LidarRelocalizer(pointcloud_to_open3d(premap), config)
     rate = scan_rate(name)
     probes: list[Probe] = []
 
@@ -512,7 +524,7 @@ def run_probes(
             frames = min(max(int(elapsed * rate), min_frames), max_frames)
             cloud = local_map(name, frames, start, voxel)
             t0, c0 = time.monotonic(), time.process_time()
-            result = relocalizer.align(cloud.pointcloud)
+            result = relocalizer.align(pointcloud_to_open3d(cloud))
             dt = time.monotonic() - t0
             elapsed += dt
             wall += dt
@@ -525,13 +537,13 @@ def run_probes(
                 break
 
         T = np.asarray(result.transformation)
-        truth_points = np.asarray(cloud.pointcloud.points)
+        truth_points = pointcloud_xyz(cloud)
         moved = applied(T, cloud)
         translation, rotation, tilt = identity_error(T)
         probes.append(
             Probe(
                 start=start,
-                n_points=len(cloud),
+                n_points=cloud.width * cloud.height,
                 coverage=place_coverage(name, start, voxel),
                 translation_m=translation,
                 rotation_deg=rotation,
@@ -621,22 +633,22 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
         rr.save(out)
     else:
         rr.spawn()
-    rr.log("world/premap/pointcloud", premap.to_rerun(voxel_size=0.05), static=True)
+    rr.log(
+        "world/premap/pointcloud",
+        cloud_archetype(premap, voxel_size=0.05, mode="spheres", height_colors=True),
+        static=True,
+    )
     for probe in probes:
-        aligned = PointCloud2.from_numpy(
-            applied(probe.transform, probe.cloud),
-            frame_id=probe.cloud.frame_id,
-            timestamp=probe.cloud.ts,
-        )
+        aligned = pointcloud_with_xyz(probe.cloud, applied(probe.transform, probe.cloud))
         entity = f"world/probe_{probe.start:04.0f}s"
         rr.log(
             f"{entity}/truth",
-            probe.cloud.to_rerun(voxel_size=0.05, colors=[76, 220, 41]),
+            cloud_archetype(probe.cloud, voxel_size=0.05, mode="spheres", color=(76, 220, 41)),
             static=True,
         )
         rr.log(
             f"{entity}/aligned",
-            aligned.to_rerun(voxel_size=0.05, colors=[231, 76, 60]),
+            cloud_archetype(aligned, voxel_size=0.05, mode="spheres", color=(231, 76, 60)),
             static=True,
         )
     if out is not None:
@@ -681,7 +693,7 @@ def _register(
 
 DatasetOpt = typer.Option(DEFAULT_DATASET, "--dataset", "-d", help="Registered dataset name")
 RecordingOpt = typer.Option(None, "--recording", help="Recording, resolved through get_data")
-PremapOpt = typer.Option(None, "--premap", help="Premap .pc2.lcm, resolved through get_data")
+PremapOpt = typer.Option(None, "--premap", help="Premap .pc2.cdr, resolved through get_data")
 LidarOpt = typer.Option(None, "--lidar", help="Lidar stream in the recording")
 FromOpt = typer.Option(None, "--from", help="Earliest second probes may come from")
 ToOpt = typer.Option(None, "--to", help="Latest second probes may come from")
@@ -727,7 +739,7 @@ def run(
 
     console = Console()
     table = _table(
-        f"{name}  premap {len(pre):,} pts  preset={preset}  "
+        f"{name}  premap {pre.width * pre.height:,} pts  preset={preset}  "
         f"cutoff={config.fitness_threshold}  "
         f"frames {config.min_frames}-{config.max_frames}",
         *PROBE_COLUMNS,
