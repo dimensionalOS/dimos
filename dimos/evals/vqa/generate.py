@@ -145,7 +145,9 @@ class GenerationRequest(BaseModel):
                     "image_index/start/stop/stride/quality_window"
                 )
             if self.with_localize or self.localize_queries or self.localize_coverage_k is not None:
-                raise ValueError("cross-view generation (--query) cannot combine with --with-localize")
+                raise ValueError(
+                    "cross-view generation (--query) cannot combine with --with-localize"
+                )
             return self
         if self.from_s != 0.0 or self.duration_s is not None:
             raise ValueError("from_s/duration_s require cross-view mode (--query)")
