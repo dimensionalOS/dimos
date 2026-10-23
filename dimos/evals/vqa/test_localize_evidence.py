@@ -74,7 +74,10 @@ def test_evidence_roundtrip_includes_name_coords_and_sightings(tmp_path) -> None
         views_by_query={"storage box": {"aaaa1111": (view,)}},
     )
     doc = evidence_from_window_result(
-        result, dataset="recording.db", after=0.0, before=20.0  # type: ignore[arg-type]
+        result,
+        dataset="recording.db",
+        after=0.0,
+        before=20.0,  # type: ignore[arg-type]
     )
     assert doc.instances[0].object_name == "storage box"
     assert doc.instances[0].position_world_xyz == (1.0, 2.0, 0.5)

@@ -303,8 +303,10 @@ def localize_window_from_evidence(
             color_frames,
             localize_queries=localize_queries,
         )
-        queries = tuple(document.queries) if document.queries else tuple(
-            sorted({name for name, _ in named_hits})
+        queries = (
+            tuple(document.queries)
+            if document.queries
+            else tuple(sorted({name for name, _ in named_hits}))
         )
         logger.info(
             f"localize evidence reuse: {len(named_hits)} hit(s), "

@@ -267,9 +267,8 @@ def localize_window(
             yield LocalizeWindowResult(named_hits=(), rig=rig, queries=())
             return
 
-        from dimos.perception.localize.localize import LocalizeTrace
-
         from dimos.evals.vqa.primitives.cross_view_identity import collect_query_instances
+        from dimos.perception.localize.localize import LocalizeTrace
 
         named: list[tuple[str, Localization]] = []
         first_seen_by_instance: dict[str, float] = {}
