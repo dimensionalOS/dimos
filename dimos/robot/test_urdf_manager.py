@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, cast
 
 import numpy as np
@@ -24,22 +27,24 @@ import pinocchio as pin
 import pytest
 import trimesh
 
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
+from dimos.msgs.files.MeshFile import MeshFile
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.msgs.std_msgs.String import String
+from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
     XARM_ROS2_REPO,
     make_xarm7_model_config,
 )
+from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -56,12 +61,12 @@ _URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelfFilter]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointClearing]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[RoboPlanPointCloudSelfFilter] = []
+    modules: list[UrdfManagerPointClearing] = []
 
-    def make(**overrides: Any) -> RoboPlanPointCloudSelfFilter:
+    def make(**overrides: Any) -> UrdfManagerPointClearing:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -70,8 +75,8 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = RoboPlanPointCloudSelfFilter(**settings)
-        cast("dict[str, Any]", module.__dict__)["_tf"] = MultiTBuffer()
+        module = UrdfManagerPointClearing(**settings)
+        cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
 
@@ -81,9 +86,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
         module.dispose()
 
 
-def _place_arm(
-    module: RoboPlanPointCloudSelfFilter, at: tuple[float, float, float], ts: float
-) -> None:
+def _place_arm(module: UrdfManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -105,7 +108,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -118,7 +121,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -310,3 +313,183 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
     for cloud, filtered in zip(captures, (first, second), strict=True):
         np.testing.assert_allclose(filtered.points_f32(), controls)
         assert filtered.frame_id == "world" and filtered.ts == cloud.ts
+
+
+def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
+    module = make_filter(urdf_xml=_joint_robot("prismatic"))
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    edge = module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001)
+
+    assert edge is not None
+    np.testing.assert_allclose(
+        [edge.translation.x, edge.translation.y, edge.translation.z], [0.3, 0, 0], atol=1e-9
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Multi-DOF joints are read from tf, so publishing them would feed the filter its own output.
+        {"urdf_xml": _joint_robot("planar")},
+        {"urdf_xml": _joint_robot("prismatic"), "publish_joint_tf": False},
+    ],
+)
+def test_no_tf_edge_is_published(make_filter, overrides):
+    module = make_filter(**overrides)
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
+
+
+def test_render_file_request_serves_the_urdf_and_only_files_it_names(
+    make_filter, tmp_path, monkeypatch
+):
+    package = tmp_path / "box_description"
+    (package / "meshes").mkdir(parents=True)
+    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
+    (package / "textures").mkdir()
+    (package / "textures" / "skin.png").write_bytes(b"png bytes")
+    urdf = tmp_path / "mesh_robot.urdf"
+    urdf.write_text(
+        _URDF.replace(
+            '<box size="0.2 0.2 0.2"/>', '<mesh filename="package://box/meshes/cube.stl"/>'
+        ).replace(
+            "</link>",
+            '<visual><geometry><box size="0.1 0.1 0.1"/></geometry><material name="skin">'
+            '<texture filename="package://box/textures/skin.png"/></material></visual></link>',
+        )
+    )
+    module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
+    sent: list[MeshFile] = []
+    monkeypatch.setattr(module.file_info, "publish", sent.append)
+    cube = str((package / "meshes" / "cube.stl").resolve())
+    texture = str((package / "textures" / "skin.png").resolve())
+
+    # the URDF and the files by the full paths it names; anything else on disk gets nothing
+    for request in (
+        str(urdf),
+        cube,
+        texture,
+        str(package / "meshes"),
+        "package://box/meshes/cube.stl",
+    ):
+        asyncio.run(module.handle_render_file_request(String(request)))
+
+    assert [file.uri for file in sent] == [str(urdf), cube, texture]
+    assert f'filename="{cube}"' in sent[0].data.decode()
+    assert MeshFile.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
+    assert sent[2].data == b"png bytes"
+
+
+def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
+    make_filter: Callable[..., UrdfManagerPointClearing],
+) -> None:
+    module = make_filter()
+    _place_arm(module, (0.0, 0.0, 0.0), 2.0)
+    cloud = _cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=2.0)
+    cloud.seq = 7
+    cloud.pointcloud_tensor.point["intensity"] = Tensor(np.asarray([[10], [20]], dtype=np.float32))
+
+    result = module.filter_cloud(cloud)
+
+    assert result is not None
+    assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
+    np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    # a second sensor on the same input lags the first: its older capture is matched to its own capture time
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    late = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=1.0))
+    assert late is not None
+    np.testing.assert_allclose(late.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+
+
+def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monkeypatch):
+    # a moving joint (shoulder) and a fixed one (tool) under it
+    urdf = _joint_robot("prismatic").replace(
+        "</robot>",
+        '<link name="tool"/><joint name="tool_mount" type="fixed"><parent link="arm"/><child link="tool"/></joint></robot>',
+    )
+    module = make_filter(urdf_xml=urdf, joint_tf_hz=1000.0, unchanged_tf_hz=4.0)
+    sent: list[set[str]] = []
+    monkeypatch.setattr(
+        module.tfbuffer,
+        "publish",
+        lambda *edges: sent.append({edge.child_frame_id for edge in edges}),
+    )
+    clock = [100.0]
+    monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
+
+    def state_at(t: float, shoulder: float) -> None:
+        clock[0] = 100.0 + t
+        module.add_joint_state(JointState(ts=t, name=["shoulder"], position=[shoulder]))
+
+    state_at(0.0, 0.3)
+    state_at(0.1, 0.4)  # the shoulder moved; the tool's edge (relative to arm) did not
+    state_at(0.2, 0.4)  # nothing moved, keepalive not due
+    state_at(
+        0.3, 0.4
+    )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
+
+    assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
+    pytest.importorskip("roboplan.core")
+    description = R1PRO_MODEL.load()
+    roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
+    module = UrdfManager(model=R1PRO_MODEL)
+    rng = np.random.default_rng(seed)
+    positions = {
+        joint.name: rng.uniform(
+            -np.pi if joint.lower is None else joint.lower,
+            np.pi if joint.upper is None else joint.upper,
+        )
+        for joint in description.joints
+        if joint.type in ("revolute", "continuous", "prismatic")
+    }
+    q = roboplan.configuration(positions, {})
+    assert q is not None
+    try:
+        transforms = module.joint_transforms(
+            JointState(ts=1.0, name=list(positions), position=list(positions.values()))
+        )
+    finally:
+        module.dispose()
+
+    assert len(transforms) == len(description.joints)
+    for transform in transforms:
+        np.testing.assert_allclose(
+            transform.to_matrix(),
+            roboplan._context.forwardKinematics(q, transform.child_frame_id, transform.frame_id),
+            atol=1e-9,
+        )
+
+
+def test_a_plain_urdf_manager_never_imports_roboplan(tmp_path):
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_joint_robot("prismatic"))
+    # A fresh interpreter where importing roboplan fails; UrdfManagerPointClearing is the control that proves it does.
+    script = f"""
+import sys
+sys.modules["roboplan"] = None
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
+model = RobotModel.from_file({str(urdf)!r})
+module = UrdfManager(model=model)
+[edge] = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+module.dispose()
+assert abs(edge.translation.x - 0.3) < 1e-9, edge
+try:
+    UrdfManagerPointClearing(model=model)
+except ImportError:
+    pass
+else:
+    raise AssertionError("roboplan was importable")
+"""
+
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
