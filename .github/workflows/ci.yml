@@ -662,8 +662,12 @@ jobs:
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
+          # Slow Azure HTTP package downloads can exhaust the test job's timeout.
+          if [[ "$RUNNER_ARCH" == "X64" ]]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg ffmpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio ffmpeg
