@@ -36,9 +36,9 @@ logger = setup_logger()
 
 class Config(ModuleConfig):
     algo: str = "height_cost"
-    # Blueprint parsing serializes dataclasses; include the height-cost fields
-    # so its clearance, noise, and smoothing settings survive validation.
-    config: HeightCostConfig | OccupancyConfig = Field(default_factory=HeightCostConfig)
+    # Keep base-only mappings generic; height-cost fields select HeightCostConfig
+    # after blueprint parsing serializes its dataclass.
+    config: OccupancyConfig | HeightCostConfig = Field(default_factory=HeightCostConfig)
     # for robots that cant see directly below themself
     initial_safe_radius_meters: float = 0.0
 

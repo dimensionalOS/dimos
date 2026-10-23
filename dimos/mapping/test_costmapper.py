@@ -14,11 +14,23 @@
 
 from dataclasses import asdict, replace
 
+import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.mapping.costmapper import Config, CostMapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig, general_occupancy
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+
+def test_general_algorithm_accepts_base_config_dict() -> None:
+    config = Config(algo="general", config={"resolution": 1.0})
+    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.5]]), frame_id="map")
+
+    grid = general_occupancy(cloud, **asdict(config.config))
+
+    assert grid.resolution == 1.0
+    np.testing.assert_array_equal(grid.grid, [[-1, 0, -1], [0, 0, 0], [-1, 0, 100]])
 
 
 @pytest.mark.parametrize("serialized", [False, True])
