@@ -56,6 +56,7 @@ import webbrowser
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -263,6 +264,13 @@ class RelayBridgeModule(Module):
         # start (main() fills it once the manifest resolves).
         self.encoded: dict[str, int] = {}
         self._rtc_unavailable_logged = False
+
+    @rpc
+    def relay_endpoint(self) -> dict[str, str] | None:
+        """The relay HTTP endpoint and robot identity, once the bridge is connected."""
+        if self._session is None or self._url is None or self._robot_info is None:
+            return None
+        return {"url": self._url, "robot": self._robot_info.id}
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
