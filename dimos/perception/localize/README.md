@@ -15,12 +15,16 @@ lifted through aligned depth or, for a camera without it, a lidar.
 | support plane | `localize.support_planes` | one plane per camera and 2 m cell, fit from the call's candidates, for the surface-patch gate |
 | detect | `localize.detect` | detector: candidate frame and queries to boxes x query scores |
 | segment | `localize.segment` | segmenter: boxes to masks |
-| lift | `rig.lift` | aligned depth, or the window's lidar scans merged, + tf to one cloud per sighting, gated in `localize._lift` |
-| associate | `localize.associate` | sightings to objects by centroid distance in `association.Groups`, clouds fused |
+| lift | `rig.lift` | aligned depth, or the window's lidar scans merged, + tf to one cloud per sighting, gated in `localize._lift`, as a `memento.Sighting` in `localize.lift` |
+| remember | `memento.Memento` | every sighting by label, read params and time in sqlite; a window reads only its unread gap |
+| associate | `localize._finalize` | the window's sightings to objects by centroid distance in `association.Groups`, clouds fused |
 | verify | `localize._finalize` | score, distinct views, rivals to `Localization` |
 
-`localize.localize` runs retrieve and support plane once per call, then detect, segment and
-associate frame by frame, so one frame's masks are in memory at a time, then verify.
+`localize.localize` asks the memento for the window. Only the window's unread gap goes through
+retrieve and support plane once, then detect, segment and lift frame by frame, so one frame's
+masks are in memory at a time; the sightings are stored and the span marked read in one
+transaction. The window's sightings, stored and new, are then associated and verified, so an
+answer holds only what was seen inside the window.
 
 ## Swapping a model
 
@@ -60,7 +64,7 @@ For offline benchmarking on recordings, `tools/tool_localize.py` defines `PRESET
 |---|---|---|---|
 | `xarm` | `XARM_PARAMS` | wrist camera over a desk (`LocalizeParams()`) | |
 | `dual_yam` | `DUAL_YAM_PARAMS` | dual OpenYAM, D405 wrist cameras | `min_camera_range_m` 0.07: the D405s see objects from 7 cm |
-| `go2` | `GO2_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
+| `go2` | `GO2_PARAMS` | walking robot, room scale, 5 cm lidar map | `candidate_floor` 0.18, `accept_score` 0.32, `cluster_radius_m` 0.30, `embed_hz` 3.0, `verify_radius_m` 5.0, `max_object_extent_m` 2.0, `surface_patch_max_rise_m` 0.08, `surface_patch_min_drop_m` -0.06, `min_points` 13, `min_camera_range_m` 0.5, `fuse_voxel_m` 0.03 |
 | `g1` | `G1_PARAMS` | walking robot with dense depth instead of a 5 cm lidar map | `go2` with `min_points` 30 |
 
 Params originate on the blueprint and can be overridden per call:

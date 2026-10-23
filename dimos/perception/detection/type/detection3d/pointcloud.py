@@ -176,14 +176,16 @@ class Detection3DPC(Detection3D):
         seg_mask = getattr(det, "mask", None)
         if seg_mask is not None:
             pixel_mask = seg_mask > 0
-            if mask_scale < 1.0:
+            if mask_scale < 1.0 and pixel_mask.any():
                 import cv2
 
-                radius = float(np.sqrt(pixel_mask.sum() / np.pi))
-                erode_px = round((1.0 - mask_scale) * radius)
-                if erode_px > 0:
-                    kernel = np.ones((2 * erode_px + 1, 2 * erode_px + 1), np.uint8)
-                    eroded = cv2.erode(pixel_mask.astype(np.uint8), kernel).astype(bool)
+                # Erode by the inscribed thickness (distance to the mask boundary)
+                # rather than total area, so elongated thin objects keep their core.
+                dist = cv2.distanceTransform(pixel_mask.astype(np.uint8), cv2.DIST_L2, 3)
+                max_dist = float(dist.max())
+                if max_dist > 1.5:
+                    erode_px = max(1.0, (1.0 - mask_scale) * max_dist)
+                    eroded = dist > erode_px
                     if eroded.any():
                         pixel_mask = eroded
         else:
