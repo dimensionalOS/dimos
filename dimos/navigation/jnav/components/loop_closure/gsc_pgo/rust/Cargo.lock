@@ -592,7 +592,6 @@ dependencies = [
 name = "dimos-gsc-pgo"
 version = "0.1.0"
 dependencies = [
- "cc",
  "dimos-module",
  "faer",
  "lcm-msgs",

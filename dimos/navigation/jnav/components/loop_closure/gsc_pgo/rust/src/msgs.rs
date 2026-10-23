@@ -18,7 +18,6 @@
 //! - `Graph3D`       — `dimos/navigation/jnav/msgs/Graph3D.py` (encode)
 //! - `GraphDelta3D`  — `dimos/navigation/jnav/msgs/GraphDelta3D.py` (encode)
 //! - `DeformationNode` — `dimos/msgs/nav_msgs/DeformationNode.py` (encode)
-//! - `LocationConstraint` — `dimos/navigation/jnav/msgs/LocationConstraint.py`
 //!   (decode only; the PGO never publishes constraints). The decode does a
 //!   tolerant tail read: `map_id`/`kind` are absent on pre-consolidation
 //!   payloads and decode as `""` rather than failing.
@@ -26,8 +25,6 @@
 //! All formats are big-endian, custom binary (dispatched by channel-name
 //! suffix, not an LCM fingerprint). Strings are `u32 len + utf-8 bytes`,
 //! no terminator. Quaternions ride the wire in xyzw order.
-
-use std::io;
 
 // ---- byte writers/readers ----------------------------------------------------
 
@@ -46,47 +43,6 @@ fn write_f64_be(out: &mut Vec<u8>, v: f64) {
 fn write_str(out: &mut Vec<u8>, s: &str) {
     write_u32_be(out, s.len() as u32);
     out.extend_from_slice(s.as_bytes());
-}
-
-struct Reader<'a> {
-    buf: &'a [u8],
-    off: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn new(buf: &'a [u8]) -> Self {
-        Reader { buf, off: 0 }
-    }
-
-    fn remaining(&self) -> usize {
-        self.buf.len() - self.off
-    }
-
-    fn take(&mut self, n: usize) -> io::Result<&'a [u8]> {
-        if self.remaining() < n {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                format!("need {n} bytes, have {}", self.remaining()),
-            ));
-        }
-        let s = &self.buf[self.off..self.off + n];
-        self.off += n;
-        Ok(s)
-    }
-
-    fn f64(&mut self) -> io::Result<f64> {
-        Ok(f64::from_be_bytes(self.take(8)?.try_into().unwrap()))
-    }
-
-    fn u32(&mut self) -> io::Result<u32> {
-        Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
-    }
-
-    fn string(&mut self) -> io::Result<String> {
-        let len = self.u32()? as usize;
-        let bytes = self.take(len)?;
-        String::from_utf8(bytes.to_vec()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
 }
 
 // ---- shared node pieces --------------------------------------------------------
@@ -242,114 +198,5 @@ impl DeformationNode {
         write_u64_be(&mut out, self.tf_id);
         self.pose.write(&mut out);
         out
-    }
-}
-
-// ---- LocationConstraint (decode only) ----------------------------------------------
-
-/// Wire (see LocationConstraint.py lcm_encode):
-/// `f64 ts; str to_id, frame_id, constraint_instance_id; 7×f64 pose
-/// (pos_xyz + quat_xyzw); 36×f64 covariance (row-major 6x6, tangent order
-/// [rot(3), trans(3)]); TAIL str map_id, kind (absent pre-consolidation ->
-/// decode as "").`
-#[derive(Debug, Clone, PartialEq)]
-pub struct LocationConstraint {
-    pub ts: f64,
-    pub to_id: String,
-    pub frame_id: String,
-    pub constraint_instance_id: String,
-    pub map_id: String,
-    pub kind: String,
-    /// x, y, z
-    pub position: [f64; 3],
-    /// x, y, z, w
-    pub orientation: [f64; 4],
-    pub covariance: [f64; 36],
-}
-
-impl LocationConstraint {
-    pub fn decode(data: &[u8]) -> io::Result<Self> {
-        let mut r = Reader::new(data);
-        let ts = r.f64()?;
-        let to_id = r.string()?;
-        let frame_id = r.string()?;
-        let constraint_instance_id = r.string()?;
-        let position = [r.f64()?, r.f64()?, r.f64()?];
-        let orientation = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
-        let mut covariance = [0.0f64; 36];
-        for v in covariance.iter_mut() {
-            *v = r.f64()?;
-        }
-        // Tail fields (map_id, kind): tolerate their absence (older payloads)
-        // exactly like msgs/LocationConstraint.hpp — a missing length prefix
-        // means "", but a length prefix promising more bytes than remain is a
-        // hard decode error.
-        let mut tail = [String::new(), String::new()];
-        for field in tail.iter_mut() {
-            if r.remaining() < 4 {
-                continue;
-            }
-            *field = r.string()?;
-        }
-        let [map_id, kind] = tail;
-        Ok(LocationConstraint {
-            ts,
-            to_id,
-            frame_id,
-            constraint_instance_id,
-            map_id,
-            kind,
-            position,
-            orientation,
-            covariance,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fnv1a_matches_python_reference() {
-        // From DeformationNode.py: tf_id_for("map", "odom").
-        assert_eq!(tf_id_for("map", "odom"), 3863314957514174452);
-    }
-
-    #[test]
-    fn location_constraint_round_trip_with_tail() {
-        // Hand-built payload following LocationConstraint.py lcm_encode.
-        let mut buf = Vec::new();
-        write_f64_be(&mut buf, 123.5);
-        for s in ["apriltag://36h11/40cm/5", "base_link", "inst-1"] {
-            write_str(&mut buf, s);
-        }
-        for v in [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0] {
-            write_f64_be(&mut buf, v);
-        }
-        for i in 0..36 {
-            write_f64_be(&mut buf, i as f64 * 0.5);
-        }
-        let head_len = buf.len();
-        for s in ["map0", "apriltag"] {
-            write_str(&mut buf, s);
-        }
-
-        let c = LocationConstraint::decode(&buf).unwrap();
-        assert_eq!(c.ts, 123.5);
-        assert_eq!(c.to_id, "apriltag://36h11/40cm/5");
-        assert_eq!(c.frame_id, "base_link");
-        assert_eq!(c.constraint_instance_id, "inst-1");
-        assert_eq!(c.map_id, "map0");
-        assert_eq!(c.kind, "apriltag");
-        assert_eq!(c.position, [1.0, 2.0, 3.0]);
-        assert_eq!(c.orientation, [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(c.covariance[35], 17.5);
-
-        // Pre-consolidation payload (no tail) -> "" for map_id/kind.
-        let old = LocationConstraint::decode(&buf[..head_len]).unwrap();
-        assert_eq!(old.map_id, "");
-        assert_eq!(old.kind, "");
-        assert_eq!(old.to_id, c.to_id);
     }
 }

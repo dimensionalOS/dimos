@@ -16,37 +16,25 @@
 //! arrives as stdin JSON).
 //!
 //! Structure:
-//! - LCM handlers stash odometry (latest + a sliding interpolation buffer),
-//!   pair each lidar scan with the LATEST odometry pose (CloudWithPose), and
-//!   buffer LocationConstraints.
-//! - A worker loop, woken by the callbacks as scans/constraints arrive, drains
-//!   constraints (each becomes its own pose node placed via odometry
-//!   interpolated at the constraint's own timestamp), feeds scans into GscPgo
-//!   oldest-first, and publishes:
-//!   corrected_odometry (offset-corrected pose), correction (map->odom
-//!   TFMessage), pose_graph (Graph3D snapshot per keyframe),
-//!   loop_closure_event (GraphDelta3D of pre->post iSAM2 deltas when a loop
-//!   fired), tf_deformation_nodes (per-keyframe DeformationNode, re-published
-//!   only when the optimizer moves a node past an epsilon), and the optional
-//!   throttled debug_global_map cloud.
-//!
-//! GscPgo wraps gtsam, which is thread-unsafe (`!Send`), so the worker is
-//! a dedicated OS thread that OWNS the GscPgo; publishes hop back onto the
-//! tokio runtime via a captured Handle.
+//! - LCM handlers stash the latest odometry and pair each lidar scan with it (CloudWithPose).
+//! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
+//!   corrected_odometry (offset-corrected pose), correction (map->odom TFMessage), pose_graph
+//!   (Graph3D snapshot per keyframe), loop_closure_event (GraphDelta3D of the keyframes a solve
+//!   moved), tf_deformation_nodes (per-keyframe DeformationNode, re-published only when a solve
+//!   moves a node past an epsilon), and the optional throttled debug_global_map cloud. Loop
+//!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
+//!   runtime via a captured Handle.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use dimos_gsc_pgo::gsc_pgo::{
-    CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, LocationConstraintObs,
-    PoseWithTime, GTSAM_THREAD_STACK_BYTES,
+    CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, PoseWithTime,
 };
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::msgs::{
-    DeformationNode, Graph3D, GraphDelta3D, LocationConstraint, PoseStamped as WirePose,
-};
+use dimos_gsc_pgo::msgs::{DeformationNode, Graph3D, GraphDelta3D, PoseStamped as WirePose};
 use dimos_gsc_pgo::pointcloud::{self, PointCloud};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
@@ -58,15 +46,15 @@ use tracing::{error, info, warn};
 use utils::{
     build_loop_closure_event, build_loop_closure_records, build_loop_edge_records, build_odometry,
     build_pointcloud2, build_pose_graph, build_pose_graph_records, build_tf_message, extract_xyz,
-    frobenius_diff, interpolate_odom, SplitMix64,
+    frobenius_diff, SplitMix64,
 };
 
 // A keyframe pose change smaller than this waits to add up before it is sent.
 const POSE_CHANGE_M: f64 = 1e-3;
 const POSE_CHANGE_RAD: f64 = 1e-4;
-/// How long the pipeline sits without a scan before it finishes the background GNC: longer than
+/// How long the pipeline sits without a scan before it adopts a finished background solve: longer than
 /// any gap between a replay's scans, so it only fires once the stream pauses or ends.
-const GNC_IDLE_FINISH: Duration = Duration::from_secs(3);
+const SOLVE_IDLE_FINISH: Duration = Duration::from_secs(3);
 
 #[native_config]
 #[derive(Clone)]
@@ -77,7 +65,7 @@ pub struct Config {
     pub map_frame: String,
     /// The corrected edge's child (odom) frame.
     pub child_frame_id: String,
-    /// Robot body frame; LocationConstraints must be expressed in it.
+    /// Robot body frame.
     pub body_frame: String,
 
     // Keyframe detection
@@ -93,18 +81,13 @@ pub struct Config {
     pub keyframe_voxel_size: f64,
     pub min_loop_detect_duration: f64,
     pub loop_search_min_interval: f64,
-    pub min_descriptor_std: f64,
     pub loop_min_occupancy: i32,
     pub loop_min_degeneracy: f64,
-    pub loop_max_lowe_ratio: f64,
-    pub loop_max_yank_rotation_deg: f64,
     pub loop_yank_gate: bool,
     pub loop_yank_gate_width: f64,
     pub loop_yank_per_sqrt_gap: bool,
     pub loop_icp_dump_dir: String,
     pub loop_extended_icp_max_keyframes: usize,
-    pub loop_yank_gate_max_distance_m: f64,
-    pub loop_min_id_gap: u64,
 
     /// Transform world-frame scans to body-frame using the paired odometry.
     pub subtract_odom_from_cloud: bool,
@@ -124,39 +107,14 @@ pub struct Config {
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
 
-    pub loop_candidate_max_distance_m: f64,
-
-    // Robust (Huber) kernel on loop factors
-    pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
     pub loop_icp_max_iterations: u64,
     pub loop_icp_max_correspondence_m: f64,
-    pub loop_icp_inlier_fitness: bool,
-    pub loop_icp_min_points: u64,
-    pub loop_icp_seed_at_current_pose: bool,
-    pub loop_rotation_variance: f64,
-    pub loop_translation_variance_floor: f64,
-    pub loop_refinement_passes: u64,
-    pub loop_refinement_tolerance_m: f64,
-    pub loop_refinement_max_passes: u64,
 
-    // Final batch GNC (TLS) re-solve over the committed closures.
-    pub loop_gnc_final: bool,
     pub loop_gnc_var_scale: f64,
     pub loop_gnc_apply_after_fraction: f64,
-    pub loop_gnc_confirmations: u64,
     pub loop_gnc_deterministic: bool,
     pub loop_gnc_inlier_probability: f64,
-
-    // Location constraints
-    pub use_location_constraints: bool,
-    pub odom_buffer_window: f64,
-
-    // First-keyframe anchor prior roll/pitch stiffness + optional per-keyframe
-    // roll/pitch prior.
-    pub anchor_roll_pitch_var: f64,
-    pub per_keyframe_roll_pitch_prior: bool,
-    pub per_keyframe_roll_pitch_var: f64,
 
     // Anisotropic odometry between-factor
     pub odom_rot_roll_pitch_var: f64,
@@ -166,18 +124,11 @@ pub struct Config {
 
     /// Bounded scan FIFO depth (<= 0 = unbounded).
     pub max_scan_queue: i32,
-
-    /// One dial over every false-closure gate, 0 (closure-happy) to 4 (all
-    /// gates plus a tight GNC). Redundant with the individual `loop_*` gates
-    /// on purpose: when set it overwrites all of them, so set one or the
-    /// other. -1 leaves the individual fields alone.
-    #[validate(range(min = -1, max = 4))]
-    pub loop_conservativeness: i32,
 }
 
 impl Config {
     fn pgo(&self) -> PgoConfig {
-        let mut config = PgoConfig {
+        PgoConfig {
             keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
             keyframe_min_distance_meters: self.keyframe_min_distance_meters,
             loop_search_radius: self.loop_search_radius,
@@ -188,45 +139,26 @@ impl Config {
             keyframe_voxel_size: self.keyframe_voxel_size,
             min_loop_detect_duration: self.min_loop_detect_duration,
             loop_search_min_interval: self.loop_search_min_interval,
-            loop_candidate_max_distance_m: self.loop_candidate_max_distance_m,
-            min_descriptor_std: self.min_descriptor_std,
             loop_min_occupancy: self.loop_min_occupancy,
             loop_min_degeneracy: self.loop_min_degeneracy,
-            loop_max_lowe_ratio: self.loop_max_lowe_ratio,
-            loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
             loop_yank_gate: self.loop_yank_gate,
             loop_yank_gate_width: self.loop_yank_gate_width,
             loop_yank_per_sqrt_gap: self.loop_yank_per_sqrt_gap,
             loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
+            loop_record_strain: false,
+            loop_yank_from_strain: false,
             loop_extended_icp_max_keyframes: self.loop_extended_icp_max_keyframes,
-            loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
-            loop_min_id_gap: self.loop_min_id_gap,
-            loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
             loop_icp_max_iterations: self.loop_icp_max_iterations,
             loop_icp_max_correspondence_m: self.loop_icp_max_correspondence_m,
-            loop_icp_inlier_fitness: self.loop_icp_inlier_fitness,
-            loop_icp_min_points: self.loop_icp_min_points,
-            loop_icp_seed_at_current_pose: self.loop_icp_seed_at_current_pose,
-            loop_rotation_variance: self.loop_rotation_variance,
-            loop_translation_variance_floor: self.loop_translation_variance_floor,
-            loop_refinement_passes: self.loop_refinement_passes,
-            loop_refinement_tolerance_m: self.loop_refinement_tolerance_m,
-            loop_refinement_max_passes: self.loop_refinement_max_passes,
-            loop_gnc_final: self.loop_gnc_final,
             loop_gnc_var_scale: self.loop_gnc_var_scale,
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
             loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
-            loop_gnc_confirmations: self.loop_gnc_confirmations,
             loop_gnc_deterministic: self.loop_gnc_deterministic,
-            use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
             odom_trans_xy_var: self.odom_trans_xy_var,
             odom_trans_z_var: self.odom_trans_z_var,
-            anchor_roll_pitch_var: self.anchor_roll_pitch_var,
-            per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
-            per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
             use_scan_context: self.use_scan_context,
             scan_context_num_rings: self.scan_context_num_rings,
             scan_context_num_sectors: self.scan_context_num_sectors,
@@ -234,9 +166,7 @@ impl Config {
             scan_context_top_k: self.scan_context_top_k,
             scan_context_match_threshold: self.scan_context_match_threshold,
             scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        };
-        config.apply_conservativeness(self.loop_conservativeness);
-        config
+        }
     }
 }
 
@@ -255,15 +185,8 @@ struct SharedState {
     latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
     last_message_time: f64,
-    /// Sliding odometry history for interpolating a constraint's pose at its
-    /// own timestamp.
-    odom_buffer: VecDeque<OdomSample>,
     /// Bounded scan FIFO.
     cloud_buffer: VecDeque<CloudWithPose>,
-    /// Pending LocationConstraints, drained by the worker loop.
-    constraints: Vec<(LocationConstraintObs, String)>,
-    /// LocationConstraint frames already warned about (once each).
-    frame_warned: HashSet<String>,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -278,12 +201,6 @@ struct GscPgoModule {
 
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
-
-    // Optional decoupled LocationConstraint events; only consumed when
-    // config.use_location_constraints is set (otherwise the handler is a
-    // no-op).
-    #[input(decode = LocationConstraint::decode, handler = on_location_constraint)]
-    location_constraints: Input<LocationConstraint>,
 
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
@@ -355,15 +272,13 @@ impl GscPgoModule {
             stop: Arc::clone(&stop),
             wake: Arc::clone(&self.wake),
         };
-        // GscPgo (gtsam) is !Send: a dedicated OS thread owns it for the
-        // module's whole life instead of a tokio task.
+        // a dedicated OS thread owns the GscPgo for the module's whole life
         let thread = std::thread::Builder::new()
             .name("gsc-pgo-worker".into())
-            .stack_size(GTSAM_THREAD_STACK_BYTES)
             .spawn(move || worker.run())
             .expect("spawn PGO worker thread");
         self.worker = Some(WorkerHandle { stop, thread });
-        info!("PGO native module started (Rust iSAM2 port)");
+        info!("PGO native module started");
     }
 
     async fn stop_worker(&mut self) {
@@ -390,17 +305,7 @@ impl GscPgoModule {
             translation,
             frame_id: msg.header.frame_id.clone(),
         };
-        let mut state = self.state.lock().expect("state");
-        state.latest_odom = Some(sample.clone());
-        state.odom_buffer.push_back(sample);
-        let window = self.config.odom_buffer_window;
-        while state
-            .odom_buffer
-            .front()
-            .is_some_and(|front| ts - front.ts > window)
-        {
-            state.odom_buffer.pop_front();
-        }
+        self.state.lock().expect("state").latest_odom = Some(sample);
     }
 
     /// Handle an incoming lidar scan: pair it with the latest odometry pose
@@ -437,43 +342,6 @@ impl GscPgoModule {
         while cap > 0 && state.cloud_buffer.len() as i32 > cap {
             state.cloud_buffer.pop_front(); // drop oldest stale scan
         }
-        drop(state);
-        self.wake.notify_one();
-    }
-
-    /// Handle an incoming LocationConstraint: validate its frame and buffer
-    /// it for the worker loop to drain.
-    async fn on_location_constraint(&mut self, msg: LocationConstraint) {
-        if !self.config.use_location_constraints {
-            return;
-        }
-        let frame_id = if msg.frame_id.is_empty() {
-            self.config.body_frame.clone()
-        } else {
-            msg.frame_id.clone()
-        };
-        let mut state = self.state.lock().expect("state");
-        if frame_id != self.config.body_frame {
-            if state.frame_warned.insert(frame_id.clone()) {
-                warn!(
-                    frame = %frame_id,
-                    body_frame = %self.config.body_frame,
-                    "LocationConstraint frame != body frame; dropping \
-                     (only body-frame constraints supported for now)"
-                );
-            }
-            return;
-        }
-        let [qx, qy, qz, qw] = msg.orientation;
-        let obs = LocationConstraintObs {
-            to_id: msg.to_id.clone(),
-            constraint_instance_id: msg.constraint_instance_id.clone(),
-            rotation_body_loc: mat3::mat_from_quat(&[qw, qx, qy, qz]),
-            translation_body_loc: msg.position,
-            covariance: msg.covariance,
-            ts: msg.ts,
-        };
-        state.constraints.push((obs, frame_id));
         drop(state);
         self.wake.notify_one();
     }
@@ -537,8 +405,8 @@ impl Worker {
         // While a background GNC solve is in flight during idle, republish the
         // graph at this cadence so downstream consumers (e.g. the eval harness
         // settle heartbeat) know the final verdict is still pending.
-        let gnc_wait_publish_interval = Duration::from_secs(2);
-        let mut last_gnc_wait_publish = std::time::Instant::now();
+        let solve_wait_publish_interval = Duration::from_secs(2);
+        let mut last_solve_wait_publish = std::time::Instant::now();
         let mut last_scan_at = std::time::Instant::now();
 
         // Per-node deformation stream state: a stable random id per keyframe
@@ -559,57 +427,13 @@ impl Worker {
         > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
-            // Nondeterministic GNC: take a finished solve's verdict now, scans or not.
-            if !self.config.loop_gnc_deterministic && pgo.gnc_pending() && pgo.poll_gnc() {
+            // Not deterministic: adopt a finished solve now, scans or not.
+            if !self.config.loop_gnc_deterministic && pgo.solve_pending() && pgo.update(true) {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
             }
             self.publish_loop_edges(&pgo, &mut edges_sent, &frame_id);
             self.dump_loop_diagnostics(&pgo, &mut diagnostics_written);
-            // Drain pending LocationConstraints first, independent of scans,
-            // so a constraint is handled promptly even with no scans arriving.
-            if self.config.use_location_constraints {
-                let pending: Vec<(LocationConstraintObs, String)> = {
-                    let mut state = self.state.lock().expect("state");
-                    std::mem::take(&mut state.constraints)
-                };
-                for (constraint, _frame) in pending {
-                    let interp = {
-                        let state = self.state.lock().expect("state");
-                        interpolate_odom(&state.odom_buffer, constraint.ts)
-                    };
-                    let Some((rotation, translation, interp_frame)) = interp else {
-                        warn!(
-                            to_id = %constraint.to_id,
-                            ts = constraint.ts,
-                            "no odometry within the buffer window for constraint; dropping"
-                        );
-                        continue;
-                    };
-                    let mut node_pose = PoseWithTime::new(rotation, translation);
-                    node_pose.set_time(
-                        constraint.ts as i32,
-                        ((constraint.ts - (constraint.ts as i32) as f64) * 1e9) as u32,
-                    );
-                    if pgo.add_location_constraint(&node_pose, &interp_frame, &constraint) {
-                        pgo.smooth_and_update();
-                        self.publish_pose_changes(
-                            &pgo,
-                            &mut published,
-                            false,
-                            constraint.ts,
-                            &frame_id,
-                        );
-                    } else {
-                        warn!(
-                            to_id = %constraint.to_id,
-                            "LocationConstraint arrived before any keyframe; dropping \
-                             (no node to anchor from)"
-                        );
-                    }
-                }
-            }
-
             // Strict FIFO: process scans oldest-first (backlog bounded at
             // enqueue time). Loops back immediately when more remain, so a
             // burst drains at full speed rather than one-per-tick.
@@ -618,12 +442,12 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(mut cloud_with_pose) = cloud_with_pose else {
-                // Idle long enough that the stream has paused or ended: finish the background
-                // GNC (non-blocking, so the graph keeps republishing while it runs). Short gaps
-                // between scans never get here, which keeps a replay's graph deterministic.
-                if pgo.gnc_pending() && last_scan_at.elapsed() >= GNC_IDLE_FINISH {
+                // Idle long enough that the stream has paused or ended: adopt a finished solve
+                // and start the next (non-blocking, so the graph keeps republishing while it runs).
+                // Short gaps between scans never get here, which keeps a replay's graph deterministic.
+                if pgo.solve_pending() && last_scan_at.elapsed() >= SOLVE_IDLE_FINISH {
                     let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
-                    let changed = pgo.poll_finish_gnc(false);
+                    let changed = pgo.update(true);
                     if changed {
                         self.publish_pose_changes(
                             &pgo,
@@ -633,8 +457,8 @@ impl Worker {
                             &frame_id,
                         );
                     }
-                    if changed || last_gnc_wait_publish.elapsed() >= gnc_wait_publish_interval {
-                        last_gnc_wait_publish = std::time::Instant::now();
+                    if changed || last_solve_wait_publish.elapsed() >= solve_wait_publish_interval {
+                        last_solve_wait_publish = std::time::Instant::now();
                         self.publish_graph(
                             &pgo,
                             last_time,
@@ -652,9 +476,7 @@ impl Worker {
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.
                 let state = self.state.lock().expect("state");
-                if state.cloud_buffer.is_empty()
-                    && (!self.config.use_location_constraints || state.constraints.is_empty())
-                {
+                if state.cloud_buffer.is_empty() {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
                 continue;
@@ -728,22 +550,9 @@ impl Worker {
                         .expect("spawn loop search thread"),
                 );
             }
-            let had_loop = pgo.has_loop();
-
-            // Everything below is on the pipeline thread; time it on closures to
-            // confirm the batch GNC no longer blocks here (was seconds inline).
-            let pipeline_thread_t0 = std::time::Instant::now();
-
-            pgo.smooth_and_update();
-            pgo.step_gnc();
-            if had_loop {
-                eprintln!(
-                    "gnc-main-thread: closure at {} keyframes handled in {:.1} ms",
-                    pgo.key_poses().len(),
-                    pipeline_thread_t0.elapsed().as_secs_f64() * 1000.0,
-                );
-            }
-            self.publish_pose_changes(&pgo, &mut published, had_loop, cur_time, &frame_id);
+            // a finished solve moves the keyframes (on the keyframe schedule when deterministic)
+            let moved = pgo.update(!self.config.loop_gnc_deterministic);
+            self.publish_pose_changes(&pgo, &mut published, moved, cur_time, &frame_id);
 
             self.publish_corrected(
                 &pgo,
@@ -806,7 +615,7 @@ impl Worker {
         let active_pairs: Vec<(usize, usize)> = pgo
             .committed_loops()
             .iter()
-            .filter(|committed| committed.active_in_isam2)
+            .filter(|committed| committed.gnc_weight > 0.5)
             .map(|committed| (committed.target_id, committed.source_id))
             .collect();
         let graph = build_pose_graph(pgo.key_poses(), &active_pairs, ts, frame_id);

@@ -40,9 +40,7 @@
 //! env-var contract and flake.nix for the pinned environment
 //! (`nix develop path:. --command cargo test`).
 
-pub mod gnc;
 pub mod gsc_pgo;
-pub mod gtsam;
 pub mod mat3;
 pub mod msgs;
 pub mod pointcloud;

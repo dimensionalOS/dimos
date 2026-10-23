@@ -14,9 +14,7 @@
 
 //! Wire-format compatibility tests against the canonical PYTHON message
 //! classes: bytes encoded by `dimos_gsc_pgo::msgs` must decode identically in
-//! `dimos.navigation.jnav.msgs.{Graph3D,GraphDelta3D,DeformationNode}`, and a Python-encoded
-//! `LocationConstraint` (WITH the map_id/kind tail) must decode identically in
-//! Rust.
+//! `dimos.navigation.jnav.msgs.{Graph3D,GraphDelta3D,DeformationNode}`.
 //!
 //! Each test shells out to the repo venv's Python (located relative to this
 //! crate: 7 directory levels up) with the same environment the jnav test
@@ -27,8 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use dimos_gsc_pgo::msgs::{
-    DeformationNode, DeltaTransform, Edge, Graph3D, GraphDelta3D, LocationConstraint, Node3D,
-    PoseStamped,
+    DeformationNode, DeltaTransform, Edge, Graph3D, GraphDelta3D, Node3D, PoseStamped,
 };
 
 fn repo_root() -> PathBuf {
@@ -87,14 +84,6 @@ fn python(python: &Path, code: &str, stdin: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn unhex(s: &str) -> Vec<u8> {
-    let s = s.trim();
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex byte"))
-        .collect()
 }
 
 fn sample_node(i: u64) -> Node3D {
@@ -294,53 +283,4 @@ print(tf_id_for("map", "odom"))
     assert_eq!(lines.next().unwrap(), expect);
     // tf_id_for must agree across languages, or consumers filter out our nodes.
     assert_eq!(lines.next().unwrap(), node.tf_id.to_string());
-}
-
-#[test]
-fn location_constraint_python_encode_decodes_in_rust() {
-    let Some(py) = venv_python() else {
-        eprintln!("skipping: repo .venv/bin/python not present (cross-language check needs the Python venv)");
-        return;
-    };
-    let out = python(
-        &py,
-        r#"
-from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-pose = Pose()
-pose.position = Vector3(1.25, -2.5, 3.75)
-pose.orientation = Quaternion(0.0, 0.0, 0.19509, 0.98079)
-cov = [0.0] * 36
-for i in range(6):
-    cov[i * 6 + i] = 0.5 + i
-c = LocationConstraint(
-    to_id="apriltag://36h11/40cm/5",
-    frame_id="base_link",
-    pose=pose,
-    covariance=cov,
-    constraint_instance_id="instance-7",
-    map_id="map0",
-    kind="apriltag",
-    ts=1717.125,
-)
-print(c.lcm_encode().hex())
-"#,
-        "",
-    );
-    let bytes = unhex(&out);
-    let c = LocationConstraint::decode(&bytes).expect("rust decode");
-    assert_eq!(c.ts, 1717.125);
-    assert_eq!(c.to_id, "apriltag://36h11/40cm/5");
-    assert_eq!(c.frame_id, "base_link");
-    assert_eq!(c.constraint_instance_id, "instance-7");
-    assert_eq!(c.map_id, "map0");
-    assert_eq!(c.kind, "apriltag");
-    assert_eq!(c.position, [1.25, -2.5, 3.75]);
-    assert_eq!(c.orientation, [0.0, 0.0, 0.19509, 0.98079]);
-    for i in 0..6 {
-        assert_eq!(c.covariance[i * 6 + i], 0.5 + i as f64);
-    }
-    assert_eq!(c.covariance[1], 0.0);
 }

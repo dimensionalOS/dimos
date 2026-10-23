@@ -17,7 +17,6 @@
 //! wire-message builders (GscPgo state -> published LCM messages) and the
 //! inbound PointCloud2 parser.
 
-use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dimos_gsc_pgo::gsc_pgo::{KeyPoseWithCloud, LoopEdgeEvent, LOOP_EDGE_RECORD_BYTES};
@@ -31,74 +30,6 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use lcm_msgs::tf2_msgs::TFMessage;
-
-use crate::OdomSample;
-
-/// Interpolate the odometry pose at `ts` (slerp rotation, lerp translation).
-/// `None` if the buffer is empty or `ts` predates it by more than 1 ms;
-/// clamps to the newest sample when `ts` is past it.
-pub fn interpolate_odom(buffer: &VecDeque<OdomSample>, ts: f64) -> Option<(Mat3, Vec3, String)> {
-    let front = buffer.front()?;
-    if ts <= front.ts {
-        if front.ts - ts > 1e-3 {
-            return None;
-        }
-        return Some((front.rotation, front.translation, front.frame_id.clone()));
-    }
-    let back = buffer.back()?;
-    if ts >= back.ts {
-        return Some((back.rotation, back.translation, back.frame_id.clone()));
-    }
-    for i in 1..buffer.len() {
-        let hi = &buffer[i];
-        if hi.ts < ts {
-            continue;
-        }
-        let lo = &buffer[i - 1];
-        let span = hi.ts - lo.ts;
-        let alpha = if span > 0.0 { (ts - lo.ts) / span } else { 0.0 };
-        let translation = [
-            lo.translation[0] + alpha * (hi.translation[0] - lo.translation[0]),
-            lo.translation[1] + alpha * (hi.translation[1] - lo.translation[1]),
-            lo.translation[2] + alpha * (hi.translation[2] - lo.translation[2]),
-        ];
-        let q = slerp(
-            &mat3::quat_from_mat(&lo.rotation),
-            &mat3::quat_from_mat(&hi.rotation),
-            alpha,
-        );
-        return Some((mat3::mat_from_quat(&q), translation, lo.frame_id.clone()));
-    }
-    None
-}
-
-/// Quaternion slerp with Eigen's shortest-path semantics (quats are [w,x,y,z]).
-fn slerp(a: &[f64; 4], b: &[f64; 4], alpha: f64) -> [f64; 4] {
-    let mut dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
-    dot *= sign;
-    let (wa, wb) = if dot > 0.9995 {
-        (1.0 - alpha, alpha)
-    } else {
-        let theta = dot.clamp(-1.0, 1.0).acos();
-        let sin_theta = theta.sin();
-        (
-            ((1.0 - alpha) * theta).sin() / sin_theta,
-            (alpha * theta).sin() / sin_theta,
-        )
-    };
-    let mut out = [0.0; 4];
-    for i in 0..4 {
-        out[i] = wa * a[i] + sign * wb * b[i];
-    }
-    let norm = out.iter().map(|v| v * v).sum::<f64>().sqrt();
-    if norm > 0.0 {
-        for v in out.iter_mut() {
-            *v /= norm;
-        }
-    }
-    out
-}
 
 /// Frobenius norm of `a - b` (sqrt of summed squared element differences).
 pub fn frobenius_diff(a: &Mat3, b: &Mat3) -> f64 {

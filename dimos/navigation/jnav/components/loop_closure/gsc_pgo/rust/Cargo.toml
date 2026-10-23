@@ -2,7 +2,7 @@
 name = "dimos-gsc-pgo"
 version = "0.1.0"
 edition = "2021"
-description = "Rust port of the gsc_pgo pose-graph-optimization core (gtsam FFI shim + Scan Context)"
+description = "gsc_pgo: lidar loop closure (Scan Context + ICP) and pose graph optimization"
 license = "Apache-2.0"
 
 [lib]
@@ -31,6 +31,3 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 tracing = { version = "0.1", optional = true }
 validator = { version = "0.21", features = ["derive"], optional = true }
-
-[build-dependencies]
-cc = "1"

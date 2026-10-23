@@ -316,39 +316,8 @@ fn levenberg_marquardt(
     let mut damping = 1e-6;
     let mut current = cost(state, odometry, loops, loop_weights);
     for _ in 0..100 {
-        let mut values: Vec<f64> = Vec::new();
-        let mut gradient = vec![0.0; size];
-        let mut diagonal = vec![0.0; size];
-        let weighted = odometry
-            .iter()
-            .map(|e| (e, 1.0))
-            .chain(loops.iter().zip(loop_weights.iter().copied()));
-        for (e, w) in weighted {
-            let (r, jf, jt) = linearize(e, state);
-            let jacobian = |k: usize| if k == e.from { &jf } else { &jt };
-            for (a, b) in edge_blocks(e.from, e.to) {
-                // the (a, b) block of J^T W J is ja^T W jb
-                let (ja, jb) = (jacobian(a), jacobian(b));
-                for (i, j, row, col) in block_entries(a, b) {
-                    let v: f64 = (0..6)
-                        .map(|k| ja[k][i] * w / e.variances[k] * jb[k][j])
-                        .sum();
-                    if row == col {
-                        diagonal[row] += v;
-                    }
-                    values.push(v);
-                }
-            }
-            for (k, jk) in [(e.from, &jf), (e.to, &jt)] {
-                if k > 0 {
-                    for i in 0..6 {
-                        gradient[6 * (k - 1) + i] -= (0..6)
-                            .map(|m| jk[m][i] * w / e.variances[m] * r[m])
-                            .sum::<f64>();
-                    }
-                }
-            }
-        }
+        let (mut values, gradient, diagonal) =
+            normal_equations(state, size, odometry, loops, loop_weights);
         let filled = values.len();
         values.resize(filled + size, 0.0);
         let mut stepped = false;
@@ -389,6 +358,148 @@ fn levenberg_marquardt(
             break;
         }
     }
+}
+
+/// The Gauss-Newton normal equations at `state`: J^T W J's entries in `Pattern` fill order (damping
+/// diagonal not included), -J^T W r, and J^T W J's diagonal.
+fn normal_equations(
+    state: &State,
+    size: usize,
+    odometry: &[Edge],
+    loops: &[Edge],
+    loop_weights: &[f64],
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let mut values: Vec<f64> = Vec::new();
+    let mut gradient = vec![0.0; size];
+    let mut diagonal = vec![0.0; size];
+    let weighted = odometry
+        .iter()
+        .map(|e| (e, 1.0))
+        .chain(loops.iter().zip(loop_weights.iter().copied()));
+    for (e, w) in weighted {
+        let (r, jf, jt) = linearize(e, state);
+        let jacobian = |k: usize| if k == e.from { &jf } else { &jt };
+        for (a, b) in edge_blocks(e.from, e.to) {
+            // the (a, b) block of J^T W J is ja^T W jb
+            let (ja, jb) = (jacobian(a), jacobian(b));
+            for (i, j, row, col) in block_entries(a, b) {
+                let v: f64 = (0..6)
+                    .map(|k| ja[k][i] * w / e.variances[k] * jb[k][j])
+                    .sum();
+                if row == col {
+                    diagonal[row] += v;
+                }
+                values.push(v);
+            }
+        }
+        for (k, jk) in [(e.from, &jf), (e.to, &jt)] {
+            if k > 0 {
+                for i in 0..6 {
+                    gradient[6 * (k - 1) + i] -= (0..6)
+                        .map(|m| jk[m][i] * w / e.variances[m] * r[m])
+                        .sum::<f64>();
+                }
+            }
+        }
+    }
+    (values, gradient, diagonal)
+}
+
+/// How hard the graph resists a proposed loop: the rise in its error if the loop were forced in
+/// rigidly, to first order. That is the loop's residual at the current poses measured against the
+/// graph's uncertainty between its two keyframes (every path between them, earlier loops
+/// included) plus the loop's own: r^T (J Sigma J^T + loop variance)^-1 r. `rotations` /
+/// `positions` should be the graph's solution with `loops` (weighted by `loop_weights`).
+pub fn strain(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    odometry: &[Edge],
+    loops: &[Edge],
+    loop_weights: &[f64],
+    candidate: &Edge,
+) -> f64 {
+    let n = rotations.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let state = State {
+        rotation: rotations.to_vec(),
+        position: positions.to_vec(),
+    };
+    let pattern = Pattern::new(n, odometry.iter().chain(loops));
+    let size = 6 * (n - 1);
+    let (mut values, _, diagonal) = normal_equations(&state, size, odometry, loops, loop_weights);
+    values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
+    let hessian = SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
+        .expect("pose graph hessian");
+    let Ok(llt) = Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower)
+    else {
+        return f64::INFINITY;
+    };
+    // the covariance columns of the loop's two keyframes (keyframe 0 is fixed, so it has none)
+    let ends = [candidate.from, candidate.to];
+    let mut columns = Mat::<f64>::zeros(size, 12);
+    for (slot, &k) in ends.iter().enumerate() {
+        if k > 0 {
+            for i in 0..6 {
+                columns[(6 * (k - 1) + i, 6 * slot + i)] = 1.0;
+            }
+        }
+    }
+    llt.solve_in_place_with_conj(Conj::No, columns.as_mut());
+    let mut joint = [[0.0; 12]; 12];
+    for (slot_a, &a) in ends.iter().enumerate() {
+        for slot_b in 0..2 {
+            if a > 0 {
+                for i in 0..6 {
+                    for j in 0..6 {
+                        joint[6 * slot_a + i][6 * slot_b + j] =
+                            columns[(6 * (a - 1) + i, 6 * slot_b + j)];
+                    }
+                }
+            }
+        }
+    }
+    let (r, jf, jt) = linearize(candidate, &state);
+    let jacobian = |k: usize, c: usize| if c < 6 { jf[k][c] } else { jt[k][c - 6] };
+    let mut total = [[0.0; 6]; 6];
+    for i in 0..6 {
+        for j in 0..6 {
+            total[i][j] = (0..12)
+                .map(|a| {
+                    (0..12)
+                        .map(|b| jacobian(i, a) * joint[a][b] * jacobian(j, b))
+                        .sum::<f64>()
+                })
+                .sum::<f64>();
+        }
+        total[i][i] += candidate.variances[i];
+    }
+    let solved = solve6(total, r);
+    (0..6).map(|i| r[i] * solved[i]).sum()
+}
+
+/// x with a x = b for a 6x6 `a` (Gaussian elimination with partial pivoting).
+fn solve6(mut a: [[f64; 6]; 6], mut b: [f64; 6]) -> [f64; 6] {
+    for col in 0..6 {
+        let pivot = (col..6)
+            .max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))
+            .unwrap();
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        for row in col + 1..6 {
+            let factor = a[row][col] / a[col][col];
+            for k in col..6 {
+                a[row][k] -= factor * a[col][k];
+            }
+            b[row] -= factor * b[col];
+        }
+    }
+    let mut x = [0.0; 6];
+    for row in (0..6).rev() {
+        x[row] = (b[row] - (row + 1..6).map(|k| a[row][k] * x[k]).sum::<f64>()) / a[row][row];
+    }
+    x
 }
 
 /// The chi-square value a 6-DoF residual stays under with probability `p` (CDF 1 - e^{-x/2}(1 + x/2 + x²/8)).
