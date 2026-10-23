@@ -38,9 +38,11 @@ MAX_AREA_FRAC = 0.50
 EDGE_MARGIN_FRAC = 0.02
 
 # Instance pool gates (localize Localization + sighting confidences).
+# Keep aligned with room-scale LocalizeParams.accept_score (0.32 in VQA generate);
+# a higher floor here silently drops every verified hit before pairing.
 MIN_INSTANCE_VIEWS = 3
-MIN_SEMANTIC_SCORE = 0.55
-MIN_SIGHTING_CONF = 0.25
+MIN_SEMANTIC_SCORE = 0.32
+MIN_SIGHTING_CONF = 0.18
 
 # Pair sampling — prefer temporally separated revisits over near-duplicate views.
 MAX_SAME_PAIRS_PER_INSTANCE = 2

@@ -68,9 +68,9 @@ def test_bbox_framing_rejects_corner_and_tiny() -> None:
 
 
 def test_instance_pool_requires_views_score_and_min_conf() -> None:
-    assert instance_pool_ok(n_views=3, semantic_score=0.55, sighting_confidences=(0.3, 0.4, 0.5))
+    assert instance_pool_ok(n_views=3, semantic_score=0.32, sighting_confidences=(0.2, 0.3, 0.4))
     assert not instance_pool_ok(n_views=2, semantic_score=0.9, sighting_confidences=(0.9, 0.9))
-    assert not instance_pool_ok(n_views=5, semantic_score=0.4, sighting_confidences=(0.9, 0.9))
+    assert not instance_pool_ok(n_views=5, semantic_score=0.20, sighting_confidences=(0.9, 0.9))
     assert not instance_pool_ok(n_views=5, semantic_score=0.7, sighting_confidences=(0.1, 0.8))
 
 
