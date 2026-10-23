@@ -142,19 +142,32 @@ def run(
 ) -> None:
     """Evaluate a generated standalone VQA dataset."""
     # Keep evaluation implementation imports out of global CLI startup.
-    from dimos.evals.cli import agent_kwargs, load_agent, run_provenance
-    from dimos.evals.runner import run_suite
-    from dimos.evals.vqa.suite import load_suite
+    from dimos.evals.cli import agent_class, agent_kwargs, run_provenance
+    from dimos.evals.runner import EvalRunner, summarize
+    from dimos.evals.vqa.suite import load_suite, source_record
 
-    suite = load_suite(dataset)
-    results = run_suite(
+    try:
+        suite = load_suite(dataset)
+    except (ValueError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    overrides = [f"model={model}"] if model else []
+    kwargs = agent_kwargs(overrides)
+    runner = EvalRunner()
+    results = runner.run(
         suite,
-        load_agent(agent, **agent_kwargs(model=model or None)),
-        provenance=run_provenance(
-            command=("evals", "vqa", "run"),
-            agent=agent,
-            model=model or None,
-            suite=str(dataset),
-        ),
+        agent_class(agent)(**kwargs),
+        provenance=run_provenance(source_record(dataset), agent, kwargs),
     )
-    typer.echo(f"Wrote {len(results)} evaluation result(s)")
+    for result in results:
+        status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
+        detail = result.error or (
+            f"score={result.score:.2f} steps={result.steps} "
+            f"answer={result.final_answer[:60]!r}"
+        )
+        typer.echo(f"{status:5} {result.case_id:30} {detail} ({result.duration_s:.1f}s)")
+    summary = summarize(results)
+    typer.echo(
+        f"\n{summary.n} cases | mean {summary.mean_score:.2f} | pass {summary.pass_rate:.0%} "
+        f"| errors {summary.errors} | {summary.duration_s:.0f}s | {runner.run_dir}"
+    )

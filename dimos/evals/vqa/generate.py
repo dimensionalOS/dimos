@@ -66,6 +66,8 @@ from dimos.evals.vqa.pointcloud_frame import (
     select_quality_indices,
 )
 from dimos.evals.vqa.primitives.cross_view_identity import (
+    IdentityPair,
+    SightingView,
     answer_cross_view_same_object,
     pair_case_id,
     propose_identity_pairs,
@@ -412,7 +414,7 @@ def generate_frames_dataset(
     config: VqaGenerationConfig | None = None,
     model_names: dict[str, str] | None = None,
     color_frames: Sequence[tuple[float, Image]] = (),
-    views_by_query: Mapping[str, Mapping[str, Sequence]] | None = None,
+    views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]] | None = None,
     localize_evidence: LocalizeEvidenceDocument | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
@@ -532,11 +534,11 @@ def _materialize_cross_view_clips(
     labels: Sequence[PrivateLabel],
     *,
     color_frames: Sequence[tuple[float, Image]],
-    views_by_query: Mapping[str, Mapping[str, Sequence]],
+    views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
     min_views: int,
 ) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
     """Append cross-view identity cases from the shared localize window (no second localize)."""
-    all_pairs = []
+    all_pairs: list[IdentityPair] = []
     n_instances = 0
     for query, by_id in views_by_query.items():
         instances = {iid: tuple(views) for iid, views in by_id.items()}

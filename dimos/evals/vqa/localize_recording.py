@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dimos.evals.vqa.contracts import QuestionProposal
+from dimos.evals.vqa.primitives.cross_view_identity import SightingView
 from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
@@ -84,7 +85,7 @@ class LocalizeWindowResult:
     # color_image frames in the window for ego / cross-view memory clips.
     color_frames: tuple[tuple[float, Image], ...] = ()
     # query → instance_id → framing sightings (from localize traces; no second pass).
-    views_by_query: dict[str, dict[str, tuple]] = field(default_factory=dict)
+    views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = field(default_factory=dict)
 
 
 def robot_pose_xyz_yaw(
@@ -272,7 +273,7 @@ def localize_window(
 
         named: list[tuple[str, Localization]] = []
         first_seen_by_instance: dict[str, float] = {}
-        views_by_query: dict[str, dict[str, tuple]] = {}
+        views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = {}
         traces = [LocalizeTrace() for _ in query_list]
         with DanDetector(embedder, detector, segmenter) as dan:
             index = embed_index(rig, dan.embedder, after, before)
