@@ -131,9 +131,7 @@ def test_load_suite_wires_clips(tmp_path: Path) -> None:
     (tmp_path / "cases.jsonl").write_text(
         case.model_dump_json(exclude_none=True) + "\n", encoding="utf-8"
     )
-    (tmp_path / "labels.jsonl").write_text(
-        '{"id":"c","answer":"yes"}\n', encoding="utf-8"
-    )
+    (tmp_path / "labels.jsonl").write_text('{"id":"c","answer":"yes"}\n', encoding="utf-8")
     suite = load_suite(tmp_path)
     assert len(suite) == 1
     assert isinstance(suite[0].environment, ImageClip)

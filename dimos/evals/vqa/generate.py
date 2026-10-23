@@ -30,6 +30,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
+from dimos.evals.vqa.clip import (
+    clip_duration_s,
+    ego_memory_clip,
+    format_clip_span,
+    write_image_clip,
+)
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
@@ -43,12 +49,6 @@ from dimos.evals.vqa.contracts import (
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
-)
-from dimos.evals.vqa.clip import (
-    clip_duration_s,
-    ego_memory_clip,
-    format_clip_span,
-    write_image_clip,
 )
 from dimos.evals.vqa.localize_coverage import (
     DEFAULT_LOCALIZE_COVERAGE_K,
@@ -403,9 +403,7 @@ def generate_frames_dataset(
                 "generation": request.model_dump(mode="json", exclude={"output"}),
                 "configuration": config.model_dump(mode="json"),
                 "families": [
-                    family.name
-                    for family in AVAILABLE_FAMILIES
-                    if family.name in used_family_names
+                    family.name for family in AVAILABLE_FAMILIES if family.name in used_family_names
                 ],
                 "models": model_names or {},
                 "frame_count": frame_count,

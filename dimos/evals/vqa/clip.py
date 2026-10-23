@@ -157,16 +157,10 @@ def _pick_with_anchors(
     for anchor in anchors:
         chosen.add(min(range(n), key=lambda i: abs(timestamps[i] - anchor)))
     if len(chosen) > max_frames:
-        raise ValueError(
-            f"ego clip needs {len(chosen)} anchor frames but max_frames={max_frames}"
-        )
+        raise ValueError(f"ego clip needs {len(chosen)} anchor frames but max_frames={max_frames}")
     target = min(max_frames, n)
     if len(chosen) < target:
-        even = (
-            [0]
-            if target == 1
-            else [round(i * (n - 1) / (target - 1)) for i in range(target)]
-        )
+        even = [0] if target == 1 else [round(i * (n - 1) / (target - 1)) for i in range(target)]
         for idx in even:
             chosen.add(idx)
             if len(chosen) >= target:

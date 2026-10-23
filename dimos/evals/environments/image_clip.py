@@ -97,6 +97,4 @@ class ImageClip(Environment):
         artifact: Path | tuple[Path, ...] = (
             self.config.paths[0] if len(self.config.paths) == 1 else self.config.paths
         )
-        return RunningEnvironment(
-            mcp_url="", streams=tuple(streams), artifacts={"clip": artifact}
-        )
+        return RunningEnvironment(mcp_url="", streams=tuple(streams), artifacts={"clip": artifact})
