@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Re-solve a pgo-eval run's final graph (its keyframes' odometry + every committed loop) with pose_graph::solve,
+//! Re-solve a pgo-eval run's final graph (its keyframes' odometry + every committed loop) with big_picture_fit::solve,
 //! pose graph, and write the keyframe positions next to the run as pose_graph.bin (f64 x, y, z per keyframe).
 //! GSC_RUN=<run dir> cargo test --release --test pose_graph_replay -- --ignored --nocapture
 
+use dimos_gsc_pgo::big_picture_fit::{residuals, solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3;
-use dimos_gsc_pgo::pose_graph::{residuals, solve, Edge, SolveConfig};
 
 #[test]
 #[ignore]

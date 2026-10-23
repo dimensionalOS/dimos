@@ -18,10 +18,9 @@
 //! Structure:
 //! - LCM handlers stash the latest odometry and pair each lidar scan with it (CloudWithPose).
 //! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
-//!   corrected_odometry (offset-corrected pose), correction (map->odom TFMessage), pose_graph
-//!   (Graph3D snapshot per keyframe), loop_closure_event (GraphDelta3D of the keyframes a solve
-//!   moved), tf_deformation_nodes (per-keyframe DeformationNode, re-published only when a solve
-//!   moves a node past an epsilon), and the optional throttled debug_global_map cloud. Loop
+//!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
+//!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
+//!   loop_edges (each loop candidate's lifecycle), and the optional debug_global_map cloud. Loop
 //!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
 //!   runtime via a captured Handle.
 
@@ -34,7 +33,6 @@ use dimos_gsc_pgo::gsc_pgo::{
     CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, PoseWithTime,
 };
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::msgs::{DeformationNode, Graph3D, GraphDelta3D, PoseStamped as WirePose};
 use dimos_gsc_pgo::pointcloud::{self, PointCloud};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
@@ -44,9 +42,8 @@ use lcm_msgs::tf2_msgs::TFMessage;
 mod utils;
 use tracing::{error, info, warn};
 use utils::{
-    build_loop_closure_event, build_loop_closure_records, build_loop_edge_records, build_odometry,
-    build_pointcloud2, build_pose_graph, build_pose_graph_records, build_tf_message, extract_xyz,
-    frobenius_diff, SplitMix64,
+    build_loop_closure_records, build_loop_edge_records, build_odometry, build_pointcloud2,
+    build_pose_graph_records, build_tf_message, extract_xyz,
 };
 
 // A keyframe pose change smaller than this waits to add up before it is sent.
@@ -79,8 +76,6 @@ pub struct Config {
     pub loop_submap_half_range: i32,
     pub submap_resolution: f64,
     pub keyframe_voxel_size: f64,
-    pub min_loop_detect_duration: f64,
-    pub loop_search_min_interval: f64,
     pub loop_min_occupancy: i32,
     pub loop_min_degeneracy: f64,
     pub loop_yank_gate: bool,
@@ -98,8 +93,6 @@ pub struct Config {
     // Where each pose graph snapshot's keyframes go, for offline checks; empty for never.
     pub dump_path: String,
 
-    // Scan Context place recognition
-    pub use_scan_context: bool,
     pub scan_context_num_rings: i32,
     pub scan_context_num_sectors: i32,
     pub scan_context_max_range_m: f64,
@@ -137,8 +130,6 @@ impl Config {
             loop_submap_half_range: self.loop_submap_half_range,
             submap_resolution: self.submap_resolution,
             keyframe_voxel_size: self.keyframe_voxel_size,
-            min_loop_detect_duration: self.min_loop_detect_duration,
-            loop_search_min_interval: self.loop_search_min_interval,
             loop_min_occupancy: self.loop_min_occupancy,
             loop_min_degeneracy: self.loop_min_degeneracy,
             loop_yank_gate: self.loop_yank_gate,
@@ -159,7 +150,6 @@ impl Config {
             odom_rot_yaw_var: self.odom_rot_yaw_var,
             odom_trans_xy_var: self.odom_trans_xy_var,
             odom_trans_z_var: self.odom_trans_z_var,
-            use_scan_context: self.use_scan_context,
             scan_context_num_rings: self.scan_context_num_rings,
             scan_context_num_sectors: self.scan_context_num_sectors,
             scan_context_max_range_m: self.scan_context_max_range_m,
@@ -205,33 +195,22 @@ struct GscPgoModule {
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
 
-    #[output(encode = TFMessage::encode)]
-    correction: Output<TFMessage>,
-
-    // The correction again, on the shared tf topic.
+    // The map -> odometry correction.
     #[output(encode = TFMessage::encode)]
     tf: Output<TFMessage>,
 
-    #[output(encode = Graph3D::encode)]
-    pose_graph: Output<Graph3D>,
-
-    #[output(encode = GraphDelta3D::encode)]
-    loop_closure_event: Output<GraphDelta3D>,
-
-    // pose_graph and loop_closure_event as packed PointCloud2 records, for fast-reform consumers.
+    // One packed record per keyframe at its current pose.
     #[output(encode = PointCloud2::encode)]
-    pose_graph_records: Output<PointCloud2>,
+    pose_graph: Output<PointCloud2>,
 
+    // One packed record per keyframe a solve moved: its pose before, and the delta.
     #[output(encode = PointCloud2::encode)]
-    loop_closure_records: Output<PointCloud2>,
+    loop_closure_event: Output<PointCloud2>,
 
     // Each loop candidate's lifecycle as it happens (proposed, gated, GNC votes, accepted,
     // rejected, applied) with both keyframes' current positions, for drawing loop edges.
     #[output(encode = PointCloud2::encode)]
     loop_edges: Output<PointCloud2>,
-
-    #[output(encode = DeformationNode::encode)]
-    tf_deformation_nodes: Output<DeformationNode>,
 
     // Debug-only, nothing reads it. Publishing is gated on global_map_publish_rate > 0.
     #[output(encode = PointCloud2::encode)]
@@ -259,13 +238,9 @@ impl GscPgoModule {
             state: Arc::clone(&self.state),
             config: self.config.clone(),
             corrected_odometry: self.corrected_odometry.clone(),
-            correction: self.correction.clone(),
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
-            pose_graph_records: self.pose_graph_records.clone(),
-            loop_closure_records: self.loop_closure_records.clone(),
             loop_edges: self.loop_edges.clone(),
-            tf_deformation_nodes: self.tf_deformation_nodes.clone(),
             global_map: self.debug_global_map.clone(),
             tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
@@ -353,14 +328,10 @@ struct Worker {
     state: Shared<SharedState>,
     config: Config,
     corrected_odometry: Output<Odometry>,
-    correction: Output<TFMessage>,
     tf: Output<TFMessage>,
-    pose_graph: Output<Graph3D>,
-    loop_closure_event: Output<GraphDelta3D>,
-    pose_graph_records: Output<PointCloud2>,
-    loop_closure_records: Output<PointCloud2>,
+    pose_graph: Output<PointCloud2>,
+    loop_closure_event: Output<PointCloud2>,
     loop_edges: Output<PointCloud2>,
-    tf_deformation_nodes: Output<DeformationNode>,
     global_map: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
@@ -409,12 +380,6 @@ impl Worker {
         let mut last_solve_wait_publish = std::time::Instant::now();
         let mut last_scan_at = std::time::Instant::now();
 
-        // Per-node deformation stream state: a stable random id per keyframe
-        // plus its last published pose (re-publish only on new/moved nodes).
-        let deformation_tf_id = dimos_gsc_pgo::msgs::tf_id_for(&frame_id, &child_frame_id);
-        let mut deformation_rng = SplitMix64::from_entropy();
-        let mut deformation_ids: Vec<u64> = Vec::new();
-        let mut deformation_last: Vec<(Mat3, Vec3)> = Vec::new();
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
         // Loop-edge events already sent on loop_edges.
@@ -459,15 +424,7 @@ impl Worker {
                     }
                     if changed || last_solve_wait_publish.elapsed() >= solve_wait_publish_interval {
                         last_solve_wait_publish = std::time::Instant::now();
-                        self.publish_graph(
-                            &pgo,
-                            last_time,
-                            &frame_id,
-                            deformation_tf_id,
-                            &mut deformation_ids,
-                            &mut deformation_last,
-                            &mut deformation_rng,
-                        );
+                        self.publish_graph(&pgo, last_time, &frame_id);
                     }
                     if changed {
                         continue;
@@ -565,15 +522,7 @@ impl Worker {
 
             // Pose graph on every keyframe (iSAM2 may have re-optimized prior
             // poses on loop closure). Only GNC-kept loops are published as edges.
-            self.publish_graph(
-                &pgo,
-                cur_time,
-                &frame_id,
-                deformation_tf_id,
-                &mut deformation_ids,
-                &mut deformation_last,
-                &mut deformation_rng,
-            );
+            self.publish_graph(&pgo, cur_time, &frame_id);
 
             // Throttled debug global map.
             if publish_global_map
@@ -599,42 +548,15 @@ impl Worker {
         }
     }
 
-    /// Publish the pose-graph snapshot (GNC-kept loops only as edges) plus the
-    /// per-keyframe deformation-node stream.
-    #[allow(clippy::too_many_arguments)]
-    fn publish_graph(
-        &self,
-        pgo: &GscPgo,
-        ts: f64,
-        frame_id: &str,
-        deformation_tf_id: u64,
-        deformation_ids: &mut Vec<u64>,
-        deformation_last: &mut Vec<(Mat3, Vec3)>,
-        deformation_rng: &mut SplitMix64,
-    ) {
-        let active_pairs: Vec<(usize, usize)> = pgo
-            .committed_loops()
-            .iter()
-            .filter(|committed| committed.gnc_weight > 0.5)
-            .map(|committed| (committed.target_id, committed.source_id))
-            .collect();
-        let graph = build_pose_graph(pgo.key_poses(), &active_pairs, ts, frame_id);
-        self.publish(&self.pose_graph, &graph, "pose_graph");
+    /// Publish every keyframe's current pose (and dump them with `dump_path`).
+    fn publish_graph(&self, pgo: &GscPgo, ts: f64, frame_id: &str) {
         let records = build_pose_graph_records(pgo.key_poses(), ts, frame_id);
-        self.publish(&self.pose_graph_records, &records, "pose_graph_records");
+        self.publish(&self.pose_graph, &records, "pose_graph");
         if !self.config.dump_path.is_empty() {
             if let Err(e) = dump_keyframes(&self.config.dump_path, pgo.key_poses()) {
                 warn!(error = %e, "Failed to dump the keyframes.");
             }
         }
-        self.publish_deformation_nodes(
-            pgo.key_poses(),
-            deformation_tf_id,
-            frame_id,
-            deformation_ids,
-            deformation_last,
-            deformation_rng,
-        );
     }
 
     /// Append every loop search since the last call to `<dump_path>.loops.jsonl`: the candidate,
@@ -725,10 +647,8 @@ impl Worker {
         if !loop_closed && !moved {
             return;
         }
-        let msg = build_loop_closure_event(published, poses, ts, frame_id);
-        self.publish(&self.loop_closure_event, &msg, "loop_closure_event");
         let records = build_loop_closure_records(published, poses, ts, frame_id);
-        self.publish(&self.loop_closure_records, &records, "loop_closure_records");
+        self.publish(&self.loop_closure_event, &records, "loop_closure_event");
         if !self.config.dump_path.is_empty() {
             if let Err(e) = append_closure(&self.config.dump_path, ts, &records) {
                 warn!(error = %e, "Failed to dump the loop closure.");
@@ -770,51 +690,7 @@ impl Worker {
             frame_id,
             child_frame_id,
         );
-        self.publish(&self.correction, &tf_msg, "correction");
         self.publish(&self.tf, &tf_msg, "tf");
-    }
-
-    /// Publish per-keyframe deformation nodes: each keyframe keeps a stable
-    /// random id; a node is (re)published only when it's new or the optimizer
-    /// moved it past an epsilon.
-    fn publish_deformation_nodes(
-        &self,
-        key_poses: &[KeyPoseWithCloud],
-        tf_id: u64,
-        frame_id: &str,
-        ids: &mut Vec<u64>,
-        last_published: &mut Vec<(Mat3, Vec3)>,
-        rng: &mut SplitMix64,
-    ) {
-        const POS_EPS: f64 = 1e-4; // 0.1 mm
-        const ROT_EPS: f64 = 1e-5; // Frobenius-norm threshold on the rotation matrix
-        for (i, kp) in key_poses.iter().enumerate() {
-            let is_new = i >= ids.len();
-            if !is_new {
-                let (last_rotation, last_translation) = &last_published[i];
-                let pos_moved = mat3::norm(&mat3::sub(&kp.translation_global, last_translation));
-                let rot_moved = frobenius_diff(&kp.rotation_global, last_rotation);
-                if pos_moved <= POS_EPS && rot_moved <= ROT_EPS {
-                    continue;
-                }
-                last_published[i] = (kp.rotation_global, kp.translation_global);
-            } else {
-                ids.push(rng.next());
-                last_published.push((kp.rotation_global, kp.translation_global));
-            }
-            let q = mat3::quat_from_mat(&kp.rotation_global);
-            let node = DeformationNode {
-                id: ids[i],
-                tf_id,
-                pose: WirePose {
-                    ts: kp.time,
-                    frame_id: frame_id.to_string(),
-                    position: kp.translation_global,
-                    orientation: [q[1], q[2], q[3], q[0]],
-                },
-            };
-            self.publish(&self.tf_deformation_nodes, &node, "tf_deformation_nodes");
-        }
     }
 }
 

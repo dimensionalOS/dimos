@@ -353,3 +353,111 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
     ranked.truncate(k);
     ranked
 }
+
+impl crate::gsc_pgo::GscPgo {
+    /// Radius search on past key-pose global positions (candidates ascending
+    /// by distance), returning the first far-enough-in-time hit.
+    pub(crate) fn search_by_position(&self) -> i64 {
+        let cur_idx = self.key_poses.len() - 1;
+        let last_item = self.key_poses.last().unwrap();
+        let last = [
+            last_item.translation_global[0] as f32,
+            last_item.translation_global[1] as f32,
+            last_item.translation_global[2] as f32,
+        ];
+        let radius_sq = (self.config.loop_search_radius * self.config.loop_search_radius) as f32;
+        let mut neighbors: Vec<(f32, usize)> = Vec::new();
+        for (i, key_pose) in self.key_poses[..cur_idx].iter().enumerate() {
+            let dx = key_pose.translation_global[0] as f32 - last[0];
+            let dy = key_pose.translation_global[1] as f32 - last[1];
+            let dz = key_pose.translation_global[2] as f32 - last[2];
+            let sq = dx * dx + dy * dy + dz * dz;
+            if sq <= radius_sq {
+                neighbors.push((sq, i));
+            }
+        }
+        if neighbors.is_empty() {
+            return -1;
+        }
+        neighbors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        for &(_, idx) in &neighbors {
+            if (last_item.time - self.key_poses[idx].time).abs() > self.config.loop_time_thresh {
+                return idx as i64;
+            }
+        }
+        -1
+    }
+    /// Scan-context candidate search. Returns (loop_idx or -1,
+    /// sector_shift, best, second): the accepted candidate under the match
+    /// threshold, plus the closest / 2nd-closest cosine distances across the
+    /// top-K (the Lowe ratio distinctiveness signal).
+    pub(crate) fn search_by_scan_context(&self) -> (i64, i32, f32, f32) {
+        let mut out_best = 2.0f32;
+        let mut out_second = 2.0f32;
+        if self.scan_context_descriptors.is_empty()
+            || self.scan_context_descriptors.last().unwrap().is_empty()
+        {
+            return (-1, 0, out_best, out_second);
+        }
+        let query = self.scan_context_descriptors.last().unwrap();
+        let query_key = self.scan_context_ring_keys.last().unwrap();
+        let current_time = self.key_poses.last().unwrap().time;
+
+        // Two-stage retrieval: rank by ring-key L2 distance, then score the
+        // top-K via column-shifted cosine distance on the full descriptor.
+        // TODO: switch to a kd-tree later for O(log n) instead of O(n) — this
+        // ring-key ranking is a linear scan (O(N^2) over a run) and won't scale
+        // to massive maps.
+        let cur_idx = self.key_poses.len() - 1;
+        let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(cur_idx);
+        for i in 0..cur_idx {
+            if self.scan_context_descriptors[i].is_empty() {
+                continue;
+            }
+            if (current_time - self.key_poses[i].time).abs() <= self.config.loop_time_thresh {
+                continue; // too recent — not a true loop candidate
+            }
+            let key = &self.scan_context_ring_keys[i];
+            let mut sq = 0.0f32;
+            for (a, b) in key.iter().zip(query_key.iter()) {
+                let d = a - b;
+                sq += d * d;
+            }
+            ranked.push((sq.sqrt(), i));
+        }
+        if ranked.is_empty() {
+            return (-1, 0, out_best, out_second);
+        }
+
+        let top_k_count = ranked.len().min(self.scan_context_config.candidate_top_k);
+        ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut best_dist = f32::MAX;
+        let mut second_dist = f32::MAX;
+        let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
+        let mut best_idx: i64 = -1;
+        let mut best_shift = 0i32;
+        for &(_, idx) in &ranked[..top_k_count] {
+            let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
+            if distance < best_dist {
+                second_dist = best_dist; // demote previous best
+                best_dist = distance;
+            } else if distance < second_dist {
+                second_dist = distance;
+            }
+            if distance < best_dist_filtered {
+                best_dist_filtered = distance;
+                best_idx = idx as i64;
+                best_shift = shift;
+            }
+        }
+
+        if best_dist < 2.0 {
+            out_best = best_dist;
+        }
+        if second_dist < 2.0 {
+            out_second = second_dist;
+        }
+        (best_idx, best_shift, out_best, out_second)
+    }
+}

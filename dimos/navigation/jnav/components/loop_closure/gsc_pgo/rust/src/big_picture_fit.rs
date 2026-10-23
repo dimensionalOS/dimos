@@ -20,6 +20,9 @@ use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Side};
 
+use std::thread::JoinHandle;
+
+use crate::gsc_pgo::{CommittedLoop, Config, GscPgo, KeyPoseWithCloud, LoopEdgeState};
 use crate::mat3::{self, Mat3, Vec3};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
@@ -547,4 +550,176 @@ fn log(r: &Mat3) -> Vec3 {
         angle / (2.0 * angle.sin())
     };
     v.map(|x| x * scale)
+}
+
+// ---- the pose graph GSC keeps, re-solved on a background thread whenever loops arrive ----
+
+/// A pose-graph solve running on another thread over the first `keyframes` keyframes, adopted once
+/// the map reaches `due_at` keyframes or, on request, as soon as it finishes (see `GscPgo::update`).
+pub(crate) struct Solving {
+    handle: JoinHandle<(Solution, f64)>,
+    keyframes: usize,
+    due_at: usize,
+}
+
+impl GscPgo {
+    /// Half the sum of squared whitened residuals of the newest applied solve (how much its
+    /// constraints conflict).
+    pub fn graph_error(&self) -> f64 {
+        self.graph_error
+    }
+    pub fn committed_loops(&self) -> &[CommittedLoop] {
+        &self.committed_loops
+    }
+    /// Whether a solve is running or loops are waiting for one.
+    pub fn solve_pending(&self) -> bool {
+        self.solving.is_some() || self.committed_loops.len() > self.loops_dispatched
+    }
+    /// Apply a finished solve, and start one when loops have arrived since the last. A solve is
+    /// adopted once the map reaches its `due_at` keyframes (waiting for it if needed), or, with
+    /// `now`, as soon as it has finished. Returns whether keyframes moved.
+    pub fn update(&mut self, now: bool) -> bool {
+        self.new_loop = false;
+        let keyframes = self.key_poses.len();
+        let ready = self.solving.as_ref().is_some_and(|solving| {
+            keyframes >= solving.due_at || (now && solving.handle.is_finished())
+        });
+        let moved = ready && self.apply_solve();
+        if self.solving.is_none() && self.committed_loops.len() > self.loops_dispatched {
+            self.dispatch_solve();
+        }
+        moved
+    }
+    /// Wait for the running solve, and solve again until every loop is in. Returns whether keyframes moved.
+    pub fn finish(&mut self) -> bool {
+        let mut moved = false;
+        loop {
+            moved |= self.apply_solve();
+            if self.committed_loops.len() == self.loops_dispatched {
+                return moved;
+            }
+            self.dispatch_solve();
+        }
+    }
+    /// Start a solve of every keyframe so far and every committed loop, from the odometry (GNC
+    /// must start from the dead-reckoned chain, not an estimate earlier loops already bent).
+    fn dispatch_solve(&mut self) {
+        let n = self.key_poses.len();
+        let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_local).collect();
+        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
+        let config = &self.config;
+        let odometry = odometry_edges(&self.key_poses, config);
+        let loops = loop_edges(self.committed_loops.iter());
+        let solve_config = SolveConfig {
+            gnc_variance_scale: config.loop_gnc_var_scale,
+            gnc_inlier_probability: config.loop_gnc_inlier_probability,
+            huber_k: config.loop_robust_huber_k,
+        };
+        let handle = std::thread::Builder::new()
+            .name("gsc-pose-graph".into())
+            .spawn(move || {
+                let started = std::time::Instant::now();
+                let solution = solve(&rotations, &positions, &odometry, &loops, &solve_config);
+                (solution, started.elapsed().as_secs_f64())
+            })
+            .expect("spawn pose graph thread");
+        let delay = (n as f64 * self.config.loop_gnc_apply_after_fraction).ceil() as usize;
+        self.loops_dispatched = self.committed_loops.len();
+        self.solving = Some(Solving {
+            handle,
+            keyframes: n,
+            due_at: n + delay.max(1),
+        });
+    }
+    /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
+    /// ride on, and its loop verdicts. Returns whether there was one.
+    fn apply_solve(&mut self) -> bool {
+        let Some(solving) = self.solving.take() else {
+            return false;
+        };
+        let (solution, seconds) = solving.handle.join().expect("pose graph solve panicked");
+        self.timing.solve_s += seconds;
+        let n = solving.keyframes;
+        for (key_pose, (rotation, position)) in self.key_poses[..n]
+            .iter_mut()
+            .zip(solution.rotations.iter().zip(&solution.positions))
+        {
+            key_pose.rotation_global = *rotation;
+            key_pose.translation_global = *position;
+        }
+        // keyframes made since the solve started ride on its newest keyframe's correction
+        let newest = &self.key_poses[n - 1];
+        self.rotation_offset = mat3::mat_mul(
+            &newest.rotation_global,
+            &mat3::transpose(&newest.rotation_local),
+        );
+        self.translation_offset = mat3::sub(
+            &newest.translation_global,
+            &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
+        );
+        for key_pose in &mut self.key_poses[n..] {
+            key_pose.rotation_global =
+                mat3::mat_mul(&self.rotation_offset, &key_pose.rotation_local);
+            key_pose.translation_global = mat3::add(
+                &mat3::mat_vec(&self.rotation_offset, &key_pose.translation_local),
+                &self.translation_offset,
+            );
+        }
+        for (index, &weight) in solution.loop_weights.iter().enumerate() {
+            let previous = self.committed_loops[index].gnc_weight;
+            self.committed_loops[index].gnc_weight = weight;
+            if previous == weight {
+                continue;
+            }
+            let (source, target) = (
+                self.committed_loops[index].source_id,
+                self.committed_loops[index].target_id,
+            );
+            let (confidence, yank_z) = (self.loop_fit_confidence[index], self.loop_yank_z[index]);
+            if weight > 0.5 {
+                self.push_edge(source, target, LoopEdgeState::Accepted, confidence, yank_z);
+                self.push_edge(source, target, LoopEdgeState::Applied, confidence, yank_z);
+            } else {
+                self.push_edge(source, target, LoopEdgeState::Rejected, 0.0, yank_z);
+            }
+        }
+        self.graph_error = solution.error;
+        true
+    }
+}
+
+/// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
+pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) -> Vec<Edge> {
+    let (tilt, yaw) = (config.odom_rot_roll_pitch_var, config.odom_rot_yaw_var);
+    let (xy, z) = (config.odom_trans_xy_var, config.odom_trans_z_var);
+    key_poses
+        .windows(2)
+        .enumerate()
+        .map(|(i, pair)| {
+            let back = mat3::transpose(&pair[0].rotation_local);
+            Edge {
+                from: i,
+                to: i + 1,
+                rotation: mat3::mat_mul(&back, &pair[1].rotation_local),
+                translation: mat3::mat_vec(
+                    &back,
+                    &mat3::sub(&pair[1].translation_local, &pair[0].translation_local),
+                ),
+                variances: [tilt, tilt, yaw, xy, xy, z],
+            }
+        })
+        .collect()
+}
+
+/// Committed loops as pose-graph edges; a loop's variance is its ICP fitness.
+pub(crate) fn loop_edges<'a>(loops: impl Iterator<Item = &'a CommittedLoop>) -> Vec<Edge> {
+    loops
+        .map(|l| Edge {
+            from: l.target_id,
+            to: l.source_id,
+            rotation: l.rotation_offset,
+            translation: l.translation_offset,
+            variances: [l.score.max(1e-6); 6],
+        })
+        .collect()
 }

@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for keyframe storage and the point-cloud machinery (voxel-grid centroids, ICP recovering
-//! a known transform, normal-scatter degeneracy).
+//! Unit tests for keyframe storage, the voxel grid, connection fit (ICP recovers a known transform) and
+//! uniqueness (normal-scatter degeneracy).
 
 // Index loops mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
 #![allow(clippy::needless_range_loop)]
 
+use dimos_gsc_pgo::connection_fit::{icp, IcpParams};
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::pointcloud::{
-    cloud_degeneracy, icp_point_to_point, voxel_downsample, IcpParams,
-};
+use dimos_gsc_pgo::pointcloud::{voxel_downsample, KdTree};
+use dimos_gsc_pgo::uniqueness::degeneracy;
 
 fn make_pose(rotation: Mat3, translation: Vec3, time: f64) -> PoseWithTime {
     let mut pose = PoseWithTime::new(rotation, translation);
@@ -146,118 +146,6 @@ fn scattered_corner_cloud() -> Vec<[f32; 3]> {
 /// Eigen's L1-cache heuristic; at this cloud size (~1200 correspondences)
 /// every L1 size >= 16 KiB yields the same panel split.
 #[test]
-fn icp_matches_pcl_reference_bits() {
-    // LCG identical to the C++ reference harness.
-    let mut state = 42u64;
-    let mut next = move || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (((state >> 40) as f32) / (1u32 << 24) as f32, state)
-    };
-    // cosf/sinf(0.12f) and cosf/sinf(0.05f) bits from the C++ run, to keep
-    // the test independent of libm.
-    let cy = f32::from_bits(0x3f7e28b5);
-    let sy = f32::from_bits(0x3df52bac);
-    let mut source: Vec<[f32; 3]> = Vec::new();
-    let mut target: Vec<[f32; 3]> = Vec::new();
-    for _ in 0..1200 {
-        let (u, _) = next();
-        let (v, _) = next();
-        let (w, s) = next();
-        let (u, v) = (u * 5.0f32, v * 5.0f32);
-        let p = match (s >> 7) % 3 {
-            0 => [u, v, 0.05f32 * w],
-            1 => [u, 0.05f32 * w, v],
-            _ => [0.05f32 * w, u, v],
-        };
-        source.push(p);
-        let (n0, _) = next();
-        let (n1, _) = next();
-        let (n2, _) = next();
-        target.push([
-            cy * p[0] - sy * p[1] + 0.35f32 + 0.002f32 * n0,
-            sy * p[0] + cy * p[1] - 0.25f32 + 0.002f32 * n1,
-            p[2] + 0.15f32 + 0.002f32 * n2,
-        ]);
-    }
-
-    let check = |result: &dimos_gsc_pgo::pointcloud::IcpResult,
-                 expected: &[[u32; 4]; 3],
-                 expected_fitness: u64,
-                 label: &str| {
-        assert!(result.converged, "{label}: PCL converged here");
-        for i in 0..3 {
-            for j in 0..3 {
-                assert_eq!(
-                    (result.rotation[i][j] as f32).to_bits(),
-                    expected[i][j],
-                    "{label}: r({i},{j})"
-                );
-            }
-            assert_eq!(
-                (result.translation[i] as f32).to_bits(),
-                expected[i][3],
-                "{label}: t({i})"
-            );
-        }
-        assert_eq!(
-            result.fitness.to_bits(),
-            expected_fitness,
-            "{label}: fitness {:e}",
-            result.fitness
-        );
-    };
-
-    // Run 1: non-identity f32 guess (cos/sin(0.05f), small translation).
-    let gc = f32::from_bits(0x3f7fae19);
-    let gs = f32::from_bits(0x3d4cb6f5);
-    let guess_rotation: Mat3 = [
-        [f64::from(gc), f64::from(-gs), 0.0],
-        [f64::from(gs), f64::from(gc), 0.0],
-        [0.0, 0.0, 1.0],
-    ];
-    let guess_translation: Vec3 = [f64::from(0.1f32), f64::from(-0.05f32), f64::from(0.02f32)];
-    let result = icp_point_to_point(
-        &source,
-        &target,
-        &guess_rotation,
-        &guess_translation,
-        &IcpParams::default(),
-    );
-    check(
-        &result,
-        &[
-            [0x3f7e28c7, 0xbdf529f2, 0xb633fd02, 0x3eb3b4bf],
-            [0x3df529e6, 0x3f7e28c2, 0x3728443e, 0xbe7eff66],
-            [0x35a19952, 0xb72918bc, 0x3f800001, 0x3e1aa158],
-        ],
-        0x3eb07798709051ec,
-        "guess run",
-    );
-
-    // Run 2: identity guess (skips the initial cloud transform, like PCL).
-    let result = icp_point_to_point(
-        &source,
-        &target,
-        &mat3::identity(),
-        &[0.0; 3],
-        &IcpParams::default(),
-    );
-    check(
-        &result,
-        &[
-            [0x3f7e28c8, 0xbdf52a00, 0xb6267b50, 0x3eb3b4e7],
-            [0x3df529e7, 0x3f7e28cc, 0x372820a2, 0xbe7effd2],
-            [0x35c8ce00, 0xb72ca928, 0x3f800008, 0x3e1aa108],
-        ],
-        0x3eb0778af6af69d0,
-        "identity run",
-    );
-}
-
-/// ICP recovers a known rigid transform between two synthetic clouds.
-#[test]
 fn icp_recovers_known_transform() {
     let source = scattered_corner_cloud();
     let rotation_true = mat3::rot_z(0.12);
@@ -265,12 +153,16 @@ fn icp_recovers_known_transform() {
     let target =
         dimos_gsc_pgo::pointcloud::transform_cloud(&source, &rotation_true, &translation_true);
 
-    let result = icp_point_to_point(
+    let result = icp(
         &source,
         &target,
+        &KdTree::build(&target),
         &mat3::identity(),
         &[0.0; 3],
-        &IcpParams::default(),
+        &IcpParams {
+            max_iterations: 50,
+            max_correspondence_distance: 10.0,
+        },
     );
     assert!(result.converged, "ICP must converge on a clean pair");
     assert!(
@@ -297,21 +189,19 @@ fn cloud_degeneracy_separates_planes_from_corners() {
             plane.push([i as f32 * 0.2, j as f32 * 0.2, 0.0]);
         }
     }
-    let (e_min, e_mid) = cloud_degeneracy(&plane);
+    let e_min = degeneracy(&plane);
     assert!(
         (0.0..0.01).contains(&e_min),
         "flat plane is degenerate: e_min {e_min}"
     );
-    assert!(e_mid >= e_min);
 
     let corner = synthetic_corner_cloud();
-    let (e_min, _) = cloud_degeneracy(&corner);
+    let e_min = degeneracy(&corner);
     assert!(
         e_min > 0.15,
         "corner scene constrains all axes: e_min {e_min}"
     );
 
-    // Too few points -> the (-1, -1) sentinel.
-    let (e_min, e_mid) = cloud_degeneracy(&plane[..10]);
-    assert_eq!((e_min, e_mid), (-1.0, -1.0));
+    // too few points -> the -1 sentinel
+    assert_eq!(degeneracy(&plane[..10]), -1.0);
 }

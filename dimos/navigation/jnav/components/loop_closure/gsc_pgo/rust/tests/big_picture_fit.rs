@@ -14,8 +14,8 @@
 
 //! The pose graph on a drifted square: a true loop closes it, a false one is voted out.
 
+use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::pose_graph::{solve, Edge, SolveConfig};
 
 const SIDE: usize = 40;
 

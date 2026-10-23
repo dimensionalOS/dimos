@@ -12,37 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! dimos-gsc-pgo — pose-graph-optimization core. Layout:
+//! dimos-gsc-pgo: loop closure for a lidar keyframe pose graph, in the order a scan meets the stages:
 //!
-//! - `gtsam`: safe wrappers over a hand-written C FFI shim
-//!   (shim/gtsam_shim.{h,cpp}) exposing the gtsam surface the core uses —
-//!   ISAM2 incremental update with factor removal, Pose3 prior/between
-//!   factors, Values, diagonal/gaussian/robust-Huber noise.
-//! - `scan_context`: the Scan Context descriptor (ring/sector max-z binning,
-//!   ring key, shifted cosine distance, structure/occupancy degeneracy
-//!   proxies).
-//! - `mat3`: small 3x3/vector helpers + a Jacobi symmetric eigensolver.
-//! - `pointcloud`: voxel-grid centroid downsampling, kd-tree NN,
-//!   point-to-point ICP, and the normal-scatter degeneracy measure.
-//! - `gsc_pgo`: the `GscPgo` core itself (keyframe gating, loop search +
-//!   gates, location constraints with revision, iSAM2 smoothing).
-//! - `gnc`: the batch GNC re-solve (`solve_gnc`) and its background worker,
-//!   run alongside `GscPgo`'s iSAM2 smoother.
-//! - `msgs`: the jnav custom LCM wire formats the module executable speaks
-//!   (Graph3D / GraphDelta3D / DeformationNode encode, LocationConstraint
-//!   decode).
+//! - stage 0 (`gsc_pgo`): keyframes and the threads that keep compute bounded.
+//! - stage 1 `uniqueness`: is this scan distinctive enough to place.
+//! - stage 2 `connection_discovery`: which earlier keyframes it might be (scan context, position).
+//! - stage 3 `connection_fit`: how well the two places line up (ICP).
+//! - stage 4 `proportional_confidence`: extended ICP until the evidence matches the yank.
+//! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which loops agree.
 //!
-//! The module executable itself (`src/main.rs`, binary `gsc-pgo`) runs the PGO
-//! on the `dimos_module` framework; it builds behind the default `native`
-//! feature.
-//!
-//! Building needs gtsam (and its Eigen/boost headers); see build.rs for the
-//! env-var contract and flake.nix for the pinned environment
-//! (`nix develop path:. --command cargo test`).
+//! `mat3` and `pointcloud` are the small math underneath. The module executable (`src/main.rs`,
+//! binary `gsc-pgo`) builds behind the default `native` feature.
 
+pub mod big_picture_fit;
+pub mod connection_discovery;
+pub mod connection_fit;
 pub mod gsc_pgo;
 pub mod mat3;
-pub mod msgs;
 pub mod pointcloud;
-pub mod pose_graph;
-pub mod scan_context;
+pub mod proportional_confidence;
+pub mod uniqueness;

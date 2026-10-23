@@ -24,9 +24,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.jnav.msgs.DeformationNode import DeformationNode
-from dimos.navigation.jnav.msgs.Graph3D import Graph3D
-from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -56,10 +53,6 @@ class PGOConfig(NativeModuleConfig):
     submap_resolution: float = 0.1
     # Voxel size (m) each incoming cloud is downsampled to before a keyframe stores it; 0 keeps clouds as they arrive
     keyframe_voxel_size: float = 0.0
-    min_loop_detect_duration: float = 2.0
-    # Seconds of keyframe time between loop searches, whatever their outcome: in a small space every
-    # keyframe finds a candidate and a rejected ICP per keyframe can outrun the scan rate. 0 disables.
-    loop_search_min_interval: float = 1.0
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
     loop_min_occupancy: int = 80
@@ -76,8 +69,6 @@ class PGOConfig(NativeModuleConfig):
     dump_path: str = ""
     global_map_voxel_size: float = 0.1
 
-    # Scan Context place recognition (used by loop closure search), https://arxiv.org/abs/2109.13494
-    use_scan_context: bool = True
     scan_context_num_rings: int = 20
     scan_context_num_sectors: int = 60
     # Ring range in meters; keep near the lidar's useful range (a fixed 80 m
@@ -145,20 +136,15 @@ class GscPGO(NativeModule):
     cloud: In[PointCloud2]
     odometry: In[Odometry]
     corrected_odometry: Out[Odometry]
-    pose_graph: Out[Graph3D]
-    loop_closure_event: Out[GraphDelta3D]
-    # pose_graph and loop_closure_event as packed PointCloud2 records, for fast-reform consumers.
-    pose_graph_records: Out[PointCloud2]
-    loop_closure_records: Out[PointCloud2]
-    # each loop candidate's lifecycle (proposed, gated, GNC votes, accepted, rejected, applied) as
-    # packed records with both keyframes' current positions and a confidence, for drawing loop edges
-    loop_edges: Out[PointCloud2]
-    correction: Out[
-        TFMessage
-    ]  # i know, kinda redundant, but makes visuals much easier to make and is low-cost
-    tf_deformation_nodes: Out[DeformationNode]  # important for future fast-tf-graph lookup
-    # The correction again, identity until the first one.
+    # the map -> odometry correction, identity until the first one
     tf: Out[TFMessage]
+    # a packed record per keyframe: x, y, z, node_id, ts, qx, qy, qz, qw
+    pose_graph: Out[PointCloud2]
+    # a packed record per keyframe a solve moved: its pose before, then the delta (post = delta * pre)
+    loop_closure_event: Out[PointCloud2]
+    # each loop candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
+    # with both keyframes' current positions and a confidence, for drawing loop edges
+    loop_edges: Out[PointCloud2]
     # debug only, gated on global_map_publish_rate > 0
     debug_global_map: Out[PointCloud2]
 
