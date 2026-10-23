@@ -305,6 +305,28 @@ export class Registry {
     return true;
   }
 
+  manifestChanged(peer: RobotPeer): void {
+    const id = peer.info?.id;
+    if (id === undefined) return;
+    const entry = this.#robots.get(id);
+    if (entry?.peer !== peer || peer.closed !== null) return;
+    entry.specs = new Map(peer.channels.map((c) => [c.ch, c]));
+    for (const ch of entry.channelsIn.keys()) {
+      if (!entry.specs.has(ch)) entry.channelsIn.delete(ch);
+    }
+    for (const viewer of this.#viewers) {
+      if (viewer.watched !== id) continue;
+      for (const ch of viewer.subs) {
+        if (entry.specs.get(ch)?.dir === "rx") continue;
+        viewer.subs.delete(ch);
+        viewer.policies.get(ch)?.dispose();
+        viewer.policies.delete(ch);
+      }
+      viewer.sendMsg({ t: "manifest", robotId: id, manifest: peer.manifest ?? undefined });
+    }
+    this.#syncSubs(id, true);
+  }
+
   /** Session-closed hook; a no-op for an unregistered/rejected peer. */
   robotClosed(peer: RobotPeer): void {
     const id = peer.info?.id;
@@ -748,10 +770,9 @@ export class Registry {
       entry.undeclared.bytesIn += bytes.byteLength;
       entry.undeclared.rate.push(bytes.byteLength, Date.now());
     } else {
-      // delivery is fixed at creation: the manifest cannot change within a
-      // registration.
       const stats = entry.channelsIn.get(ch) ??
         { delivery, framesIn: 0, bytesIn: 0, rate: new Rate() };
+      stats.delivery = delivery;
       stats.framesIn++;
       stats.bytesIn += bytes.byteLength;
       stats.rate.push(bytes.byteLength, Date.now());

@@ -48,6 +48,7 @@ from dataclasses import dataclass, field, replace
 import functools
 import importlib.util
 from pathlib import Path
+import pickle
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -56,14 +57,18 @@ import webbrowser
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.core import rpc
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
-from dimos.web.codecs import EncodedPayload, encoder_definition
+from dimos.web.cockpit import channel_request, discovered_channel
+from dimos.web.codecs import EncodedPayload, encoder_definition, resolve_encoder
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
@@ -71,7 +76,7 @@ from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
 from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.locate import find_web_dir
-from dimos.web.relay_bridge.manifest import TRACK_ENCODING, parse_manifest
+from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN, TRACK_ENCODING, parse_manifest
 from dimos.web.relay_bridge.pacing import (
     FrameMeta,
     PacedSender,
@@ -84,6 +89,7 @@ from dimos.web.relay_bridge.protocol import (
     ChannelSpec,
     DataFrame,
     IceServer,
+    Manifest as WireManifest,
     Msg,
     RobotInfo,
     RobotManifest,
@@ -259,10 +265,120 @@ class RelayBridgeModule(Module):
         # None: the manifest advertises no teleop channel, so every teleop
         # message is ignored.
         self._teleop: Teleop | None = None
-        # Live-path encode counters, keyed by the advertised rx channels at
-        # start (main() fills it once the manifest resolves).
         self.encoded: dict[str, int] = {}
         self._rtc_unavailable_logged = False
+        self._discovered: dict[bytes, RuntimeChannelSpec] = {}
+
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Expose current producers after startup, module load, unload, or restart."""
+        own_name = self.config.rpc_name or self.config.instance_name or type(self).__name__
+        try:
+            streams = [
+                descriptor._replace(module=module.remote_name)
+                for module in modules
+                if module.remote_name != own_name
+                for descriptor in module.get_stream_descriptors()
+                if descriptor.direction != "in"
+            ]
+        finally:
+            for module in modules:
+                module.stop_rpc_client()
+        self.spawn(self._update_streams(streams)).result()
+
+    def _add_stream(self, descriptor: StreamDescriptor) -> RuntimeChannelSpec:
+        message_type, transport = pickle.loads(descriptor.transport)
+        ch = f"{descriptor.module}.{descriptor.name}"
+        if len(ch) > MAX_MANIFEST_ID_LEN:
+            raise ValueError(f"channel id is longer than {MAX_MANIFEST_ID_LEN} chars")
+        channel = discovered_channel(ch, message_type)
+        request = channel_request(channel)
+        codec = resolve_encoder(request.encoding, message_type)
+        spec = RuntimeChannelSpec(
+            ch=ch,
+            message_type=message_type,
+            dir="rx",
+            encoding=request.encoding,
+            delivery=request.delivery,
+            max_hz=request.max_hz,
+            params=dict(request.params),
+            encoder=codec.encode,
+            encoder_takes_params=codec.takes_params,
+            paced=channel.paced,
+        )
+        setattr(self, ch, In(message_type, ch, self, transport))
+        return spec
+
+    def _set_channel_specs(self, specs: tuple[RuntimeChannelSpec, ...]) -> None:
+        self._channel_specs = specs
+        # _on_input reads encoded before _min_interval, so a removed channel
+        # must leave _min_interval first.
+        self._min_interval = {s.ch: 1.0 / s.max_hz for s in specs}
+        self.encoded = {s.ch: self.encoded.get(s.ch, 0) for s in specs}
+
+    async def _update_streams(self, streams: list[StreamDescriptor]) -> None:
+        if self._manifest is None or self._module_closed:
+            return
+        discovered = {s.ch for s in self._discovered.values()}
+        specs = tuple(s for s in self._channel_specs if s.ch not in discovered)
+        producers = {d.transport: d for d in sorted(streams, reverse=True)}
+        covered = {
+            pickle.dumps((self.inputs[s.ch].type, self.inputs[s.ch].transport)) for s in specs
+        }
+        desired = producers.keys() - covered
+        removed = self._discovered.keys() - desired
+        retired = {self._discovered[key].ch for key in removed}
+        session = self._session
+        if session is not None:
+            self._reconcile(session, set(session.unsubs) - retired)
+            for ch in retired:
+                sender = session.senders.pop(ch, None)
+                if isinstance(sender, PacedSender):
+                    sender.close()
+                session.client.stop_latest_writer(ch)
+        for key in removed:
+            ch = self._discovered.pop(key).ch
+            self.inputs[ch].stop()
+            delattr(self, ch)
+            self._next_due.pop(ch, None)
+        for key in desired - self._discovered.keys():
+            try:
+                self._discovered[key] = self._add_stream(producers[key])
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    f"cannot expose {producers[key].module}.{producers[key].name}: {exc}"
+                )
+        self._set_channel_specs((*specs, *self._discovered.values()))
+        manifest = {
+            **self._manifest,
+            "channels": [c for c in self._manifest["channels"] if c["ch"] not in discovered],
+        }
+        manifest["channels"].extend(
+            ChannelSpec(
+                ch=s.ch,
+                encoding=s.encoding,
+                delivery=s.delivery,
+                maxHz=s.max_hz,
+                params=s.params,
+            ).model_dump()
+            for s in sorted(self._discovered.values(), key=lambda s: s.ch)
+        )
+        previous = self._manifest
+        self._manifest = parse_manifest(manifest).model_dump()
+        if session is not None:
+            session.senders.update(
+                self._build_senders(
+                    session.client,
+                    session.rtc_channels,
+                    [s for s in self._channel_specs if s.ch not in session.senders],
+                )
+            )
+            if self._manifest != previous:
+                assert self._robot_info is not None and self._relay_info is not None
+                wire, _ = self._wire_manifest(self._relay_info, session.rtc_channels)
+                session.client.send_control_frame(
+                    WireManifest(robotId=self._robot_info.id, manifest=wire)
+                )
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
@@ -298,12 +414,11 @@ class RelayBridgeModule(Module):
             rx_wire = [spec for spec in manifest.channels if spec.dir == "rx"]
             pub_specs: dict[str, RuntimeChannelSpec] = {}
             if self.config.channels is not None:
-                self._channel_specs, pub_specs = self._adopt_authored_specs(manifest.channels)
+                specs, pub_specs = self._adopt_authored_specs(manifest.channels)
             else:
-                self._channel_specs = self._resolve_builtin_specs(rx_wire)
+                specs = self._resolve_builtin_specs(rx_wire)
+            self._set_channel_specs(specs)
             self._publish = PublishHandler(self._robot_info.id, pub_specs, self.outputs)
-            self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
-            self.encoded = {s.ch: 0 for s in self._channel_specs}
             by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
             for spec in manifest.channels:
                 if spec.dir != "tx" or spec.publish != "none":
@@ -318,9 +433,8 @@ class RelayBridgeModule(Module):
                     )
                 if spec.ch == "tele_cmd_vel":
                     self._teleop = Teleop(resolve_teleop_params(spec), self.tele_cmd_vel.publish)
-            # No runtime stream probing: an authored channel whose input got
-            # no transport stays advertised (its panel shows "waiting for
-            # data"); _reconcile just never subscribes it.
+            # An authored channel without a transport stays advertised so
+            # its panel shows "waiting for data".
             unwired = sorted(
                 s.ch for s in self._channel_specs if self.inputs[s.ch].transport is None
             )
@@ -662,7 +776,12 @@ class RelayBridgeModule(Module):
         try:
             await client.hello(robot=self._robot_info, manifest=manifest, token=self._key)
             client.start_keepalive()
-            senders = self._build_senders(client, rtc_channels)
+            current, _ = self._wire_manifest(info, rtc_channels)
+            if current != manifest:
+                client.send_control_frame(
+                    WireManifest(robotId=self._robot_info.id, manifest=current)
+                )
+            senders = self._build_senders(client, rtc_channels, self._channel_specs)
         except BaseException:
             try:
                 await client.close()
@@ -671,7 +790,9 @@ class RelayBridgeModule(Module):
             raise
         return _Session(client, senders, rtc_channels=rtc_channels)
 
-    def _wire_manifest(self, info: RelayInfo) -> tuple[RobotManifest, frozenset[str]]:
+    def _wire_manifest(
+        self, info: RelayInfo, negotiated: frozenset[str] | None = None
+    ) -> tuple[RobotManifest, frozenset[str]]:
         """The manifest to register and the channels advertised as tracks.
 
         Only this wire copy changes: the runtime specs keep their JPEG encoder,
@@ -679,7 +800,11 @@ class RelayBridgeModule(Module):
         relay restart can change it.
         """
         assert self._manifest is not None
-        track_chs = frozenset(s.ch for s in self._channel_specs if s.encoding == "jpeg.v1")
+        track_chs = (
+            negotiated
+            if negotiated is not None
+            else frozenset(s.ch for s in self._channel_specs if s.encoding == "jpeg.v1")
+        )
         if not (info.rtc and self.config.rtc and track_chs):
             return self._manifest, frozenset()
         if not RTC_AVAILABLE:
@@ -704,10 +829,10 @@ class RelayBridgeModule(Module):
         return manifest, track_chs
 
     def _build_senders(
-        self, client: RelayClient, rtc_channels: frozenset[str]
+        self, client: RelayClient, rtc_channels: frozenset[str], specs: Sequence[RuntimeChannelSpec]
     ) -> dict[str, Sender]:
         senders: dict[str, Sender] = {}
-        for spec in self._channel_specs:
+        for spec in specs:
             if spec.ch in rtc_channels:
                 continue  # a track channel sends nothing through the relay
             sender: Sender
@@ -976,10 +1101,12 @@ class RelayBridgeModule(Module):
         """Transport-thread callback: maxHz gate, encode, hand to the loop."""
         if session.retired.is_set():
             return
+        counts = self.encoded
+        interval = self._min_interval.get(spec.ch)
+        if interval is None:
+            return
         now = time.monotonic()
-        if not spec.paced and not passes_sampling_gate(
-            self._next_due, spec.ch, now, self._min_interval[spec.ch]
-        ):
+        if not spec.paced and not passes_sampling_gate(self._next_due, spec.ch, now, interval):
             return
         if spec.ch in session.rtc_channels:
             # The raw image feeds the SFU peer; nothing rides the relay.
@@ -989,14 +1116,14 @@ class RelayBridgeModule(Module):
                     loop = self._loop
                     if loop is not None and loop.is_running():
                         loop.call_soon_threadsafe(self._report_stall, session, spec.ch)
-                self.encoded[spec.ch] += 1
+                counts[spec.ch] += 1
             return
         assert sender is not None
         encoded = self._run_encoder(spec, msg)
         if encoded is None:
             return
         payload, meta = encoded
-        self.encoded[spec.ch] += 1
+        counts[spec.ch] += 1
         loop = self._loop
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(self._offer, session, sender, payload, meta)

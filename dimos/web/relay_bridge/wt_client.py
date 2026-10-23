@@ -468,6 +468,12 @@ class RelayClient:
         self._writers.append(writer)
         return writer
 
+    def stop_latest_writer(self, ch: str) -> None:
+        for writer in self._writers[:]:
+            if writer.ch == ch:
+                writer.stop()
+                self._writers.remove(writer)
+
     async def frames(self) -> AsyncIterator[DataFrame]:
         """Data frames pushed by the relay (viewer role).
 

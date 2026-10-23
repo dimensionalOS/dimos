@@ -161,6 +161,22 @@ async def test_pump_stops_cleanly_on_session_close() -> None:
         writer.offer(b"x")
 
 
+async def test_removing_a_latest_channel_stops_only_its_writer() -> None:
+    client = _client(StubSession())
+    removed = client.latest_writer("removed")
+    retained = client.latest_writer("retained")
+    try:
+        client.stop_latest_writer("removed")
+        with pytest.raises(asyncio.CancelledError):
+            await removed._task
+        with pytest.raises(RuntimeError):
+            removed.offer(b"stale")
+        retained.offer(b"live")
+        assert client._writers == [retained]
+    finally:
+        retained.stop()
+
+
 async def test_offer_survives_delivery_and_keeps_sending() -> None:
     # A healthy pump keeps accepting; sanity check that the stub path works.
     session = StubSession()

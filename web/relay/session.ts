@@ -86,6 +86,8 @@ export class RobotSession implements RobotPeer {
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
   readonly #carrier: RobotCarrier;
   readonly #auth: Auth | null;
+  #manifestSeq = -1;
+  #helloManifest: RobotManifest | null = null;
 
   constructor(
     wt: WebTransport,
@@ -201,6 +203,25 @@ export class RobotSession implements RobotPeer {
         this.#onHello(msg);
         return;
       }
+      if (msg.t === "manifest" && this.info !== null) {
+        if (
+          msg.robotId !== this.info.id || msg.manifest === undefined ||
+          header.seq <= this.#manifestSeq || this.closed !== null
+        ) return;
+        try {
+          const channels = parseManifest(msg.manifest).channels;
+          if (!this.#registry.rtcEnabled && channels.some((c) => c.encoding === TRACK_ENCODING)) {
+            return;
+          }
+          this.#manifestSeq = header.seq;
+          this.channels = channels;
+          this.manifest = msg.manifest;
+          this.#registry.manifestChanged(this);
+        } catch (e) {
+          this.sendMsg({ t: "error", code: "invalid_manifest", message: String(e) });
+        }
+        return;
+      }
       if (this.info !== null && (msg.t === "pub_ack" || msg.t === "pub_nack")) {
         this.#registry.onRobotPubResult(this, msg);
         return;
@@ -284,11 +305,12 @@ export class RobotSession implements RobotPeer {
       this.info = msg.robot;
       this.channels = channels;
       this.manifest = msg.manifest ?? null;
+      this.#helloManifest = this.manifest;
     } else if (
       this.info.id !== msg.robot.id ||
       this.info.name !== msg.robot.name ||
       this.info.model !== msg.robot.model ||
-      JSON.stringify(this.manifest) !== JSON.stringify(msg.manifest ?? null)
+      JSON.stringify(this.#helloManifest) !== JSON.stringify(msg.manifest ?? null)
     ) {
       this.#reject(
         "hello_mismatch",

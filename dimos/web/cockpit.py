@@ -49,7 +49,9 @@ else:
 from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.codecs import is_generic_lcm_encoding
 from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
@@ -272,7 +274,7 @@ class Channel:
         object.__setattr__(self, "params", _freeze_params(params))
 
 
-def _request_of(channel: Channel) -> ChannelRequest:
+def channel_request(channel: Channel) -> ChannelRequest:
     """The manifest request a declaration compiles to."""
     assert channel.encoding is not None  # resolved in __post_init__
     # Deep plain copy: the manifest and specs must not alias the (frozen)
@@ -601,7 +603,7 @@ class Chat(Panel):
         )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        return tuple(_request_of(channel) for channel in self._channels())
+        return tuple(channel_request(channel) for channel in self._channels())
 
 
 @dataclass(frozen=True)
@@ -630,7 +632,37 @@ class Stats(Panel):
         )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        return tuple(_request_of(channel) for channel in self._channels())
+        return tuple(channel_request(channel) for channel in self._channels())
+
+
+def discovered_channel(stream: str, message_type: type[Any]) -> Channel:
+    """The channel for an output found at runtime: the settings of the panel
+    that shows its message type, else the type's default encoding."""
+    panel: Panel
+    if message_type is Image:
+        panel = Video(stream)
+    elif message_type is OccupancyGrid:
+        panel = Map2D(costmap=stream, pose=None)
+    elif message_type is PointCloud2:
+        panel = Map3D(cloud=stream, pose=None)
+    else:
+        try:
+            chat = Chat(messages=stream)._channels()
+        except ImportError:  # langchain-core comes with the optional [agents] extra
+            chat = ()
+        for channel in chat:
+            if channel.stream == stream and channel.message_type is message_type:
+                return channel
+        return Channel(stream, message_type)
+    (request,) = panel._channel_requests()
+    return Channel(
+        stream,
+        message_type,
+        encoding=request.encoding,
+        delivery=request.delivery,
+        max_hz=request.max_hz,
+        params=request.params,
+    )
 
 
 class _Split:
@@ -756,7 +788,7 @@ def build_manifest_data(
     def add_panel(panel: Panel) -> str:
         panel_id = f"p{len(panels_out)}"
         for channel in panel._channels():
-            merge(_request_of(channel))
+            merge(channel_request(channel))
         requests = panel._channel_requests()
         for request in requests:
             merge(request)
@@ -948,7 +980,7 @@ def cockpit(
     requests: list[ChannelRequest] = []
     for channel in declared.values():
         try:
-            requests.append(_request_of(channel))
+            requests.append(channel_request(channel))
         except ValueError as e:
             raise ValueError(f"channel {channel.stream!r}: {e}") from e
 

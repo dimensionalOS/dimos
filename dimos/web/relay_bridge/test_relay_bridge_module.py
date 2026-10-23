@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
+import pickle
 import random
 import socket
 import subprocess
@@ -38,10 +39,12 @@ import time
 from typing import Any
 import zlib
 
+from langchain_core.messages import AIMessage, BaseMessage
 import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -70,6 +73,7 @@ from dimos.web.relay_bridge.module_test_support import (
 from dimos.web.relay_bridge.pacing import passes_rate_gate, passes_sampling_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
+    Manifest as WireManifest,
     ProtocolError,
     Stop as WireStop,
     Subs,
@@ -79,6 +83,62 @@ from dimos.web.relay_bridge.protocol import (
 )
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
+
+
+def test_runtime_streams_are_usable_and_removed_without_reconnecting(monkeypatch, mocker):
+    module, clients = make_bridge(monkeypatch, wire=())
+    producer = mocker.Mock(remote_name="sensor")
+    number = StreamDescriptor(
+        "sensor", "number", "out", "int", "/number", pickle.dumps((int, FakeTransport()))
+    )
+    chat = StreamDescriptor(
+        "sensor",
+        "chat",
+        "out",
+        "BaseMessage",
+        "/agent",
+        pickle.dumps((BaseMessage, FakeTransport())),
+    )
+    unsupported = StreamDescriptor(
+        "sensor", "items", "out", "list", "/items", pickle.dumps((list[int], FakeTransport()))
+    )
+    client = clients[0]
+    try:
+        producer.get_stream_descriptors.return_value = [number, unsupported]
+        module.on_system_modules([producer])
+        assert isinstance(client.control_frames[-1], WireManifest)
+        assert [c["ch"] for c in client.control_frames[-1].manifest["channels"]] == [
+            "sensor.number"
+        ]
+        push(module, client, Subs(chs=["sensor.number"], n=1))
+        wait_until(lambda: "sensor.number" in module._session.unsubs)
+        port = module.inputs["sensor.number"]
+        port.transport.publish(42)
+        wait_until(lambda: len(client.frames) == 1)
+        assert client.frames[0][:2] == ("sensor.number", b"42")
+
+        producer.get_stream_descriptors.return_value = [number, chat]
+        module.on_system_modules([producer])
+        assert module.inputs["sensor.number"] is port
+        assert len(port.transport.subscribers) == 1
+        updates = len(client.control_frames)
+        module.on_system_modules([producer])
+        assert len(client.control_frames) == updates
+        push(module, client, Subs(chs=["sensor.number", "sensor.chat"], n=2))
+        wait_until(lambda: "sensor.chat" in module._session.unsubs)
+        module.inputs["sensor.chat"].transport.publish(AIMessage(content="hello"))
+        wait_until(lambda: len(client.frames) == 2)
+        assert client.frames[-1][0] == "sensor.chat"
+        assert json.loads(client.frames[-1][1])[0]["text"] == "hello"
+
+        producer.get_stream_descriptors.return_value = [chat]
+        module.on_system_modules([producer])
+        assert [c["ch"] for c in client.control_frames[-1].manifest["channels"]] == ["sensor.chat"]
+        assert "sensor.number" not in module.inputs
+        assert not port.transport.subscribers
+        assert len(clients) == 1 and client.close_count == 0
+    finally:
+        stop_module(module)
 
 
 def test_manifest_and_robot_info_content() -> None:
