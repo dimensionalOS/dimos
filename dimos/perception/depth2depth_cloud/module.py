@@ -81,6 +81,11 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     height_frame: str = ""
     min_height_m: float = -1000.0
     max_height_m: float = 1000.0
+    # Floor prior (height_frame's z = 0 is the floor): pixels probed one per floor_anchor_step block (0 is off) and
+    # anchored on the floor where calibrated at most floor_tolerance_m over it, in floor_anchor_rounds rounds.
+    floor_anchor_step: int = Field(default=0, ge=0, le=256)
+    floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
+    floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
 
     @field_validator("model_height", "model_width")
     @classmethod

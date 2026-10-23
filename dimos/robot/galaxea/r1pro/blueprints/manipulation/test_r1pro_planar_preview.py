@@ -14,6 +14,7 @@
 
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
+from dataclasses import replace
 import os
 import platform
 
@@ -80,11 +81,21 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)
+    # The mock base steps a fixed tick per write, so on a loaded machine it trails the clock: give it time to settle,
+    # and a goal tolerance tighter than the check below so "completed" can't mean stopping 5 cm short.
+    tasks = [
+        replace(
+            task, params={**task.params, "settle_timeout": 10.0, "position_goal_tolerance": 0.01}
+        )
+        if task.name == "base_trajectory"
+        else task
+        for task in config.tasks
+    ]
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
         hardware=config.hardware,
-        tasks=config.tasks,
+        tasks=tasks,
     )
     coordinator.start()
     try:
@@ -95,7 +106,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
             is TrajectoryState.COMPLETED,
-            timeout=5.0,
+            timeout=15.0,
             message="the base trajectory never completed",
         )
         assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(0.2, abs=0.03)

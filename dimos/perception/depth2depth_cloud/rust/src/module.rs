@@ -29,13 +29,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use depth2depth::{
-    Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
+    Anchor, Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use nalgebra::{Isometry3, Point3};
+use nalgebra::{Isometry3, Point3, Vector3};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tracing::info;
@@ -117,6 +117,15 @@ pub struct Config {
     height_frame: String,
     min_height_m: f64,
     max_height_m: f64,
+    /// Floor prior (`height_frame`'s z = 0 is the floor): pixels probed one per block of this many, 0 for off.
+    #[validate(range(min = 0, max = 256))]
+    floor_anchor_step: i64,
+    /// A probed pixel the calibration puts at most this above the floor (or under it) is anchored on it.
+    #[validate(range(min = 0.0, max = 10.0))]
+    floor_tolerance_m: f64,
+    /// Probe-and-anchor rounds per frame: each round's anchors recalibrate the pixels the next one probes.
+    #[validate(range(min = 1, max = 16))]
+    floor_anchor_rounds: i64,
 }
 
 #[derive(Module)]
@@ -504,12 +513,30 @@ impl Worker {
                 seconds(&frame.header.stamp),
             );
             let anchored = Instant::now();
-            let visible = depth2depth::cloud::thin_anchors(
+            let mut visible = depth2depth::cloud::thin_anchors(
                 depth2depth::cloud::visible_anchors(&anchors, &map.camera, map.height, map.width),
                 cfg.anchor_step as usize,
                 map.height,
                 map.width,
             );
+            if let (true, Some(floor_from_camera)) =
+                (cfg.floor_anchor_step > 0, &poses.height_from_camera)
+            {
+                let floor = FloorPrior {
+                    step: cfg.floor_anchor_step as usize,
+                    tolerance: cfg.floor_tolerance_m,
+                    rounds: cfg.floor_anchor_rounds as usize,
+                    max_range: cfg.max_range_m,
+                }
+                .anchors(
+                    &calibration,
+                    &frame.pred,
+                    map,
+                    &visible,
+                    floor_from_camera,
+                );
+                visible.extend(floor);
+            }
             // Only the pixels the cloud keeps are calibrated.
             let mut calibrated =
                 calibration.apply_for_cloud(&frame.pred, map.height, map.width, &visible, &options);
@@ -820,9 +847,136 @@ impl Timing {
     }
 }
 
+/// Floor prior: the Config fields of the same names, and the floor counted out to `max_range` along the optical axis.
+struct FloorPrior {
+    step: usize,
+    tolerance: f64,
+    rounds: usize,
+    max_range: f64,
+}
+
+impl FloorPrior {
+    /// Floor anchors (`floor_from_camera`'s z = 0) for the probed pixels the calibration puts on or just over the floor.
+    fn anchors(
+        &self,
+        calibration: &Calibration,
+        pred: &[f32],
+        map: &UndistortMap,
+        visible: &[Anchor],
+        floor_from_camera: &Isometry3<f64>,
+    ) -> Vec<Anchor> {
+        let pin = &map.camera;
+        let camera_z = floor_from_camera.translation.vector.z;
+        let candidates: Vec<(usize, usize, f64, f64)> = (0..map.height)
+            .step_by(self.step)
+            .flat_map(|v| (0..map.width).step_by(self.step).map(move |u| (u, v)))
+            .filter_map(|(u, v)| {
+                let ray = Vector3::new(
+                    (u as f64 - pin.cx as f64) / pin.fx as f64,
+                    (v as f64 - pin.cy as f64) / pin.fy as f64,
+                    1.0,
+                );
+                // Height gained per unit of depth along the optical axis; the floor is only below the camera.
+                let down = (floor_from_camera.rotation * ray).z;
+                let depth = -camera_z / down;
+                (down < 0.0 && depth <= self.max_range).then_some((u, v, depth, down))
+            })
+            .collect();
+        let pixels: Vec<(usize, usize)> = candidates.iter().map(|&(u, v, _, _)| (u, v)).collect();
+        let mut anchored = vec![false; candidates.len()];
+        let mut floor: Vec<Anchor> = Vec::new();
+        // Floor read too near drops onto the floor once its neighbours are anchored; an obstacle keeps its height.
+        for _ in 0..self.rounds {
+            let with_floor: Vec<Anchor> = visible.iter().chain(&floor).copied().collect();
+            let probed = calibration.probe(pred, map.height, map.width, &with_floor, &pixels);
+            let before = floor.len();
+            for (i, (&(u, v, depth, down), probed)) in candidates.iter().zip(probed).enumerate() {
+                if !anchored[i] && camera_z + probed as f64 * down <= self.tolerance {
+                    anchored[i] = true;
+                    floor.push(Anchor {
+                        u: u as f32,
+                        v: v as f32,
+                        z: depth as f32,
+                    });
+                }
+            }
+            if floor.len() == before {
+                break;
+            }
+        }
+        floor
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floor_read_too_far_is_anchored_on_the_floor_and_a_box_on_it_is_not() {
+        // A camera 1 m up, pitched 30 degrees down; optical axes (x right, y down, z ahead) to base (x ahead, z up).
+        let optical = nalgebra::Rotation3::from_matrix_unchecked(nalgebra::Matrix3::new(
+            0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0,
+        ));
+        let pitch = nalgebra::Rotation3::from_axis_angle(&Vector3::y_axis(), 30f64.to_radians());
+        let floor_from_camera = Isometry3::from_parts(
+            nalgebra::Translation3::new(0.0, 0.0, 1.0),
+            nalgebra::UnitQuaternion::from_rotation_matrix(&(pitch * optical)),
+        );
+        let lens = Lens::from_info(
+            &CameraInfo {
+                width: 160,
+                height: 120,
+                K: [100.0, 0.0, 79.5, 0.0, 100.0, 59.5, 0.0, 0.0, 1.0],
+                D: vec![0.0; 5],
+                ..Default::default()
+            },
+            1.0,
+        )
+        .unwrap();
+        let map = UndistortMap::new(&lens, 160, 120, 100.0);
+        let pin = &map.camera;
+        // Depth along the optical axis to the floor for each pixel, and whether it lands in a box's footprint.
+        let floor_hit = |u: usize, v: usize| {
+            let ray = Vector3::new(
+                (u as f64 - pin.cx as f64) / pin.fx as f64,
+                (v as f64 - pin.cy as f64) / pin.fy as f64,
+                1.0,
+            );
+            let down = (floor_from_camera.rotation * ray).z;
+            let depth = -1.0 / down;
+            let hit = floor_from_camera * Point3::from(ray * depth);
+            (down < 0.0).then_some((depth, (1.5..1.8).contains(&hit.x) && hit.y.abs() < 0.2))
+        };
+        // The model reads the floor 30% too far and the box as a block 20% nearer than the floor behind it.
+        let pred: Vec<f32> = (0..120)
+            .flat_map(|v| (0..160).map(move |u| (u, v)))
+            .map(|(u, v)| match floor_hit(u, v) {
+                Some((depth, false)) => (depth * 1.3) as f32,
+                Some((depth, true)) => (depth * 0.8) as f32,
+                None => 20.0,
+            })
+            .collect();
+        let calibration = Calibration::new(CalibrationConfig::default());
+
+        let floor = FloorPrior {
+            step: 4,
+            tolerance: 0.05,
+            rounds: 3,
+            max_range: 6.0,
+        }
+        .anchors(&calibration, &pred, &map, &[], &floor_from_camera);
+
+        assert!(floor.len() > 100, "{}", floor.len());
+        for anchor in &floor {
+            let (depth, on_box) = floor_hit(anchor.u as usize, anchor.v as usize).unwrap();
+            assert!(!on_box, "anchored the box at {anchor:?}");
+            assert!(
+                (anchor.z as f64 - depth).abs() < 1e-4,
+                "{anchor:?} vs {depth}"
+            );
+        }
+    }
 
     #[test]
     fn a_stage_behind_takes_the_newest_item_and_counts_the_ones_it_missed() {
