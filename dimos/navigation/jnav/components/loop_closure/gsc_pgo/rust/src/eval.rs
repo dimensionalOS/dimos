@@ -19,7 +19,7 @@
 //! This deliberately bypasses the module/transport/replay scaffolding: it opens
 //! the SQLite recording directly, decodes the LCM blobs, and drives the same
 //! worker-loop logic as `main.rs` (pair each scan with the latest odom pose →
-//! add_key_pose → on keyframe: search_for_loop_pairs + smooth_and_update).
+//! add_key_pose → on keyframe: search_for_loop_pairs + update).
 //! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
 //! reuses `trajectory_metrics`.
 
@@ -41,221 +41,17 @@ use serde::{Deserialize, Serialize};
 mod memory2;
 use memory2::{read_odometry, read_scans, OdomRow};
 
-/// Eval config. Defaults mirror `module.py`'s `PGOConfig` so a bare run
-/// reproduces the module default; a `--config` JSON overlays any subset.
-// Unknown keys are ignored on purpose: the resolved config is dumped from the
-// Python PGOConfig, which carries module-lifecycle fields (executable, cwd,
-// global_map_*, ...) this eval never uses. PGOConfig itself rejects typos.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
+/// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
+// Unknown keys are ignored on purpose: the resolved config is dumped from the Python PGOConfig, which
+// carries module-lifecycle fields (executable, cwd, global_map_*, ...) this eval never uses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct EvalConfig {
-    map_frame: String,
-    child_frame_id: String,
-    body_frame: String,
-
-    keyframe_min_rotation_degrees: f64,
-    keyframe_min_distance_meters: f64,
-
-    loop_search_radius: f64,
-    loop_time_thresh: f64,
-    loop_score_thresh: f64,
-    loop_submap_half_range: i32,
-    submap_resolution: f64,
-    keyframe_voxel_size: f64,
-    min_loop_detect_duration: f64,
-    loop_search_min_interval: f64,
-    min_descriptor_std: f64,
-    loop_min_occupancy: i32,
-    loop_min_degeneracy: f64,
-    loop_max_lowe_ratio: f64,
-    loop_candidate_max_distance_m: f64,
-    loop_max_yank_rotation_deg: f64,
-    loop_yank_gate: bool,
-    loop_yank_gate_width: f64,
-    loop_yank_per_sqrt_gap: bool,
-    loop_icp_dump_dir: String,
-    loop_extended_icp_max_keyframes: usize,
-    loop_yank_gate_max_distance_m: f64,
-    loop_min_id_gap: u64,
-
-
+    #[serde(flatten)]
+    pgo: PgoConfig,
+    /// The scans arrive in the world frame: bring them into the body frame with the odometry.
     subtract_odom_from_cloud: bool,
-
-    use_scan_context: bool,
-    scan_context_num_rings: i32,
-    scan_context_num_sectors: i32,
-    scan_context_max_range_m: f64,
-    scan_context_top_k: i32,
-    scan_context_match_threshold: f64,
-    scan_context_lidar_height_m: f64,
-
-    loop_robust_kernel: bool,
-    loop_robust_huber_k: f64,
-    loop_icp_max_iterations: u64,
-    loop_icp_max_correspondence_m: f64,
-    loop_icp_inlier_fitness: bool,
-    loop_icp_min_points: u64,
-    loop_icp_seed_at_current_pose: bool,
-    loop_rotation_variance: f64,
-    loop_translation_variance_floor: f64,
-    loop_refinement_passes: u64,
-    loop_refinement_tolerance_m: f64,
-    loop_refinement_max_passes: u64,
-    loop_gnc_final: bool,
-    loop_gnc_var_scale: f64,
-    loop_gnc_inlier_probability: f64,
-    loop_gnc_apply_after_fraction: f64,
-    loop_gnc_confirmations: u64,
-    loop_gnc_deterministic: bool,
-
-    use_location_constraints: bool,
-
-    anchor_roll_pitch_var: f64,
-    per_keyframe_roll_pitch_prior: bool,
-    per_keyframe_roll_pitch_var: f64,
-
-    odom_rot_roll_pitch_var: f64,
-    odom_rot_yaw_var: f64,
-    odom_trans_xy_var: f64,
-    odom_trans_z_var: f64,
-
-    max_scan_queue: i32,
-
-    loop_conservativeness: i32,
-}
-
-impl Default for EvalConfig {
-    fn default() -> Self {
-        Self {
-            map_frame: "map".into(),
-            child_frame_id: "odom".into(),
-            body_frame: "base_link".into(),
-            keyframe_min_rotation_degrees: 10.0,
-            keyframe_min_distance_meters: 0.5,
-            loop_search_radius: 3.0,
-            loop_time_thresh: 5.0,
-            loop_score_thresh: 0.15,
-            loop_submap_half_range: 5,
-            submap_resolution: 0.1,
-            keyframe_voxel_size: 0.0,
-            min_loop_detect_duration: 2.0,
-            loop_search_min_interval: 1.0,
-            min_descriptor_std: 0.0,
-            loop_min_occupancy: 80,
-            loop_min_degeneracy: 0.05,
-            loop_max_lowe_ratio: 0.0,
-            loop_candidate_max_distance_m: 0.0,
-            loop_max_yank_rotation_deg: 0.0,
-            loop_yank_gate: true,
-            loop_yank_gate_width: 1.0,
-            loop_yank_per_sqrt_gap: true,
-            loop_icp_dump_dir: String::new(),
-            loop_extended_icp_max_keyframes: 16,
-            loop_yank_gate_max_distance_m: 0.0,
-            loop_min_id_gap: 0,
-            subtract_odom_from_cloud: false,
-            use_scan_context: true,
-            scan_context_num_rings: 20,
-            scan_context_num_sectors: 60,
-            scan_context_max_range_m: 0.0,
-            scan_context_top_k: 10,
-            scan_context_match_threshold: 0.4,
-            scan_context_lidar_height_m: 2.0,
-            loop_robust_kernel: true,
-            loop_robust_huber_k: 1.345,
-            loop_icp_max_iterations: 50,
-            loop_icp_max_correspondence_m: 10.0,
-            loop_icp_inlier_fitness: false,
-            loop_icp_min_points: 0,
-            loop_icp_seed_at_current_pose: false,
-            loop_rotation_variance: 0.0,
-            loop_translation_variance_floor: 0.0,
-            loop_refinement_passes: 5,
-            loop_refinement_tolerance_m: 0.01,
-            loop_refinement_max_passes: 200,
-            loop_gnc_final: true,
-            loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.95,
-            loop_gnc_apply_after_fraction: 0.05,
-            loop_gnc_confirmations: 2,
-            loop_gnc_deterministic: true,
-            use_location_constraints: false,
-            anchor_roll_pitch_var: 1e-12,
-            per_keyframe_roll_pitch_prior: false,
-            per_keyframe_roll_pitch_var: 1e-4,
-            odom_rot_roll_pitch_var: 1e-8,
-            odom_rot_yaw_var: 1e-5,
-            odom_trans_xy_var: 1e-4,
-            odom_trans_z_var: 1e-6,
-            max_scan_queue: 5,
-            loop_conservativeness: -1,
-        }
-    }
-}
-
-impl EvalConfig {
-    fn to_pgo(&self) -> PgoConfig {
-        let mut config = PgoConfig {
-            keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
-            keyframe_min_distance_meters: self.keyframe_min_distance_meters,
-            loop_search_radius: self.loop_search_radius,
-            loop_time_thresh: self.loop_time_thresh,
-            loop_score_thresh: self.loop_score_thresh,
-            loop_submap_half_range: self.loop_submap_half_range,
-            submap_resolution: self.submap_resolution,
-            keyframe_voxel_size: self.keyframe_voxel_size,
-            min_loop_detect_duration: self.min_loop_detect_duration,
-            loop_search_min_interval: self.loop_search_min_interval,
-            loop_candidate_max_distance_m: self.loop_candidate_max_distance_m,
-            min_descriptor_std: self.min_descriptor_std,
-            loop_min_occupancy: self.loop_min_occupancy,
-            loop_min_degeneracy: self.loop_min_degeneracy,
-            loop_max_lowe_ratio: self.loop_max_lowe_ratio,
-            loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
-            loop_yank_gate: self.loop_yank_gate,
-            loop_yank_gate_width: self.loop_yank_gate_width,
-            loop_yank_per_sqrt_gap: self.loop_yank_per_sqrt_gap,
-            loop_icp_dump_dir: self.loop_icp_dump_dir.clone(),
-            loop_extended_icp_max_keyframes: self.loop_extended_icp_max_keyframes,
-            loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
-            loop_min_id_gap: self.loop_min_id_gap,
-            loop_robust_kernel: self.loop_robust_kernel,
-            loop_robust_huber_k: self.loop_robust_huber_k,
-            loop_icp_max_iterations: self.loop_icp_max_iterations,
-            loop_icp_max_correspondence_m: self.loop_icp_max_correspondence_m,
-            loop_icp_inlier_fitness: self.loop_icp_inlier_fitness,
-            loop_icp_min_points: self.loop_icp_min_points,
-            loop_icp_seed_at_current_pose: self.loop_icp_seed_at_current_pose,
-            loop_rotation_variance: self.loop_rotation_variance,
-            loop_translation_variance_floor: self.loop_translation_variance_floor,
-            loop_refinement_passes: self.loop_refinement_passes,
-            loop_refinement_tolerance_m: self.loop_refinement_tolerance_m,
-            loop_refinement_max_passes: self.loop_refinement_max_passes,
-            loop_gnc_final: self.loop_gnc_final,
-            loop_gnc_var_scale: self.loop_gnc_var_scale,
-            loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
-            loop_gnc_apply_after_fraction: self.loop_gnc_apply_after_fraction,
-            loop_gnc_confirmations: self.loop_gnc_confirmations,
-            loop_gnc_deterministic: self.loop_gnc_deterministic,
-            use_location_constraints: self.use_location_constraints,
-            odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
-            odom_rot_yaw_var: self.odom_rot_yaw_var,
-            odom_trans_xy_var: self.odom_trans_xy_var,
-            odom_trans_z_var: self.odom_trans_z_var,
-            anchor_roll_pitch_var: self.anchor_roll_pitch_var,
-            per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
-            per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
-            use_scan_context: self.use_scan_context,
-            scan_context_num_rings: self.scan_context_num_rings,
-            scan_context_num_sectors: self.scan_context_num_sectors,
-            scan_context_max_range_m: self.scan_context_max_range_m,
-            scan_context_top_k: self.scan_context_top_k,
-            scan_context_match_threshold: self.scan_context_match_threshold,
-            scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        };
-        config.apply_conservativeness(self.loop_conservativeness);
-        config
-    }
 }
 
 /// Serializable mirror of `LoopCandidateDiag` (the core struct carries no serde
@@ -299,6 +95,7 @@ struct LoopDiag {
     extended_inliers: usize,
     extended_fitness: f64,
     extended_confidence: f64,
+    strain: f64,
 }
 
 /// A committed loop's ICP-refined relative pose (target frame -> source), so an
@@ -367,6 +164,7 @@ impl From<&LoopCandidateDiag> for LoopDiag {
             extended_inliers: diag.extended_inliers,
             extended_fitness: diag.extended_fitness,
             extended_confidence: diag.extended_confidence,
+            strain: diag.strain,
         }
     }
 }
@@ -392,9 +190,9 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
-    /// Per keyframe, ms the scan thread spends on it (add_key_pose + loop search + smooth_and_update), in order.
+    /// Per keyframe, ms the scan thread spends on it (add_key_pose + loop search), in order.
     keyframe_scan_thread_ms: Vec<f32>,
-    /// Per keyframe, ms in the GNC step (a background thread in the live module, inline here).
+    /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
     keyframe_gnc_ms: Vec<f32>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
@@ -598,7 +396,7 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let mut pgo = GscPgo::new(config.to_pgo());
+    let mut pgo = GscPgo::new(config.pgo.clone());
     let mut cursor = 0usize;
     let mut closures = 0usize;
     let mut scans_processed = 0usize;
@@ -679,10 +477,9 @@ fn run() -> Result<(), String> {
         if had_loop {
             closures += 1;
         }
-        pgo.smooth_and_update();
         keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
         let gnc_started = Instant::now();
-        pgo.step_gnc();
+        pgo.update(false);
         keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
@@ -691,7 +488,7 @@ fn run() -> Result<(), String> {
             write_loop_edges(edges, &pgo, &mut edges_written)?;
         }
     }
-    pgo.finish_gnc();
+    pgo.finish();
     if let Some(events) = &mut events {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         write_pose_changes(events, &pgo, &mut published, false, ts)?;
