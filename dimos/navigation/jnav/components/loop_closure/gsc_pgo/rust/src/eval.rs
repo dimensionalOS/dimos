@@ -54,50 +54,6 @@ struct EvalConfig {
     subtract_odom_from_cloud: bool,
 }
 
-/// Serializable mirror of `ClosureCandidateDiag` (the core struct carries no serde
-/// derive so the PGO library stays dependency-free). NaN metrics serialize as
-/// JSON null, marking a value the rejecting path never computed.
-#[derive(Serialize)]
-struct LoopDiag {
-    outcome: String,
-    source_id: usize,
-    source_time: f64,
-    source_xyz: [f64; 3],
-    target_id: i64,
-    target_time: f64,
-    target_xyz: [f64; 3],
-    from_scan_context: bool,
-    descriptor_structure: f32,
-    descriptor_occupancy: i32,
-    scan_context_best: f32,
-    scan_context_second: f32,
-    lowe_ratio: f32,
-    candidate_distance: f64,
-    degeneracy_min: f32,
-    icp_converged: bool,
-    icp_fitness: f64,
-    icp_translation_norm: f64,
-    yank_translation: f64,
-    yank_rotation_deg: f64,
-    yank_drift_scale: f64,
-    sigma_rotation_deg: f64,
-    sigma_translation_m: f64,
-    yank_z: f64,
-    scan_context_factor: f64,
-    icp_factor: f64,
-    degeneracy_factor: f64,
-    confidence: f64,
-    required_confidence: f64,
-    extended_keyframes: usize,
-    extended_source_points: usize,
-    extended_target_points: usize,
-    single_inliers: usize,
-    extended_inliers: usize,
-    extended_fitness: f64,
-    extended_confidence: f64,
-    strain: f64,
-}
-
 /// A committed closure's ICP-refined relative pose (target frame -> source), so an
 /// offline PCM pass can compose it with odometry. `rotation` is row-major 3x3.
 #[derive(Serialize)]
@@ -121,50 +77,6 @@ impl From<&CommittedClosure> for CommittedClosureEdge {
             translation: edge.translation_offset,
             score: edge.score,
             gnc_weight: edge.gnc_weight,
-        }
-    }
-}
-
-impl From<&ClosureCandidateDiag> for LoopDiag {
-    fn from(diag: &ClosureCandidateDiag) -> LoopDiag {
-        LoopDiag {
-            outcome: diag.outcome.to_string(),
-            source_id: diag.source_id,
-            source_time: diag.source_time,
-            source_xyz: diag.source_xyz,
-            target_id: diag.target_id,
-            target_time: diag.target_time,
-            target_xyz: diag.target_xyz,
-            from_scan_context: diag.from_scan_context,
-            descriptor_structure: diag.descriptor_structure,
-            descriptor_occupancy: diag.descriptor_occupancy,
-            scan_context_best: diag.scan_context_best,
-            scan_context_second: diag.scan_context_second,
-            lowe_ratio: diag.lowe_ratio,
-            candidate_distance: diag.candidate_distance,
-            degeneracy_min: diag.degeneracy_min,
-            icp_converged: diag.icp_converged,
-            icp_fitness: diag.icp_fitness,
-            icp_translation_norm: diag.icp_translation_norm,
-            yank_translation: diag.yank_translation,
-            yank_rotation_deg: diag.yank_rotation_deg,
-            yank_drift_scale: diag.yank_drift_scale,
-            sigma_rotation_deg: diag.sigma_rotation_deg,
-            sigma_translation_m: diag.sigma_translation_m,
-            yank_z: diag.yank_z,
-            scan_context_factor: diag.scan_context_factor,
-            icp_factor: diag.icp_factor,
-            degeneracy_factor: diag.degeneracy_factor,
-            confidence: diag.confidence,
-            required_confidence: diag.required_confidence,
-            extended_keyframes: diag.extended_keyframes,
-            extended_source_points: diag.extended_source_points,
-            extended_target_points: diag.extended_target_points,
-            single_inliers: diag.single_inliers,
-            extended_inliers: diag.extended_inliers,
-            extended_fitness: diag.extended_fitness,
-            extended_confidence: diag.extended_confidence,
-            strain: diag.strain,
         }
     }
 }
@@ -200,7 +112,7 @@ struct EvalOutput {
     gate_counts: BTreeMap<String, usize>,
     /// One record per closure-search evaluation (accepted + rejected), with the
     /// metric at each gate and the source/target locations.
-    closure_diagnostics: Vec<LoopDiag>,
+    closure_diagnostics: Vec<ClosureCandidateDiag>,
     /// Total nonlinear error of the final factor graph (½·Σ whitened residual²,
     /// robust kernels applied) — how much all the constraints conflict.
     graph_error: f64,
@@ -533,11 +445,7 @@ fn run() -> Result<(), String> {
     for diag in pgo.closure_diagnostics() {
         *gate_counts.entry(diag.outcome.to_string()).or_insert(0) += 1;
     }
-    let closure_diagnostics: Vec<LoopDiag> = pgo
-        .closure_diagnostics()
-        .iter()
-        .map(LoopDiag::from)
-        .collect();
+    let closure_diagnostics = pgo.closure_diagnostics().to_vec();
     let graph_error = pgo.graph_error();
     let committed_closure_edges: Vec<CommittedClosureEdge> = pgo
         .committed_closures()
