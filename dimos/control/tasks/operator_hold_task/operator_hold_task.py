@@ -41,6 +41,7 @@ from dimos.control.task import (
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.web.codecs import web_decoder
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -82,12 +83,55 @@ class OperatorHoldStatus:
     unheld: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class OperatorHoldCommand:
+    """Turn the operator hold on or off.
+
+    Attributes:
+        action: "request" turns the hold on; "acknowledge" turns it off.
+        route: Who asks for the hold: "manual", "failsafe" or "agent" (the
+            HoldRoute values); read by "request" only.
+        reason: Free text shown to the operator; read by "request" only.
+    """
+
+    action: str
+    route: str = HoldRoute.MANUAL.value
+    reason: str = ""
+
+
+_HOLD_ACTIONS = ("request", "acknowledge")
+_HOLD_ROUTES = tuple(route.value for route in HoldRoute)
+
+
+@web_decoder("operator_hold_command.json.v1")
+def decode_operator_hold_command(value: dict[str, Any]) -> OperatorHoldCommand:
+    """Read one hold command a web page sent; raise ValueError when it is malformed.
+
+    Args:
+        value: Parsed JSON: ``{"action": "request", "route": "manual",
+            "reason": "..."}`` or ``{"action": "acknowledge"}``. route defaults
+            to "manual" and reason to "".
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"operator hold command must be an object, got {type(value).__name__}")
+    action = value.get("action")
+    if action not in _HOLD_ACTIONS:
+        raise ValueError(f"action must be one of {_HOLD_ACTIONS}, got {action!r}")
+    route = value.get("route", HoldRoute.MANUAL.value)
+    if route not in _HOLD_ROUTES:
+        raise ValueError(f"route must be one of {_HOLD_ROUTES}, got {route!r}")
+    reason = value.get("reason", "")
+    if not isinstance(reason, str):
+        raise ValueError(f"reason must be a string, got {type(reason).__name__}")
+    return OperatorHoldCommand(action=action, route=route, reason=reason)
+
+
 def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
     """Blueprint entry for the coordinator's one operator-hold task.
 
     Args:
         priority: Arbitration priority. Keep it above every other task
-            (teleop is 50, autonomy 10-20) or the hold cannot take the joints.
+            (teleop is 20, autonomy 10) or the hold cannot take the joints.
     """
     # The coordinator imports task modules, so import it lazily here.
     from dimos.control.coordinator import TaskConfig
@@ -251,6 +295,22 @@ class OperatorHoldTask(BaseControlTask):
             logger.warning("Operator hold acknowledged")
             self._emit(status)
         return status
+
+    def on_command(self, msg: OperatorHoldCommand, t_now: float) -> None:
+        """Request or acknowledge the hold from one operator_hold_command message.
+
+        Args:
+            msg: "request" calls ``request(msg.route, msg.reason)``;
+                "acknowledge" calls ``acknowledge()``. Any other action raises
+                ValueError.
+            t_now: Coordinator time in seconds; not used.
+        """
+        if msg.action == "request":
+            self.request(msg.route, msg.reason)
+        elif msg.action == "acknowledge":
+            self.acknowledge()
+        else:
+            raise ValueError(f"unknown operator hold action {msg.action!r}")
 
     def get_status(self) -> OperatorHoldStatus:
         """The current hold state, without changing anything."""

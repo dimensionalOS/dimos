@@ -143,7 +143,15 @@ my_robot = ControlCoordinator.blueprint(
 `operator_hold` (priority 100) freezes every joint where it is and waits for a
 person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
 (zero velocity for a base). Add it with `operator_hold_task()` from
-`dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
+`dimos/control/tasks/operator_hold_task/operator_hold_task.py`, on an
+`OperatorHoldCoordinator`
+(`dimos/robot/manipulators/xarm/blueprints/hybrid_teleop_sim.py`) or a
+subclass of it. That coordinator adds two ports: `operator_hold_command` takes
+an `OperatorHoldCommand` (`action` "request" with a `route` and `reason`, or
+"acknowledge"), and `operator_hold_status` carries the hold's
+`OperatorHoldStatus`. A web page sends the command as JSON with the
+`operator_hold_command.json.v1` encoding. The same commands also work over
+`task_invoke`:
 
 ```python
 coordinator.task_invoke("operator_hold", "request", {"route": "manual", "reason": "arm stuck"})
@@ -155,10 +163,9 @@ trajectory is preempted, and a trajectory sent during the hold is accepted
 and then aborted by preemption on the next tick, so the arm stays put.
 Stopping a running policy is the policy's job, not the coordinator's.
 `get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
-time, unheld joints); the task also hands the same status to whatever
-`set_status_publisher()` was given, once a second while on and once more on
-acknowledge. After acknowledge nothing resumes by itself: the next task to
-command a joint takes it.
+time, unheld joints); the same status goes out on `operator_hold_status`
+once a second while on and once more on acknowledge. After acknowledge
+nothing resumes by itself: the next task to command a joint takes it.
 
 ## Control Modes
 

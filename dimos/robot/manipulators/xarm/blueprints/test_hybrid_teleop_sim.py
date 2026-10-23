@@ -15,7 +15,7 @@
 """Operator hold through the coordinator: request, preempt, reject, publish, acknowledge.
 
 A rig wires one mock arm, one mock twist base, the canonical trajectory task
-and the hold task into a real, unmodified coordinator, then ticks it by hand
+and the hold task into a real OperatorHoldCoordinator, then ticks it by hand
 so every assertion is deterministic.
 """
 
@@ -43,6 +43,7 @@ from dimos.control.task import (
 )
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
+    OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
     operator_hold_task,
@@ -58,6 +59,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import OperatorHoldCoordinator
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -119,7 +121,7 @@ class Rig:
         self.base.read_odometry.return_value = list(BASE_ODOMETRY)
         self.base.write_velocities.return_value = True
 
-        self.coordinator = ControlCoordinator(publish_joint_state=False)
+        self.coordinator = OperatorHoldCoordinator(publish_joint_state=False)
         self.coordinator.add_hardware(
             self.arm,
             HardwareComponent(
@@ -145,7 +147,7 @@ class Rig:
         self.coordinator.add_task(self.hold_task, task_type="operator_hold")
 
         self.statuses: list[OperatorHoldStatus] = []
-        self.hold_task.set_status_publisher(self.statuses.append)
+        self.coordinator.operator_hold_status.subscribe(self.statuses.append)
 
         self._loop = TickLoop(
             tick_rate=100.0,
@@ -324,3 +326,30 @@ class TestAcknowledge:
 
         assert status.on is False
         assert rig.statuses == []
+
+
+class TestPorts:
+    def test_command_port_requests_and_acknowledges(self, rig):
+        rig.coordinator._dispatch(
+            "operator_hold_command", OperatorHoldCommand(action="request", reason="pressed hold")
+        )
+        rig.tick()
+
+        status = rig.statuses[-1]
+        assert status.on and status.route == "manual" and status.reason == "pressed hold"
+        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+
+        rig.coordinator._dispatch(
+            "operator_hold_command", OperatorHoldCommand(action="acknowledge")
+        )
+
+        assert rig.statuses[-1].on is False
+        assert not rig.hold_task.is_active()
+
+    def test_plain_coordinator_has_no_command_port(self):
+        coordinator = ControlCoordinator(publish_joint_state=False)
+        try:
+            with pytest.raises(ValueError, match="operator_hold_command"):
+                coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
+        finally:
+            coordinator.stop()

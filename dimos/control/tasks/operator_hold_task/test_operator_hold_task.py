@@ -22,11 +22,14 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
+    OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
     create_task,
+    decode_operator_hold_command,
     operator_hold_task,
 )
+from dimos.web.codecs import resolve_decoder
 
 
 def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
@@ -145,6 +148,60 @@ def test_acknowledge_clears_everything():
     assert not task.is_active()
     assert task.claim().joints == frozenset()
     assert task.compute(_state({"arm/joint1": 0.5})) is None
+
+
+def test_command_messages_request_and_acknowledge():
+    task = OperatorHoldTask()
+
+    task.on_command(OperatorHoldCommand(action="request"), t_now=0.0)
+    assert task.get_status().on and task.get_status().route == "manual"
+    assert task.get_status().reason == ""
+
+    task.on_command(
+        OperatorHoldCommand(action="request", route="agent", reason="need help"), t_now=0.1
+    )
+    assert (task.get_status().route, task.get_status().reason) == ("agent", "need help")
+
+    task.on_command(OperatorHoldCommand(action="acknowledge"), t_now=0.2)
+    assert not task.is_active()
+
+
+def test_command_with_an_unknown_action_raises():
+    task = OperatorHoldTask()
+
+    with pytest.raises(ValueError, match="release"):
+        task.on_command(OperatorHoldCommand(action="release"), t_now=0.0)
+
+    assert not task.is_active()
+
+
+def test_decoder_reads_page_commands():
+    assert decode_operator_hold_command({"action": "acknowledge"}) == OperatorHoldCommand(
+        action="acknowledge"
+    )
+    assert decode_operator_hold_command(
+        {"action": "request", "route": "agent", "reason": "need help"}
+    ) == OperatorHoldCommand(action="request", route="agent", reason="need help")
+    # The cockpit bridge finds it by encoding id and checks the message type.
+    assert (
+        resolve_decoder("operator_hold_command.json.v1", OperatorHoldCommand).decode
+        is decode_operator_hold_command
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "complaint"),
+    [
+        ({"route": "manual"}, "action"),
+        ({"action": "release"}, "action"),
+        ({"action": "request", "route": "typo"}, "route"),
+        ({"action": "request", "reason": 3}, "reason"),
+        ("request", "object"),
+    ],
+)
+def test_decoder_rejects_bad_commands(value, complaint):
+    with pytest.raises(ValueError, match=complaint):
+        decode_operator_hold_command(value)
 
 
 def test_status_interval_must_be_positive():
