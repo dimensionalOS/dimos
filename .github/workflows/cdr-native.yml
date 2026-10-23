@@ -31,6 +31,13 @@ jobs:
           sudo apt-get install -y cmake pkg-config clang libclang-dev portaudio19-dev libturbojpeg ffmpeg
       - name: Install Python project and test dependencies
         run: uv sync --frozen --group tests
+      - name: Test generated value adapters
+        run: |
+          uv run --no-sync pytest --noconftest --import-mode=importlib -o addopts='' -q \
+            dimos/message_utils/test_image_views.py \
+            dimos/message_utils/test_image_compression.py \
+            dimos/message_utils/test_camera_info.py \
+            dimos/message_utils/test_time.py
       - name: Test native SDK
         run: |
           cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml
