@@ -682,119 +682,233 @@ struct TimingStats {
     smooth_calls: u64,
 }
 
-impl GscPgo {
-    pub fn new(config: Config) -> GscPgo {
-        let scan_context_config = scan_context::Config {
-            n_rings: config.scan_context_num_rings.max(0) as usize,
-            n_sectors: config.scan_context_num_sectors.max(0) as usize,
-            max_range_m: config.scan_context_max_range_m,
-            candidate_top_k: config.scan_context_top_k.max(0) as usize,
-            match_threshold: config.scan_context_match_threshold,
-            lidar_height_m: config.scan_context_lidar_height_m,
-        };
-        let gnc_worker = if config.loop_gnc_final {
-            let (job_sender, job_receiver) = std::sync::mpsc::channel::<GncJob>();
-            let (result_sender, result_receiver) = std::sync::mpsc::channel::<GncResult>();
-            std::thread::Builder::new()
-                .name("gnc-worker".to_string())
-                .stack_size(GTSAM_THREAD_STACK_BYTES)
-                .spawn(move || gnc_worker_loop(job_receiver, result_sender))
-                .expect("spawn gnc worker thread");
-            Some(GncWorker {
-                job_sender,
-                result_receiver,
-            })
-        } else {
-            None
-        };
-        GscPgo {
-            config,
-            scan_context_config,
-            gnc_worker,
-            gnc_due_at: None,
-            gnc_loops_covered: 0,
-            key_poses: Vec::new(),
-            history_pairs: Vec::new(),
-            committed_loops: Vec::new(),
-            cache_pairs: Vec::new(),
-            scan_context_descriptors: Vec::new(),
-            scan_context_ring_keys: Vec::new(),
-            rotation_offset: mat3::identity(),
-            translation_offset: [0.0; 3],
-            // The shim configures ISAM2 with relinearizeThreshold = 0.01,
-            // relinearizeSkip = 1.
-            isam2: Isam2::new(),
-            initial_values: Values::new(),
-            graph: FactorGraph::new(),
-            node_poses: BTreeMap::new(),
-            location_index: BTreeMap::new(),
-            next_location: 0,
-            staged_constraint_factors: Vec::new(),
-            committed_by_instance: BTreeMap::new(),
-            pending_removals: Vec::new(),
-            accepted_loop_inserts: Vec::new(),
-            location_closure: false,
-            reseeded: false,
-            timing: TimingStats::default(),
-            loop_diagnostics: Vec::new(),
-            loop_edge_events: Vec::new(),
-            loop_applied: Vec::new(),
-            loop_out_votes: Vec::new(),
-            scored_yanks: Vec::new(),
-            loop_yank_z: Vec::new(),
-            loop_fit_confidence: Vec::new(),
-            last_loop_search_time: None,
+/// The ICP half of one loop search, on its own copy of the keyframes so it can run on another thread
+/// while scans keep arriving (`GscPgo::begin_loop_search` makes it, `finish_loop_search` applies it).
+pub struct LoopSearch {
+    key_poses: Vec<KeyPoseWithCloud>,
+    config: Config,
+    scored_yanks: Vec<(f64, f64)>,
+    diag: LoopCandidateDiag,
+    loop_idx: usize,
+    init_rotation: Mat3,
+    init_translation: Vec3,
+}
+
+/// What a `LoopSearch` found: its diagnostics, the loop it accepts (relative rotation, translation,
+/// fitness), the yank it scored, and the time each stage took.
+pub struct LoopSearchResult {
+    diag: LoopCandidateDiag,
+    accepted: Option<(Mat3, Vec3, f64)>,
+    scored_yank: Option<(f64, f64)>,
+    timing: TimingStats,
+}
+
+impl LoopSearch {
+    /// The ICP half of a loop search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
+    pub fn run(self) -> LoopSearchResult {
+        let mut diag = self.diag.clone();
+        let (cur_idx, loop_idx) = (diag.source_id, self.loop_idx);
+        let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
+        let mut timing = TimingStats::default();
+        let mut scored_yank = None;
+        let t0 = std::time::Instant::now();
+        let target_cloud = sub_map(
+            &self.key_poses,
+            loop_idx as i32,
+            self.config.loop_submap_half_range,
+            self.config.submap_resolution,
+        );
+        let source_cloud = sub_map(
+            &self.key_poses,
+            cur_idx as i32,
+            0,
+            self.config.submap_resolution,
+        );
+        let min_points = self.config.loop_icp_min_points as usize;
+        if min_points > 0 && (source_cloud.len() < min_points || target_cloud.len() < min_points) {
+            diag.outcome = "icp_reject";
+            return LoopSearchResult {
+                diag,
+                accepted: None,
+                scored_yank,
+                timing,
+            };
+        }
+        timing.submap_s += t0.elapsed().as_secs_f64();
+
+        let t0 = std::time::Instant::now();
+        let target_tree = KdTree::build(&target_cloud);
+        let icp = icp_point_to_point_with_tree(
+            &source_cloud,
+            &target_cloud,
+            &target_tree,
+            &init_rotation,
+            &init_translation,
+            &IcpParams {
+                max_iterations: self.config.loop_icp_max_iterations as usize,
+                max_correspondence_distance: self.config.loop_icp_max_correspondence_m,
+                fitness_max_distance: if self.config.loop_icp_inlier_fitness {
+                    self.config.loop_icp_max_correspondence_m
+                } else {
+                    0.0
+                },
+                ..IcpParams::default()
+            },
+        );
+        timing.icp_s += t0.elapsed().as_secs_f64();
+        if !self.config.loop_icp_dump_dir.is_empty() {
+            dump_icp_inputs(
+                &self.config.loop_icp_dump_dir,
+                cur_idx,
+                loop_idx,
+                &source_cloud,
+                &target_cloud,
+                &icp,
+                "",
+            );
+        }
+        diag.icp_converged = icp.converged;
+        diag.icp_fitness = icp.fitness;
+        diag.icp_translation_norm = mat3::norm(&icp.translation);
+
+        // Observability gate: a planar/degenerate source scan leaves the
+        // alignment unconstrained in-plane — fitness lies. Computed for every
+        // candidate that reaches ICP (not just when the gate is on) so the
+        // metric is always available to compare good vs bad closures.
+        let t0 = std::time::Instant::now();
+        let (degeneracy_min, _) = cloud_degeneracy(&source_cloud);
+        timing.degeneracy_s += t0.elapsed().as_secs_f64();
+        diag.degeneracy_min = degeneracy_min;
+
+        if self.config.loop_min_degeneracy > 0.0
+            && degeneracy_min >= 0.0
+            && (degeneracy_min as f64) < self.config.loop_min_degeneracy
+        {
+            diag.outcome = "degeneracy_reject";
+            return LoopSearchResult {
+                diag,
+                accepted: None,
+                scored_yank,
+                timing,
+            };
+        }
+
+        if !icp.converged || icp.fitness > self.config.loop_score_thresh {
+            diag.outcome = "icp_reject";
+            return LoopSearchResult {
+                diag,
+                accepted: None,
+                scored_yank,
+                timing,
+            };
+        }
+
+        let mut score = icp.fitness;
+        let rotation_refined =
+            mat3::mat_mul(&icp.rotation, &self.key_poses[cur_idx].rotation_global);
+        let translation_refined = mat3::add(
+            &mat3::mat_vec(&icp.rotation, &self.key_poses[cur_idx].translation_global),
+            &icp.translation,
+        );
+        let loop_rotation_transpose = mat3::transpose(&self.key_poses[loop_idx].rotation_global);
+        let mut rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
+        let mut translation_offset = mat3::mat_vec(
+            &loop_rotation_transpose,
+            &mat3::sub(
+                &translation_refined,
+                &self.key_poses[loop_idx].translation_global,
+            ),
+        );
+
+        // Graph yank: how far this constraint pulls the source keyframe from the
+        // current odom-chain estimate (relative pose loop->cur, in the loop's
+        // frame). A large yank on a plausible-distance candidate = a closure that
+        // disagrees with odometry = the signature of a false closure.
+        let current_relative_rotation = mat3::mat_mul(
+            &loop_rotation_transpose,
+            &self.key_poses[cur_idx].rotation_global,
+        );
+        let current_relative_translation = mat3::mat_vec(
+            &loop_rotation_transpose,
+            &mat3::sub(
+                &self.key_poses[cur_idx].translation_global,
+                &self.key_poses[loop_idx].translation_global,
+            ),
+        );
+        diag.yank_translation = mat3::norm(&mat3::sub(
+            &translation_offset,
+            &current_relative_translation,
+        ));
+        diag.yank_rotation_deg =
+            mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
+
+        scored_yank = Some(self.score_candidate(&mut diag));
+        if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
+            let t0 = std::time::Instant::now();
+            let extended = self.extended_icp(
+                cur_idx,
+                loop_idx,
+                &source_cloud,
+                &target_tree,
+                &icp,
+                &mut diag,
+            );
+            timing.extended_icp_s += t0.elapsed().as_secs_f64();
+            let Some(extended) = extended else {
+                diag.outcome = "yank_confidence_reject";
+                return LoopSearchResult {
+                    diag,
+                    accepted: None,
+                    scored_yank,
+                    timing,
+                };
+            };
+            // the loop measurement comes from the extended alignment, which saw more of both places
+            let rotation_refined =
+                mat3::mat_mul(&extended.rotation, &self.key_poses[cur_idx].rotation_global);
+            let translation_refined = mat3::add(
+                &mat3::mat_vec(
+                    &extended.rotation,
+                    &self.key_poses[cur_idx].translation_global,
+                ),
+                &extended.translation,
+            );
+            rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
+            translation_offset = mat3::mat_vec(
+                &loop_rotation_transpose,
+                &mat3::sub(
+                    &translation_refined,
+                    &self.key_poses[loop_idx].translation_global,
+                ),
+            );
+            score = extended.fitness;
+        }
+
+        if self.config.loop_max_yank_rotation_deg > 0.0
+            && diag.candidate_distance < self.config.loop_yank_gate_max_distance_m
+            && diag.yank_rotation_deg > self.config.loop_max_yank_rotation_deg
+        {
+            diag.outcome = "yank_reject";
+            return LoopSearchResult {
+                diag,
+                accepted: None,
+                scored_yank,
+                timing,
+            };
+        }
+
+        diag.outcome = "accepted";
+        LoopSearchResult {
+            diag,
+            accepted: Some((rotation_offset, translation_offset, score)),
+            scored_yank,
+            timing,
         }
     }
 
-    /// All per-search loop-closure diagnostic records accumulated so far.
-    /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, iSAM2 (smooth_and_update).
-    pub fn stage_seconds(&self) -> [(&'static str, f64); 6] {
-        let t = &self.timing;
-        [
-            ("scan_context", t.scan_context_s),
-            ("submap", t.submap_s),
-            ("icp", t.icp_s),
-            ("degeneracy", t.degeneracy_s),
-            ("extended_icp", t.extended_icp_s),
-            ("isam2", t.gtsam_s),
-        ]
-    }
-
-    pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
-        &self.loop_diagnostics
-    }
-
-    /// Every loop-edge lifecycle event so far, oldest first.
-    pub fn loop_edge_events(&self) -> &[LoopEdgeEvent] {
-        &self.loop_edge_events
-    }
-
-    fn newest_keyframe_time(&self) -> f64 {
-        self.key_poses.last().map_or(f64::NAN, |k| k.time)
-    }
-
-    fn push_edge(
-        &mut self,
-        source_id: usize,
-        target_id: usize,
-        state: LoopEdgeState,
-        confidence: f64,
-        yank_z: f64,
-    ) {
-        self.loop_edge_events.push(LoopEdgeEvent {
-            time: self.newest_keyframe_time(),
-            source_id,
-            target_id,
-            state,
-            confidence: confidence.clamp(0.0, 1.0),
-            yank_z,
-        });
-    }
-
-    /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, then
-    /// add its yank to the scale.
-    fn score_candidate(&mut self, diag: &mut LoopCandidateDiag) {
+    /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
+    /// return its yank for the scale.
+    fn score_candidate(&self, diag: &mut LoopCandidateDiag) -> (f64, f64) {
         let robust_scale = |values: Vec<f64>| -> f64 {
             let mut values = values;
             values.sort_by(f64::total_cmp);
@@ -845,10 +959,10 @@ impl GscPgo {
         diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
         let width = self.config.loop_yank_gate_width.max(f64::EPSILON);
         diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / (2.0 * width * width)).exp();
-        self.scored_yanks.push((
+        (
             diag.yank_rotation_deg / drift,
             diag.yank_translation / drift,
-        ));
+        )
     }
 
     /// Global-frame cloud of keyframes `ids`, voxel-downsampled at the submap resolution.
@@ -1005,6 +1119,117 @@ impl GscPgo {
             keyframes *= 2;
         }
         None
+    }
+}
+
+impl GscPgo {
+    pub fn new(config: Config) -> GscPgo {
+        let scan_context_config = scan_context::Config {
+            n_rings: config.scan_context_num_rings.max(0) as usize,
+            n_sectors: config.scan_context_num_sectors.max(0) as usize,
+            max_range_m: config.scan_context_max_range_m,
+            candidate_top_k: config.scan_context_top_k.max(0) as usize,
+            match_threshold: config.scan_context_match_threshold,
+            lidar_height_m: config.scan_context_lidar_height_m,
+        };
+        let gnc_worker = if config.loop_gnc_final {
+            let (job_sender, job_receiver) = std::sync::mpsc::channel::<GncJob>();
+            let (result_sender, result_receiver) = std::sync::mpsc::channel::<GncResult>();
+            std::thread::Builder::new()
+                .name("gnc-worker".to_string())
+                .stack_size(GTSAM_THREAD_STACK_BYTES)
+                .spawn(move || gnc_worker_loop(job_receiver, result_sender))
+                .expect("spawn gnc worker thread");
+            Some(GncWorker {
+                job_sender,
+                result_receiver,
+            })
+        } else {
+            None
+        };
+        GscPgo {
+            config,
+            scan_context_config,
+            gnc_worker,
+            gnc_due_at: None,
+            gnc_loops_covered: 0,
+            key_poses: Vec::new(),
+            history_pairs: Vec::new(),
+            committed_loops: Vec::new(),
+            cache_pairs: Vec::new(),
+            scan_context_descriptors: Vec::new(),
+            scan_context_ring_keys: Vec::new(),
+            rotation_offset: mat3::identity(),
+            translation_offset: [0.0; 3],
+            // The shim configures ISAM2 with relinearizeThreshold = 0.01,
+            // relinearizeSkip = 1.
+            isam2: Isam2::new(),
+            initial_values: Values::new(),
+            graph: FactorGraph::new(),
+            node_poses: BTreeMap::new(),
+            location_index: BTreeMap::new(),
+            next_location: 0,
+            staged_constraint_factors: Vec::new(),
+            committed_by_instance: BTreeMap::new(),
+            pending_removals: Vec::new(),
+            accepted_loop_inserts: Vec::new(),
+            location_closure: false,
+            reseeded: false,
+            timing: TimingStats::default(),
+            loop_diagnostics: Vec::new(),
+            loop_edge_events: Vec::new(),
+            loop_applied: Vec::new(),
+            loop_out_votes: Vec::new(),
+            scored_yanks: Vec::new(),
+            loop_yank_z: Vec::new(),
+            loop_fit_confidence: Vec::new(),
+            last_loop_search_time: None,
+        }
+    }
+
+    /// All per-search loop-closure diagnostic records accumulated so far.
+    /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, iSAM2 (smooth_and_update).
+    pub fn stage_seconds(&self) -> [(&'static str, f64); 6] {
+        let t = &self.timing;
+        [
+            ("scan_context", t.scan_context_s),
+            ("submap", t.submap_s),
+            ("icp", t.icp_s),
+            ("degeneracy", t.degeneracy_s),
+            ("extended_icp", t.extended_icp_s),
+            ("isam2", t.gtsam_s),
+        ]
+    }
+
+    pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
+        &self.loop_diagnostics
+    }
+
+    /// Every loop-edge lifecycle event so far, oldest first.
+    pub fn loop_edge_events(&self) -> &[LoopEdgeEvent] {
+        &self.loop_edge_events
+    }
+
+    fn newest_keyframe_time(&self) -> f64 {
+        self.key_poses.last().map_or(f64::NAN, |k| k.time)
+    }
+
+    fn push_edge(
+        &mut self,
+        source_id: usize,
+        target_id: usize,
+        state: LoopEdgeState,
+        confidence: f64,
+        yank_z: f64,
+    ) {
+        self.loop_edge_events.push(LoopEdgeEvent {
+            time: self.newest_keyframe_time(),
+            source_id,
+            target_id,
+            state,
+            confidence: confidence.clamp(0.0, 1.0),
+            yank_z,
+        });
     }
 
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
@@ -1381,25 +1606,7 @@ impl GscPgo {
     /// idx+half_range] transformed by their GLOBAL poses,
     /// then voxel-downsample at `resolution` (when > 0).
     pub fn get_sub_map(&self, idx: i32, half_range: i32, resolution: f64) -> PointCloud {
-        assert!(idx >= 0 && (idx as usize) < self.key_poses.len());
-        let min_idx = 0.max(idx - half_range) as usize;
-        let max_idx = (self.key_poses.len() as i32 - 1).min(idx + half_range) as usize;
-
-        let mut ret: PointCloud = Vec::new();
-        for key_pose in &self.key_poses[min_idx..=max_idx] {
-            if let Some(body_cloud) = &key_pose.body_cloud {
-                let global_cloud = transform_cloud(
-                    body_cloud,
-                    &key_pose.rotation_global,
-                    &key_pose.translation_global,
-                );
-                ret.extend_from_slice(&global_cloud);
-            }
-        }
-        if resolution > 0.0 {
-            ret = voxel_downsample(&ret, resolution);
-        }
-        ret
+        sub_map(&self.key_poses, idx, half_range, resolution)
     }
 
     /// Radius search on past key-pose global positions (candidates ascending
@@ -1516,20 +1723,27 @@ impl GscPgo {
     /// are already queued behind it: a search (an ICP on a large cloud can take
     /// seconds) must never be what makes the module fall behind.
     pub fn skip_loop_search_behind(&mut self) {
+        self.skip_loop_search("throttle_backlog");
+    }
+
+    /// Record that the newest keyframe's loop search was skipped, and why.
+    pub fn skip_loop_search(&mut self, reason: &'static str) {
         if let Some(key_pose) = self.key_poses.last() {
             let mut diag = LoopCandidateDiag::new(
                 self.key_poses.len() - 1,
                 key_pose.time,
                 key_pose.translation_global,
             );
-            diag.outcome = "throttle_backlog";
+            diag.outcome = reason;
             self.record_search(diag);
         }
     }
 
-    pub fn search_for_loop_pairs(&mut self) {
+    /// Search for a loop at the newest keyframe: the cheap gates and the candidate pick happen here, and the
+    /// ICP half comes back as a `LoopSearch` to run (on any thread) and hand to `finish_loop_search`.
+    pub fn begin_loop_search(&mut self) -> Option<LoopSearch> {
         if self.key_poses.len() < 10 {
-            return;
+            return None;
         }
 
         let cur_idx = self.key_poses.len() - 1;
@@ -1546,7 +1760,7 @@ impl GscPgo {
                 if current_time - last_time < self.config.min_loop_detect_duration {
                     diag.outcome = "throttle_min_duration";
                     self.record_search(diag);
-                    return;
+                    return None;
                 }
             }
         }
@@ -1557,7 +1771,7 @@ impl GscPgo {
                 if current_time - last_search < self.config.loop_search_min_interval {
                     diag.outcome = "throttle_search_interval";
                     self.record_search(diag);
-                    return;
+                    return None;
                 }
             }
             self.last_loop_search_time = Some(current_time);
@@ -1577,14 +1791,14 @@ impl GscPgo {
             {
                 diag.outcome = "no_structure";
                 self.record_search(diag);
-                return;
+                return None;
             }
             if self.config.loop_min_occupancy > 0
                 && diag.descriptor_occupancy < self.config.loop_min_occupancy
             {
                 diag.outcome = "low_occupancy";
                 self.record_search(diag);
-                return;
+                return None;
             }
         }
 
@@ -1607,7 +1821,7 @@ impl GscPgo {
         if loop_idx < 0 {
             diag.outcome = "no_candidate";
             self.record_search(diag);
-            return;
+            return None;
         }
         let loop_idx = loop_idx as usize;
 
@@ -1628,7 +1842,7 @@ impl GscPgo {
         {
             diag.outcome = "id_gap_reject";
             self.record_search(diag);
-            return;
+            return None;
         }
 
         if from_scan_context && sc_second > 1e-6 {
@@ -1647,7 +1861,7 @@ impl GscPgo {
         {
             diag.outcome = "lowe_reject";
             self.record_search(diag);
-            return;
+            return None;
         }
 
         // Positional-plausibility gate on scan-context false matches.
@@ -1656,7 +1870,7 @@ impl GscPgo {
         {
             diag.outcome = "distance_reject";
             self.record_search(diag);
-            return;
+            return None;
         }
 
         // Seed ICP from the place-recognition match: the source keyframe is put
@@ -1715,177 +1929,52 @@ impl GscPgo {
             init_translation = [0.0f64; 3];
         }
 
-        let t0 = std::time::Instant::now();
-        let target_cloud = self.get_sub_map(
-            loop_idx as i32,
-            self.config.loop_submap_half_range,
-            self.config.submap_resolution,
-        );
-        let source_cloud = self.get_sub_map(cur_idx as i32, 0, self.config.submap_resolution);
-        let min_points = self.config.loop_icp_min_points as usize;
-        if min_points > 0 && (source_cloud.len() < min_points || target_cloud.len() < min_points) {
-            diag.outcome = "icp_reject";
+        Some(LoopSearch {
+            key_poses: self.key_poses.clone(),
+            config: self.config.clone(),
+            scored_yanks: self.scored_yanks.clone(),
+            diag,
+            loop_idx,
+            init_rotation,
+            init_translation,
+        })
+    }
+
+    /// Search for a loop at the newest keyframe, all on this thread.
+    pub fn search_for_loop_pairs(&mut self) {
+        if let Some(search) = self.begin_loop_search() {
+            let result = search.run();
+            self.finish_loop_search(result);
+        }
+    }
+
+    /// Apply a `LoopSearch`'s result: record its diagnostics and commit the loop it accepted.
+    pub fn finish_loop_search(&mut self, result: LoopSearchResult) {
+        let LoopSearchResult {
+            diag,
+            accepted,
+            scored_yank,
+            timing,
+        } = result;
+        self.timing.submap_s += timing.submap_s;
+        self.timing.icp_s += timing.icp_s;
+        self.timing.degeneracy_s += timing.degeneracy_s;
+        self.timing.extended_icp_s += timing.extended_icp_s;
+        if let Some(yank) = scored_yank {
+            self.scored_yanks.push(yank);
+        }
+        let Some((rotation_offset, translation_offset, score)) = accepted else {
             self.record_search(diag);
             return;
-        }
-        self.timing.submap_s += t0.elapsed().as_secs_f64();
-
-        let t0 = std::time::Instant::now();
-        let target_tree = KdTree::build(&target_cloud);
-        let icp = icp_point_to_point_with_tree(
-            &source_cloud,
-            &target_cloud,
-            &target_tree,
-            &init_rotation,
-            &init_translation,
-            &IcpParams {
-                max_iterations: self.config.loop_icp_max_iterations as usize,
-                max_correspondence_distance: self.config.loop_icp_max_correspondence_m,
-                fitness_max_distance: if self.config.loop_icp_inlier_fitness {
-                    self.config.loop_icp_max_correspondence_m
-                } else {
-                    0.0
-                },
-                ..IcpParams::default()
-            },
-        );
-        self.timing.icp_s += t0.elapsed().as_secs_f64();
-        if !self.config.loop_icp_dump_dir.is_empty() {
-            dump_icp_inputs(
-                &self.config.loop_icp_dump_dir,
-                cur_idx,
-                loop_idx,
-                &source_cloud,
-                &target_cloud,
-                &icp,
-                "",
-            );
-        }
-        diag.icp_converged = icp.converged;
-        diag.icp_fitness = icp.fitness;
-        diag.icp_translation_norm = mat3::norm(&icp.translation);
-
-        // Observability gate: a planar/degenerate source scan leaves the
-        // alignment unconstrained in-plane — fitness lies. Computed for every
-        // candidate that reaches ICP (not just when the gate is on) so the
-        // metric is always available to compare good vs bad closures.
-        let t0 = std::time::Instant::now();
-        let (degeneracy_min, _) = cloud_degeneracy(&source_cloud);
-        self.timing.degeneracy_s += t0.elapsed().as_secs_f64();
-        diag.degeneracy_min = degeneracy_min;
-
-        if self.config.loop_min_degeneracy > 0.0
-            && degeneracy_min >= 0.0
-            && (degeneracy_min as f64) < self.config.loop_min_degeneracy
-        {
-            diag.outcome = "degeneracy_reject";
-            self.record_search(diag);
-            return;
-        }
-
-        if !icp.converged || icp.fitness > self.config.loop_score_thresh {
-            diag.outcome = "icp_reject";
-            self.record_search(diag);
-            return;
-        }
-
-        let mut score = icp.fitness;
-        let rotation_refined =
-            mat3::mat_mul(&icp.rotation, &self.key_poses[cur_idx].rotation_global);
-        let translation_refined = mat3::add(
-            &mat3::mat_vec(&icp.rotation, &self.key_poses[cur_idx].translation_global),
-            &icp.translation,
-        );
-        let loop_rotation_transpose = mat3::transpose(&self.key_poses[loop_idx].rotation_global);
-        let mut rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
-        let mut translation_offset = mat3::mat_vec(
-            &loop_rotation_transpose,
-            &mat3::sub(
-                &translation_refined,
-                &self.key_poses[loop_idx].translation_global,
-            ),
-        );
-
-        // Graph yank: how far this constraint pulls the source keyframe from the
-        // current odom-chain estimate (relative pose loop->cur, in the loop's
-        // frame). A large yank on a plausible-distance candidate = a closure that
-        // disagrees with odometry = the signature of a false closure.
-        let current_relative_rotation = mat3::mat_mul(
-            &loop_rotation_transpose,
-            &self.key_poses[cur_idx].rotation_global,
-        );
-        let current_relative_translation = mat3::mat_vec(
-            &loop_rotation_transpose,
-            &mat3::sub(
-                &self.key_poses[cur_idx].translation_global,
-                &self.key_poses[loop_idx].translation_global,
-            ),
-        );
-        diag.yank_translation = mat3::norm(&mat3::sub(
-            &translation_offset,
-            &current_relative_translation,
-        ));
-        diag.yank_rotation_deg =
-            mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
-
-        self.score_candidate(&mut diag);
-        if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
-            let t0 = std::time::Instant::now();
-            let extended = self.extended_icp(
-                cur_idx,
-                loop_idx,
-                &source_cloud,
-                &target_tree,
-                &icp,
-                &mut diag,
-            );
-            self.timing.extended_icp_s += t0.elapsed().as_secs_f64();
-            let Some(extended) = extended else {
-                diag.outcome = "yank_confidence_reject";
-                self.record_search(diag);
-                return;
-            };
-            // the loop measurement comes from the extended alignment, which saw more of both places
-            let rotation_refined =
-                mat3::mat_mul(&extended.rotation, &self.key_poses[cur_idx].rotation_global);
-            let translation_refined = mat3::add(
-                &mat3::mat_vec(
-                    &extended.rotation,
-                    &self.key_poses[cur_idx].translation_global,
-                ),
-                &extended.translation,
-            );
-            rotation_offset = mat3::mat_mul(&loop_rotation_transpose, &rotation_refined);
-            translation_offset = mat3::mat_vec(
-                &loop_rotation_transpose,
-                &mat3::sub(
-                    &translation_refined,
-                    &self.key_poses[loop_idx].translation_global,
-                ),
-            );
-            score = extended.fitness;
-        }
-
-        if self.config.loop_max_yank_rotation_deg > 0.0
-            && diag.candidate_distance < self.config.loop_yank_gate_max_distance_m
-            && diag.yank_rotation_deg > self.config.loop_max_yank_rotation_deg
-        {
-            diag.outcome = "yank_reject";
-            self.record_search(diag);
-            return;
-        }
-
-        let noise = NoiseModel::diagonal_variances(&loop_variances(&self.config, score));
+        };
         let pair = LoopPair {
-            source_id: cur_idx,
-            target_id: loop_idx,
+            source_id: diag.source_id,
+            target_id: diag.target_id as usize,
             rotation_offset,
             translation_offset,
             score,
-            noise,
+            noise: NoiseModel::diagonal_variances(&loop_variances(&self.config, score)),
         };
-
-        diag.outcome = "accepted";
         self.record_search(diag);
         self.commit_loop_pair(pair);
     }
@@ -2597,6 +2686,35 @@ impl GscPgo {
 /// Free an iSAM2 on a short-lived thread: tearing down a large Bayes tree would
 /// stall the pipeline thread.
 /// Write one candidate's ICP inputs and result (see `Config::loop_icp_dump_dir`).
+/// Aggregate the body clouds of keyframes [idx-half_range, idx+half_range] transformed by their
+/// GLOBAL poses, then voxel-downsample at `resolution` (when > 0).
+pub fn sub_map(
+    key_poses: &[KeyPoseWithCloud],
+    idx: i32,
+    half_range: i32,
+    resolution: f64,
+) -> PointCloud {
+    assert!(idx >= 0 && (idx as usize) < key_poses.len());
+    let min_idx = 0.max(idx - half_range) as usize;
+    let max_idx = (key_poses.len() as i32 - 1).min(idx + half_range) as usize;
+
+    let mut ret: PointCloud = Vec::new();
+    for key_pose in &key_poses[min_idx..=max_idx] {
+        if let Some(body_cloud) = &key_pose.body_cloud {
+            let global_cloud = transform_cloud(
+                body_cloud,
+                &key_pose.rotation_global,
+                &key_pose.translation_global,
+            );
+            ret.extend_from_slice(&global_cloud);
+        }
+    }
+    if resolution > 0.0 {
+        ret = voxel_downsample(&ret, resolution);
+    }
+    ret
+}
+
 fn dump_icp_inputs(
     dir: &str,
     source_id: usize,

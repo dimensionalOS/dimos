@@ -553,6 +553,10 @@ impl Worker {
         let mut edges_sent = 0usize;
         // Search diagnostics already written to <dump_path>.loops.jsonl.
         let mut diagnostics_written = 0usize;
+        // The loop search running in the background, if any.
+        let mut loop_search: Option<
+            std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::LoopSearchResult>,
+        > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
             // Nondeterministic GNC: take a finished solve's verdict now, scans or not.
@@ -701,12 +705,28 @@ impl Worker {
                     .iter()
                     .map(|kp| (kp.rotation_global, kp.translation_global)),
             );
-            // Never search for loops while scans are waiting: skip it rather than fall behind.
+            // A loop search that finished in the background lands now, so its loop joins this keyframe's update.
+            if loop_search
+                .as_ref()
+                .is_some_and(|search| search.is_finished())
+            {
+                let search = loop_search.take().expect("checked above");
+                pgo.finish_loop_search(search.join().expect("loop search thread panicked"));
+            }
+            // The ICP half of a loop search runs on its own thread so scans never wait on it; one at a time,
+            // and never while scans are waiting (skip it rather than fall behind).
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
             if behind {
                 pgo.skip_loop_search_behind();
-            } else {
-                pgo.search_for_loop_pairs();
+            } else if loop_search.is_some() {
+                pgo.skip_loop_search("search_in_flight");
+            } else if let Some(search) = pgo.begin_loop_search() {
+                loop_search = Some(
+                    std::thread::Builder::new()
+                        .name("gsc-loop-search".into())
+                        .spawn(move || search.run())
+                        .expect("spawn loop search thread"),
+                );
             }
             let had_loop = pgo.has_loop();
 
