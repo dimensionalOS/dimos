@@ -18,7 +18,9 @@ import typer
 
 from dimos.cli.hardware.a1z import app as a1z_app
 from dimos.cli.hardware.g1 import app as g1_app
+from dimos.cli.hardware.seeedstudio import app as seeedstudio_app
 
 app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
 app.add_typer(a1z_app, name="a1z")
 app.add_typer(g1_app, name="g1")
+app.add_typer(seeedstudio_app, name="seeedstudio")
