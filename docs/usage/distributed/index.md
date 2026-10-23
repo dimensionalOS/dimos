@@ -10,7 +10,8 @@ authentication or encryption yet.
 
 - A Host listens only on its own machine until you open it with `listen=`.
 - Open it only on networks you trust: ideally a VPN such as Tailscale
-  (`dimos host config listen=iface/tailscale0`).
+  (`dimos host config listen=iface/tailscale0`, which binds tailscale0's IPv4 address when the
+  Host starts).
 
 ## TL;DR
 

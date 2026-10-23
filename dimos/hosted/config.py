@@ -21,6 +21,7 @@ from pathlib import Path
 import socket
 
 from dotenv import set_key, unset_key
+import psutil
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -47,7 +48,7 @@ class HostConfig(BaseSettings):
     name: str = Field(default_factory=socket.gethostname)
     # Comma-separated tags, key or key=value, added to the auto-detected ones.
     tags: str = ""
-    # Comma-separated router listen endpoints; iface/<name>[:<port>] is every address of one interface.
+    # Comma-separated router listen endpoints; iface/<name>[:<port>] is every IPv4 address of one interface.
     listen: str = DEFAULT_LISTEN
     # Comma-separated routers this one links to; zenoh dials and redials them.
     connect: str = ""
@@ -67,20 +68,29 @@ class HostConfig(BaseSettings):
 
     @property
     def listen_endpoints(self) -> list[str]:
-        """``listen`` as zenoh endpoints: ``iface/wlan0`` as ``tcp/0.0.0.0:7447#iface=wlan0``, a missing port 7447."""
+        """``listen`` as zenoh endpoints: ``iface/wlan0`` as ``tcp/<wlan0's IPv4>:7447``, a missing port 7447."""
         out = []
         for item in (e.strip() for e in self.listen.split(",")):
             kind, _, rest = item.partition("/")
             if kind == "iface":
                 name, _, port = rest.partition(":")
-                item = f"tcp/0.0.0.0:{port or DEFAULT_PORT}#iface={name}"
-            elif rest:
+                out += [f"tcp/{ip}:{port or DEFAULT_PORT}" for ip in _ipv4s(name)]
+                continue
+            if rest:
                 address, sep, options = rest.partition("#")
                 if ":" not in address.rpartition("]")[2]:
                     item = f"{kind}/{address}:{DEFAULT_PORT}{sep}{options}"
             if item:
                 out.append(item)
-        return out
+        return list(dict.fromkeys(out))
+
+
+def _ipv4s(iface: str) -> list[str]:
+    """An interface's IPv4 addresses, read now; a listener bound to them answers nowhere else."""
+    ips = [a.address for a in psutil.net_if_addrs().get(iface, ()) if a.family == socket.AF_INET]
+    if not ips:
+        raise ValueError(f"Interface {iface!r} has no IPv4 address to listen on")
+    return ips
 
 
 def write_settings(values: Mapping[str, str], env_file: Path | None = HOST_ENV_FILE) -> None:

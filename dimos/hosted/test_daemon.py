@@ -129,10 +129,9 @@ def test_sync_checks_out_when_idle_and_refuses_while_busy(host_setup: dict[str, 
     (
         ("tcp/0.0.0.0:7447", "tcp/127.0.0.1:7447"),
         ("tcp/10.0.0.5:7447", "tcp/10.0.0.5:7447"),
-        (f"tcp/0.0.0.0:7447#iface={LOOPBACK_INTERFACE}", "tcp/127.0.0.1:7447"),
         (f"iface/{LOOPBACK_INTERFACE}", "tcp/127.0.0.1:7447"),
         (f"iface/{LOOPBACK_INTERFACE}:7450", "tcp/127.0.0.1:7450"),
-        ("tcp/127.0.0.1:7447,tcp/0.0.0.0:7448#iface=nope", "tcp/127.0.0.1:7447"),
+        (f"tcp/127.0.0.1:7447,iface/{LOOPBACK_INTERFACE}:7448", "tcp/127.0.0.1:7447"),
     ),
 )
 def test_fragments_dial_the_first_listener_where_it_answers(listen: str, dialed: str) -> None:
@@ -140,24 +139,9 @@ def test_fragments_dial_the_first_listener_where_it_answers(listen: str, dialed:
     assert daemon.client_endpoint == dialed
 
 
-def test_iface_shorthand_becomes_a_zenoh_endpoint() -> None:
-    config = HostConfig(
-        listen="iface/wlan0, iface/eth0:7450, tcp/127.0.0.1:7447, tcp/0.0.0.0, tcp/[::], tcp/[::1]:7450"
-    )
-    assert config.listen_endpoints == [
-        "tcp/0.0.0.0:7447#iface=wlan0",
-        "tcp/0.0.0.0:7450#iface=eth0",
-        "tcp/127.0.0.1:7447",
-        "tcp/0.0.0.0:7447",
-        "tcp/[::]:7447",
-        "tcp/[::1]:7450",
-    ]
-
-
-def test_a_listener_on_an_interface_without_ipv4_is_refused() -> None:
-    daemon = HostDaemon(HostConfig(listen="tcp/0.0.0.0:7447#iface=nope"), host_id="h", revision="r")
+def test_a_host_on_an_interface_without_ipv4_does_not_start() -> None:
     with pytest.raises(ValueError, match="'nope' has no IPv4"):
-        daemon.client_endpoint  # noqa: B018
+        HostDaemon(HostConfig(listen="tcp/127.0.0.1:7447,iface/nope"), host_id="h", revision="r")
 
 
 def test_start_is_idempotent(host_setup: dict[str, Any]) -> None:

@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import getpass
 import re
+import shutil
 import socket
 import subprocess
 import time
@@ -155,6 +156,13 @@ def _restart() -> None:
     _wait(_running_revision)
 
 
+def _nix() -> str | None:
+    """Native modules build with nix, which the unit finds only on its own PATH."""
+    if shutil.which("nix", path=machine.unit_search_path(machine.dimos_executable())):
+        return None
+    return "nix is not on the unit's PATH; native modules will fail to build"
+
+
 def _reachable() -> str | None:
     """Other machines can only link to a Host that listens beyond loopback."""
     endpoints = [e.partition("#")[0] for e in HostConfig().listen_endpoints]
@@ -168,6 +176,7 @@ CHECKS: tuple[Check, ...] = (
     Check("Host identity is readable", _identity),
     Check("The configured Host port is free or held by this Host", _port),
     Check("Other machines can reach this Host", _reachable, warning=True),
+    Check("nix, which builds native modules, is on the unit's PATH", _nix, warning=True),
     Check("Code revision is a clean git commit, so Hosts can match on it", _revision, warning=True),
     Check("The dimos-host systemd user unit is installed and enabled", _unit_installed, _install),
     Check("The installed systemd unit matches this checkout", _unit_current, _install),
