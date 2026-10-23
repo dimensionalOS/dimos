@@ -14,6 +14,9 @@
 
 """Coupled WebXR teleoperation for the complete Dual OpenYAM entity."""
 
+from collections.abc import Mapping
+from dataclasses import replace
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -78,16 +81,35 @@ _dual_openyam_webxr_task = teleop_ik_task(
 )
 
 
+def dual_openyam_webxr_task(
+    *,
+    max_joint_velocity_rad_s: float = 2.0,
+    joint_velocity_limits_rad_s: Mapping[str, float] | None = None,
+) -> TaskConfig:
+    """The stock dual-arm teleop task with the joint-speed ceilings as its knobs."""
+    return replace(
+        _dual_openyam_webxr_task,
+        params={
+            **_dual_openyam_webxr_task.params,
+            "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
+            "joint_velocity_limits_rad_s": dict(joint_velocity_limits_rad_s or {}),
+        },
+    )
+
+
 def build_dual_openyam_webxr(
-    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+    *,
+    visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
+    teleop_task: TaskConfig = _dual_openyam_webxr_task,
+    teleop_module: type[ArmTeleopModule] = ArmTeleopModule,
 ) -> Blueprint:
-    """Compose dual-arm teleop with deployment-specific visualization."""
+    """Compose dual-arm teleop with deployment-specific visualization and tuning."""
     return autoconnect(
-        ArmTeleopModule.blueprint(),
+        teleop_module.blueprint(),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
-                _dual_openyam_webxr_task,
+                teleop_task,
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",
@@ -112,10 +134,10 @@ def build_dual_openyam_webxr(
         ),
     ).remappings(
         [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+            (teleop_module, "left_controller_output", "left_cartesian_command"),
+            (teleop_module, "left_gripper_command", "left_gripper_command"),
+            (teleop_module, "right_controller_output", "right_cartesian_command"),
+            (teleop_module, "right_gripper_command", "right_gripper_command"),
         ]
     )
 
