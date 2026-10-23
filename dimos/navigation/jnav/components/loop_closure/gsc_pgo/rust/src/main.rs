@@ -469,27 +469,11 @@ impl Worker {
         if self.config.dump_path.is_empty() || diagnostics.len() <= *written {
             return;
         }
-        let number = |v: f64| {
-            if v.is_finite() {
-                format!("{v}")
-            } else {
-                "null".to_string()
-            }
-        };
-        let mut lines = String::new();
-        for d in &diagnostics[*written..] {
-            lines += &format!(
-                "{{\"outcome\":\"{}\",\"source_id\":{},\"source_time\":{},\"target_id\":{},\"target_time\":{},\"scan_context_best\":{},\"lowe_ratio\":{},\"candidate_distance\":{},\"degeneracy_min\":{},\"icp_fitness\":{},\"yank_rotation_deg\":{},\"yank_translation\":{},\"yank_drift_scale\":{},\"sigma_rotation_deg\":{},\"sigma_translation_m\":{},\"yank_z\":{},\"scan_context_factor\":{},\"icp_factor\":{},\"degeneracy_factor\":{},\"confidence\":{},\"required_confidence\":{},\"extended_keyframes\":{},\"extended_source_points\":{},\"extended_target_points\":{},\"single_inliers\":{},\"extended_inliers\":{},\"extended_fitness\":{},\"extended_confidence\":{}}}\n",
-                d.outcome, d.source_id, number(d.source_time), d.target_id, number(d.target_time),
-                number(d.scan_context_best as f64), number(d.lowe_ratio as f64), number(d.candidate_distance),
-                number(d.degeneracy_min as f64), number(d.icp_fitness), number(d.yank_rotation_deg),
-                number(d.yank_translation), number(d.yank_drift_scale), number(d.sigma_rotation_deg), number(d.sigma_translation_m),
-                number(d.yank_z), number(d.scan_context_factor), number(d.icp_factor),
-                number(d.degeneracy_factor), number(d.confidence), number(d.required_confidence),
-                d.extended_keyframes, d.extended_source_points, d.extended_target_points, d.single_inliers,
-                d.extended_inliers, number(d.extended_fitness), number(d.extended_confidence),
-            );
-        }
+        let lines: String = diagnostics[*written..]
+            .iter()
+            .filter_map(|d| serde_json::to_string(d).ok())
+            .map(|line| line + "\n")
+            .collect();
         use std::io::Write;
         let appended = std::fs::OpenOptions::new()
             .create(true)

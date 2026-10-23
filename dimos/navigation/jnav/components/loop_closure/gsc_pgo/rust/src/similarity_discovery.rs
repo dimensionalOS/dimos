@@ -341,14 +341,11 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
 }
 
 impl crate::gsc_pgo::GscPgo {
-    /// The newest keyframe a closure may close onto: one older than the source's extended-ICP stack plus
-    /// the target's submap half-width, so the two sides never share clouds (a match there only
-    /// checks odometry against itself).
+    /// The newest keyframe a closure may close onto: one whose submap leaves out the source's own scan (a match
+    /// against itself only checks odometry against itself). Extended ICP keeps its stack clear of the target on its own.
     fn newest_closure_target(&self) -> usize {
-        (self.key_poses.len() - 1).saturating_sub(
-            self.config.closure_extended_icp_max_keyframes.max(1)
-                + self.config.closure_submap_half_range.max(0) as usize,
-        )
+        (self.key_poses.len() - 1)
+            .saturating_sub(self.config.closure_submap_half_range.max(0) as usize + 1)
     }
     /// Radius search on past key-pose global positions (candidates ascending
     /// by distance), returning the nearest that is far enough back.

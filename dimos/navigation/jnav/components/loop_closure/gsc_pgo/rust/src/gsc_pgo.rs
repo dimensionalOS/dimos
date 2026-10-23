@@ -90,6 +90,7 @@ pub struct CommittedClosure {
 /// gate and the outcome (accepted, or the name of the gate that rejected it).
 /// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "native", derive(serde::Serialize))]
 pub struct ClosureCandidateDiag {
     /// Outcome: "accepted", "outranked" (a better proposal took the search thread), or the rejecting gate — one of "no_structure",
     /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
