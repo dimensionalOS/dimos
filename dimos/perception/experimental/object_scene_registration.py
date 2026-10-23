@@ -262,6 +262,19 @@ class ObjectSceneRegistrationModule(Module):
         return [obj.agent_encode() for obj in self._object_db.get_all_objects()]
 
     @rpc
+    def get_object_bboxes(self) -> dict[str, list[int]]:
+        """Where each stored object (pending and permanent) was last seen in the colour image.
+
+        Returns:
+            Object id to [x1, y1, x2, y2]: the left, top, right and bottom edges
+            of its detection box in colour-image pixels at its last sighting.
+        """
+        return {
+            obj.object_id: [round(edge) for edge in obj.bbox]
+            for obj in self._object_db.get_all_objects()
+        }
+
+    @rpc
     def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None:
         """Get pointcloud for an object by class name."""
         objects = self._object_db.find_by_name(name)

@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <!-- Operator page for the hybrid-teleop-sim blueprint: the arm camera, a 3D
-     view of the scene's point cloud, the operator hold status, an e-stop, and
-     buttons to ask for an operator or to end the hold (take over or resume).
+     view of the scene's point cloud, the operator hold status, an e-stop,
+     buttons to ask for an operator or to end the hold (take over or resume),
+     and a scan for objects whose boxes are drawn on the camera: click one to
+     target it, then pick it.
      On a relay that needs a viewer token, open it with ?token=...
      Run:  dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop -->
 <html lang="en">
@@ -58,6 +60,12 @@
         width: 100%;
         height: auto;
       }
+      #camera #camera-overlay {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        cursor: crosshair;
+      }
       #cloud {
         margin-top: 12px;
       }
@@ -81,7 +89,8 @@
         flex-direction: column;
         gap: 12px;
       }
-      #hold-card {
+      #hold-card,
+      #pick-card {
         background: #1f2226;
         border: 1px solid #2c3036;
         border-radius: 6px;
@@ -147,6 +156,30 @@
         min-height: 1.4em;
         font-size: 12px;
       }
+      #pick-card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #pick-card .row {
+        align-items: center;
+      }
+      #pick-prompt {
+        flex: 2;
+        min-width: 0;
+        padding: 9px;
+        border: 1px solid #3a3f46;
+        border-radius: 6px;
+        background: #15171a;
+        color: inherit;
+        font: inherit;
+      }
+      #pick-result.ok {
+        color: #6fcf8f;
+      }
+      #pick-result.bad {
+        color: #ff8a8a;
+      }
     </style>
   </head>
   <body>
@@ -159,6 +192,12 @@
         <div id="camera">
           <canvas id="camera-canvas" width="640" height="480"></canvas>
           <video id="camera-video" autoplay muted playsinline hidden></video>
+          <canvas
+            id="camera-overlay"
+            width="640"
+            height="480"
+            title="Click an object to target it"
+          ></canvas>
         </div>
         <div id="camera-info" class="muted">waiting for camera</div>
         <div id="cloud">
@@ -197,6 +236,20 @@
           <button id="takeover" disabled>Take over</button>
           <button id="resume" disabled>Resume</button>
         </div>
+        <div id="pick-card">
+          <div class="muted">Pick</div>
+          <div class="row">
+            <label for="pick-prompt" class="muted">look for</label>
+            <input id="pick-prompt" value="ball" title="Object names, comma separated" />
+            <button id="scan">Scan</button>
+          </div>
+          <div id="pick-target">target: none</div>
+          <div class="row">
+            <button id="pick" disabled>Pick</button>
+            <button id="pick-clear">Clear</button>
+          </div>
+          <div id="pick-result" class="muted"></div>
+        </div>
         <div id="log" class="muted"></div>
       </aside>
     </main>
@@ -233,6 +286,7 @@
             if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
               canvas.width = bitmap.width;
               canvas.height = bitmap.height;
+              drawBoxes();
             }
             ctx.drawImage(bitmap, 0, 0);
             bitmap.close();
@@ -579,6 +633,93 @@
       $("#estop-clear").addEventListener(
         "click",
         () => send(false, "operator_estop", "clear"),
+      );
+
+      // Pick. operator_state carries the scanned objects with their boxes
+      // (x1, y1, x2, y2 in camera-frame pixels), the target and the last
+      // result. The overlay has the frame's own size, so boxes are drawn and
+      // clicks are read in frame pixels.
+      const overlay = $("#camera-overlay");
+      const overlayCtx = overlay.getContext("2d");
+      let pick = null; // the latest operator_state; null before the first one
+      const frameSize = () =>
+        video.hidden || !video.videoWidth
+          ? [canvas.width, canvas.height]
+          : [video.videoWidth, video.videoHeight];
+
+      const drawBoxes = () => {
+        const [w, h] = frameSize();
+        if (overlay.width !== w || overlay.height !== h) {
+          overlay.width = w;
+          overlay.height = h;
+        }
+        overlayCtx.clearRect(0, 0, w, h);
+        overlayCtx.font = "15px system-ui, sans-serif";
+        for (const obj of pick?.objects ?? []) {
+          if (obj.bbox.length !== 4) continue; // [] when the object has no box
+          const [x1, y1, x2, y2] = obj.bbox;
+          const targeted = obj.object_id === pick.target_id;
+          const color = targeted ? "#ff8a3d" : "#6fcf8f";
+          overlayCtx.lineWidth = targeted ? 4 : 2;
+          overlayCtx.strokeStyle = color;
+          overlayCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+          const top = y1 >= 20 ? y1 - 20 : y2; // label above the box, or below at the top edge
+          overlayCtx.fillStyle = "rgba(0, 0, 0, 0.65)";
+          overlayCtx.fillRect(x1, top, overlayCtx.measureText(obj.name).width + 8, 20);
+          overlayCtx.fillStyle = color;
+          overlayCtx.fillText(obj.name, x1 + 4, top + 15);
+        }
+      };
+
+      const renderPick = () => {
+        const busy = pick?.busy === true;
+        const result = pick?.last_result;
+        $("#scan").disabled = busy;
+        $("#pick").disabled = busy || !pick?.target_id;
+        $("#pick-clear").disabled = busy;
+        $("#pick-target").textContent = `target: ${pick?.target_name || "none"}`;
+        const line = $("#pick-result");
+        line.className = "muted";
+        if (pick?.error) {
+          line.textContent = `error: ${pick.error}`;
+          line.className = "bad";
+        } else if (busy) {
+          line.textContent = `${pick.last_action}: working...`;
+        } else if (result) {
+          line.textContent = `${result.ok ? "ok" : "failed"}: ${result.message} (${
+            (result.duration_ms / 1000).toFixed(1)
+          } s)`;
+          line.className = result.ok ? "ok" : "bad";
+        } else {
+          line.textContent = "";
+        }
+      };
+      session.subscribe("operator_state", (snapshot) => {
+        pick = snapshot.slot?.value ?? null;
+        renderPick();
+        drawBoxes();
+      });
+
+      overlay.addEventListener("click", (e) => {
+        const rect = overlay.getBoundingClientRect();
+        const [w, h] = frameSize();
+        send({
+          action: "target",
+          x: Math.round(((e.clientX - rect.left) * w) / rect.width),
+          y: Math.round(((e.clientY - rect.top) * h) / rect.height),
+        }, "operator_command");
+      });
+      $("#scan").addEventListener("click", () => {
+        const names = $("#pick-prompt").value.split(",").map((name) => name.trim());
+        send({ action: "scan", prompts: names.filter(Boolean) }, "operator_command");
+      });
+      $("#pick").addEventListener(
+        "click",
+        () => send({ action: "pick" }, "operator_command"),
+      );
+      $("#pick-clear").addEventListener(
+        "click",
+        () => send({ action: "clear" }, "operator_command"),
       );
     </script>
   </body>

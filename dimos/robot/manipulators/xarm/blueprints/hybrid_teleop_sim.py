@@ -16,8 +16,9 @@
 
 The same modules as xarm-perception-sim, on a coordinator that also runs the
 operator hold and takes hold and e-stop commands and sends their status as
-streams. The camera, a point cloud of the scene, both statuses and both
-commands also go to the page in web/hybrid-teleop: run
+streams. OperatorCommandsModule runs scan, click-to-target and pick commands.
+The camera, a point cloud of the scene, every status and every command also go
+to the page in web/hybrid-teleop: run
 `dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
 """
 
@@ -47,10 +48,16 @@ from dimos.core.stream import In, Out
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
+from dimos.manipulation.operator_assist.operator_commands_module import (
+    OperatorCommand,
+    OperatorCommandsModule,
+    OperatorState,
+)
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
@@ -178,6 +185,8 @@ hybrid_teleop_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
+    # A pick blocks until the object is held or every grasp failed: minutes.
+    OperatorCommandsModule.blueprint(rpc_timeouts={**DEFAULT_RPC_TIMEOUTS, "pick_object": 600.0}),
     # The page's 3D view: rays from the wrist camera (80 x 60, about 1 cm
     # apart on the table) give world-frame points at 5 Hz. Renamed so they do
     # not mix with the object clouds ObjectSceneRegistrationModule sends on
@@ -195,6 +204,9 @@ hybrid_teleop_sim = autoconnect(
         detector_backend="moondream",
         segmentation_backend="edgetam",
         detect_on_request=True,
+        # Detections closer than this (metres) count as one object. The objects
+        # on the table are 10 to 17 cm apart; the 0.2 m default merges them.
+        distance_threshold=0.05,
     ),
     coordinator(
         hardware=[_xarm7_sim_hw],
@@ -257,6 +269,22 @@ hybrid_teleop_sim = autoconnect(
             Channel(
                 "operator_estop_status",
                 OperatorEstopStatus,
+                max_hz=5.0,
+                paced=True,
+                resend_on_subscribe=True,
+            ),
+            Channel(
+                "operator_command",
+                OperatorCommand,
+                dir="tx",
+                publish="shared",
+                encoding="operator_command.json.v1",
+                max_hz=5.0,
+            ),
+            # Paced: a state that follows another within 0.2 s still reaches the page.
+            Channel(
+                "operator_state",
+                OperatorState,
                 max_hz=5.0,
                 paced=True,
                 resend_on_subscribe=True,

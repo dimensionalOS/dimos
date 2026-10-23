@@ -521,3 +521,34 @@ def test_object_db_keeps_first_sighting_pending_above_threshold() -> None:
     object_db.add_objects([newer])
 
     assert object_db.get_objects() == [detected]
+
+
+def test_object_bboxes_cover_pending_and_permanent_objects() -> None:
+    module = ObjectSceneRegistrationModule(target_frame="camera")
+    module._object_db = ObjectDB(min_detections_for_permanent=2)
+    pending = MagicMock(
+        object_id="pending-id",
+        track_id=-1,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        bbox=(10.4, 20.6, 50.0, 80.0),
+    )
+    permanent = MagicMock(
+        object_id="permanent-id",
+        track_id=-1,
+        ts=1.0,
+        last_seen_ts=None,
+        detections_count=1,
+        bbox=(100.0, 120.0, 140.0, 170.0),
+    )
+    pending.center = permanent.center = None
+    module._object_db.add_objects([pending, permanent])
+    module._object_db.promote("permanent-id")
+
+    assert module._object_db.get_objects() == [permanent]
+    assert module.get_object_bboxes() == {
+        "pending-id": [10, 21, 50, 80],
+        "permanent-id": [100, 120, 140, 170],
+    }
+    module.stop()
