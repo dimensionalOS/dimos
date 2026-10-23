@@ -58,6 +58,7 @@ keyboard_teleop_a1z = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_a1z_model,
         visualization={"backend": "viser"},
     ),
@@ -96,6 +97,7 @@ coordinator_teleop_a1z = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_a1z_webxr_model,
         visualization={"backend": "viser"},
     ),

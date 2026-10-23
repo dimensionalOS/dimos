@@ -98,12 +98,21 @@ def _hardware_component(
     )
 
 
+# These pairs overlap by a few mm at the folded rest pose.
+DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
+    (f"{side}_link{a}", f"{side}_link{b}")
+    for side in DUAL_OPENYAM_SIDES
+    for a, b in ((1, 3), (2, 4))
+]
+
+
 def dual_openyam_model_config() -> RobotModelConfig:
     """Build the combined arm-only planning model."""
     return RobotModelConfig(
         model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
+        collision_exclusion_pairs=list(DUAL_OPENYAM_COLLISION_EXCLUSIONS),
         planning_groups=[
             PlanningGroupDefinition(
                 name="left_manipulator",

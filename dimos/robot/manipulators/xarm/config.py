@@ -81,7 +81,6 @@ def make_xarm7_sim_robot_config(
     """
     return make_xarm7_model_config(
         add_gripper=True,
-        gripper_hardware_id="arm",
         base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
         tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
         home_joints=XARM7_SIM_HOME,
@@ -279,7 +278,6 @@ def make_xarm_model_config(
     robot_type: str = "xarm",
     prefix: str = "",
     add_gripper: bool = True,
-    gripper_hardware_id: str | None = None,
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
@@ -322,7 +320,6 @@ def make_xarm_model_config(
         collision_exclusion_pairs=(
             collision_exclusions if add_gripper and robot_type == "xarm" else []
         ),
-        gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

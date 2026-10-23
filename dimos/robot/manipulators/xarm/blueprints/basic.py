@@ -65,10 +65,10 @@ def _gripper_task() -> TaskConfig:
 
 xarm7_planner_coordinator = autoconnect(
     planner(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=make_xarm7_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
-        )
+        ),
     ),
     coordinator(
         hardware=[_xarm7_hw],
@@ -107,9 +107,9 @@ _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
 
 lite6_planner_coordinator = autoconnect(
     planner(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=make_lite6_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         ),
         visualization={"backend": "viser"},
     ),

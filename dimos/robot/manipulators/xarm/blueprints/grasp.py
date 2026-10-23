@@ -126,7 +126,6 @@ if SIMULATED:
 else:
     _model = make_xarm7_model_config(
         add_gripper=True,
-        gripper_hardware_id="arm",
         base_pose=PoseStamped(frame_id="world"),
         tf_extra_links=["link7"],
     )
@@ -194,6 +193,7 @@ def _scene_registration() -> Blueprint:
 # PickAndPlaceModule resolves its generator by spec, so two would be ambiguous.
 _XARM_GRASP_MODULES = (
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_model,
         static_transforms=[] if SIMULATED else [XARM_WRIST_CAMERA_TRANSFORM],
         planning_timeout=10.0,
