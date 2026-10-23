@@ -64,7 +64,9 @@ def test_cli_import_does_not_pull_ipython() -> None:
     assert result.returncode == 0, f"IPython leaked into CLI import:\n{result.stderr}"
 
 
-@pytest.mark.parametrize("args", [[], ["evals", "setup", "space"], ["evals", "score", "space"]])
+@pytest.mark.parametrize(
+    "args", [[], ["evals", "space"], ["evals", "space", "setup"], ["evals", "space", "score"]]
+)
 def test_help_startup_time(args: list[str]) -> None:
     """CLI help must finish within the startup budget."""
     start = time.monotonic()

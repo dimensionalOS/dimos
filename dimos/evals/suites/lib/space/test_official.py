@@ -157,7 +157,7 @@ def test_native_standard_cli_preserves_prompt_and_official_score(
         ],
     )
     assert result.exit_code == 0, result.output
-    scored = CliRunner().invoke(cli.app, ["score", "space", str(runner.run_dir)])
+    scored = CliRunner().invoke(cli.app, ["space", "score", str(runner.run_dir)])
     assert scored.exit_code == 0, scored.output
     report = json.loads(scored.output)
     assert report["complete"]

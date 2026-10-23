@@ -16,7 +16,7 @@ Use Linux or macOS, Python 3.12, and the repository's `uv` setup:
 
 ```bash skip
 uv sync --locked --no-default-groups --extra space
-uv run --no-sync dimos evals setup space
+uv run --no-sync dimos evals space setup
 ```
 
 The `space` extra installs the pinned `ml-space-benchmark-ky135` package.
@@ -47,7 +47,7 @@ explicit output budget:
 uv run --no-sync dimos evals run dimos.evals.suites.space_map_sketching \
   --agent dimos.evals.agents.single_call \
   --set model=gpt-5.6-luna --set max_output_tokens=16384
-uv run --no-sync dimos evals score space /path/to/run-directory
+uv run --no-sync dimos evals space score /path/to/run-directory
 ```
 
 Use the directory printed by the run command. Each run saves a manifest,

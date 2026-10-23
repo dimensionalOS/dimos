@@ -175,7 +175,7 @@ def setup(paths: SpacePaths) -> dict[str, Any]:
 
 def load_examples(paths: SpacePaths) -> tuple[Example, ...]:
     if not paths.questions.is_file():
-        raise FileNotFoundError("SPACE data is missing. Run dimos evals setup space")
+        raise FileNotFoundError("SPACE data is missing. Run dimos evals space setup")
     payload = paths.questions.read_bytes()
     verify_data(payload)
     rows = json.loads(payload)

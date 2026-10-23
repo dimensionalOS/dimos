@@ -25,8 +25,7 @@ from types import FrameType
 
 import typer
 
-setup_app = typer.Typer(help="Prepare benchmark inputs.", no_args_is_help=True)
-score_app = typer.Typer(help="Score saved benchmark replies.", no_args_is_help=True)
+app = typer.Typer(help="Set up and score the SPACE benchmark.", no_args_is_help=True)
 
 
 def _terminate(signum: int, _frame: FrameType | None) -> None:
@@ -45,7 +44,7 @@ def _termination_handlers() -> Iterator[None]:
         yield
 
 
-@setup_app.command("space")
+@app.command("setup")
 def setup_space() -> None:
     """Acquire pinned SPACE task data for the installed scorer."""
     # Keep the optional benchmark dependencies out of CLI startup.
@@ -56,7 +55,7 @@ def setup_space() -> None:
     typer.echo(json.dumps(result, indent=2, allow_nan=False))
 
 
-@score_app.command("space")
+@app.command("score")
 def score_space(
     run_dir: Path = typer.Argument(
         ..., exists=True, file_okay=False, help="Directory produced by dimos evals run."

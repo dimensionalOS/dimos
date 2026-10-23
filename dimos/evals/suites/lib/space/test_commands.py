@@ -35,7 +35,7 @@ from dimos.evals.suites.lib.space.data import SpacePaths
 def test_score_command_exit_status(tmp_path: Path, mocker: MockerFixture, complete: bool) -> None:
     expected = {"complete": complete, "official_percent": 0.0}
     score = mocker.patch.object(report, "score_run", return_value=expected)
-    result = CliRunner().invoke(app, ["evals", "score", "space", str(tmp_path)])
+    result = CliRunner().invoke(app, ["evals", "space", "score", str(tmp_path)])
     assert result.exit_code == (0 if complete else 1), result.output
     score.assert_called_once_with(SpacePaths(), tmp_path)
     assert json.loads(result.output) == expected
@@ -44,7 +44,7 @@ def test_score_command_exit_status(tmp_path: Path, mocker: MockerFixture, comple
 def test_setup_command(mocker: MockerFixture) -> None:
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
     setup = mocker.patch.object(data, "setup", return_value={"selected_cases": []})
-    result = CliRunner().invoke(app, ["evals", "setup", "space"])
+    result = CliRunner().invoke(app, ["evals", "space", "setup"])
     assert result.exit_code == 0, result.output
     assert {sig: signal.getsignal(sig) for sig in previous} == previous
     setup.assert_called_once_with(SpacePaths())
@@ -55,13 +55,13 @@ def test_setup_failure_restores_handlers(mocker: MockerFixture) -> None:
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
     failure = RuntimeError("Data download failed")
     mocker.patch.object(data, "setup", side_effect=failure)
-    result = CliRunner().invoke(app, ["evals", "setup", "space"])
+    result = CliRunner().invoke(app, ["evals", "space", "setup"])
     assert result.exit_code == 1
     assert result.exception is failure
     assert {sig: signal.getsignal(sig) for sig in previous} == previous
 
 
-@pytest.mark.parametrize("args", [["setup", "unknown"], ["score", "unknown"], ["score", "space"]])
+@pytest.mark.parametrize("args", [["unknown", "setup"], ["space", "unknown"], ["space", "score"]])
 def test_invalid_command_does_not_run_backend(args: list[str], mocker: MockerFixture) -> None:
     setup = mocker.patch.object(data, "setup")
     score = mocker.patch.object(report, "score_run")
@@ -85,7 +85,7 @@ def command_process(
             "connection.sendall(f'{os.getpid()}\\n'.encode())\n"
             "connection.recv(1)\n"
         )
-        args = ["evals", request.param, "space"]
+        args = ["evals", "space", request.param]
         if request.param == "score":
             args.append(str(tmp_path))
         script = (

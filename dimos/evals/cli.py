@@ -30,14 +30,13 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from dimos.evals.suites.lib.space.commands import score_app, setup_app
+from dimos.evals.suites.lib.space.commands import app as space_app
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
-app.add_typer(setup_app, name="setup")
-app.add_typer(score_app, name="score")
+app.add_typer(space_app, name="space")
 
 
 def agent_class(module: str) -> type[Agent]:
