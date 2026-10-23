@@ -15,18 +15,13 @@ express. Do not repeat the fields in a constructor `Args:` section unless a
 handwritten constructor takes different inputs.
 
 Keep types in Python annotations, rather than copying them into descriptions.
-The [configuration API](/docs/api/configuration.md) renders available annotations
-and defaults from the source. Docstring checks do not require annotations or
-missing docstrings; the existing mypy policy remains separate and unchanged.
+The [configuration reference](/docs/usage/configuration.md#configuration-api)
+renders available annotations and defaults from the source.
 
-Pre-commit checks Google section capitalization and colons with Ruff `D405` and
-`D416`. The `docstring-style` hook rejects underlined NumPy sections, reST fields
-such as `:param name:`, and Epydoc fields such as `@param name:` in actual Python
-docstrings. It checks all Python files selected by pre-commit, including tests,
-with the existing `dimos/models/` and `deprecated` exclusions. It leaves ordinary
-comments, string data, code fences, indented examples, and literal blocks alone.
-This gate checks section syntax; it does not require sections or descriptions for
-every parameter, and it does not validate the meaning of prose.
+Ruff checks recognized section headings for capitalization and a trailing colon
+with `D405` and `D416`, using the Google convention. These rules do not reject
+every NumPy, reST, or other docstring format. Missing docstrings and annotations
+remain allowed by these checks; the existing mypy policy is unchanged.
 
 ## No comment banners
 

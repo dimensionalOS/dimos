@@ -152,11 +152,16 @@ class SceneClient:
     sandbox: ``loadGLTF``, ``addCollider``, ``removeCollider``, ``addNPC``,
     ``removeNPC``.
 
-    Args:
-        host: Bridge server host (default ``"localhost"``).
-        port: Bridge server port (default ``8090``).
-        channel: Multi-page channel name (default ``""`` = single page mode).
-        timeout: Default timeout in seconds for exec commands.
+    Parameters
+    ----------
+    host : str
+        Bridge server host (default ``"localhost"``).
+    port : int
+        Bridge server port (default ``8090``).
+    channel : str
+        Multi-page channel name (default ``""`` = single page mode).
+    timeout : float
+        Default timeout in seconds for exec commands.
     """
 
     def __init__(
@@ -812,10 +817,10 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
         updates the agent's kinematic body directly.  The new position is
         then broadcast to the browser for rendering.
 
-        Args:
-            x: Target position in Three.js world coordinates (Y-up).
-            y: Target position in Three.js world coordinates (Y-up).
-            z: Target position in Three.js world coordinates (Y-up).
+        Parameters
+        ----------
+        x, y, z : float
+            Target position in Three.js world coordinates (Y-up).
         """
         cmd: dict[str, Any] = {"type": "teleport", "x": x, "y": y, "z": z}
         if self.channel:

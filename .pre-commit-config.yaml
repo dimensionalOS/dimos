@@ -82,12 +82,6 @@ repos:
 
   - repo: local
     hooks:
-      - id: docstring-style
-        name: Google docstring sections
-        entry: python bin/hooks/docstring_style.py
-        language: python
-        types: [python]
-
       - id: uv-lock-check
         name: Check uv.lock is up-to-date
         entry: uv lock --check

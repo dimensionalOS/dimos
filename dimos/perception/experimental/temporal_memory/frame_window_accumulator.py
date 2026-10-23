@@ -42,11 +42,16 @@ class FrameWindowAccumulator:
 
     Thread-safe: a single lock protects all mutable state.
 
-    Args:
-        max_buffer_frames: Maximum frames kept in memory.  Oldest frames are evicted when full.
-        window_s: Minimum elapsed time (in seconds) a window must span.
-        stride_s: Minimum interval between successive window extractions.
-        fps: Expected ingest rate — used to compute ``frames_needed``.
+    Parameters
+    ----------
+    max_buffer_frames:
+        Maximum frames kept in memory.  Oldest frames are evicted when full.
+    window_s:
+        Minimum elapsed time (in seconds) a window must span.
+    stride_s:
+        Minimum interval between successive window extractions.
+    fps:
+        Expected ingest rate — used to compute ``frames_needed``.
     """
 
     def __init__(

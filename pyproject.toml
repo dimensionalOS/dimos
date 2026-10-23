@@ -531,8 +531,6 @@ tests-self-hosted = [
 ]
 docs = [
     "mkdocstrings[python]==1.0.7",
-    "mkdocstrings-python==2.0.9",
-    "griffe-pydantic==1.3.2",
     "mkdocs-awesome-nav>=3.3.0",
     "mkdocs-glightbox>=0.5.2",
     "mkdocs-material>=9.7.7",

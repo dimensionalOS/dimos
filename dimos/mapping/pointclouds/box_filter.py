@@ -42,7 +42,7 @@ logger = setup_logger()
 class Box:
     """A box to leave out of a cloud.
 
-    Attributes:
+    Args:
         pose: The box's centre and orientation, in ``frame_id``.
         size: Full edge lengths along the box's own axes, metres.
         frame_id: The frame the box is fixed in, or None for the cloud's own

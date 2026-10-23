@@ -107,7 +107,6 @@ plugins:
             show_docstring_attributes: true
             extensions:
               - misc/mkdocs/namespace_packages.py:DimosNamespaces
-              - griffe_pydantic
   # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
   - awesome-nav
   # click a diagram or screenshot to open it full size

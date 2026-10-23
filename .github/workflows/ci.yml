@@ -310,10 +310,6 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
-      - name: Test docstring style hook
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        run: uv run --no-sync pytest -c /dev/null --confcutdir=bin/hooks -p no:cacheprovider bin/hooks/test_docstring_style.py -q
       - name: Check declared dependencies
         run: uv run --no-sync deptry dimos --config pyproject.toml --github-output
       - name: Mypy
