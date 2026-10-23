@@ -122,7 +122,7 @@ def test_server_url_is_configured_else_the_blueprints_server_else_the_default() 
 @pytest.fixture
 def mcp_client() -> McpClient:
     """Build an McpClient wired to a mock requests session."""
-    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+    client = McpClient(mcp_server_url="http://localhost:9990/mcp", persist_history=False)
     client._http_client = _mock_session(_mock_payload)
     try:
         yield client

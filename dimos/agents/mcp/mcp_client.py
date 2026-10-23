@@ -32,16 +32,18 @@ from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import field_validator, model_validator
 from reactivex.disposable import Disposable
 import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import DEFAULT_MCP_URL
+from dimos.agents.mcp.session_store import AgentSession
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -94,6 +96,20 @@ class McpClientConfig(ModuleConfig):
     # None: the McpServer in this blueprint, or the default endpoint without one.
     mcp_server_url: str | None = None
     trace_dir: Path | None = None
+    persist_history: bool = True
+    restore_session: str | None = None
+    session_dir: Path | None = None
+
+    @field_validator("restore_session")
+    @classmethod
+    def validate_session_id(cls, value: str | None) -> str | None:
+        return str(uuid.UUID(value)) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_persistence(self) -> "McpClientConfig":
+        if self.restore_session is not None and not self.persist_history:
+            raise ValueError("restore_session requires persist_history")
+        return self
 
 
 class McpClient(Module):
@@ -116,6 +132,7 @@ class McpClient(Module):
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _session: AgentSession | None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -134,6 +151,7 @@ class McpClient(Module):
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._session = None
         self._mcp_url: str | None = None
         Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
 
@@ -278,7 +296,29 @@ class McpClient(Module):
         self._rebuild_agent()
         with self._lock:
             if not self._thread.is_alive():
-                self._thread.start()
+                self._start_session()
+                try:
+                    self._thread.start()
+                except BaseException:
+                    self._close_session()
+                    raise
+
+    def _start_session(self) -> None:
+        """Load history before the worker can consume any queued input."""
+        if self.config.persist_history and self._session is None:
+            session = AgentSession(
+                self.config.session_dir or STATE_DIR / "agent_sessions", self.config.restore_session
+            )
+            self._history = session.start()
+            self._session = session
+            logger.info(
+                "Agent session ready", session_id=session.session_id, path=str(session.path)
+            )
+
+    def _close_session(self) -> None:
+        if self._session is not None:
+            self._session.close()
+            self._session = None
 
     def _rebuild_agent(self) -> None:
         # ~2s: pulls transformers+torch; deferred to keep module import light.
@@ -308,6 +348,10 @@ class McpClient(Module):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        # A timed-out worker still owns the checkpoint until its finally block runs.
+        if not self._thread.is_alive():
+            with self._lock:
+                self._close_session()
         self._http_client.close()
         super().stop()
 
@@ -389,16 +433,20 @@ class McpClient(Module):
         )
 
     def _thread_loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                message = self._message_queue.get(timeout=0.5)
-            except Empty:
-                continue
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    message = self._message_queue.get(timeout=0.5)
+                except Empty:
+                    continue
 
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+        finally:
             with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+                self._close_session()
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
@@ -414,6 +462,9 @@ class McpClient(Module):
                     self._history.append(msg)
                     pretty_print_langchain_message(msg)
                     self.agent.publish(msg)
+
+        if self._session is not None:
+            self._session.save(self._history)
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)

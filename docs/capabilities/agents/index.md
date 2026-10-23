@@ -46,6 +46,30 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
 
+## Conversation Sessions
+
+By default, `McpClient` starts a new session with a UUID and logs its ID and file
+path at startup. After each successful agent turn, it atomically saves the full
+LangChain message history, including tool calls, tool results, and image content,
+under `STATE_DIR/agent_sessions/<UUID>.json` (`~/.local/state/dimos` by default).
+An interrupted turn leaves the previous checkpoint intact.
+
+To continue a saved conversation, stop the original run and pass its session ID
+to an agentic blueprint:
+
+```bash
+dimos run unitree-go2-agentic --restore-session 123e4567-e89b-12d3-a456-426614174000
+```
+
+Replace the example UUID with the ID from your logs. The agent loads the saved
+messages before handling new input; it discovers tools and builds its system
+prompt from the current blueprint. Restoring history does not replay tool calls
+or restore robot state. Missing, invalid, or already active sessions fail startup.
+
+Session files contain conversation content as plain JSON. Use
+`--persist-history false` to disable saving, or `--session-dir /path/to/sessions`
+to choose a different directory. Restoring requires persistence to be enabled.
+
 ## Skills
 
 Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup.
