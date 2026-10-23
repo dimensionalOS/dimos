@@ -554,8 +554,9 @@ class RoboPlanWorld:
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
         self._add_geometry(scene, obstacle, obstacle_id)
-        # Obstacles never move, so two that overlap say nothing about the robot;
-        # checked, their overlap would put every configuration in collision.
+        # Obstacles are not checked against each other: they never move, and an
+        # overlap (the object and the scene at its edge) would put every robot pose
+        # in collision. The robot is still checked against every obstacle.
         pairs = [(obstacle_id, other) for other in self._obstacles if other != obstacle_id]
         pairs += [(obstacle_id, link) for link in obstacle.touch_links]
         if pairs:
