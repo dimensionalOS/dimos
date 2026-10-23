@@ -29,9 +29,11 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import numpy as np
+from openai import APIError, APITimeoutError
 from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
@@ -392,7 +394,7 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
 def test_question_answer_encodes_the_recording_into_one_call(
     dataset: str, tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    clock = mocker.patch("dimos.evals.agents.lib.single_call.time")
+    clock = mocker.patch("dimos.evals.agents.single_call.time")
     clock.time.return_value = 1_700_000_000.0
     clock.monotonic.side_effect = [10.0, 10.25]
     chat = FakeListChatModel(responses=["4"])
@@ -450,6 +452,53 @@ def test_blind_never_reads_the_recording(
     text = str(messages[-1].content)
     assert BLIND_BLOCK["text"] in text and "odom" not in text
     assert trajectory.final_answer == "7"
+
+
+@pytest.mark.parametrize("agent_type", [Blind, QuestionAnswer])
+@pytest.mark.parametrize(
+    ("failure", "ended_by", "grade_calls", "score"),
+    [
+        (
+            APITimeoutError(request=httpx.Request("POST", "https://provider.invalid")),
+            "timeout",
+            1,
+            0.5,
+        ),
+        (
+            APIError(
+                "unavailable", request=httpx.Request("POST", "https://provider.invalid"), body=None
+            ),
+            "error",
+            0,
+            0.0,
+        ),
+    ],
+)
+def test_single_call_failures_preserve_trajectory_and_grading_policy(
+    agent_type: type[Blind] | type[QuestionAnswer],
+    failure: APIError,
+    ended_by: str,
+    grade_calls: int,
+    score: float,
+    dataset: str,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    chat = FakeListChatModel(responses=["unused"])
+    mocker.patch.object(FakeListChatModel, "generate", side_effect=failure)
+    grade = mocker.Mock(return_value=0.5)
+    case = EvalCase(id="failure", inputs="how far?", environment=Dataset(dataset), grade=grade)
+
+    result = EvalRunner(out_dir=tmp_path).run([case], agent_type(chat_model=chat))[0]
+
+    assert result.ended_by == ended_by
+    assert result.score == score and not result.passed
+    assert bool(result.error) == (ended_by == "error")
+    assert grade.call_count == grade_calls
+    saved = json.loads(Path(result.trajectory).read_text())
+    assert saved["extra"]["ended_by"] == ended_by
+    assert saved["extra"]["error"] == f"{type(failure).__name__}: {failure}"
+    assert [step["source"] for step in saved["steps"]] == ["user"]
 
 
 def test_runner_uses_unique_directory_when_timestamps_match(
@@ -762,6 +811,7 @@ def test_suites_and_agents_importable() -> None:
         "mcp_client_adapter",
         "pi",
         "dimcode",
+        "single_call",
     }
     for module_name in agents:
         assert callable(load_agent(module_name).run), module_name
@@ -787,7 +837,7 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(ValidationError, match="model"):
         load_agent("dimos.evals.agents.mcp_client_adapter", ["model=gpt-4o"])
     with pytest.raises(TypeError, match="0 agents"):
-        load_agent("dimos.evals.agents.lib.single_call")
+        load_agent("dimos.evals.agents.base")
     with pytest.raises(ValidationError, match="modules"):
         load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server mcp-client"])
     with pytest.raises(ValidationError, match="frames_per_stream"):

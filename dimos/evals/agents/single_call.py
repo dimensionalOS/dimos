@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared model invocation and tracing for agents that answer in one call."""
+"""One model call over the prompt, with provider tracing."""
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from contextlib import ExitStack
 from pathlib import Path
 import time
 from typing import Any
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration
+from openai import APIError, APITimeoutError
+from pydantic import Field
 
-from dimos.agents.llm_trace import latest_pair, write_normalized
+from dimos.agents.llm_trace import latest_pair, tracing_http_client, write_normalized
 from dimos.evals.agents.base import Agent, ModelAgentConfig
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -35,12 +38,15 @@ Blocks = list[str | dict[str, Any]]
 
 
 class SingleCallAgentConfig(ModelAgentConfig):
-    system_prompt: str = "Answer the question using only the provided observations."
+    system_prompt: str | None = None
     chat_model: BaseChatModel | None = None
+    request_timeout_s: float | None = Field(default=60.0, gt=0, allow_inf_nan=False)
+    max_retries: int | None = Field(default=0, ge=0)
+    max_output_tokens: int | None = Field(default=2048, gt=0)
 
 
 class SingleCallAgent(Agent):
-    """Encode observations, call a chat model once, and record the result.
+    """Send the prompt to a chat model once and record the result.
 
     ``chat_model`` injects a LangChain model, including a fake for offline evals.
     Otherwise ``model`` uses the production model factory with wire tracing.
@@ -52,31 +58,61 @@ class SingleCallAgent(Agent):
         if self.config.allowed_tools:
             raise ValueError(f"{type(self).__name__} has no tools")
 
-    @abstractmethod
     def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
-        """The observations this agent includes before the instruction."""
+        """Subclasses can prepend observations to the prompt."""
+        return []
 
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
         blocks = self._observation_blocks(env)
-        if self.config.chat_model is None:
-            # The production factory loads optional model-provider dependencies.
-            from dimos.agents.mcp.mcp_client import init_model
+        with ExitStack() as resources:
+            if self.config.chat_model is None:
+                # The production factory loads optional model-provider dependencies.
+                from dimos.agents.mcp.mcp_client import init_model
 
-            chat = init_model(self.config.model, trace_dir=run_dir / "raw")
-            model_name = self.config.model
-        else:
-            chat = self.config.chat_model
-            model_name = type(chat).__name__
+                request_timeout = self.config.request_timeout_s
+                if request_timeout is not None:
+                    if timeout_s <= 0:
+                        return TrajectoryBuilder(
+                            inputs, name=type(self).__name__, model=self.config.model
+                        ).build("timeout", error="case budget expired before the request")
+                    request_timeout = min(request_timeout, timeout_s)
+                client = resources.enter_context(tracing_http_client(run_dir / "raw"))
+                chat = init_model(
+                    self.config.model,
+                    http_client=client,
+                    timeout=request_timeout,
+                    max_retries=self.config.max_retries,
+                    max_tokens=self.config.max_output_tokens,
+                )
+                model_name = self.config.model
+            else:
+                chat = self.config.chat_model
+                model_name = type(chat).__name__
+            return self._generate(inputs, blocks, chat, model_name, run_dir)
+
+    def _generate(
+        self,
+        inputs: str,
+        blocks: Blocks,
+        chat: BaseChatModel,
+        model_name: str,
+        run_dir: Path,
+    ) -> Trajectory:
         trajectory = TrajectoryBuilder(inputs, name=type(self).__name__, model=model_name)
-        messages: list[BaseMessage] = [
-            SystemMessage(self.config.system_prompt),
-            HumanMessage(content=[*blocks, {"type": "text", "text": inputs}]),
-        ]
+        messages: list[BaseMessage] = []
+        if self.config.system_prompt:
+            messages.append(SystemMessage(self.config.system_prompt))
+        messages.append(HumanMessage(content=[*blocks, {"type": "text", "text": inputs}]))
         started_at = time.time()
         started = time.monotonic()
-        result = chat.generate([messages])
+        try:
+            result = chat.generate([messages])
+        except (APITimeoutError, httpx.TimeoutException) as exc:
+            return trajectory.build("timeout", error=f"{type(exc).__name__}: {exc}")
+        except (APIError, httpx.TransportError) as exc:
+            return trajectory.build("error", error=f"{type(exc).__name__}: {exc}")
         latency_s = time.monotonic() - started
         generation = result.generations[0][0]
         if not isinstance(generation, ChatGeneration) or not isinstance(
