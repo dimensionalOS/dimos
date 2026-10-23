@@ -160,6 +160,8 @@ class ManipulationModuleConfig(ModuleConfig):
     # publisher for the whole chain: a second module publishing the mount at its
     # own rate leaves the two edges of one chain stamped up to a period apart.
     static_transforms: list[Transform] = Field(default_factory=list)
+    # Off when another module (e.g. UrdfManager) already publishes these links, so tf keeps one parent per frame.
+    publish_tf: bool = True
     # Frame the voxel_map port's clouds must already be expressed in.
     world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
@@ -330,7 +332,7 @@ class ManipulationModule(Module):
 
         # Publish every pose-group tip plus any explicitly requested extra links.
         has_pose_group = any(group.has_pose_target for group in self.config.model.planning_groups)
-        if has_pose_group or self.config.model.tf_extra_links:
+        if self.config.publish_tf and (has_pose_group or self.config.model.tf_extra_links):
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
