@@ -17,14 +17,17 @@
 //! along `planner_path`, pulled back along it to where the body fits. A refusal or a stale
 //! map publishes a one-pose hold stub.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, Refine, Terrain, COMMIT_MARGIN, SHORT_M};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
+use lcm_msgs::geometry_msgs::PoseStamped;
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs::Time;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
@@ -32,6 +35,7 @@ use crate::module::emb;
 use crate::module::ground::{self, Plane};
 use crate::module::msg;
 use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
+use crate::module::region::{Memory, RegionBounds};
 use crate::module::tf_pose::PoseWatch;
 
 /// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
@@ -72,6 +76,17 @@ pub struct Config {
     /// A carrot jump beyond this drops the held route.
     #[validate(range(min = 0.0))]
     pub reset_carrot_m: f64,
+    /// Arc of approach re-searched on the fine lattice on each side of a tight spot,
+    /// and the room around it (m). Zero turns refinement off.
+    #[validate(range(min = 0.0))]
+    pub refine_window_m: f64,
+    /// A coarse route farther than this from the global route is a detour worth refining (m).
+    #[validate(range(min = 0.0))]
+    pub refine_detour_m: f64,
+    /// A plan that ends short of a carrot mid-route is published as a hold once the robot
+    /// is this close to its end, so the follower never claims it as the goal (m).
+    #[validate(range(min = 0.0))]
+    pub hold_short_m: f64,
     /// What counts as an obstacle (`obstacles.rs`).
     pub obstacle_model: String,
     /// Hold once the local map is this old, measured from arrival.
@@ -97,6 +112,8 @@ struct Shared {
     /// Arrival time, not `msg.ts`: the mapper's clock is not the robot's.
     cloud_at: Option<Instant>,
     global_xy: Option<Vec<[f64; 2]>>,
+    /// The latest region_bounds, oldest first, for pairing with local_map by stamp.
+    bounds: VecDeque<(Time, RegionBounds)>,
 }
 
 #[derive(Module)]
@@ -107,6 +124,10 @@ pub struct LocalPlanner {
 
     #[input(decode = Path::decode, handler = on_planner_path)]
     planner_path: Input<Path>,
+
+    /// The cylinder each local_map covers, stamped like it.
+    #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
+    region_bounds: Input<PoseStamped>,
 
     #[output(encode = Path::encode)]
     path: Output<Path>,
@@ -157,6 +178,15 @@ impl LocalPlanner {
         s.cloud_at = Some(Instant::now());
     }
 
+    async fn on_region_bounds(&mut self, msg: PoseStamped) {
+        let mut s = self.shared.lock().expect("shared mutex");
+        if s.bounds.len() == BOUNDS_KEPT {
+            s.bounds.pop_front();
+        }
+        s.bounds
+            .push_back((msg.header.stamp.clone(), RegionBounds::of_msg(&msg)));
+    }
+
     /// MLS emits an empty path when it finds no route; the next tick clears what was published.
     async fn on_planner_path(&mut self, msg: Path) {
         let xy: Vec<[f64; 2]> = msg
@@ -200,6 +230,24 @@ pub fn approach_along(
         remaining -= seg;
     }
     Some(route[i..].to_vec())
+}
+
+/// Whether a plan ending short of the carrot, near the robot, must be held so the follower
+/// does not read it as arrival.
+pub fn short_hold(
+    end: (f64, f64),
+    carrot: (f64, f64),
+    route_end: (f64, f64),
+    robot: (f64, f64),
+    hold_m: f64,
+) -> bool {
+    let d = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1);
+    let short = if d(carrot, route_end) > 1e-9 {
+        SHORT_M
+    } else {
+        hold_m
+    };
+    d(end, carrot) > short && d(end, robot) < hold_m
 }
 
 /// Has an input the plan depends on moved? The route enters only through the
@@ -258,21 +306,42 @@ pub fn hold_stub(pose: (f64, f64, f64), frame_id: &str, ts: f64, ground_z: f64) 
     msg::build_path(&[[pose.0, pose.1, pose.2]], &[ts], ts, frame_id, ground_z)
 }
 
-/// Edge trigger so a dead map warns once per spell, not `replan_hz` times a second.
-#[derive(Default)]
-pub struct StaleGate {
-    stale: bool,
+/// A hold stub in place of `path` when it ends short of the carrot near the robot.
+fn short_stub(
+    path: &Path,
+    carrot: (f64, f64),
+    route_end: (f64, f64),
+    pose: (f64, f64, f64),
+    ground_z: f64,
+    config: &Config,
+) -> Option<Path> {
+    let end = &path.poses.last()?.pose.position;
+    let short = path.poses.len() >= 2
+        && short_hold(
+            (end.x, end.y),
+            carrot,
+            route_end,
+            (pose.0, pose.1),
+            config.hold_short_m,
+        );
+    short.then(|| hold_stub(pose, &config.world_frame, msg::now_secs(), ground_z))
 }
 
-impl StaleGate {
-    /// True on the first tick of a stale spell.
+/// Edge trigger so a lasting condition logs once per spell, not `replan_hz` times a second.
+#[derive(Default)]
+pub struct SpellGate {
+    on: bool,
+}
+
+impl SpellGate {
+    /// True on the first tick of a spell.
     pub fn enter(&mut self) -> bool {
-        !std::mem::replace(&mut self.stale, true)
+        !std::mem::replace(&mut self.on, true)
     }
 
     /// True on the first tick after one ends.
     pub fn recover(&mut self) -> bool {
-        std::mem::replace(&mut self.stale, false)
+        std::mem::replace(&mut self.on, false)
     }
 }
 
@@ -309,6 +378,10 @@ pub fn plan_once(
         config.resolution,
         incumbent,
         COMMIT_MARGIN,
+        &Refine {
+            window_m: config.refine_window_m,
+            detour_m: config.refine_detour_m,
+        },
     ) {
         Some(s) if !s.is_empty() => s,
         _ => {
@@ -346,6 +419,9 @@ pub fn plan_once(
     msg::build_path(&states, &ts, t0, &config.world_frame, ground.z)
 }
 
+/// Bounds held for pairing. The ray tracer publishes them beside each local_map.
+const BOUNDS_KEPT: usize = 8;
+
 /// Owns the replan cadence and the publishing, off the dispatch loop.
 struct Worker {
     shared: Arc<Mutex<Shared>>,
@@ -363,6 +439,7 @@ struct Snapshot {
     cloud_seq: u64,
     age_s: Option<f64>,
     route: Option<Vec<[f64; 2]>>,
+    bounds: Option<RegionBounds>,
 }
 
 impl Worker {
@@ -372,9 +449,10 @@ impl Worker {
         // A tick lost to an overrunning replan is gone; a burst afterwards makes the next late.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        let mut gate = StaleGate::default();
+        let mut gate = SpellGate::default();
+        let mut short = SpellGate::default();
         let mut watch = PoseWatch::new(self.config.max_map_age_s);
-        let mut points: Option<(u64, Arc<Vec<[f32; 3]>>)> = None;
+        let mut memory = Memory::default();
         // The (cloud, carrot) the published plan was made from.
         let mut planned: Option<(u64, (f64, f64))> = None;
         // The published plan; the search keeps it unless a fresh one earns the switch.
@@ -413,6 +491,7 @@ impl Worker {
                     // and the incumbent, a route held across a dead link is unvalidated.
                     planned = None;
                     incumbent = None;
+                    short = SpellGate::default();
                     let pose = pose.expect("Hold implies a pose");
                     let held = hold_stub(
                         pose,
@@ -427,6 +506,7 @@ impl Worker {
                     info!("planner_path is empty, clearing the local plan");
                     planned = None;
                     incumbent = None;
+                    short = SpellGate::default();
                     published = false;
                     let empty =
                         msg::build_path(&[], &[], msg::now_secs(), &self.config.world_frame, 0.0);
@@ -464,7 +544,13 @@ impl Worker {
                     // The search is synchronous; block_in_place keeps it off the async
                     // workers, hence the module's 2 threads.
                     let produced = tokio::task::block_in_place(|| {
-                        let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
+                        let pts = self.points(
+                            &cloud,
+                            snap.cloud_seq,
+                            snap.bounds.as_ref(),
+                            (pose.0, pose.1),
+                            &mut memory,
+                        )?;
                         let body = body_z.unwrap_or(0.0);
                         let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
                         let path = plan_once(
@@ -478,6 +564,30 @@ impl Worker {
                             incumbent.as_deref(),
                         );
                         Some((path, ground.support))
+                    });
+                    let route_end = route[route.len() - 1];
+                    let produced = produced.map(|(path, support)| {
+                        match short_stub(
+                            &path,
+                            goal,
+                            (route_end[0], route_end[1]),
+                            pose,
+                            body_z.unwrap_or(0.0),
+                            &self.config,
+                        ) {
+                            Some(held) => {
+                                if short.enter() {
+                                    info!("plan ends short of the carrot at the robot, holding");
+                                }
+                                (held, support)
+                            }
+                            None => {
+                                if short.recover() {
+                                    info!("plan no longer ends short of the carrot, resuming");
+                                }
+                                (path, support)
+                            }
+                        }
                     });
                     if let Some((produced, support)) = produced {
                         let floor =
@@ -496,31 +606,39 @@ impl Worker {
 
     fn snapshot(&self, now: Instant) -> Snapshot {
         let s = self.shared.lock().expect("shared mutex");
+        let bounds = s.cloud.as_ref().and_then(|c| {
+            let stamp = &c.header.stamp;
+            s.bounds
+                .iter()
+                .rev()
+                .find(|(t, _)| t.sec == stamp.sec && t.nsec == stamp.nsec)
+                .map(|(_, b)| *b)
+        });
         Snapshot {
             cloud: s.cloud.clone(),
             cloud_seq: s.cloud_seq,
             age_s: s.cloud_at.map(|t| now.duration_since(t).as_secs_f64()),
             route: s.global_xy.clone(),
+            bounds,
         }
     }
 
-    /// The latest cloud as xyz points, extracted once per arrival.
+    /// The latest cloud's points with the remembered ones, extracted once per arrival.
     fn points(
         &self,
         cloud: &PointCloud2,
         seq: u64,
-        cache: &mut Option<(u64, Arc<Vec<[f32; 3]>>)>,
+        bounds: Option<&RegionBounds>,
+        robot: (f64, f64),
+        memory: &mut Memory,
     ) -> Option<Arc<Vec<[f32; 3]>>> {
-        if let Some((cached_seq, pts)) = cache {
-            if *cached_seq == seq {
-                return Some(Arc::clone(pts));
-            }
+        if let Some(pts) = memory.cached(seq) {
+            return Some(pts);
         }
         match msg::extract_xyz(cloud) {
-            Ok(pts) => {
-                let pts = Arc::new(pts);
-                *cache = Some((seq, Arc::clone(&pts)));
-                Some(pts)
+            Ok(fresh) => {
+                let reach = self.config.goal_lookahead_m + self.emb.length.max(self.emb.width);
+                Some(memory.update(seq, fresh, bounds, robot, reach))
             }
             Err(e) => {
                 warn_throttled!(
@@ -675,14 +793,64 @@ mod tests {
     }
 
     #[test]
-    fn the_stale_gate_fires_once_per_spell() {
-        let mut gate = StaleGate::default();
+    fn the_spell_gate_fires_once_per_spell() {
+        let mut gate = SpellGate::default();
         assert!(gate.enter());
         assert!(!gate.enter());
         assert!(!gate.enter());
         assert!(gate.recover());
         assert!(!gate.recover()); // a live map does not announce itself
         assert!(gate.enter()); // and a second spell warns again
+    }
+
+    #[test]
+    fn a_plan_ending_short_mid_route_is_held_near_its_end() {
+        let route_end = (10.0, 0.0);
+        assert!(short_hold(
+            (2.0, 0.0),
+            (5.0, 0.0),
+            route_end,
+            (1.6, 0.0),
+            0.6
+        ));
+        assert!(!short_hold(
+            (2.0, 0.0),
+            (5.0, 0.0),
+            route_end,
+            (1.0, 0.0),
+            0.6
+        ));
+    }
+
+    #[test]
+    fn a_plan_ending_far_short_of_the_goal_is_held() {
+        // The goal lies past a gap the body does not fit, and the plan stops meters short of it.
+        assert!(short_hold(
+            (7.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 0.0),
+            (6.6, 0.0),
+            0.6
+        ));
+    }
+
+    #[test]
+    fn a_plan_reaching_the_carrot_or_the_route_end_is_not_held() {
+        assert!(!short_hold(
+            (5.0, 0.0),
+            (5.0, 0.0),
+            (10.0, 0.0),
+            (4.8, 0.0),
+            0.6
+        ));
+        // At the goal the carrot is the route end, and arriving a little short of it is arriving.
+        assert!(!short_hold(
+            (9.6, 0.0),
+            (10.0, 0.0),
+            (10.0, 0.0),
+            (9.5, 0.0),
+            0.6
+        ));
     }
 
     fn config() -> Config {
@@ -700,6 +868,9 @@ mod tests {
             replan_on_change: true,
             replan_carrot_m: 0.2,
             reset_carrot_m: 1.0,
+            refine_window_m: 0.0,
+            refine_detour_m: 1.5,
+            hold_short_m: 0.6,
             obstacle_model: "body_band".into(),
             max_map_age_s: 5.0,
         }

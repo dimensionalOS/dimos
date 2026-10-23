@@ -17,4 +17,5 @@ pub mod ground;
 pub mod msg;
 pub mod obstacles;
 pub mod planner;
+pub mod region;
 pub mod tf_pose;

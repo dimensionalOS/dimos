@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -57,6 +58,14 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     replan_carrot_m: float = 0.3
     # A carrot jump this far is a new task: the warm start and hysteresis are reset.
     reset_carrot_m: float = 1.0
+    # A gap the coarse lattice cannot land in is re-searched on the fine lattice over this much
+    # route on each side of it, when the coarse search refuses, pulls the carrot short or detours.
+    refine_window_m: float = 0.75
+    # A coarse route farther than this from the global route counts as a detour worth refining.
+    refine_detour_m: float = 1.5
+    # A plan ending short of a mid-route carrot is held once the robot is this close to its
+    # end, so the follower does not claim arrival there.
+    hold_short_m: float = 0.6
     # What counts as an obstacle; "body_band" reads the cloud against the surface the feet stand on.
     obstacle_model: str = "body_band"
     # Hold once the local map is this old: a dropped link must not leave us replanning on a frozen world.
@@ -69,6 +78,8 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     config: LocalPlannerNativeConfig
 
     local_map: In[PointCloud2]
+    # The cylinder each local_map covers. Outside it the planner keeps what it last saw.
+    region_bounds: In[PoseStamped]
     planner_path: In[Path]
     # IO, not In: rust `#[tf]` subscribes and publishes, and refuses to start on a mismatch.
     tf: IO[TFMessage]

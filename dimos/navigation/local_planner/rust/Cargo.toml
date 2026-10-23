@@ -43,6 +43,7 @@ threads = 2
 
 [package.metadata.dimos.module.local_planner.inputs]
 local_map = "sensor_msgs.PointCloud2"
+region_bounds = "geometry_msgs.PoseStamped"
 planner_path = "nav_msgs.Path"
 tf = "tf2_msgs.TFMessage"
 
