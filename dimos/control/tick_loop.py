@@ -170,6 +170,7 @@ class TickLoop:
         """Main control loop - deterministic read → compute → arbitrate → write."""
         period_ns = round(1_000_000_000 / self._tick_rate)
         next_tick_time = time.perf_counter_ns()
+        oversleep = 1.0
 
         while not self._stop_event.is_set():
             try:
@@ -177,15 +178,17 @@ class TickLoop:
             except Exception as e:
                 logger.error(f"TickLoop tick error: {e}")
 
-            # We simply increment the time from the last loop so we correct for long
-            # sleeps (e.g. Mac OS typically oversleeps upto 25%).
+            # We simply increment the time from the last loop so we correct for long sleeps.
             next_tick_time += period_ns
-            sleep_ns = next_tick_time - time.perf_counter_ns()
-            if sleep_ns > 0:
-                time.sleep(sleep_ns / 1_000_000_000)
-            else:
+            if next_tick_time <= time.perf_counter_ns():
                 # Over a full period behind, reset the timer.
                 next_tick_time = time.perf_counter_ns()
+            # macOS timer coalescing can stretch a sleep ~8x, so ask for the remainder shrunk by the oversleep seen so far.
+            while (sleep_ns := next_tick_time - time.perf_counter_ns()) > 0:
+                request_ns = sleep_ns / oversleep
+                slept_from = time.perf_counter_ns()
+                time.sleep(request_ns / 1_000_000_000)
+                oversleep = (oversleep + (time.perf_counter_ns() - slept_from) / request_ns) / 2
 
     def _tick(self) -> None:
         """Single tick: read → compute → arbitrate → route → write."""
