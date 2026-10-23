@@ -88,7 +88,7 @@ class GraspContactChecker:
         if robot.gripper is None:
             raise ValueError("The robot config has no gripper config")
         self._gripper = robot.gripper
-        fingers = [name for name in self._gripper.open_joints if name not in robot.joint_names]
+        fingers = [name for name in self._gripper.open_positions if name not in robot.joint_names]
         model = robot.model_copy(update={"joint_names": [*robot.joint_names, *fingers]})
         self._world = create_world(backend=world_backend)
         self._world.load_model(prepare_robot_model(model))
@@ -103,7 +103,7 @@ class GraspContactChecker:
         home = robot.home_joints or [0.0] * len(robot.joint_names)
         self._rest = {
             **dict(zip(robot.joint_names, home, strict=True)),
-            **self._gripper.open_joints,
+            **self._gripper.open_positions,
         }
 
     def keep_clear(

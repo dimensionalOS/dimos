@@ -28,37 +28,37 @@ class GripperConfig(BaseConfig):
     Args:
         pad_links: URDF links allowed to touch the object being grasped, typically
             the fingers that carry the pads. The whole link counts.
-        open_joints: Finger joint positions with the gripper open, by URDF joint
+        open_positions: Finger joint positions with the gripper open, by URDF joint
             name, radians (metres for a sliding joint). Joints that mimic one of
             these in the URDF follow it.
-        closed_joints: The same joints fully closed. Must name the same joints.
+        closed_positions: The same joints fully closed. Must name the same joints.
         closing_steps: How many poses between open and closed to check. 0 checks
             the open pose only (a suction cup, say).
     """
 
     pad_links: tuple[str, ...] = Field(min_length=1)
-    open_joints: dict[str, float] = Field(default_factory=dict)
-    closed_joints: dict[str, float] = Field(default_factory=dict)
+    open_positions: dict[str, float] = Field(default_factory=dict)
+    closed_positions: dict[str, float] = Field(default_factory=dict)
     closing_steps: int = Field(default=4, ge=0)
 
     @model_validator(mode="after")
     def _same_joints(self) -> Self:
-        if set(self.open_joints) != set(self.closed_joints):
+        if set(self.open_positions) != set(self.closed_positions):
             raise ValueError(
-                "GripperConfig open_joints and closed_joints must name the same joints, got "
-                f"{sorted(self.open_joints)} and {sorted(self.closed_joints)}"
+                "GripperConfig open_positions and closed_positions must name the same joints, got "
+                f"{sorted(self.open_positions)} and {sorted(self.closed_positions)}"
             )
         return self
 
     def joint_positions(self) -> list[dict[str, float]]:
         """Finger joint positions at the open pose, then at each closing step, last fully closed."""
-        steps = self.closing_steps if self.open_joints else 0
+        steps = self.closing_steps if self.open_positions else 0
         if steps == 0:
-            return [dict(self.open_joints)]
+            return [dict(self.open_positions)]
         return [
             {
-                name: start + (self.closed_joints[name] - start) * step / steps
-                for name, start in self.open_joints.items()
+                name: start + (self.closed_positions[name] - start) * step / steps
+                for name, start in self.open_positions.items()
             }
             for step in range(steps + 1)
         ]
