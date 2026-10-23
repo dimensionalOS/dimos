@@ -864,7 +864,7 @@ pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClos
 /// is then as loose as the tighter of the two ways back along its cycle, from either end, combined in
 /// parallel. Closures in order, so a cycle anchored to an earlier one is only as tight as that anchor;
 /// O(cycle length) per closure.
-pub(crate) fn position_variance(n: usize, closures: &[CommittedClosure], step: f64) -> Vec<f64> {
+pub fn position_variance(n: usize, closures: &[CommittedClosure], step: f64) -> Vec<f64> {
     let mut variance: Vec<f64> = (0..n).map(|k| k as f64 * step).collect();
     let mut order: Vec<&CommittedClosure> =
         closures.iter().filter(|l| l.gnc_weight > 0.5).collect();

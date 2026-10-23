@@ -400,6 +400,7 @@ impl Default for Config {
     }
 }
 
+#[derive(Default)]
 pub struct GscPgo {
     pub(crate) config: Config,
     pub(crate) scan_context_config: similarity_discovery::Config,
@@ -687,25 +688,8 @@ impl GscPgo {
         GscPgo {
             config,
             scan_context_config,
-            key_poses: Vec::new(),
-            committed_closures: Vec::new(),
-            closure_yank_z: Vec::new(),
-            closure_fit_confidence: Vec::new(),
-            new_closure: false,
-            closures_dispatched: 0,
-            solving: None,
-            graph_error: 0.0,
-            scan_context_descriptors: Vec::new(),
-            scan_context_ring_keys: Vec::new(),
             rotation_offset: mat3::identity(),
-            translation_offset: [0.0; 3],
-            timing: TimingStats::default(),
-            closure_diagnostics: Vec::new(),
-            closure_edge_events: Vec::new(),
-            scored_yanks: Vec::new(),
-            waiting_proposal: None,
-            solving_keyframes: 0,
-            pending_search: None,
+            ..Default::default()
         }
     }
 
@@ -1002,13 +986,11 @@ impl GscPgo {
             ),
         });
 
-        // Cache the Scan Context descriptor + ring-key (empty when the node
-        // has no cloud, e.g. a constraint-triggered node). A non-positive
-        // max_range means "auto": resolve it once from the first real cloud's
-        // extent and reuse it, so all descriptors share one binning.
-        if let Some(cloud) = cloud {
+        // the scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from
+        // the first cloud's extent, so every descriptor shares one binning
+        if let Some(cloud) = &cloud {
             if self.scan_context_config.max_range_m <= 0.0 {
-                let auto_range = similarity_discovery::auto_max_range(&cloud);
+                let auto_range = similarity_discovery::auto_max_range(cloud);
                 if auto_range > 0.0 {
                     self.scan_context_config.max_range_m = auto_range;
                     eprintln!(
@@ -1016,24 +998,17 @@ impl GscPgo {
                     );
                 }
             }
-            if self.scan_context_config.max_range_m > 0.0 {
-                let descriptor =
-                    similarity_discovery::make_descriptor(&cloud, &self.scan_context_config);
-                self.scan_context_ring_keys
-                    .push(similarity_discovery::make_ring_key(&descriptor));
-                self.scan_context_descriptors.push(descriptor);
-            } else {
-                self.scan_context_descriptors
-                    .push(similarity_discovery::Descriptor::empty());
-                self.scan_context_ring_keys
-                    .push(similarity_discovery::RingKey::new());
-            }
-        } else {
-            self.scan_context_descriptors
-                .push(similarity_discovery::Descriptor::empty());
-            self.scan_context_ring_keys
-                .push(similarity_discovery::RingKey::new());
         }
+        let descriptor = match &cloud {
+            Some(cloud) if self.scan_context_config.max_range_m > 0.0 => {
+                similarity_discovery::make_descriptor(cloud, &self.scan_context_config)
+            }
+            _ => similarity_discovery::Descriptor::empty(),
+        };
+        // an empty descriptor's ring key is empty too
+        self.scan_context_ring_keys
+            .push(similarity_discovery::make_ring_key(&descriptor));
+        self.scan_context_descriptors.push(descriptor);
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.

@@ -101,9 +101,9 @@ class PGOConfig(NativeModuleConfig):
     # is. A solve's cost grows with the map (~2 ms per keyframe; keyframes come ~0.7 s apart), so 5%
     # leaves it several times the time it needs.
     closure_gnc_apply_after_fraction: float = 0.05
-    # False folds a solve in as soon as it finishes, keyframes or not (a robot standing
-    # still at a closure still gets the closure); True keeps the keyframe schedule so replays repeat.
-    closure_gnc_deterministic: bool = True
+    # False (live) folds a solve in as soon as it finishes, keyframes or not; True keeps the keyframe
+    # schedule above so a replay repeats on any machine.
+    closure_gnc_deterministic: bool = False
     closure_cooling: bool = False
 
     # "stiffness" in different dimensions.
