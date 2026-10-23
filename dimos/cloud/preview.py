@@ -14,7 +14,8 @@
 
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
-LiDAR observation), timed camera thumbnails, joystick input, and an H.264 timelapse."""
+LiDAR observation, else the recording's tf), timed camera thumbnails, joystick input, and an
+H.264 timelapse."""
 
 from __future__ import annotations
 
@@ -48,8 +49,10 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.memory.tf import StreamTF
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -58,16 +61,33 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def _stream(store: Store, payload: type, prefer: str) -> Any:
+def _stream(store: Store, payload: type | tuple[type, ...], prefer: str) -> Any:
     """The first stream carrying this dimos type, named like *prefer* first: a mapper's
     `global_map` is a PointCloud2 too, `goal_request` a Pose and `depth_image` an Image."""
     for name in sorted(store.list_streams(), key=lambda n: prefer not in n):
+        kind = getattr(store.streams[name], "data_type", None)
+        if isinstance(kind, type) and not issubclass(kind, payload):
+            continue  # typed by the store: no need to decode it (or fail to) to know
         try:
             if isinstance(store.streams[name].first().data, payload):
                 return store.streams[name]
         except LookupError:  # empty stream
             continue
     return None
+
+
+def _placed(
+    pc: PointCloud2, pose: Pose | None, ts: float, tf: StreamTF | None, frames: tuple[str, ...]
+) -> PointCloud2 | None:
+    """A scan in the first of *frames* tf reaches. A sensor-frame scan the store posed (a .db
+    keeps one) goes by that pose; a world-frame one tf can't relate stays as it is."""
+    if pose is not None and pc.frame_id not in WORLD_FRAMES:
+        return pc.transform(Transform.from_pose(WORLD_FRAMES[0], pose))
+    if tf is not None:
+        for frame in frames:
+            if (t := tf.get(frame, pc.frame_id, ts, warn=False)) is not None:
+                return pc.transform(t)
+    return pc if pc.frame_id in WORLD_FRAMES else None
 
 
 def _evenly(n: int, k: int) -> set[int]:
@@ -91,7 +111,11 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
     lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
-    odom = _stream(store, Pose, "odom")
+    odom = _stream(store, (Pose, Odometry), "odom")
+    tf = StreamTF.from_store(store)
+    # scans go in the odometry's frame, so the path lines up with the map
+    frame = getattr(odom.first().data, "frame_id", "") if odom is not None else ""
+    frames = (frame,) if frame else WORLD_FRAMES
     joy = _stream(store, Joy, "joy")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
@@ -104,10 +128,10 @@ def build(store: Store) -> dict[str, Any] | None:
             if i not in merged:
                 continue
             pc = obs.data
-            if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
-                if obs.pose is None:
+            if pc.frame_id not in frames:  # a sensor frame, or another world frame
+                pc = _placed(pc, obs.pose, obs.ts, tf, frames)
+                if pc is None:
                     continue
-                pc = pc.transform(Transform.from_pose(WORLD_FRAMES[0], obs.pose))
             pc = pc.voxel_downsample(PREVIEW_MAP_VOXEL)
             if i in shown:
                 scans.append((obs.ts, pc))
