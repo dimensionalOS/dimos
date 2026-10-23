@@ -62,7 +62,6 @@ class VoxelRayMapper:
 
         Points are (N, 3) float32. Orientation is an (x, y, z, w) quaternion.
         """
-        ...
 
     def add_frame_world(
         self,
@@ -70,18 +69,15 @@ class VoxelRayMapper:
         origin: tuple[float, float, float],
     ) -> None:
         """Fold an already world-frame cloud into the map, raycasting from origin."""
-        ...
 
     def seed_points(self, points: NDArray[np.float32]) -> int:
         """Bulk-seed a world-frame map cloud, creating only absent voxels.
 
         Points are (N, 3) float32. Returns how many voxels were created.
         """
-        ...
 
     def registered_points(self) -> NDArray[np.float32]:
         """Return the last frame's registered points as (N, 3) float32."""
-        ...
 
     def take_local_bounds(self) -> tuple[float, float, float, float, float]:
         """Cylinder over the frames batched since the last call.
@@ -89,11 +85,9 @@ class VoxelRayMapper:
         Returns (cx, cy, radius, z_min, z_max) and consumes the batch.
         Frames batch only when emit_every is nonzero.
         """
-        ...
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
-        ...
 
     def start_seed(
         self,
@@ -104,21 +98,18 @@ class VoxelRayMapper:
 
         Points are (N, 3) float32. Returns the region count.
         """
-        ...
 
     def seed_next_region(self) -> SeededRegion | None:
         """Seed the next pending region and return it as the map now holds it.
 
         None once every region has landed.
         """
-        ...
 
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return healthy voxel centers and their surface normals, both (M, 3) float32.
 
         Matching order. The normal is the zero vector where the voxel has no plane.
         """
-        ...
 
     def global_map_normal_fits(
         self,
@@ -127,7 +118,6 @@ class VoxelRayMapper:
 
         Whole-map refit cost. Visualization only.
         """
-        ...
 
     def local_map(
         self,
@@ -137,7 +127,6 @@ class VoxelRayMapper:
         z_max: float,
     ) -> NDArray[np.float32]:
         """Return healthy voxels inside the cylinder around origin as (M, 3) float32."""
-        ...
 
     def local_map_fine(
         self,
@@ -150,17 +139,13 @@ class VoxelRayMapper:
 
         Raises ValueError when fine_divisor is not set.
         """
-        ...
 
     def voxel_count(self) -> int:
         """Number of healthy voxels currently in the map."""
-        ...
 
     def clear(self) -> None:
         """Reset the map to empty."""
-        ...
 
     def __len__(self) -> int: ...
-    def __repr__(self) -> str: ...
 
 __all__ = ["SeededRegion", "VoxelRayMapper"]

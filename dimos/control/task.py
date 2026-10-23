@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
-from dimos.hardware.manipulators.spec import ControlMode as ControlMode
+from dimos.hardware.manipulators.spec import ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:

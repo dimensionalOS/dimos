@@ -89,9 +89,7 @@ class YourArmPinkPoseTargetSolver(PinkPoseTargetSolver):
         posture = tasks.get("posture/current")
         if posture is None:
             raise ValueError("YourArm requires a positive posture cost")
-        posture.cost = self.config.posture_cost * np.array(
-            [4.0, 3.0, 0.2, 2.0, 1.0, 0.5]
-        )
+        posture.cost = self.config.posture_cost * np.array([4.0, 3.0, 0.2, 2.0, 1.0, 0.5])
 
         for frame_name in target_frames:
             tasks[f"manipulability/{frame_name}"] = pink.tasks.ManipulabilityTask(

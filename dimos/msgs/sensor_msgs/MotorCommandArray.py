@@ -77,8 +77,7 @@ class MotorCommandArray:
         buf.write(struct.pack(">d", self.timestamp))
         buf.write(struct.pack(">i", self.num_joints))
         for arr in (self.q, self.dq, self.kp, self.kd, self.tau):
-            for v in arr:
-                buf.write(struct.pack(">d", v))
+            buf.writelines(struct.pack(">d", v) for v in arr)
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> "MotorCommandArray":

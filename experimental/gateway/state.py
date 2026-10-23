@@ -29,7 +29,7 @@ from pydantic import BeforeValidator
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
-from experimental.gateway.errors import ApiError as ApiError
+from experimental.gateway.errors import ApiError
 from experimental.gateway.launches import RunSource
 from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats

@@ -821,14 +821,14 @@ def test_held_actions_do_not_relax_camera_rate_or_gap_checks():
     ],
 )
 def test_held_action_requires_named_position_vector(changes):
-    values = dict(
-        stream="commands",
-        field="position",
-        dtype="float32",
-        shape=(3,),
-        names=["left", "right", "gripper"],
-        source_kind="joint_position_updates",
-    )
+    values = {
+        "stream": "commands",
+        "field": "position",
+        "dtype": "float32",
+        "shape": (3,),
+        "names": ["left", "right", "gripper"],
+        "source_kind": "joint_position_updates",
+    }
     with pytest.raises(ValueError):
         FeatureSpec(**(values | changes))
 

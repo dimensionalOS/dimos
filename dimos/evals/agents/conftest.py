@@ -61,68 +61,76 @@ class ScriptedProvider:
         events: list[dict[str, JsonValue]]
         if self.name == "openai":
             item: dict[str, JsonValue] = (
-                dict(
-                    type="function_call",
-                    id=f"fc_{index}",
-                    call_id=call.tool_call_id,
-                    name=call.function_name,
-                    arguments=json.dumps(call.arguments),
-                )
+                {
+                    "type": "function_call",
+                    "id": f"fc_{index}",
+                    "call_id": call.tool_call_id,
+                    "name": call.function_name,
+                    "arguments": json.dumps(call.arguments),
+                }
                 if call
-                else dict(
-                    type="message",
-                    id=f"out_{index}",
-                    role="assistant",
-                    content=[dict(type="output_text", text="OK", annotations=[])],
-                )
+                else {
+                    "type": "message",
+                    "id": f"out_{index}",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "OK", "annotations": []}],
+                }
             )
-            response: dict[str, JsonValue] = dict(
-                id=f"resp_{index}",
-                status="completed",
-                output=[item],
-                model=self.model,
-                usage=dict(input_tokens=10, output_tokens=5),
-            )
+            response: dict[str, JsonValue] = {
+                "id": f"resp_{index}",
+                "status": "completed",
+                "output": [item],
+                "model": self.model,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
             events = [
-                dict(type="response.created", response=dict(id=response["id"])),
-                dict(type="response.output_item.added", output_index=0, item=item),
-                dict(type="response.output_item.done", output_index=0, item=item),
-                dict(type="response.completed", response=response),
+                {"type": "response.created", "response": {"id": response["id"]}},
+                {"type": "response.output_item.added", "output_index": 0, "item": item},
+                {"type": "response.output_item.done", "output_index": 0, "item": item},
+                {"type": "response.completed", "response": response},
             ]
         else:
             block: dict[str, JsonValue] = (
-                dict(type="tool_use", id=call.tool_call_id, name=call.function_name, input={})
+                {
+                    "type": "tool_use",
+                    "id": call.tool_call_id,
+                    "name": call.function_name,
+                    "input": {},
+                }
                 if call
-                else dict(type="text", text="")
+                else {"type": "text", "text": ""}
             )
             delta: dict[str, JsonValue] = (
-                dict(type="input_json_delta", partial_json=json.dumps(call.arguments))
+                {"type": "input_json_delta", "partial_json": json.dumps(call.arguments)}
                 if call
-                else dict(type="text_delta", text="OK")
+                else {"type": "text_delta", "text": "OK"}
             )
             events = [
-                dict(
-                    type="message_start",
-                    message=dict(
-                        id=f"msg_{index}",
-                        type="message",
-                        role="assistant",
-                        model=self.model,
-                        content=[],
-                        stop_reason=None,
-                        stop_sequence=None,
-                        usage=dict(input_tokens=10, output_tokens=0),
-                    ),
-                ),
-                dict(type="content_block_start", index=0, content_block=block),
-                dict(type="content_block_delta", index=0, delta=delta),
-                dict(type="content_block_stop", index=0),
-                dict(
-                    type="message_delta",
-                    delta=dict(stop_reason="tool_use" if call else "end_turn", stop_sequence=None),
-                    usage=dict(output_tokens=5),
-                ),
-                dict(type="message_stop"),
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": f"msg_{index}",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": self.model,
+                        "content": [],
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 10, "output_tokens": 0},
+                    },
+                },
+                {"type": "content_block_start", "index": 0, "content_block": block},
+                {"type": "content_block_delta", "index": 0, "delta": delta},
+                {"type": "content_block_stop", "index": 0},
+                {
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "tool_use" if call else "end_turn",
+                        "stop_sequence": None,
+                    },
+                    "usage": {"output_tokens": 5},
+                },
+                {"type": "message_stop"},
             ]
         return "".join(
             f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events

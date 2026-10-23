@@ -19,7 +19,7 @@ from typing import Any, overload
 
 from PIL import Image as PILImage
 import torch
-import torch.nn.functional as functional
+from torch.nn import functional
 from transformers import AutoImageProcessor, AutoModel
 
 from dimos.models.base import HuggingFaceModel

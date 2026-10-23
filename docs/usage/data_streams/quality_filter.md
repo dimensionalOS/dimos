@@ -59,13 +59,13 @@ from dimos.utils.testing.replay import TimedSensorReplay
 video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
-input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
-    ops.to_list()
-).run()
+input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(ops.to_list()).run()
+
 
 def show_frames(frames):
-   for i, frame in enumerate(frames[:10]):
-      print(f"  Frame {i}: {frame.sharpness:.3f}")
+    for i, frame in enumerate(frames[:10]):
+        print(f"  Frame {i}: {frame.sharpness:.3f}")
+
 
 print(f"Loaded {len(input_frames)} frames from Go2 camera")
 print(f"Frame resolution: {input_frames[0].width}x{input_frames[0].height}")
@@ -94,10 +94,11 @@ Using `sharpness_barrier` to select the sharpest frames:
 ```python skip session=qb
 # Create a stream from the recorded frames
 
-sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
-    sharpness_barrier(2.0),
-    ops.to_list()
-).run()
+sharp_frames = (
+    video_replay.stream(seek=5.0, duration=1.5, speed=1.0)
+    .pipe(sharpness_barrier(2.0), ops.to_list())
+    .run()
+)
 
 print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
 show_frames(sharp_frames)
@@ -118,40 +119,46 @@ import matplotlib
 import matplotlib.pyplot as plt
 import math
 
+
 def plot_mosaic(frames, selected, path, cols=5):
-    matplotlib.use('Agg')
+    matplotlib.use("Agg")
     rows = math.ceil(len(frames) / cols)
     aspect = frames[0].width / frames[0].height
     fig_w, fig_h = 12, 12 * rows / (cols * aspect)
 
     fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h))
-    fig.patch.set_facecolor('black')
+    fig.patch.set_facecolor("black")
     for i, ax in enumerate(axes.flat):
         if i < len(frames):
             ax.imshow(frames[i].data)
             for spine in ax.spines.values():
-                spine.set_color('lime' if frames[i] in selected else 'black')
+                spine.set_color("lime" if frames[i] in selected else "black")
                 spine.set_linewidth(4 if frames[i] in selected else 0)
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
         else:
-            ax.axis('off')
+            ax.axis("off")
     plt.subplots_adjust(wspace=0.02, hspace=0.02, left=0, right=1, top=1, bottom=0)
-    plt.savefig(path, facecolor='black', dpi=100, bbox_inches='tight', pad_inches=0)
+    plt.savefig(path, facecolor="black", dpi=100, bbox_inches="tight", pad_inches=0)
     plt.close()
 
+
 def plot_sharpness(frames, selected, path):
-    matplotlib.use('svg')
-    plt.style.use('dark_background')
+    matplotlib.use("svg")
+    plt.style.use("dark_background")
     sharpness = [f.sharpness for f in frames]
     selected_idx = [i for i, f in enumerate(frames) if f in selected]
 
     plt.figure(figsize=(10, 3))
-    plt.plot(sharpness, 'o-', label='All frames', color='#b5e4f4', alpha=0.7)
+    plt.plot(sharpness, "o-", label="All frames", color="#b5e4f4", alpha=0.7)
     for i, idx in enumerate(selected_idx):
-        plt.axvline(x=idx, color='lime', linestyle='--', label='Selected' if i == 0 else None)
-    plt.xlabel('Frame'); plt.ylabel('Sharpness')
+        plt.axvline(x=idx, color="lime", linestyle="--", label="Selected" if i == 0 else None)
+    plt.xlabel("Frame")
+    plt.ylabel("Sharpness")
     plt.xticks(range(len(sharpness)))
-    plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
     plt.savefig(path, transparent=True)
     plt.close()
 ```
@@ -161,13 +168,13 @@ def plot_sharpness(frames, selected, path):
 Visualizing which frames were selected (green border = selected as sharpest in window):
 
 ```python skip session=qb output=assets/frame_mosaic.jpg
-plot_mosaic(input_frames, sharp_frames, '{output}')
+plot_mosaic(input_frames, sharp_frames, "{output}")
 ```
 
 ![output](assets/frame_mosaic.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph.svg
-plot_sharpness(input_frames, sharp_frames, '{output}')
+plot_sharpness(input_frames, sharp_frames, "{output}")
 ```
 
 ![output](assets/sharpness_graph.svg)
@@ -175,10 +182,11 @@ plot_sharpness(input_frames, sharp_frames, '{output}')
 Let's request a higher frequency.
 
 ```python skip session=qb
-sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
-    sharpness_barrier(4.0),
-    ops.to_list()
-).run()
+sharp_frames = (
+    video_replay.stream(seek=5.0, duration=1.5, speed=1.0)
+    .pipe(sharpness_barrier(4.0), ops.to_list())
+    .run()
+)
 
 print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
 show_frames(sharp_frames)
@@ -195,13 +203,13 @@ Output: 6 frame(s) (selected sharpest per window)
 ```
 
 ```python skip session=qb output=assets/frame_mosaic2.jpg
-plot_mosaic(input_frames, sharp_frames, '{output}')
+plot_mosaic(input_frames, sharp_frames, "{output}")
 ```
 
 ![output](assets/frame_mosaic2.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph2.svg
-plot_sharpness(input_frames, sharp_frames, '{output}')
+plot_sharpness(input_frames, sharp_frames, "{output}")
 ```
 
 ![output](assets/sharpness_graph2.svg)
@@ -215,8 +223,10 @@ Here's how it's used in the actual camera module:
 ```python skip
 from dimos.core.module import Module
 
+
 class CameraModule(Module):
     frequency: float = 2.0  # Target output frequency
+
     @rpc
     def start(self) -> None:
         stream = self.hardware.image_stream()
@@ -227,7 +237,6 @@ class CameraModule(Module):
         self.register_disposable(
             stream.subscribe(self.color_image.publish),
         )
-
 ```
 
 ### How Sharpness is Calculated
@@ -269,10 +278,14 @@ detections = [
     {"name": "bird", "confidence": 0.6},
 ]
 
-result = rx.of(*detections).pipe(
-    quality_barrier(lambda d: d["confidence"], target_frequency=2.0),
-    ops.to_list(),
-).run()
+result = (
+    rx.of(*detections)
+    .pipe(
+        quality_barrier(lambda d: d["confidence"], target_frequency=2.0),
+        ops.to_list(),
+    )
+    .run()
+)
 
 print(f"Selected: {result[0]['name']} (conf: {result[0]['confidence']})")
 ```

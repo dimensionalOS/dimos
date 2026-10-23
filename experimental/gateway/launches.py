@@ -471,7 +471,7 @@ def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) 
 
 def _wait_then_tell(child: subprocess.Popen[bytes]) -> None:
     child.wait()
-    for listener in list(exit_listeners):
+    for listener in exit_listeners:
         listener()
 
 

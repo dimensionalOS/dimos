@@ -109,14 +109,16 @@ def test_subscriber_failure_does_not_suppress_measured_state():
 
     tick, hardware = make_loop(fail)
     tick._publish_callback = measured.append
-    with patch.object(
-        tick,
-        "_route_to_hardware",
-        return_value={"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)},
+    with (
+        patch.object(
+            tick,
+            "_route_to_hardware",
+            return_value={"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)},
+        ),
+        patch("dimos.control.tick_loop.time.time", side_effect=[100.0, 200.0]),
     ):
-        with patch("dimos.control.tick_loop.time.time", side_effect=[100.0, 200.0]):
-            with patch("dimos.control.tick_loop.logger.exception") as log_error:
-                tick._tick()
+        with patch("dimos.control.tick_loop.logger.exception") as log_error:
+            tick._tick()
     assert commands[0].position == [1.2]
     assert commands[0].ts == 200.0
     assert measured[0].position == [-99.0]
