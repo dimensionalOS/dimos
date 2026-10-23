@@ -46,4 +46,5 @@ pub mod gtsam;
 pub mod mat3;
 pub mod msgs;
 pub mod pointcloud;
+pub mod pose_graph;
 pub mod scan_context;
