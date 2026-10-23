@@ -382,7 +382,7 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            closure_gnc_apply_after_fraction: 0.05,
+            closure_gnc_apply_after_fraction: 0.01,
             closure_gnc_deterministic: true,
             closure_cooling: false,
             closure_search_keyframes: 0,
