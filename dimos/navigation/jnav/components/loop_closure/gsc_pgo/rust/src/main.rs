@@ -63,7 +63,7 @@ macro_rules! config {
         }
         impl Config {
             fn pgo(&self) -> PgoConfig {
-                PgoConfig { $($pgo: self.$pgo.clone(),)* loop_record_strain: false, loop_yank_from_strain: false }
+                PgoConfig { $($pgo: self.$pgo.clone(),)* loop_record_strain: false, loop_yank_from_strain: false, loop_search_keyframes: 0 }
             }
         }
     };

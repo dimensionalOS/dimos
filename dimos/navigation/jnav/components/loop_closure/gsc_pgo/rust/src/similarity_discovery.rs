@@ -375,40 +375,18 @@ impl crate::gsc_pgo::GscPgo {
             return (-1, 0, out_best, out_second);
         }
         let query = self.scan_context_descriptors.last().unwrap();
-        let query_key = self.scan_context_ring_keys.last().unwrap();
-
-        // Two-stage retrieval: rank by ring-key L2 distance, then score the
-        // top-K via column-shifted cosine distance on the full descriptor.
-        // TODO: switch to a kd-tree later for O(log n) instead of O(n) — this
-        // ring-key ranking is a linear scan (O(N^2) over a run) and won't scale
-        // to massive maps.
-        let newest = self.newest_loop_target();
-        let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(newest);
-        for i in 0..newest {
-            if self.scan_context_descriptors[i].is_empty() {
-                continue;
-            }
-            let key = &self.scan_context_ring_keys[i];
-            let mut sq = 0.0f32;
-            for (a, b) in key.iter().zip(query_key.iter()) {
-                let d = a - b;
-                sq += d * d;
-            }
-            ranked.push((sq.sqrt(), i));
-        }
-        if ranked.is_empty() {
-            return (-1, 0, out_best, out_second);
-        }
-
-        let top_k_count = ranked.len().min(self.scan_context_config.candidate_top_k);
-        ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
+        // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
+        let ranked = ring_key_top_k(
+            self.scan_context_ring_keys.last().unwrap(),
+            &self.scan_context_ring_keys[..self.newest_loop_target()],
+            self.scan_context_config.candidate_top_k,
+        );
         let mut best_dist = f32::MAX;
         let mut second_dist = f32::MAX;
         let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
         let mut best_idx: i64 = -1;
         let mut best_shift = 0i32;
-        for &(_, idx) in &ranked[..top_k_count] {
+        for &(_, idx) in &ranked {
             let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
             if distance < best_dist {
                 second_dist = best_dist; // demote previous best

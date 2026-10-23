@@ -343,6 +343,8 @@ pub struct Config {
     /// Hold the keyframes no new loop can move by more than one odometry step's noise (see
     /// `big_picture_fit::position_variance`), so a solve covers only the loose part of the map.
     pub loop_cooling: bool,
+    /// Replay only (`search_for_loop_pairs`): keyframes a loop search occupies the search thread for; 0 = instant.
+    pub loop_search_keyframes: usize,
     // Odometry between-factor noise (anisotropic).
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
@@ -383,6 +385,7 @@ impl Default for Config {
             loop_gnc_apply_after_fraction: 0.05,
             loop_gnc_deterministic: true,
             loop_cooling: false,
+            loop_search_keyframes: 0,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
             odom_trans_xy_var: 1e-4,
@@ -426,6 +429,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<LoopProposal>,
     /// Keyframes the newest dispatched solve covered.
     pub(crate) solving_keyframes: usize,
+    /// A finished search waiting for its keyframe (`loop_search_keyframes`).
+    pub(crate) pending_search: Option<(LoopSearchResult, usize)>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -690,6 +695,7 @@ impl GscPgo {
             scored_yanks: Vec::new(),
             waiting_proposal: None,
             solving_keyframes: 0,
+            pending_search: None,
         }
     }
 
@@ -920,11 +926,26 @@ impl GscPgo {
         })
     }
     /// Search for a loop at the newest keyframe, all on this thread.
+    /// With `loop_search_keyframes`, a search holds the search thread for that many keyframes before its
+    /// result lands (proposals queue meanwhile), the way a slower machine would, but the same on every machine.
     pub fn search_for_loop_pairs(&mut self) {
         self.propose_loop();
+        if self
+            .pending_search
+            .as_ref()
+            .is_some_and(|(_, due)| self.key_poses.len() < *due)
+        {
+            return;
+        }
+        if let Some((result, _)) = self.pending_search.take() {
+            self.finish_loop_search(result);
+        }
         if let Some(search) = self.begin_loop_search() {
             let result = search.run();
-            self.finish_loop_search(result);
+            match self.config.loop_search_keyframes {
+                0 => self.finish_loop_search(result),
+                k => self.pending_search = Some((result, self.key_poses.len() + k)),
+            }
         }
     }
     /// Apply a `LoopSearch`'s result: record its diagnostics and commit the loop it accepted.

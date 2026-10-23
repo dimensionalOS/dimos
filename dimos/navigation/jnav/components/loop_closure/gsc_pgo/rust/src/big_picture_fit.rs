@@ -612,6 +612,9 @@ impl GscPgo {
     }
     /// Wait for the running solve, and solve again until every loop is in. Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
+        if let Some((result, _)) = self.pending_search.take() {
+            self.finish_loop_search(result);
+        }
         let mut moved = false;
         loop {
             moved |= self.apply_solve();
