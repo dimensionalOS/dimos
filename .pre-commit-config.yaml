@@ -84,7 +84,7 @@ repos:
     hooks:
       - id: docstring-style
         name: Google docstring sections
-        entry: python dimos/cli/docstring_style.py
+        entry: python bin/hooks/docstring_style.py
         language: python
         types: [python]
 
