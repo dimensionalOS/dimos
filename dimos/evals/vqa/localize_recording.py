@@ -26,9 +26,9 @@ Does not modify ``dimos.perception.localize``.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dimos.evals.vqa.contracts import QuestionProposal
@@ -40,6 +40,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
     scene_from_named_hits,
 )
 from dimos.memory.cli.dataset import open_dataset
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.logging_config import setup_logger
@@ -73,6 +74,10 @@ class LocalizeWindowResult:
     named_hits: tuple[tuple[str, Localization], ...]
     rig: Rig
     queries: tuple[str, ...]
+    # Earliest Detection3DPC.ts per Localization.instance_id in this window.
+    first_seen_by_instance: dict[str, float] = field(default_factory=dict)
+    # color_image frames in the window for ego memory clips.
+    color_frames: tuple[tuple[float, Image], ...] = ()
 
 
 def robot_pose_xyz_yaw(
@@ -90,13 +95,20 @@ def scene_at_timestamp(
     named_hits: Sequence[tuple[str, Localization]],
     rig: Rig,
     timestamp: float,
+    *,
+    first_seen_by_instance: Mapping[str, float] | None = None,
 ) -> LocalizeSceneEvidence | None:
     """Attach robot pose at ``timestamp`` to verified hits; ``None`` without base_link."""
     pose = robot_pose_xyz_yaw(rig, timestamp)
     if pose is None:
         return None
     robot_xyz, robot_yaw = pose
-    return scene_from_named_hits(robot_xyz, robot_yaw, named_hits)
+    return scene_from_named_hits(
+        robot_xyz,
+        robot_yaw,
+        named_hits,
+        first_seen_by_instance=dict(first_seen_by_instance or {}),
+    )
 
 
 # Cap multi-instance categories so full-episode scenes do not explode case counts.
@@ -248,19 +260,46 @@ def localize_window(
             yield LocalizeWindowResult(named_hits=(), rig=rig, queries=())
             return
 
+        from dimos.perception.localize.localize import LocalizeTrace
+
         named: list[tuple[str, Localization]] = []
+        first_seen_by_instance: dict[str, float] = {}
+        traces = [LocalizeTrace() for _ in query_list]
         with DanDetector(embedder, detector, segmenter) as dan:
             index = embed_index(rig, dan.embedder, after, before)
-            results = dan.localize(query_list, index=index, rig=rig, params=_ROOM_LOCALIZE_PARAMS)
-            for query, hits in zip(query_list, results, strict=True):
+            results = dan.localize(
+                query_list,
+                index=index,
+                rig=rig,
+                params=_ROOM_LOCALIZE_PARAMS,
+                traces=traces,
+            )
+            for query, hits, trace in zip(query_list, results, traces, strict=True):
                 logger.info(f"localize verification {query!r}: {len(hits)} hit(s)")
-                for hit in hits:
+                for hit, sightings in zip(hits, trace.answers, strict=True):
                     named.append((query, hit))
+                    times = [float(s.ts) for s in sightings]
+                    if times:
+                        prev = first_seen_by_instance.get(hit.instance_id)
+                        earliest = min(times)
+                        if prev is None or earliest < prev:
+                            first_seen_by_instance[hit.instance_id] = earliest
+
+        color_frames: list[tuple[float, Image]] = []
+        camera = next(iter(rig.cameras.values()))
+        for observation in camera.color.after(after).before(before):
+            image = observation.data
+            if not isinstance(image, Image):
+                continue
+            color_frames.append((float(observation.ts), image))
+        color_frames.sort(key=lambda row: row[0])
 
         yield LocalizeWindowResult(
             named_hits=tuple(named),
             rig=rig,
             queries=tuple(query_list),
+            first_seen_by_instance=first_seen_by_instance,
+            color_frames=tuple(color_frames),
         )
     finally:
         store.stop()

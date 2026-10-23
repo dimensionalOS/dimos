@@ -83,15 +83,29 @@ class LocalizeInstanceEvidence(BaseModel):
     position_world_xyz: tuple[float, float, float]
     n_views: int = Field(default=1, ge=1)
     semantic_score: float = Field(default=1.0, ge=0)
+    instance_id: NonEmptyString | None = None
+    # Earliest sighting in the localize window (for ego memory clips).
+    first_seen_timestamp: float | None = None
+    last_seen_timestamp: float | None = None
 
     @classmethod
-    def from_localization(cls, object_name: str, hit: Localization) -> LocalizeInstanceEvidence:
+    def from_localization(
+        cls,
+        object_name: str,
+        hit: Localization,
+        *,
+        first_seen_timestamp: float | None = None,
+    ) -> LocalizeInstanceEvidence:
         """Map one Dan localize hit; ``object_name`` is the caller's query label."""
+        last_seen = getattr(hit, "last_seen_timestamp", None)
         return cls(
             object_name=object_name,
             position_world_xyz=hit.position_world_xyz,
             n_views=hit.n_views,
             semantic_score=hit.semantic_score,
+            instance_id=getattr(hit, "instance_id", None),
+            first_seen_timestamp=first_seen_timestamp,
+            last_seen_timestamp=float(last_seen) if last_seen is not None else None,
         )
 
 
@@ -379,12 +393,20 @@ def scene_from_named_hits(
     robot_position_xyz: tuple[float, float, float],
     robot_yaw_rad: float,
     named_hits: Sequence[tuple[str, Localization]],
+    *,
+    first_seen_by_instance: dict[str, float] | None = None,
 ) -> LocalizeSceneEvidence:
     """Build scene evidence from ``(query_name, Localization)`` pairs."""
+    first_seen = first_seen_by_instance or {}
     return LocalizeSceneEvidence(
         robot_position_xyz=robot_position_xyz,
         robot_yaw_rad=robot_yaw_rad,
         instances=tuple(
-            LocalizeInstanceEvidence.from_localization(name, hit) for name, hit in named_hits
+            LocalizeInstanceEvidence.from_localization(
+                name,
+                hit,
+                first_seen_timestamp=first_seen.get(hit.instance_id),
+            )
+            for name, hit in named_hits
         ),
     )

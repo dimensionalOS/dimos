@@ -106,10 +106,20 @@ Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m
 `|θ| ≤ 45°`, behind `|θ| ≥ 135°`, sides rejected for fore/aft; `ego_turn` answers
 left / right / ahead / **turn around**.
 
-These families are **pose-grounded**: answers come from verified 3D instances +
-`base_link`, not from pixels in the published RGB alone. A referent may be behind
-the robot or outside the camera FOV. Image-only models are expected to fail those
-cases; that is intentional for measuring ego-spatial capability, not a labeling bug.
+These families are **pose-grounded for labels** (verified 3D + `base_link`) but
+**memory-clip for the agent**: each ego case publishes a short dense `color_image`
+clip from the referent's **first sighting** through the **question time**
+(``query − first_spot ≤ 8`` s), and the question text states that relative
+`t=0.0s … t=duration` span. Ego cases never fall back to a single RGB frame.
+
+Publish balances two bands (~1:1 when both exist):
+
+- **Hard memory**: `ego_fore_aft=behind`, or `ego_turn∈{left,right,turn around}`
+  (bearing outside the 45° ahead cone; on Go2 ~77° HFOV this is usually out of RGB).
+- **Soft / in-view**: `ahead`, `ego_any` yes/no, `height_order`, etc.
+
+The default `QuestionAnswer` agent encodes every frame in the clip
+(length ≤ `frames_per_stream`).
 
 Left/right ``<category>`` referents are not proposed (awkward English in the question text;
 multi-instance disambiguation uses nearest / next-to instead).
@@ -139,7 +149,8 @@ dataset/
   cases.jsonl
   labels.jsonl
   assets/
-    frame-000100.png
+    frame-000100.png          # single-frame families
+    clips/<case-id>/…         # ego memory clips (first sighting → question)
   audit/
     run.json
     frame-000100/
@@ -148,6 +159,9 @@ dataset/
       cases.json
       labels.json
 ```
+
+Each public case uses exactly one of `image`, `clip`, or `clips`. Ego cases use `clip`
+with a stated relative time span; image-only families still use `image`.
 
 `cases.jsonl` and `assets/` are public evaluation inputs. `labels.jsonl` and `audit/` contain private
 answers, evidence, rejected proposals, source indices, and timestamps.
@@ -159,5 +173,5 @@ dimos evals vqa run ~/.local/state/dimos/datasets/vqa/calibrated-recording-frame
   --model gpt-4o-mini
 ```
 
-Evaluation exposes only each public image, question, and fixed choices to the model. The shared runner
-writes results under `~/.local/state/dimos/evals/run-*/`.
+`QuestionAnswer` encodes clip streams from the MemoryStore environment. Results land under
+`~/.local/state/dimos/evals/run-*/`.

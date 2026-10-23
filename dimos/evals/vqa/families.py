@@ -500,6 +500,12 @@ def _answer_ego_fore_aft(
     }
     if parsed.landmark is not None:
         evidence["landmark"] = parsed.landmark
+    if instance.instance_id is not None:
+        evidence["instance_id"] = instance.instance_id
+    if instance.first_seen_timestamp is not None:
+        evidence["first_seen_timestamp"] = instance.first_seen_timestamp
+    if instance.last_seen_timestamp is not None:
+        evidence["last_seen_timestamp"] = instance.last_seen_timestamp
     return FamilyAnswer(
         question=f"Is the {referent} ahead of the robot or behind it?",
         choices=("ahead", "behind"),
@@ -560,6 +566,12 @@ def _answer_ego_turn(
     }
     if parsed.landmark is not None:
         evidence["landmark"] = parsed.landmark
+    if instance.instance_id is not None:
+        evidence["instance_id"] = instance.instance_id
+    if instance.first_seen_timestamp is not None:
+        evidence["first_seen_timestamp"] = instance.first_seen_timestamp
+    if instance.last_seen_timestamp is not None:
+        evidence["last_seen_timestamp"] = instance.last_seen_timestamp
     return FamilyAnswer(
         question=(
             f"To face the {referent}, should the robot turn left, turn right, "
@@ -586,26 +598,34 @@ def _answer_ego_any_fore_aft(
     ahead = instances_in_ahead_cone(localize_scene, bare)
     ahead_xyz = {inst.position_world_xyz for inst in ahead}
     answer = "yes" if ahead else "no"
+    first_seen = min(
+        (inst.first_seen_timestamp for inst in hits if inst.first_seen_timestamp is not None),
+        default=None,
+    )
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "object_name": bare,
+        "selector": "any_ahead",
+        "answer_rule": "exists_instance_in_ahead_cone_45",
+        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+        "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        "instances": cast(
+            "JsonValue",
+            [
+                {
+                    "position_world_xyz": list(inst.position_world_xyz),
+                    "in_ahead_cone": inst.position_world_xyz in ahead_xyz,
+                    "first_seen_timestamp": inst.first_seen_timestamp,
+                }
+                for inst in hits
+            ],
+        ),
+    }
+    if first_seen is not None:
+        evidence["first_seen_timestamp"] = first_seen
     return FamilyAnswer(
         question=f"Is there any verified {bare} ahead of the robot?",
         choices=("yes", "no"),
         answer=answer,
-        evidence={
-            "primitive": "localize_scene",
-            "object_name": bare,
-            "selector": "any_ahead",
-            "answer_rule": "exists_instance_in_ahead_cone_45",
-            "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
-            "robot_yaw_rad": localize_scene.robot_yaw_rad,
-            "instances": cast(
-                "JsonValue",
-                [
-                    {
-                        "position_world_xyz": list(inst.position_world_xyz),
-                        "in_ahead_cone": inst.position_world_xyz in ahead_xyz,
-                    }
-                    for inst in hits
-                ],
-            ),
-        },
+        evidence=evidence,
     )

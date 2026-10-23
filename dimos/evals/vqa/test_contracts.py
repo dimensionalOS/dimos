@@ -1015,7 +1015,9 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
             queries=("chair", "table"),
         )
 
-    def fake_scene_at_timestamp(named_hits: object, rig: object, timestamp: float):
+    def fake_scene_at_timestamp(
+        named_hits: object, rig: object, timestamp: float, **_kwargs: object
+    ):
         del named_hits, rig, timestamp
         return LocalizeSceneEvidence(
             robot_position_xyz=(0.0, 0.0, 0.0),
@@ -1143,7 +1145,7 @@ def test_standalone_rows_match_public_private_contract() -> None:
     )
     label = PrivateLabel(id=case.id, answer="yes")
 
-    assert case.model_dump(mode="json") == {
+    assert case.model_dump(mode="json", exclude_none=True) == {
         "id": "frame-000004-chair-presence",
         "image": "assets/frame-000004.png",
         "question": "Is there a chair in the image?",
