@@ -1,0 +1,16 @@
+move 0.5 0.0 -0.2 0.0
+move 0.5 0.0 -0.2 1.5
+stand-up
+stand-down
+balance
+rage on
+rage off
+1016
+brightness 3
+obstacle-avoidance on
+obstacle-avoidance off
+joystick on
+joystick off
+stop
+request rt/api/vui/request 1005 {"brightness": 3}
+request rt/api/sport/request 1009

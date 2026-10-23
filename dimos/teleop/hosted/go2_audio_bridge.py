@@ -238,6 +238,9 @@ class Go2AudioBridgeModule(Module):
             RTC_TOPIC["AUDIO_HUB_REQ"],
             {"api_id": api_id, "parameter": json.dumps(parameter or {})},
         )
+        if response is None:
+            # sent without waiting (the Rust Go2 connection): no answer to check
+            return {}
         if not response:
             raise RuntimeError(f"Go2 audio request {api_id} returned no response")
         code = self._response_code(response)

@@ -18,11 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
+from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.go2.connection import (
     ConnectionConfig,
     GO2Connection,
@@ -56,8 +59,9 @@ class FleetConnectionConfig(ConnectionConfig):
 
 class Go2FleetConnection(GO2Connection):
     """Inherits all single-robot behaviour from GO2Connection for the primary
-    (first) robot. Additional robots only receive broadcast commands
-    (move, standup, liedown, publish_request).
+    (first) robot (the Rust module on real robots). Additional robots only
+    receive broadcast commands (move, standup, liedown, publish_request), over
+    Python WebRTC on real robots.
     """
 
     config: FleetConnectionConfig
@@ -73,12 +77,29 @@ class Go2FleetConnection(GO2Connection):
         for ip in self._extra_ips:
             # The AES-128 key is per-device; a heterogeneous fleet would need a
             # per-IP mapping here rather than this shared key.
-            conn = make_connection(ip, self.config, aes_128_key=self.config.aes_128_key)
+            conn = make_connection(ip, self.config) or UnitreeWebRTCConnection(
+                ip,
+                aes_128_key=self.config.aes_128_key,
+                velocity_api=self.config.velocity_api,
+            )
             conn.start()
             self._extra_connections.append(conn)
 
-        # Parent starts primary robot, subscribes sensors, calls standup() on all
+        # Parent starts the primary robot. On replay and the sims it calls standup(), which stands every robot; the
+        # Rust module stands only its own, so the extras stand up here.
         super().start()
+        if self.connection is None:
+            for conn in self._extra_connections:
+                conn.standup()
+            time.sleep(self.config.timing.stand_up_settle)
+            # the Rust module drives the primary from cmd_vel; the extras follow it here
+            self.register_disposable(
+                Disposable(
+                    self.cmd_vel.subscribe(
+                        lambda twist: self._each_extra("move", lambda c: c.move(twist))
+                    )
+                )
+            )
         for conn in self._extra_connections:
             conn.balance_stand()
             conn.set_obstacle_avoidance(self.config.obstacle_avoidance)
@@ -98,42 +119,33 @@ class Go2FleetConnection(GO2Connection):
         self._extra_connections.clear()
         super().stop()
 
-    @property
-    def _all_connections(self) -> list[Go2ConnectionProtocol]:
-        return [self.connection, *self._extra_connections]
+    def _each_extra(self, what: str, call: Any) -> bool:
+        results = []
+        for conn in self._extra_connections:
+            try:
+                results.append(call(conn))
+            except Exception as e:
+                logger.error(f"Fleet {what} failed: {e}")
+                results.append(False)
+        return all(results)
+
+    def _broadcast(self, what: str, primary: bool, call: Any) -> bool:
+        """The primary's result and every extra robot's, each failure logged and counted as False."""
+        extras = self._each_extra(what, call)
+        return primary and extras
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        results: list[bool] = []
-        for conn in self._all_connections:
-            try:
-                results.append(conn.move(twist, duration))
-            except Exception as e:
-                logger.error(f"Fleet move failed: {e}")
-                results.append(False)
-        return all(results)
+        primary = super().move(twist, duration)
+        return self._broadcast("move", primary, lambda conn: conn.move(twist, duration))
 
     @rpc
     def standup(self) -> bool:
-        results: list[bool] = []
-        for conn in self._all_connections:
-            try:
-                results.append(conn.standup())
-            except Exception as e:
-                logger.error(f"Fleet standup failed: {e}")
-                results.append(False)
-        return all(results)
+        return self._broadcast("standup", super().standup(), lambda conn: conn.standup())
 
     @rpc
     def liedown(self) -> bool:
-        results: list[bool] = []
-        for conn in self._all_connections:
-            try:
-                results.append(conn.liedown())
-            except Exception as e:
-                logger.error(f"Fleet liedown failed: {e}")
-                results.append(False)
-        return all(results)
+        return self._broadcast("liedown", super().liedown(), lambda conn: conn.liedown())
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
@@ -143,4 +155,4 @@ class Go2FleetConnection(GO2Connection):
                 conn.publish_request(topic, data)
             except Exception as e:
                 logger.error(f"Fleet publish_request failed: {e}")
-        return self.connection.publish_request(topic, data)
+        return super().publish_request(topic, data)
