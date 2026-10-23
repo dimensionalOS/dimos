@@ -84,6 +84,7 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.tasklist
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
@@ -101,8 +102,11 @@ plugins:
               warn_missing_types: false
             show_signature_annotations: true
             separate_signature: true
+            show_root_heading: true
+            show_root_full_path: false
             show_docstring_attributes: true
             extensions:
+              - misc/mkdocs/namespace_packages.py:DimosNamespaces
               - griffe_pydantic
   # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
   - awesome-nav

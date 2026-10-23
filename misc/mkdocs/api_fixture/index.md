@@ -1,5 +1,7 @@
 # API rendering check
 
+- [ ] [Jump to API](#api-rendering-check)
+
 ::: misc.mkdocs.api_fixture.examples.typed
 
 ::: misc.mkdocs.api_fixture.examples.untyped

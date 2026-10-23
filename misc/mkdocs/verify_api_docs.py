@@ -15,6 +15,7 @@
 """Build API fixtures with the site's real handler options and inspect the HTML."""
 
 from html.parser import HTMLParser
+import logging
 from pathlib import Path
 import tempfile
 
@@ -29,7 +30,6 @@ class PageText(HTMLParser):
 
     def __init__(self) -> None:
         super().__init__()
-        self.parts: list[str] = []
         self.signatures: list[list[str]] = []
         self.signature_depth = 0
         self.table_parts: list[str] = []
@@ -52,7 +52,6 @@ class PageText(HTMLParser):
             self.signature_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(data)
         if self.signature_depth:
             self.signatures[-1].append(data)
         if self.table_depth:
@@ -61,6 +60,7 @@ class PageText(HTMLParser):
 
 def main() -> None:
     """Verify functions, a dataclass constructor, and Pydantic field declarations."""
+    logging.basicConfig(level=logging.INFO)
     with tempfile.TemporaryDirectory() as destination:
         config = load_config(
             config_file=str(ROOT / "mkdocs.yml"),
