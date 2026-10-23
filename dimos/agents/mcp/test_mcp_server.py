@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.mcp.tool_result import ToolResult
 from dimos.core.module import SkillInfo
 
 
@@ -69,7 +70,7 @@ def test_mcp_module_request_flow() -> None:
     )
     assert response is not None
     assert response["result"]["content"][0]["text"] == "5"
-    rpc_calls["add"].assert_called_once_with(x=2, y=3)
+    rpc_calls["add"].assert_called_once_with(x=2, y=3, _mcp_context={"meta": {}})
 
 
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
@@ -96,12 +97,13 @@ def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
         )
     )
 
-    rpc_calls["echo"].assert_called_once_with(x=42, _mcp_context={"progress_token": "pt-srv-test"})
+    rpc_calls["echo"].assert_called_once_with(
+        x=42,
+        _mcp_context={"meta": {"progressToken": "pt-srv-test"}, "progress_token": "pt-srv-test"},
+    )
 
 
-def test_mcp_module_without_progress_token_does_not_inject_context() -> None:
-    """Absence of `progressToken` preserves the legacy call shape. The skill
-    sees only the arguments it declared."""
+def test_mcp_module_without_meta_passes_empty_meta() -> None:
     schema = json.dumps({"type": "object", "properties": {}})
     skills = [SkillInfo(class_name="TestSkills", func_name="ping", args_schema=schema)]
     rpc_calls = _make_rpc_calls(skills, {"ping": "pong"})
@@ -118,7 +120,7 @@ def test_mcp_module_without_progress_token_does_not_inject_context() -> None:
         )
     )
 
-    rpc_calls["ping"].assert_called_once_with()
+    rpc_calls["ping"].assert_called_once_with(_mcp_context={"meta": {}})
 
 
 def test_mcp_module_handles_errors() -> None:
@@ -173,7 +175,32 @@ def test_mcp_module_handles_errors() -> None:
         )
     )
     assert response is not None
+    assert response["result"]["isError"] is True
     assert "not found" in response["result"]["content"][0]["text"].lower()
+
+
+def test_structured_content_that_is_not_json_is_a_tool_error() -> None:
+    """Strict JSON has no Infinity, so the endpoint could not render such a result."""
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [SkillInfo(class_name="TestSkills", func_name="measure", args_schema=schema)]
+
+    def measure(**_: object) -> ToolResult:
+        return ToolResult("distance inf", {"distance": float("inf")})
+
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 5, "params": {"name": "measure", "arguments": {}}},
+            skills,
+            {"measure": measure},
+        )
+    )
+    assert response is not None
+    assert set(response["result"]) == {"content", "isError"}
+    assert response["result"]["isError"] is True
+    assert response["result"]["content"][0]["text"].startswith(
+        "Tool 'measure' returned structured content that is not JSON: "
+        "Out of range float values are not JSON compliant"
+    )
 
 
 def test_mcp_module_initialize_and_unknown() -> None:
