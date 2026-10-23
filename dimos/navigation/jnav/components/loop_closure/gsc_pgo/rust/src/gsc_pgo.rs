@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `GscPgo`: keyframe gating, the loop search and its gates, and the pose graph (each keyframe's
-//! odometry plus the loops that passed the gates), re-solved by `pose_graph` on a background thread
-//! whenever new loops arrive. Keyframe ids are their indices; rotations and vectors are `mat3`
+//! `GscPgo`: keyframe gating, the closure search and its gates, and the pose graph (each keyframe's
+//! odometry plus the closures that passed the gates), re-solved by `pose_graph` on a background thread
+//! whenever new closures arrive. Keyframe ids are their indices; rotations and vectors are `mat3`
 //! (row-major f64).
 
 use std::sync::Arc;
 
-use crate::big_picture_fit::{self, loop_edges, odometry_edges, Edge, Solving};
+use crate::big_picture_fit::{self, closure_edges, odometry_edges, Edge, Solving};
 use crate::connection_fit::{dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
@@ -72,10 +72,10 @@ pub struct KeyPoseWithCloud {
     pub body_cloud: Option<Arc<PointCloud>>,
 }
 
-/// A loop that passed every gate: its relative pose (source in the target's frame), its ICP
+/// A closure that passed every gate: its relative pose (source in the target's frame), its ICP
 /// fitness, and the newest applied solve's verdict.
 #[derive(Clone, Copy)]
-pub struct CommittedLoop {
+pub struct CommittedClosure {
     pub source_id: usize,
     pub target_id: usize,
     pub rotation_offset: Mat3,
@@ -86,11 +86,11 @@ pub struct CommittedLoop {
 }
 
 /// Per-search loop-closure diagnostics
-/// one record every time `search_for_loop_pairs` evaluates a keyframe, capturing the metric at each
+/// one record every time `search_for_closure_pairs` evaluates a keyframe, capturing the metric at each
 /// gate and the outcome (accepted, or the name of the gate that rejected it).
 /// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
 #[derive(Debug, Clone)]
-pub struct LoopCandidateDiag {
+pub struct ClosureCandidateDiag {
     /// Outcome: "accepted", "outranked" (a better proposal took the search thread), or the rejecting gate — one of "no_structure",
     /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
     /// "degeneracy_reject", "icp_reject", "uninformative", "yank_reject".
@@ -130,13 +130,13 @@ pub struct LoopCandidateDiag {
     /// disagrees with odometry. NaN if ICP did not run.
     pub yank_translation: f64,
     pub yank_rotation_deg: f64,
-    /// The inputs and outputs of the yank / confidence gate (`loop_yank_gate`), recorded for every
+    /// The inputs and outputs of the yank / confidence gate (`closure_yank_gate`), recorded for every
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
-    /// yank_drift_scale = sqrt(keyframe gap) with `loop_yank_per_sqrt_gap`, else 1;
+    /// yank_drift_scale = sqrt(keyframe gap) with `closure_yank_per_sqrt_gap`, else 1;
     /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
     /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
     /// (0 before any); each factor is its metric normalized by its own gate and clamped to [0, 1];
-    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `loop_yank_gate_width`.
+    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `closure_yank_gate_width`.
     pub yank_drift_scale: f64,
     pub sigma_rotation_deg: f64,
     pub sigma_translation_m: f64,
@@ -146,7 +146,7 @@ pub struct LoopCandidateDiag {
     pub degeneracy_factor: f64,
     pub confidence: f64,
     pub required_confidence: f64,
-    /// Extended ICP (`loop_extended_icp_max_keyframes`), recorded when it ran (0 / NaN otherwise):
+    /// Extended ICP (`closure_extended_icp_max_keyframes`), recorded when it ran (0 / NaN otherwise):
     /// the source keyframes stacked into the last round, both clouds' sizes, the source points
     /// within the correspondence distance of the target for the single scan and the extended
     /// clouds, the extended ICP's fitness, and the confidence that evidence gives.
@@ -157,13 +157,13 @@ pub struct LoopCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
-    /// Rise in the graph's error if this loop were forced in rigidly (`big_picture_fit::strain`), with
-    /// `loop_record_strain`; NaN otherwise.
+    /// Rise in the graph's error if this closure were forced in rigidly (`big_picture_fit::strain`), with
+    /// `closure_record_strain`; NaN otherwise.
     pub strain: f64,
 }
-impl LoopCandidateDiag {
-    fn new(source_id: usize, source_time: f64, source_xyz: Vec3) -> LoopCandidateDiag {
-        LoopCandidateDiag {
+impl ClosureCandidateDiag {
+    fn new(source_id: usize, source_time: f64, source_xyz: Vec3) -> ClosureCandidateDiag {
+        ClosureCandidateDiag {
             outcome: "no_candidate",
             source_id,
             source_time,
@@ -205,11 +205,11 @@ impl LoopCandidateDiag {
     }
 }
 
-/// Where a loop candidate is in its life: proposed by the search, through the gates, GNC's
+/// Where a closure candidate is in its life: proposed by the search, through the gates, GNC's
 /// votes, in or out of the graph, and applied to the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum LoopEdgeState {
+pub enum ClosureEdgeState {
     /// The search found a candidate keyframe for this one.
     Proposed = 0,
     /// A gate (distance, degeneracy, ICP, yank, ...) turned it down; it never reaches GNC.
@@ -226,27 +226,27 @@ pub enum LoopEdgeState {
     Applied = 6,
 }
 
-/// One step in a loop candidate's life, for visualizing proposed / accepted /
+/// One step in a closure candidate's life, for visualizing proposed / accepted /
 /// rejected / applied edges as they happen. Purely observational.
 #[derive(Debug, Clone, Copy)]
-pub struct LoopEdgeEvent {
+pub struct ClosureEdgeEvent {
     /// Keyframe time of the newest keyframe when it happened.
     pub time: f64,
     pub source_id: usize,
     pub target_id: usize,
-    pub state: LoopEdgeState,
+    pub state: ClosureEdgeState,
     /// How likely the edge is right, in [0, 1]: scan-context similarity while only proposed,
     /// ICP fitness against the fitness its yank requires once ICP ran, then GNC's weight times that.
     pub confidence: f64,
     /// How hard the edge pulls the accepted pose graph, in robust standard deviations of the
-    /// yanks of loops committed so far (`LoopCandidateDiag::yank_z`); NaN before ICP.
+    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_z`); NaN before ICP.
     pub yank_z: f64,
 }
 
-/// Bytes per packed loop-edge record (`LoopEdgeEvent::put_record`).
-pub const LOOP_EDGE_RECORD_BYTES: usize = 52;
+/// Bytes per packed closure-edge record (`ClosureEdgeEvent::put_record`).
+pub const CLOSURE_EDGE_RECORD_BYTES: usize = 52;
 
-impl LoopEdgeEvent {
+impl ClosureEdgeEvent {
     /// Append this event as one packed record: both keyframes where they are now (x y z, then
     /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_z f32, time f64.
     pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &[KeyPoseWithCloud]) {
@@ -277,74 +277,74 @@ impl LoopEdgeEvent {
 pub struct Config {
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
-    pub loop_search_radius: f64,
-    pub loop_score_thresh: f64,
-    pub loop_submap_half_range: i32,
+    pub closure_search_radius: f64,
+    pub closure_score_thresh: f64,
+    pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Voxel size each incoming cloud is downsampled to before a keyframe
     /// stores it. 0 keeps clouds as they arrive.
     pub keyframe_voxel_size: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
-    pub loop_min_occupancy: i32,
+    pub closure_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
-    pub loop_min_degeneracy: f64,
-    /// Reject a loop whose match confidence is too low for how hard it yanks the accepted pose
-    /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `LoopCandidateDiag`). A small yank needs
+    pub closure_min_degeneracy: f64,
+    /// Reject a closure whose match confidence is too low for how hard it yanks the accepted pose
+    /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `ClosureCandidateDiag`). A small yank needs
     /// little confidence, a large one needs a near-perfect match. The inputs are recorded either way.
-    pub loop_yank_gate: bool,
+    pub closure_yank_gate: bool,
     /// k in the yank gate's 1 - exp(-yank_z^2 / 2k^2): how many sigmas of yank before a near-perfect match is required.
-    pub loop_yank_gate_width: f64,
-    /// Measure yank against the drift odometry could have built up between the loop's ends: divide
-    /// it by sqrt(keyframe gap) before scaling (on huge_loop this ranks loops that help above loops
+    pub closure_yank_gate_width: f64,
+    /// Measure yank against the drift odometry could have built up between the closure's ends: divide
+    /// it by sqrt(keyframe gap) before scaling (on huge_closure this ranks closures that help above closures
     /// that hurt at AUC 0.82 vs 0.70). Off = the plain yank.
-    pub loop_yank_per_sqrt_gap: bool,
+    pub closure_yank_per_sqrt_gap: bool,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
     /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
-    pub loop_icp_dump_dir: String,
+    pub closure_icp_dump_dir: String,
     /// Record each ICP-scored candidate's `strain` (one sparse factorization each, on the search thread).
-    pub loop_record_strain: bool,
+    pub closure_record_strain: bool,
     /// The yank gate measures a candidate by its `strain` (how hard the graph resists it as a near-rigid
     /// edge), scaled by the median strain of the candidates scored so far, instead of its raw yank.
-    pub loop_yank_from_strain: bool,
-    /// With `loop_yank_gate`, a candidate whose single-scan confidence is too low for its yank gets
+    pub closure_yank_from_strain: bool,
+    /// With `closure_yank_gate`, a candidate whose single-scan confidence is too low for its yank gets
     /// a second look on more data instead of an outright reject: each round seeded with the previous
     /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
-    /// keyframes near the matched one in time that those land within `loop_search_radius` of.
-    /// Inliers are source points within sqrt(`loop_score_thresh`) of the target after ICP.
+    /// keyframes near the matched one in time that those land within `closure_search_radius` of.
+    /// Inliers are source points within sqrt(`closure_score_thresh`) of the target after ICP.
     /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
     /// good as the single scan's confidence times how well the overlap held up (extended inlier
     /// fraction / single inlier fraction, at most 1): confidence = 1 - (1 - c_round)^checks.
     /// (Mean squared fitness is not used: the stacked clouds see places the other side never did.)
-    /// The first round that clears the gate is kept, and its transform becomes the loop. 0 = off.
-    pub loop_extended_icp_max_keyframes: usize,
-    /// Huber threshold on a kept loop's whitened residual in the final solve; 0 = plain least squares.
-    pub loop_robust_huber_k: f64,
-    /// Loop-verification ICP: iteration cap and correspondence gate (m).
-    pub loop_icp_max_iterations: u64,
-    pub loop_icp_max_correspondence_m: f64,
-    /// GNC loop-factor variance is `score * loop_gnc_var_scale`. The raw ICP
+    /// The first round that clears the gate is kept, and its transform becomes the closure. 0 = off.
+    pub closure_extended_icp_max_keyframes: usize,
+    /// Huber threshold on a kept closure's whitened residual in the final solve; 0 = plain least squares.
+    pub closure_robust_huber_k: f64,
+    /// Closure-verification ICP: iteration cap and correspondence gate (m).
+    pub closure_icp_max_iterations: u64,
+    pub closure_icp_max_correspondence_m: f64,
+    /// GNC closure-factor variance is `score * closure_gnc_var_scale`. The raw ICP
     /// score gives a variance (~1e-3) tight enough that GNC over-rejects; scaling
-    /// it up loosens each loop so GNC keeps the true consensus set.
-    pub loop_gnc_var_scale: f64,
+    /// it up loosens each closure so GNC keeps the true consensus set.
+    pub closure_gnc_var_scale: f64,
     /// Probability that a true inlier's residual falls under GNC's chi-squared
-    /// cost threshold. Lowering it tightens the test so GNC rejects more loops;
+    /// cost threshold. Lowering it tightens the test so GNC rejects more closures;
     /// outside (0, 1) it keeps GNC's own 0.99 default.
-    pub loop_gnc_inlier_probability: f64,
+    pub closure_gnc_inlier_probability: f64,
     /// A background GNC solve is folded in once the map has grown by this fraction of its size
     /// at dispatch (at least one keyframe), waiting for it if it is not done, so the result
     /// depends on the data, not the machine. A solve's cost grows with the map, so the delay does.
-    pub loop_gnc_apply_after_fraction: f64,
+    pub closure_gnc_apply_after_fraction: f64,
     /// true: fold a background GNC solve on the keyframe schedule above, so a replay gives the same
     /// graph on any machine. false: fold it as soon as it finishes (see `poll_gnc`), keyframes or
-    /// not, so a robot standing still at a loop still gets the closure; results then depend on timing.
-    pub loop_gnc_deterministic: bool,
-    /// Hold the keyframes no new loop can move by more than one odometry step's noise (see
+    /// not, so a robot standing still at a closure still gets the closure; results then depend on timing.
+    pub closure_gnc_deterministic: bool,
+    /// Hold the keyframes no new closure can move by more than one odometry step's noise (see
     /// `big_picture_fit::position_variance`), so a solve covers only the loose part of the map.
-    pub loop_cooling: bool,
-    /// Replay only (`search_for_loop_pairs`): keyframes a loop search occupies the search thread for; 0 = instant.
-    pub loop_search_keyframes: usize,
+    pub closure_cooling: bool,
+    /// Replay only (`search_for_closure_pairs`): keyframes a closure search occupies the search thread for; 0 = instant.
+    pub closure_search_keyframes: usize,
     // Odometry between-factor noise (anisotropic).
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
@@ -363,29 +363,29 @@ impl Default for Config {
         Config {
             keyframe_min_rotation_degrees: 10.0,
             keyframe_min_distance_meters: 0.5,
-            loop_search_radius: 3.0,
-            loop_score_thresh: 0.15,
-            loop_submap_half_range: 5,
+            closure_search_radius: 3.0,
+            closure_score_thresh: 0.15,
+            closure_submap_half_range: 5,
             submap_resolution: 0.1,
             keyframe_voxel_size: 0.0,
-            loop_min_occupancy: 80,
-            loop_min_degeneracy: 0.05,
-            loop_yank_gate: true,
-            loop_yank_gate_width: 1.0,
-            loop_yank_per_sqrt_gap: true,
-            loop_icp_dump_dir: String::new(),
-            loop_record_strain: false,
-            loop_yank_from_strain: false,
-            loop_extended_icp_max_keyframes: 16,
-            loop_robust_huber_k: 1.345,
-            loop_icp_max_iterations: 50,
-            loop_icp_max_correspondence_m: 10.0,
-            loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.95,
-            loop_gnc_apply_after_fraction: 0.05,
-            loop_gnc_deterministic: true,
-            loop_cooling: false,
-            loop_search_keyframes: 0,
+            closure_min_occupancy: 80,
+            closure_min_degeneracy: 0.05,
+            closure_yank_gate: true,
+            closure_yank_gate_width: 1.0,
+            closure_yank_per_sqrt_gap: true,
+            closure_icp_dump_dir: String::new(),
+            closure_record_strain: false,
+            closure_yank_from_strain: false,
+            closure_extended_icp_max_keyframes: 16,
+            closure_robust_huber_k: 1.345,
+            closure_icp_max_iterations: 50,
+            closure_icp_max_correspondence_m: 10.0,
+            closure_gnc_var_scale: 10.0,
+            closure_gnc_inlier_probability: 0.95,
+            closure_gnc_apply_after_fraction: 0.05,
+            closure_gnc_deterministic: true,
+            closure_cooling: false,
+            closure_search_keyframes: 0,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
             odom_trans_xy_var: 1e-4,
@@ -404,14 +404,14 @@ pub struct GscPgo {
     pub(crate) config: Config,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
-    pub(crate) committed_loops: Vec<CommittedLoop>,
-    /// Per committed loop: its yank_z and gate confidence, for its loop-edge events.
-    pub(crate) loop_yank_z: Vec<f64>,
-    pub(crate) loop_fit_confidence: Vec<f64>,
-    /// A loop was committed since the last `update`.
-    pub(crate) new_loop: bool,
-    /// Committed loops a solve has been started for.
-    pub(crate) loops_dispatched: usize,
+    pub(crate) committed_closures: Vec<CommittedClosure>,
+    /// Per committed closure: its yank_z and gate confidence, for its closure-edge events.
+    pub(crate) closure_yank_z: Vec<f64>,
+    pub(crate) closure_fit_confidence: Vec<f64>,
+    /// A closure was committed since the last `update`.
+    pub(crate) new_closure: bool,
+    /// Committed closures a solve has been started for.
+    pub(crate) closures_dispatched: usize,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     pub(crate) scan_context_descriptors: Vec<similarity_discovery::Descriptor>,
@@ -419,18 +419,18 @@ pub struct GscPgo {
     pub(crate) rotation_offset: Mat3,
     pub(crate) translation_offset: Vec3,
     pub(crate) timing: TimingStats,
-    pub(crate) loop_diagnostics: Vec<LoopCandidateDiag>,
-    pub(crate) loop_edge_events: Vec<LoopEdgeEvent>,
+    pub(crate) closure_diagnostics: Vec<ClosureCandidateDiag>,
+    pub(crate) closure_edge_events: Vec<ClosureEdgeEvent>,
     /// Rotation (deg) and translation (m) yank of every candidate ICP has scored (per sqrt keyframe
-    /// gap with `loop_yank_per_sqrt_gap`), the scale new yanks are measured against. Every scored
-    /// candidate, not just committed ones: a scale taken only from loops the gate let through would
+    /// gap with `closure_yank_per_sqrt_gap`), the scale new yanks are measured against. Every scored
+    /// candidate, not just committed ones: a scale taken only from closures the gate let through would
     /// shrink with each rejection and reject the rest.
     pub(crate) scored_yanks: Vec<(f64, f64)>,
-    pub(crate) waiting_proposal: Option<LoopProposal>,
+    pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// Keyframes the newest dispatched solve covered.
     pub(crate) solving_keyframes: usize,
-    /// A finished search waiting for its keyframe (`loop_search_keyframes`).
-    pub(crate) pending_search: Option<(LoopSearchResult, usize)>,
+    /// A finished search waiting for its keyframe (`closure_search_keyframes`).
+    pub(crate) pending_search: Option<(ClosureSearchResult, usize)>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -445,33 +445,33 @@ pub(crate) struct TimingStats {
     pub(crate) solve_s: f64,
 }
 
-/// The ICP half of one loop search, on its own copy of the keyframes so it can run on another thread
-/// while scans keep arriving (`GscPgo::begin_loop_search` makes it, `finish_loop_search` applies it).
+/// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
+/// while scans keep arriving (`GscPgo::begin_closure_search` makes it, `finish_closure_search` applies it).
 /// A keyframe through stages 1 and 2, waiting for the search thread: its candidate target, the
 /// scan-context column shift between them, and the match's cosine distance (lower is better).
-pub struct LoopProposal {
-    pub(crate) diag: LoopCandidateDiag,
-    pub(crate) loop_idx: usize,
+pub struct ClosureProposal {
+    pub(crate) diag: ClosureCandidateDiag,
+    pub(crate) target_idx: usize,
     pub(crate) sector_shift: i32,
     pub(crate) similarity: f32,
 }
 
-pub struct LoopSearch {
+pub struct ClosureSearch {
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) config: Config,
     pub(crate) scored_yanks: Vec<(f64, f64)>,
-    /// The loops the newest solve kept, for `loop_record_strain`.
-    pub(crate) kept_loops: Vec<Edge>,
-    pub(crate) diag: LoopCandidateDiag,
-    pub(crate) loop_idx: usize,
+    /// The closures the newest solve kept.
+    pub(crate) kept_closures: Vec<Edge>,
+    pub(crate) diag: ClosureCandidateDiag,
+    pub(crate) target_idx: usize,
     pub(crate) init_rotation: Mat3,
     pub(crate) init_translation: Vec3,
 }
 
-/// What a `LoopSearch` found: its diagnostics, the loop it accepts (relative rotation, translation,
+/// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
 /// fitness), the yank it scored, and the time each stage took.
-pub struct LoopSearchResult {
-    diag: LoopCandidateDiag,
+pub struct ClosureSearchResult {
+    diag: ClosureCandidateDiag,
     accepted: Option<(Mat3, Vec3, f64)>,
     scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
@@ -479,13 +479,13 @@ pub struct LoopSearchResult {
 
 /// A search that ended at the gate `outcome`.
 fn rejected(
-    mut diag: LoopCandidateDiag,
+    mut diag: ClosureCandidateDiag,
     outcome: &'static str,
     scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
-) -> LoopSearchResult {
+) -> ClosureSearchResult {
     diag.outcome = outcome;
-    LoopSearchResult {
+    ClosureSearchResult {
         diag,
         accepted: None,
         scored_yank,
@@ -493,19 +493,19 @@ fn rejected(
     }
 }
 
-impl LoopSearch {
-    /// The ICP half of a loop search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
-    pub fn run(self) -> LoopSearchResult {
+impl ClosureSearch {
+    /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
+    pub fn run(self) -> ClosureSearchResult {
         let mut diag = self.diag.clone();
-        let (cur_idx, loop_idx) = (diag.source_id, self.loop_idx);
+        let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
         let mut scored_yank = None;
         let t0 = std::time::Instant::now();
         let target_cloud = sub_map(
             &self.key_poses,
-            loop_idx as i32,
-            self.config.loop_submap_half_range,
+            target_idx as i32,
+            self.config.closure_submap_half_range,
             self.config.submap_resolution,
         );
         let source_cloud = sub_map(
@@ -525,16 +525,16 @@ impl LoopSearch {
             &init_rotation,
             &init_translation,
             &IcpParams {
-                max_iterations: self.config.loop_icp_max_iterations as usize,
-                max_correspondence_distance: self.config.loop_icp_max_correspondence_m,
+                max_iterations: self.config.closure_icp_max_iterations as usize,
+                max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
             },
         );
         timing.icp_s += t0.elapsed().as_secs_f64();
-        if !self.config.loop_icp_dump_dir.is_empty() {
+        if !self.config.closure_icp_dump_dir.is_empty() {
             dump_icp(
-                &self.config.loop_icp_dump_dir,
+                &self.config.closure_icp_dump_dir,
                 cur_idx,
-                loop_idx,
+                target_idx,
                 &source_cloud,
                 &target_cloud,
                 &icp,
@@ -554,26 +554,36 @@ impl LoopSearch {
         timing.degeneracy_s += t0.elapsed().as_secs_f64();
         diag.degeneracy_min = degeneracy_min;
 
-        if self.config.loop_min_degeneracy > 0.0
+        if self.config.closure_min_degeneracy > 0.0
             && degeneracy_min >= 0.0
-            && (degeneracy_min as f64) < self.config.loop_min_degeneracy
+            && (degeneracy_min as f64) < self.config.closure_min_degeneracy
         {
             return rejected(diag, "degeneracy_reject", scored_yank, timing);
         }
 
-        if !icp.converged || icp.fitness > self.config.loop_score_thresh {
+        if !icp.converged || icp.fitness > self.config.closure_score_thresh {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
-        // the pose graph takes ICP's fitness as the loop's variance: when the odometry between the two ends is
-        // already surer of their relative position than that, the loop adds only ICP's noise
-        if icp.fitness >= (cur_idx - loop_idx) as f64 * self.config.odom_trans_xy_var {
+        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
+        // ends' relative position than that (along the odometry, or across one kept closure), the closure adds only
+        // ICP's noise, and repeats of a closure already kept would count the same evidence twice
+        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * self.config.odom_trans_xy_var;
+        let known = self
+            .kept_closures
+            .iter()
+            .fold(step(cur_idx, target_idx), |known, l| {
+                let via =
+                    |a: usize, b: usize| step(target_idx, a) + l.variances[3] + step(cur_idx, b);
+                known.min(via(l.from, l.to)).min(via(l.to, l.from))
+            });
+        if icp.fitness >= known {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
 
         let mut score = icp.fitness;
-        let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[loop_idx]);
-        let loop_rotation_transpose = mat3::transpose(&target.rotation_global);
-        // the loop measurement an alignment gives: the source keyframe moved by it, in the target's frame
+        let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[target_idx]);
+        let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
+        // the closure measurement an alignment gives: the source keyframe moved by it, in the target's frame
         let measured = |rotation: &Mat3, translation: &Vec3| {
             let moved = mat3::add(
                 &mat3::mat_vec(rotation, &source.translation_global),
@@ -581,11 +591,11 @@ impl LoopSearch {
             );
             (
                 mat3::mat_mul(
-                    &loop_rotation_transpose,
+                    &closure_rotation_transpose,
                     &mat3::mat_mul(rotation, &source.rotation_global),
                 ),
                 mat3::mat_vec(
-                    &loop_rotation_transpose,
+                    &closure_rotation_transpose,
                     &mat3::sub(&moved, &target.translation_global),
                 ),
             )
@@ -594,7 +604,7 @@ impl LoopSearch {
             measured(&icp.rotation, &icp.translation);
 
         // Graph yank: how far this constraint pulls the source keyframe from the
-        // current odom-chain estimate (relative pose loop->cur, in the loop's
+        // current odom-chain estimate (relative pose closure->cur, in the closure's
         // frame). A large yank on a plausible-distance candidate = a closure that
         // disagrees with odometry = the signature of a false closure.
         let (current_relative_rotation, current_relative_translation) =
@@ -607,10 +617,10 @@ impl LoopSearch {
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
 
         scored_yank = Some(self.score_candidate(&mut diag));
-        if self.config.loop_record_strain || self.config.loop_yank_from_strain {
+        if self.config.closure_record_strain || self.config.closure_yank_from_strain {
             let poses = &self.key_poses[..=cur_idx];
-            let loops: Vec<Edge> = self
-                .kept_loops
+            let closures: Vec<Edge> = self
+                .kept_closures
                 .iter()
                 .filter(|l| l.from.max(l.to) <= cur_idx)
                 .copied()
@@ -622,10 +632,10 @@ impl LoopSearch {
                     .map(|k| k.translation_global)
                     .collect::<Vec<_>>(),
                 &odometry_edges(poses, &self.config),
-                &loops,
-                &vec![1.0; loops.len()],
+                &closures,
+                &vec![1.0; closures.len()],
                 &Edge {
-                    from: loop_idx,
+                    from: target_idx,
                     to: cur_idx,
                     rotation: rotation_offset,
                     translation: translation_offset,
@@ -634,11 +644,11 @@ impl LoopSearch {
                 },
             );
         }
-        if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
+        if self.config.closure_yank_gate && diag.confidence < diag.required_confidence {
             let t0 = std::time::Instant::now();
             let extended = self.extended_icp(
                 cur_idx,
-                loop_idx,
+                target_idx,
                 &source_cloud,
                 &target_tree,
                 &icp,
@@ -648,14 +658,14 @@ impl LoopSearch {
             let Some(extended) = extended else {
                 return rejected(diag, "yank_confidence_reject", scored_yank, timing);
             };
-            // the loop measurement comes from the extended alignment, which saw more of both places
+            // the closure measurement comes from the extended alignment, which saw more of both places
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
             score = extended.fitness;
         }
 
         diag.outcome = "accepted";
-        LoopSearchResult {
+        ClosureSearchResult {
             diag,
             accepted: Some((rotation_offset, translation_offset, score)),
             scored_yank,
@@ -678,11 +688,11 @@ impl GscPgo {
             config,
             scan_context_config,
             key_poses: Vec::new(),
-            committed_loops: Vec::new(),
-            loop_yank_z: Vec::new(),
-            loop_fit_confidence: Vec::new(),
-            new_loop: false,
-            loops_dispatched: 0,
+            committed_closures: Vec::new(),
+            closure_yank_z: Vec::new(),
+            closure_fit_confidence: Vec::new(),
+            new_closure: false,
+            closures_dispatched: 0,
             solving: None,
             graph_error: 0.0,
             scan_context_descriptors: Vec::new(),
@@ -690,8 +700,8 @@ impl GscPgo {
             rotation_offset: mat3::identity(),
             translation_offset: [0.0; 3],
             timing: TimingStats::default(),
-            loop_diagnostics: Vec::new(),
-            loop_edge_events: Vec::new(),
+            closure_diagnostics: Vec::new(),
+            closure_edge_events: Vec::new(),
             scored_yanks: Vec::new(),
             waiting_proposal: None,
             solving_keyframes: 0,
@@ -711,12 +721,12 @@ impl GscPgo {
             ("solve", t.solve_s),
         ]
     }
-    pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
-        &self.loop_diagnostics
+    pub fn closure_diagnostics(&self) -> &[ClosureCandidateDiag] {
+        &self.closure_diagnostics
     }
-    /// Every loop-edge lifecycle event so far, oldest first.
-    pub fn loop_edge_events(&self) -> &[LoopEdgeEvent] {
-        &self.loop_edge_events
+    /// Every closure-edge lifecycle event so far, oldest first.
+    pub fn closure_edge_events(&self) -> &[ClosureEdgeEvent] {
+        &self.closure_edge_events
     }
     fn newest_keyframe_time(&self) -> f64 {
         self.key_poses.last().map_or(f64::NAN, |k| k.time)
@@ -725,11 +735,11 @@ impl GscPgo {
         &mut self,
         source_id: usize,
         target_id: usize,
-        state: LoopEdgeState,
+        state: ClosureEdgeState,
         confidence: f64,
         yank_z: f64,
     ) {
-        self.loop_edge_events.push(LoopEdgeEvent {
+        self.closure_edge_events.push(ClosureEdgeEvent {
             time: self.newest_keyframe_time(),
             source_id,
             target_id,
@@ -739,33 +749,39 @@ impl GscPgo {
         });
     }
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
-    /// as loop-edge events.
-    pub(crate) fn record_search(&mut self, diag: LoopCandidateDiag) {
+    /// as closure-edge events.
+    pub(crate) fn record_search(&mut self, diag: ClosureCandidateDiag) {
         if diag.target_id >= 0 {
             let (source, target) = (diag.source_id, diag.target_id as usize);
             let proposed = if diag.scan_context_best.is_finite() {
                 1.0 - diag.scan_context_best as f64
             } else {
-                1.0 - diag.candidate_distance / self.config.loop_search_radius.max(f64::EPSILON)
+                1.0 - diag.candidate_distance / self.config.closure_search_radius.max(f64::EPSILON)
             };
-            self.push_edge(source, target, LoopEdgeState::Proposed, proposed, f64::NAN);
+            self.push_edge(
+                source,
+                target,
+                ClosureEdgeState::Proposed,
+                proposed,
+                f64::NAN,
+            );
             let checked = if diag.confidence.is_finite() {
                 diag.confidence
             } else {
                 proposed
             };
             let outcome = if diag.outcome == "accepted" {
-                LoopEdgeState::Committed
+                ClosureEdgeState::Committed
             } else {
-                LoopEdgeState::GateRejected
+                ClosureEdgeState::GateRejected
             };
-            if outcome == LoopEdgeState::Committed {
-                self.loop_fit_confidence.push(checked.clamp(0.0, 1.0));
-                self.loop_yank_z.push(diag.yank_z);
+            if outcome == ClosureEdgeState::Committed {
+                self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
+                self.closure_yank_z.push(diag.yank_z);
             }
             self.push_edge(source, target, outcome, checked, diag.yank_z);
         }
-        self.loop_diagnostics.push(diag);
+        self.closure_diagnostics.push(diag);
     }
     /// Keyframe gating by translation / rotation delta against the last
     /// keyframe's LOCAL pose.
@@ -804,26 +820,26 @@ impl GscPgo {
     pub fn translation_offset(&self) -> Vec3 {
         self.translation_offset
     }
-    /// Whether a loop was committed since the last `update`.
-    pub fn has_loop(&self) -> bool {
-        self.new_loop
+    /// Whether a closure was committed since the last `update`.
+    pub fn has_closure(&self) -> bool {
+        self.new_closure
     }
 
     /// Candidate search (scan context with position fallback) + all the
     /// gates, ICP verification, and LoopPair construction.
-    /// Record that this keyframe's loop search was skipped because newer scans
+    /// Record that this keyframe's closure search was skipped because newer scans
     /// are already queued behind it: a search (an ICP on a large cloud can take
     /// seconds) must never be what makes the module fall behind.
     /// Stages 1 and 2 for the newest keyframe, inline on every keyframe: it becomes the waiting
     /// proposal if its scan-context match beats the one already waiting (the loser is recorded as
     /// "outranked"), so a busy search thread still gets the most promising keyframe it missed.
-    pub fn propose_loop(&mut self) {
+    pub fn propose_closure(&mut self) {
         if self.key_poses.len() < 10 {
             return;
         }
         let cur_idx = self.key_poses.len() - 1;
         let current = &self.key_poses[cur_idx];
-        let mut diag = LoopCandidateDiag::new(cur_idx, current.time, current.translation_global);
+        let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
         // stage 1, universal uniqueness: a scan whose structure barely fills the descriptor can't place itself
         let descriptor = &self.scan_context_descriptors[cur_idx];
@@ -831,7 +847,7 @@ impl GscPgo {
             diag.descriptor_structure = similarity_discovery::descriptor_structure(descriptor);
             diag.descriptor_occupancy =
                 similarity_discovery::descriptor_occupancy(descriptor) as i32;
-            if diag.descriptor_occupancy < self.config.loop_min_occupancy {
+            if diag.descriptor_occupancy < self.config.closure_min_occupancy {
                 diag.outcome = "low_occupancy";
                 self.record_search(diag);
                 return;
@@ -840,21 +856,21 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (mut loop_idx, sector_shift, sc_best, sc_second) = self.search_by_scan_context();
+        let (mut target_idx, sector_shift, sc_best, sc_second) = self.search_by_scan_context();
         self.timing.scan_context_s += t0.elapsed().as_secs_f64();
-        diag.from_scan_context = loop_idx >= 0;
-        if loop_idx < 0 {
-            loop_idx = self.search_by_position();
+        diag.from_scan_context = target_idx >= 0;
+        if target_idx < 0 {
+            target_idx = self.search_by_position();
         }
-        if loop_idx < 0 {
+        if target_idx < 0 {
             diag.outcome = "no_candidate";
             self.record_search(diag);
             return;
         }
-        let loop_idx = loop_idx as usize;
-        diag.target_id = loop_idx as i64;
-        diag.target_time = self.key_poses[loop_idx].time;
-        diag.target_xyz = self.key_poses[loop_idx].translation_global;
+        let target_idx = target_idx as usize;
+        diag.target_id = target_idx as i64;
+        diag.target_time = self.key_poses[target_idx].time;
+        diag.target_xyz = self.key_poses[target_idx].translation_global;
         diag.candidate_distance = mat3::norm(&mat3::sub(&diag.source_xyz, &diag.target_xyz));
         if diag.from_scan_context && sc_second > 1e-6 {
             diag.scan_context_best = sc_best;
@@ -863,9 +879,9 @@ impl GscPgo {
         }
         // a position-only candidate ranks below any scan-context match (cosine distance is at most 2)
         let similarity = if diag.from_scan_context { sc_best } else { 2.0 };
-        let proposal = LoopProposal {
+        let proposal = ClosureProposal {
             diag,
-            loop_idx,
+            target_idx,
             sector_shift,
             similarity,
         };
@@ -886,17 +902,17 @@ impl GscPgo {
         diag.outcome = "outranked";
         self.record_search(diag);
     }
-    /// Take the waiting proposal as a `LoopSearch` (stages 3 and 4) to run on any thread and hand to
-    /// `finish_loop_search`.
-    pub fn begin_loop_search(&mut self) -> Option<LoopSearch> {
-        let LoopProposal {
+    /// Take the waiting proposal as a `ClosureSearch` (stages 3 and 4) to run on any thread and hand to
+    /// `finish_closure_search`.
+    pub fn begin_closure_search(&mut self) -> Option<ClosureSearch> {
+        let ClosureProposal {
             diag,
-            loop_idx,
+            target_idx,
             sector_shift,
             ..
         } = self.waiting_proposal.take()?;
         let source_position = self.key_poses[diag.source_id].translation_global;
-        let target_position = self.key_poses[loop_idx].translation_global;
+        let target_position = self.key_poses[target_idx].translation_global;
         // ICP starts with the source keyframe at the target's position, turned by the scan-context yaw:
         // after a long drift the two positions differ by the whole drift, and seeding at the source's
         // own position would leave the two submaps without overlap
@@ -910,26 +926,27 @@ impl GscPgo {
             &target_position,
             &mat3::mat_vec(&init_rotation, &source_position),
         );
-        Some(LoopSearch {
+        Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: self.config.clone(),
             scored_yanks: self.scored_yanks.clone(),
-            kept_loops: if self.config.loop_record_strain || self.config.loop_yank_from_strain {
-                loop_edges(self.committed_loops.iter().filter(|l| l.gnc_weight > 0.5))
-            } else {
-                Vec::new()
-            },
+            // kept, or not judged yet
+            kept_closures: closure_edges(
+                self.committed_closures
+                    .iter()
+                    .filter(|l| !(l.gnc_weight <= 0.5)),
+            ),
             diag,
-            loop_idx,
+            target_idx,
             init_rotation,
             init_translation,
         })
     }
-    /// Search for a loop at the newest keyframe, all on this thread.
-    /// With `loop_search_keyframes`, a search holds the search thread for that many keyframes before its
+    /// Search for a closure at the newest keyframe, all on this thread.
+    /// With `closure_search_keyframes`, a search holds the search thread for that many keyframes before its
     /// result lands (proposals queue meanwhile), the way a slower machine would, but the same on every machine.
-    pub fn search_for_loop_pairs(&mut self) {
-        self.propose_loop();
+    pub fn search_for_closure_pairs(&mut self) {
+        self.propose_closure();
         if self
             .pending_search
             .as_ref()
@@ -938,19 +955,19 @@ impl GscPgo {
             return;
         }
         if let Some((result, _)) = self.pending_search.take() {
-            self.finish_loop_search(result);
+            self.finish_closure_search(result);
         }
-        if let Some(search) = self.begin_loop_search() {
+        if let Some(search) = self.begin_closure_search() {
             let result = search.run();
-            match self.config.loop_search_keyframes {
-                0 => self.finish_loop_search(result),
+            match self.config.closure_search_keyframes {
+                0 => self.finish_closure_search(result),
                 k => self.pending_search = Some((result, self.key_poses.len() + k)),
             }
         }
     }
-    /// Apply a `LoopSearch`'s result: record its diagnostics and commit the loop it accepted.
-    pub fn finish_loop_search(&mut self, result: LoopSearchResult) {
-        let LoopSearchResult {
+    /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.
+    pub fn finish_closure_search(&mut self, result: ClosureSearchResult) {
+        let ClosureSearchResult {
             diag,
             accepted,
             scored_yank,
@@ -969,7 +986,7 @@ impl GscPgo {
         };
         let (source, target) = (diag.source_id, diag.target_id as usize);
         self.record_search(diag);
-        self.commit_loop(source, target, rotation_offset, translation_offset, score);
+        self.commit_closure(source, target, rotation_offset, translation_offset, score);
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
@@ -1019,8 +1036,8 @@ impl GscPgo {
         }
     }
 
-    /// Commit a loop that passed every gate; the next `update` starts a solve with it.
-    fn commit_loop(
+    /// Commit a closure that passed every gate; the next `update` starts a solve with it.
+    fn commit_closure(
         &mut self,
         source_id: usize,
         target_id: usize,
@@ -1028,7 +1045,7 @@ impl GscPgo {
         translation_offset: Vec3,
         score: f64,
     ) {
-        self.committed_loops.push(CommittedLoop {
+        self.committed_closures.push(CommittedClosure {
             source_id,
             target_id,
             rotation_offset,
@@ -1036,13 +1053,10 @@ impl GscPgo {
             score,
             gnc_weight: f64::NAN,
         });
-        self.new_loop = true;
+        self.new_closure = true;
     }
 }
 
-/// Free an iSAM2 on a short-lived thread: tearing down a large Bayes tree would
-/// stall the pipeline thread.
-/// Write one candidate's ICP inputs and result (see `Config::loop_icp_dump_dir`).
 /// Aggregate the body clouds of keyframes [idx-half_range, idx+half_range] transformed by their
 /// GLOBAL poses, then voxel-downsample at `resolution` (when > 0).
 pub fn sub_map(

@@ -13,27 +13,27 @@
 // limitations under the License.
 
 //! Stage 4, proportional confidence: how much evidence a connection needs grows with how hard it pulls
-//! the graph. The yank (how far the loop would move its source keyframe from where the graph has it, or
-//! its strain with `loop_yank_from_strain`) is scaled against the yanks of the candidates scored so far
+//! the graph. The yank (how far the closure would move its source keyframe from where the graph has it, or
+//! its strain with `closure_yank_from_strain`) is scaled against the yanks of the candidates scored so far
 //! into z; the connection's confidence (scan context x ICP fitness x degeneracy) must reach
 //! 1 - exp(-z^2 / 2k^2), and one that falls short gets a second look with extended ICP on more keyframes.
 
 use crate::connection_fit::{dump_icp, icp, IcpParams, IcpResult};
-use crate::gsc_pgo::{LoopCandidateDiag, LoopSearch};
+use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Vec3};
 use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
 
-impl LoopSearch {
+impl ClosureSearch {
     /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
     /// return its yank for the scale.
-    pub(crate) fn score_candidate(&self, diag: &mut LoopCandidateDiag) -> (f64, f64) {
+    pub(crate) fn score_candidate(&self, diag: &mut ClosureCandidateDiag) -> (f64, f64) {
         let robust_scale = |values: Vec<f64>| -> f64 {
             let mut values = values;
             values.sort_by(f64::total_cmp);
             (1.4826 * values[values.len() / 2]).max(f64::EPSILON)
         };
-        // odometry drift is a random walk, so the yank a correct loop needs grows with sqrt(keyframes between its ends)
-        let drift = if self.config.loop_yank_per_sqrt_gap {
+        // odometry drift is a random walk, so the yank a correct closure needs grows with sqrt(keyframes between its ends)
+        let drift = if self.config.closure_yank_per_sqrt_gap {
             (diag.source_id as f64 - diag.target_id as f64)
                 .abs()
                 .max(1.0)
@@ -42,7 +42,7 @@ impl LoopSearch {
             1.0
         };
         diag.yank_drift_scale = drift;
-        if self.config.loop_yank_from_strain {
+        if self.config.closure_yank_from_strain {
             diag.yank_z = if self.scored_yanks.is_empty() {
                 0.0
             } else {
@@ -70,20 +70,22 @@ impl LoopSearch {
                     / self.config.scan_context_match_threshold.max(f64::EPSILON),
             )
         } else {
-            unit(1.0 - diag.candidate_distance / self.config.loop_search_radius.max(f64::EPSILON))
+            unit(
+                1.0 - diag.candidate_distance / self.config.closure_search_radius.max(f64::EPSILON),
+            )
         };
         diag.icp_factor =
-            unit(1.0 - diag.icp_fitness / self.config.loop_score_thresh.max(f64::EPSILON));
+            unit(1.0 - diag.icp_fitness / self.config.closure_score_thresh.max(f64::EPSILON));
         diag.degeneracy_factor =
-            if self.config.loop_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
-                unit(diag.degeneracy_min as f64 / self.config.loop_min_degeneracy)
+            if self.config.closure_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
+                unit(diag.degeneracy_min as f64 / self.config.closure_min_degeneracy)
             } else {
                 1.0
             };
         diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
-        let width = self.config.loop_yank_gate_width.max(f64::EPSILON);
+        let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
         diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / (2.0 * width * width)).exp();
-        if self.config.loop_yank_from_strain {
+        if self.config.closure_yank_from_strain {
             return (diag.strain, diag.strain);
         }
         (
@@ -109,25 +111,25 @@ impl LoopSearch {
         }
         cloud
     }
-    /// See `Config::loop_extended_icp_max_keyframes`. Returns the extended ICP of the first round
+    /// See `Config::closure_extended_icp_max_keyframes`. Returns the extended ICP of the first round
     /// whose confidence clears `diag.required_confidence`, or None.
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,
-        loop_idx: usize,
+        target_idx: usize,
         source_cloud: &PointCloud,
         target_tree: &KdTree,
         first: &IcpResult,
-        diag: &mut LoopCandidateDiag,
+        diag: &mut ClosureCandidateDiag,
     ) -> Option<IcpResult> {
-        let max_keyframes = self.config.loop_extended_icp_max_keyframes;
+        let max_keyframes = self.config.closure_extended_icp_max_keyframes;
         if max_keyframes < 2 || !first.converged {
             return None;
         }
-        let max_distance = self.config.loop_icp_max_correspondence_m;
+        let max_distance = self.config.closure_icp_max_correspondence_m;
         // a point overlaps when it is within the RMS distance the ICP score gate allows (fitness is a mean squared distance)
         let inliers = |source: &PointCloud, tree: &KdTree, icp: &IcpResult| {
-            let limit = self.config.loop_score_thresh as f32;
+            let limit = self.config.closure_score_thresh as f32;
             transform_cloud(source, &icp.rotation, &icp.translation)
                 .iter()
                 .filter(|p| matches!(tree.nearest(p), Some((_, d)) if d <= limit))
@@ -139,18 +141,20 @@ impl LoopSearch {
             return None;
         }
         let params = IcpParams {
-            max_iterations: self.config.loop_icp_max_iterations as usize,
+            max_iterations: self.config.closure_icp_max_iterations as usize,
             max_correspondence_distance: max_distance,
         };
-        let half_range = self.config.loop_submap_half_range.max(0) as usize;
-        let radius = self.config.loop_search_radius;
+        let half_range = self.config.closure_submap_half_range.max(0) as usize;
+        let radius = self.config.closure_search_radius;
         // each round starts from the previous round's alignment, which saw more of both places than the first ICP
         let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
         let mut keyframes = 2;
         while keyframes <= max_keyframes {
             // never stack source keyframes into the stretch the target side is drawn from
             let window = half_range + keyframes;
-            let source_first = cur_idx.saturating_sub(keyframes).max(loop_idx + window + 1);
+            let source_first = cur_idx
+                .saturating_sub(keyframes)
+                .max(target_idx + window + 1);
             if source_first >= cur_idx {
                 return None;
             }
@@ -164,9 +168,9 @@ impl LoopSearch {
                 })
                 .collect();
             let target_ids =
-                loop_idx.saturating_sub(window)..=(loop_idx + window).min(source_first - 1);
+                target_idx.saturating_sub(window)..=(target_idx + window).min(source_first - 1);
             let near = |j: usize| {
-                j.abs_diff(loop_idx) <= half_range
+                j.abs_diff(target_idx) <= half_range
                     || placed.iter().any(|p| {
                         mat3::norm(&mat3::sub(p, &self.key_poses[j].translation_global)) < radius
                     })
@@ -190,11 +194,11 @@ impl LoopSearch {
                 &seed_translation,
                 &params,
             );
-            if !self.config.loop_icp_dump_dir.is_empty() {
+            if !self.config.closure_icp_dump_dir.is_empty() {
                 dump_icp(
-                    &self.config.loop_icp_dump_dir,
+                    &self.config.closure_icp_dump_dir,
                     cur_idx,
-                    loop_idx,
+                    target_idx,
                     &source,
                     &target,
                     &icp,
@@ -215,7 +219,7 @@ impl LoopSearch {
             let per_scan = diag.confidence * held_up;
             // evidence = -ln(1 - confidence); the gate compares it to z^2 / 2k^2 without rounding to 1
             let evidence = -(1.0 - per_scan).ln() * extended as f64 / single as f64;
-            let width = self.config.loop_yank_gate_width.max(f64::EPSILON);
+            let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
             let required = diag.yank_z * diag.yank_z / (2.0 * width * width);
             let confidence = 1.0 - (-evidence).exp();
             diag.extended_keyframes = cur_idx - source_first + 1;

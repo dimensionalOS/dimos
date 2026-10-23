@@ -341,28 +341,28 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
 }
 
 impl crate::gsc_pgo::GscPgo {
-    /// The newest keyframe a loop may close onto: one older than the source's extended-ICP stack plus
+    /// The newest keyframe a closure may close onto: one older than the source's extended-ICP stack plus
     /// the target's submap half-width, so the two sides never share clouds (a match there only
     /// checks odometry against itself).
-    fn newest_loop_target(&self) -> usize {
+    fn newest_closure_target(&self) -> usize {
         (self.key_poses.len() - 1).saturating_sub(
-            self.config.loop_extended_icp_max_keyframes.max(1)
-                + self.config.loop_submap_half_range.max(0) as usize,
+            self.config.closure_extended_icp_max_keyframes.max(1)
+                + self.config.closure_submap_half_range.max(0) as usize,
         )
     }
     /// Radius search on past key-pose global positions (candidates ascending
     /// by distance), returning the nearest that is far enough back.
     pub(crate) fn search_by_position(&self) -> i64 {
         let here = self.key_poses.last().unwrap().translation_global;
-        self.key_poses[..self.newest_loop_target()]
+        self.key_poses[..self.newest_closure_target()]
             .iter()
             .map(|k| mat3::norm(&mat3::sub(&k.translation_global, &here)))
             .enumerate()
-            .filter(|&(_, d)| d <= self.config.loop_search_radius)
+            .filter(|&(_, d)| d <= self.config.closure_search_radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map_or(-1, |(i, _)| i as i64)
     }
-    /// Scan-context candidate search. Returns (loop_idx or -1,
+    /// Scan-context candidate search. Returns (target_idx or -1,
     /// sector_shift, best, second): the accepted candidate under the match
     /// threshold, plus the closest / 2nd-closest cosine distances across the
     /// top-K (the Lowe ratio distinctiveness signal).
@@ -378,7 +378,7 @@ impl crate::gsc_pgo::GscPgo {
         // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
         let ranked = ring_key_top_k(
             self.scan_context_ring_keys.last().unwrap(),
-            &self.scan_context_ring_keys[..self.newest_loop_target()],
+            &self.scan_context_ring_keys[..self.newest_closure_target()],
             self.scan_context_config.candidate_top_k,
         );
         let mut best_dist = f32::MAX;

@@ -19,7 +19,7 @@
 //! - stage 2 `similarity_discovery`: which earlier keyframes it might be (scan context, position).
 //! - stage 3 `connection_fit`: how well the two places line up (ICP).
 //! - stage 4 `proportional_confidence`: extended ICP until the evidence matches the yank.
-//! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which loops agree.
+//! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which closures agree.
 //!
 //! `mat3` and `pointcloud` are the small math underneath. The module executable (`src/main.rs`,
 //! binary `gsc-pgo`) builds behind the default `native` feature.

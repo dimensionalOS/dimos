@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, with graduated non-convexity (truncated least squares) deciding which loops are inliers by
+//! A pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, with graduated non-convexity (truncated least squares) deciding which closures are inliers by
 //! how well they agree with the odometry and with each other, then a Huber pass on the kept ones.
 
 use faer::linalg::solvers::SolveCore;
@@ -22,7 +22,7 @@ use faer::{Conj, Mat, Side};
 
 use std::thread::JoinHandle;
 
-use crate::gsc_pgo::{CommittedLoop, Config, GscPgo, KeyPoseWithCloud, LoopEdgeState};
+use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
@@ -39,19 +39,19 @@ pub struct Edge {
 
 #[derive(Clone)]
 pub struct SolveConfig {
-    /// Loop variances are multiplied by this while GNC decides inliers (looser, so drift alone is not an outlier).
+    /// Closure variances are multiplied by this while GNC decides inliers (looser, so drift alone is not an outlier).
     pub gnc_variance_scale: f64,
-    /// Probability that an inlier loop's residual is within GNC's threshold (sets the chi-square cutoff).
+    /// Probability that an inlier closure's residual is within GNC's threshold (sets the chi-square cutoff).
     pub gnc_inlier_probability: f64,
-    /// Huber threshold on a kept loop's whitened residual; 0 = plain least squares.
+    /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
 }
 
 pub struct Solution {
     pub rotations: Vec<Mat3>,
     pub positions: Vec<Vec3>,
-    /// Per loop: 1 kept, 0 rejected (GNC's final weight, rounded at 0.5).
-    pub loop_weights: Vec<f64>,
+    /// Per closure: 1 kept, 0 rejected (GNC's final weight, rounded at 0.5).
+    pub closure_weights: Vec<f64>,
     /// Half the sum of squared whitened residuals of everything kept.
     pub error: f64,
 }
@@ -63,31 +63,31 @@ pub fn solve(
     positions: &[Vec3],
     free: &[bool],
     odometry: &[Edge],
-    loops: &[Edge],
+    closures: &[Edge],
     config: &SolveConfig,
 ) -> Solution {
     let mut state = State {
         rotation: rotations.to_vec(),
         position: positions.to_vec(),
     };
-    let scaled: Vec<Edge> = loops
+    let scaled: Vec<Edge> = closures
         .iter()
         .map(|e| Edge {
             variances: e.variances.map(|v| v * config.gnc_variance_scale),
             ..*e
         })
         .collect();
-    let pattern = Pattern::new(free, odometry.iter().chain(loops));
+    let pattern = Pattern::new(free, odometry.iter().chain(closures));
 
-    // GNC with truncated least squares (Yang et al. 2020): start convex (every loop in), then tighten
-    // until each loop is clearly in or out. Odometry is always in.
+    // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
+    // until each closure is clearly in or out. Odometry is always in.
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
     // GNC's starting mu comes from the residuals at the starting estimate, before any solve (as GTSAM's
     // GncOptimizer does): the worse the start, the more gently it tightens
     let worst = residual(&state).into_iter().fold(0.0, f64::max);
-    let mut weights = vec![1.0; loops.len()];
+    let mut weights = vec![1.0; closures.len()];
     levenberg_marquardt(&mut state, &pattern, odometry, &scaled, &weights, 1e-5);
     let mut r2 = residual(&state);
     if worst > threshold {
@@ -122,11 +122,11 @@ pub fn solve(
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
         .collect();
 
-    // the kept loops at their own variances, Huber-weighted
+    // the kept closures at their own variances, Huber-weighted
     let mut huber = kept.clone();
     for _ in 0..3 {
-        levenberg_marquardt(&mut state, &pattern, odometry, loops, &huber, 1e-5);
-        for (h, (e, &k)) in huber.iter_mut().zip(loops.iter().zip(&kept)) {
+        levenberg_marquardt(&mut state, &pattern, odometry, closures, &huber, 1e-5);
+        for (h, (e, &k)) in huber.iter_mut().zip(closures.iter().zip(&kept)) {
             let r = whitened_squared(e, &state).sqrt();
             *h = if config.huber_k > 0.0 && r > config.huber_k {
                 k * config.huber_k / r
@@ -135,11 +135,11 @@ pub fn solve(
             };
         }
     }
-    let error = 0.5 * cost(&state, odometry, loops, &huber);
+    let error = 0.5 * cost(&state, odometry, closures, &huber);
     Solution {
         rotations: state.rotation,
         positions: state.position,
-        loop_weights: kept,
+        closure_weights: kept,
         error,
     }
 }
@@ -244,14 +244,14 @@ fn skew(v: &Vec3) -> Mat3 {
     [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]
 }
 
-fn cost(state: &State, odometry: &[Edge], loops: &[Edge], loop_weights: &[f64]) -> f64 {
+fn cost(state: &State, odometry: &[Edge], closures: &[Edge], closure_weights: &[f64]) -> f64 {
     odometry
         .iter()
         .map(|e| whitened_squared(e, state))
         .sum::<f64>()
-        + loops
+        + closures
             .iter()
-            .zip(loop_weights)
+            .zip(closure_weights)
             .map(|(e, w)| w * whitened_squared(e, state))
             .sum::<f64>()
 }
@@ -325,16 +325,16 @@ fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
     odometry: &[Edge],
-    loops: &[Edge],
-    loop_weights: &[f64],
+    closures: &[Edge],
+    closure_weights: &[f64],
     tolerance: f64,
 ) {
     let size = pattern.size;
     let mut damping = 1e-6;
-    let mut current = cost(state, odometry, loops, loop_weights);
+    let mut current = cost(state, odometry, closures, closure_weights);
     for _ in 0..100 {
         let (mut values, gradient, diagonal) =
-            normal_equations(state, pattern, odometry, loops, loop_weights);
+            normal_equations(state, pattern, odometry, closures, closure_weights);
         let filled = values.len();
         values.resize(filled + size, 0.0);
         let mut stepped = false;
@@ -363,7 +363,7 @@ fn levenberg_marquardt(
                     (trial.rotation[k], trial.position[k]) = state.retract(k, &delta);
                 }
             }
-            let trial_cost = cost(&trial, odometry, loops, loop_weights);
+            let trial_cost = cost(&trial, odometry, closures, closure_weights);
             if trial_cost.is_finite() && trial_cost <= current {
                 stepped = current - trial_cost > tolerance * current;
                 *state = trial;
@@ -385,8 +385,8 @@ fn normal_equations(
     state: &State,
     pattern: &Pattern,
     odometry: &[Edge],
-    loops: &[Edge],
-    loop_weights: &[f64],
+    closures: &[Edge],
+    closure_weights: &[f64],
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let mut values: Vec<f64> = Vec::new();
     let mut gradient = vec![0.0; pattern.size];
@@ -394,7 +394,7 @@ fn normal_equations(
     let weighted = odometry
         .iter()
         .map(|e| (e, 1.0))
-        .chain(loops.iter().zip(loop_weights.iter().copied()));
+        .chain(closures.iter().zip(closure_weights.iter().copied()));
     for (e, w) in weighted {
         let (r, jf, jt) = linearize(e, state);
         let jacobian = |k: usize| if k == e.from { &jf } else { &jt };
@@ -424,17 +424,17 @@ fn normal_equations(
     (values, gradient, diagonal)
 }
 
-/// How hard the graph resists a proposed loop: the rise in its error if the loop were forced in
-/// rigidly, to first order. That is the loop's residual at the current poses measured against the
-/// graph's uncertainty between its two keyframes (every path between them, earlier loops
-/// included) plus the loop's own: r^T (J Sigma J^T + loop variance)^-1 r. `rotations` /
-/// `positions` should be the graph's solution with `loops` (weighted by `loop_weights`).
+/// How hard the graph resists a proposed closure: the rise in its error if the closure were forced in
+/// rigidly, to first order. That is the closure's residual at the current poses measured against the
+/// graph's uncertainty between its two keyframes (every path between them, earlier closures
+/// included) plus the closure's own: r^T (J Sigma J^T + closure variance)^-1 r. `rotations` /
+/// `positions` should be the graph's solution with `closures` (weighted by `closure_weights`).
 pub fn strain(
     rotations: &[Mat3],
     positions: &[Vec3],
     odometry: &[Edge],
-    loops: &[Edge],
-    loop_weights: &[f64],
+    closures: &[Edge],
+    closure_weights: &[f64],
     candidate: &Edge,
 ) -> f64 {
     let n = rotations.len();
@@ -446,10 +446,10 @@ pub fn strain(
         position: positions.to_vec(),
     };
     let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-    let pattern = Pattern::new(&free, odometry.iter().chain(loops));
+    let pattern = Pattern::new(&free, odometry.iter().chain(closures));
     let size = pattern.size;
     let (mut values, _, diagonal) =
-        normal_equations(&state, &pattern, odometry, loops, loop_weights);
+        normal_equations(&state, &pattern, odometry, closures, closure_weights);
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
     let hessian = SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
         .expect("pose graph hessian");
@@ -457,7 +457,7 @@ pub fn strain(
     else {
         return f64::INFINITY;
     };
-    // the covariance columns of the loop's two keyframes (keyframe 0 is fixed, so it has none)
+    // the covariance columns of the closure's two keyframes (keyframe 0 is fixed, so it has none)
     let ends = [candidate.from, candidate.to];
     let mut columns = Mat::<f64>::zeros(size, 12);
     for (end, &k) in ends.iter().enumerate() {
@@ -570,7 +570,7 @@ fn log(r: &Mat3) -> Vec3 {
     v.map(|x| x * scale)
 }
 
-// ---- the pose graph GSC keeps, re-solved on a background thread whenever loops arrive ----
+// ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
 
 /// A pose-graph solve running on another thread over the first `keyframes` keyframes, adopted once
 /// the map reaches `due_at` keyframes or, on request, as soon as it finishes (see `GscPgo::update`).
@@ -578,7 +578,7 @@ pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
     due_at: usize,
-    /// The committed loops the solve judged, in its loop order (the rest keep their verdicts).
+    /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
     judged: Vec<usize>,
 }
 
@@ -588,55 +588,58 @@ impl GscPgo {
     pub fn graph_error(&self) -> f64 {
         self.graph_error
     }
-    pub fn committed_loops(&self) -> &[CommittedLoop] {
-        &self.committed_loops
+    pub fn committed_closures(&self) -> &[CommittedClosure] {
+        &self.committed_closures
     }
-    /// Whether a solve is running or loops are waiting for one.
+    /// Whether a solve is running or closures are waiting for one.
     pub fn solve_pending(&self) -> bool {
-        self.solving.is_some() || self.committed_loops.len() > self.loops_dispatched
+        self.solving.is_some() || self.committed_closures.len() > self.closures_dispatched
     }
-    /// Apply a finished solve, and start one when loops have arrived since the last. A solve is
+    /// Apply a finished solve, and start one when closures have arrived since the last. A solve is
     /// adopted once the map reaches its `due_at` keyframes (waiting for it if needed), or, with
     /// `now`, as soon as it has finished. Returns whether keyframes moved.
     pub fn update(&mut self, now: bool) -> bool {
-        self.new_loop = false;
+        self.new_closure = false;
         let keyframes = self.key_poses.len();
         let ready = self.solving.as_ref().is_some_and(|solving| {
             keyframes >= solving.due_at || (now && solving.handle.is_finished())
         });
         let moved = ready && self.apply_solve();
-        if self.solving.is_none() && self.committed_loops.len() > self.loops_dispatched {
+        if self.solving.is_none() && self.committed_closures.len() > self.closures_dispatched {
             self.dispatch_solve();
         }
         moved
     }
-    /// Wait for the running solve, and solve again until every loop is in. Returns whether keyframes moved.
+    /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
         if let Some((result, _)) = self.pending_search.take() {
-            self.finish_loop_search(result);
+            self.finish_closure_search(result);
         }
         let mut moved = false;
         loop {
             moved |= self.apply_solve();
-            if self.committed_loops.len() == self.loops_dispatched {
+            if self.committed_closures.len() == self.closures_dispatched {
                 return moved;
             }
             self.dispatch_solve();
         }
     }
-    /// Start a solve of every committed loop from the odometry (GNC must start from the dead-reckoned
-    /// chain, not an estimate earlier loops already bent). With `loop_cooling`, only the keyframes a new
-    /// loop can move by more than one odometry step's noise are free (plus those since the last solve);
-    /// the rest are held where they are, and the loops between two held keyframes keep their verdicts.
+    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned
+    /// chain, not an estimate earlier closures already bent). With `closure_cooling`, only the keyframes a new
+    /// closure can move by more than one odometry step's noise are free (plus those since the last solve);
+    /// the rest are held where they are, and the closures between two held keyframes keep their verdicts.
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let all_loops = loop_edges(self.committed_loops.iter());
+        let all_closures = closure_edges(self.committed_closures.iter());
         let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        if config.loop_cooling {
+        if config.closure_cooling {
             let step = config.odom_trans_xy_var;
-            let variance =
-                position_variance(n, &self.committed_loops[..self.loops_dispatched], step);
+            let variance = position_variance(
+                n,
+                &self.committed_closures[..self.closures_dispatched],
+                step,
+            );
             let solved = self.solving_keyframes;
             for k in 1..solved.min(n) {
                 free[k] = false;
@@ -647,7 +650,7 @@ impl GscPgo {
                 .iter()
                 .map(|k| k.translation_global)
                 .collect();
-            for e in &all_loops[self.loops_dispatched..] {
+            for e in &all_closures[self.closures_dispatched..] {
                 let pull = residuals(
                     &rotations,
                     &positions,
@@ -696,15 +699,15 @@ impl GscPgo {
             .into_iter()
             .filter(touches_free)
             .collect();
-        let judged: Vec<usize> = (0..all_loops.len())
-            .filter(|&i| touches_free(&all_loops[i]))
+        let judged: Vec<usize> = (0..all_closures.len())
+            .filter(|&i| touches_free(&all_closures[i]))
             .collect();
-        let loops: Vec<Edge> = judged.iter().map(|&i| all_loops[i]).collect();
+        let closures: Vec<Edge> = judged.iter().map(|&i| all_closures[i]).collect();
         let free_count = free.iter().filter(|&&f| f).count();
         let solve_config = SolveConfig {
-            gnc_variance_scale: config.loop_gnc_var_scale,
-            gnc_inlier_probability: config.loop_gnc_inlier_probability,
-            huber_k: config.loop_robust_huber_k,
+            gnc_variance_scale: config.closure_gnc_var_scale,
+            gnc_inlier_probability: config.closure_gnc_inlier_probability,
+            huber_k: config.closure_robust_huber_k,
         };
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
@@ -715,15 +718,16 @@ impl GscPgo {
                     &positions,
                     &free,
                     &odometry,
-                    &loops,
+                    &closures,
                     &solve_config,
                 );
                 (solution, started.elapsed().as_secs_f64())
             })
             .expect("spawn pose graph thread");
         // a solve's cost grows with its free keyframes, so its delay does
-        let delay = (free_count as f64 * self.config.loop_gnc_apply_after_fraction).ceil() as usize;
-        self.loops_dispatched = self.committed_loops.len();
+        let delay =
+            (free_count as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
+        self.closures_dispatched = self.committed_closures.len();
         self.solving_keyframes = n;
         self.solving = Some(Solving {
             handle,
@@ -733,7 +737,7 @@ impl GscPgo {
         });
     }
     /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
-    /// ride on, and its loop verdicts. Returns whether there was one.
+    /// ride on, and its closure verdicts. Returns whether there was one.
     fn apply_solve(&mut self) -> bool {
         let Some(solving) = self.solving.take() else {
             return false;
@@ -766,9 +770,9 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        // a loop no solve judged (both ends held) agreed with the map within odometry noise
+        // a closure no solve judged (both ends held) agreed with the map within odometry noise
         let mut weights: Vec<f64> = self
-            .committed_loops
+            .committed_closures
             .iter()
             .map(|l| {
                 if l.gnc_weight.is_nan() {
@@ -778,25 +782,40 @@ impl GscPgo {
                 }
             })
             .collect();
-        for (&index, &weight) in solving.judged.iter().zip(&solution.loop_weights) {
+        for (&index, &weight) in solving.judged.iter().zip(&solution.closure_weights) {
             weights[index] = weight;
         }
         for (index, weight) in weights.into_iter().enumerate() {
-            let previous = self.committed_loops[index].gnc_weight;
-            self.committed_loops[index].gnc_weight = weight;
+            let previous = self.committed_closures[index].gnc_weight;
+            self.committed_closures[index].gnc_weight = weight;
             if previous == weight {
                 continue;
             }
             let (source, target) = (
-                self.committed_loops[index].source_id,
-                self.committed_loops[index].target_id,
+                self.committed_closures[index].source_id,
+                self.committed_closures[index].target_id,
             );
-            let (confidence, yank_z) = (self.loop_fit_confidence[index], self.loop_yank_z[index]);
+            let (confidence, yank_z) = (
+                self.closure_fit_confidence[index],
+                self.closure_yank_z[index],
+            );
             if weight > 0.5 {
-                self.push_edge(source, target, LoopEdgeState::Accepted, confidence, yank_z);
-                self.push_edge(source, target, LoopEdgeState::Applied, confidence, yank_z);
+                self.push_edge(
+                    source,
+                    target,
+                    ClosureEdgeState::Accepted,
+                    confidence,
+                    yank_z,
+                );
+                self.push_edge(
+                    source,
+                    target,
+                    ClosureEdgeState::Applied,
+                    confidence,
+                    yank_z,
+                );
             } else {
-                self.push_edge(source, target, LoopEdgeState::Rejected, 0.0, yank_z);
+                self.push_edge(source, target, ClosureEdgeState::Rejected, 0.0, yank_z);
             }
         }
         self.graph_error = solution.error;
@@ -827,9 +846,9 @@ pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) ->
         .collect()
 }
 
-/// Committed loops as pose-graph edges; a loop's variance is its ICP fitness.
-pub(crate) fn loop_edges<'a>(loops: impl Iterator<Item = &'a CommittedLoop>) -> Vec<Edge> {
-    loops
+/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness.
+pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
+    closures
         .map(|l| Edge {
             from: l.target_id,
             to: l.source_id,
@@ -841,13 +860,14 @@ pub(crate) fn loop_edges<'a>(loops: impl Iterator<Item = &'a CommittedLoop>) -> 
 }
 
 /// Each keyframe's position variance (m²) along the odometry chain from keyframe 0, lowered by every
-/// kept loop: the loop ties its two ends together (at its own variance), and each keyframe between them
-/// is then as loose as the tighter of the two ways back along its ring, from either end, combined in
-/// parallel. Loops in order, so a ring anchored to an earlier one is only as tight as that anchor;
-/// O(ring) per loop.
-pub(crate) fn position_variance(n: usize, loops: &[CommittedLoop], step: f64) -> Vec<f64> {
+/// kept closure: the closure ties its two ends together (at its own variance), and each keyframe between them
+/// is then as loose as the tighter of the two ways back along its cycle, from either end, combined in
+/// parallel. Closures in order, so a cycle anchored to an earlier one is only as tight as that anchor;
+/// O(cycle length) per closure.
+pub(crate) fn position_variance(n: usize, closures: &[CommittedClosure], step: f64) -> Vec<f64> {
     let mut variance: Vec<f64> = (0..n).map(|k| k as f64 * step).collect();
-    let mut order: Vec<&CommittedLoop> = loops.iter().filter(|l| l.gnc_weight > 0.5).collect();
+    let mut order: Vec<&CommittedClosure> =
+        closures.iter().filter(|l| l.gnc_weight > 0.5).collect();
     order.sort_by_key(|l| l.source_id.max(l.target_id));
     for l in order {
         let (t, s) = (l.target_id.min(l.source_id), l.target_id.max(l.source_id));
@@ -859,7 +879,7 @@ pub(crate) fn position_variance(n: usize, loops: &[CommittedLoop], step: f64) ->
             let (back, forward) = (vt + (k - t) as f64 * step, vs + (s - k) as f64 * step);
             variance[k] = variance[k].min(back * forward / (back + forward));
         }
-        // the keyframes after the ring hang off its end
+        // the keyframes after the cycle hang off its end
         for k in s + 1..n {
             let chained = variance[k - 1] + step;
             if chained >= variance[k] {

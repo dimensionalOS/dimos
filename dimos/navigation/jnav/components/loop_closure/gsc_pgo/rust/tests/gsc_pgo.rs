@@ -15,7 +15,7 @@
 //! Unit tests for keyframe storage, the voxel grid, connection fit (ICP recovers a known transform) and
 //! uniqueness (normal-scatter degeneracy).
 
-// Index loops mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
+// Index closures mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
 #![allow(clippy::needless_range_loop)]
 
 use dimos_gsc_pgo::connection_fit::{icp, IcpParams};

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Re-solve a pgo-eval run's final graph (its keyframes' odometry + every committed loop) with big_picture_fit::solve,
+//! Re-solve a pgo-eval run's final graph (its keyframes' odometry + every committed closure) with big_picture_fit::solve,
 //! pose graph, and write the keyframe positions next to the run as pose_graph.bin (f64 x, y, z per keyframe).
 //! GSC_RUN=<run dir> cargo test --release --test pose_graph_replay -- --ignored --nocapture
 
@@ -57,9 +57,9 @@ fn replay_a_runs_final_graph() {
             }
         })
         .collect();
-    let floor = num("loop_translation_variance_floor");
-    let committed = json["committed_loop_edges"].as_array().unwrap();
-    let loops: Vec<Edge> = committed
+    let floor = num("closure_translation_variance_floor");
+    let committed = json["committed_closure_edges"].as_array().unwrap();
+    let closures: Vec<Edge> = committed
         .iter()
         .map(|e| {
             let rotation: Vec<Vec<f64>> = serde_json::from_value(e["rotation"].clone()).unwrap();
@@ -76,10 +76,10 @@ fn replay_a_runs_final_graph() {
         })
         .collect();
     let solve_config = SolveConfig {
-        gnc_variance_scale: num("loop_gnc_var_scale"),
-        gnc_inlier_probability: num("loop_gnc_inlier_probability"),
-        huber_k: if config["loop_robust_kernel"].as_bool().unwrap() {
-            num("loop_robust_huber_k")
+        gnc_variance_scale: num("closure_gnc_var_scale"),
+        gnc_inlier_probability: num("closure_gnc_inlier_probability"),
+        huber_k: if config["closure_robust_kernel"].as_bool().unwrap() {
+            num("closure_robust_huber_k")
         } else {
             0.0
         },
@@ -89,12 +89,12 @@ fn replay_a_runs_final_graph() {
         .map(|e| e["gnc_weight"].as_f64().unwrap() >= 0.5)
         .collect();
     if std::env::var("GSC_CHECK").is_ok() {
-        // the loops' residuals (GNC-scaled) at GTSAM's own final poses, split by GTSAM's GNC verdict
+        // the closures' residuals (GNC-scaled) at GTSAM's own final poses, split by GTSAM's GNC verdict
         let corrected_rotations: Vec<_> = raw
             .chunks_exact(15)
             .map(|k| mat3::mat_from_quat(&[k[14], k[11], k[12], k[13]]))
             .collect();
-        let scaled: Vec<Edge> = loops
+        let scaled: Vec<Edge> = closures
             .iter()
             .map(|e| Edge {
                 variances: e.variances.map(|v| v * solve_config.gnc_variance_scale),
@@ -112,7 +112,7 @@ fn replay_a_runs_final_graph() {
             v.sort_by(f64::total_cmp);
             if !v.is_empty() {
                 println!(
-                    "GTSAM {}: {} loops, r2 median {:.2} p90 {:.2} max {:.2}",
+                    "GTSAM {}: {} closures, r2 median {:.2} p90 {:.2} max {:.2}",
                     if want { "kept" } else { "rejected" },
                     v.len(),
                     v[v.len() / 2],
@@ -124,8 +124,8 @@ fn replay_a_runs_final_graph() {
     }
     let started = std::time::Instant::now();
     let solution = if std::env::var("GSC_ONLY_GTSAM_KEPT").is_ok() {
-        // only the loops GTSAM's GNC kept, with GNC effectively off: isolates the solver from the inlier decisions
-        let kept: Vec<Edge> = loops
+        // only the closures GTSAM's GNC kept, with GNC effectively off: isolates the solver from the inlier decisions
+        let kept: Vec<Edge> = closures
             .iter()
             .zip(&gtsam_kept)
             .filter(|(_, &k)| k)
@@ -142,7 +142,7 @@ fn replay_a_runs_final_graph() {
                 ..solve_config.clone()
             },
         );
-        s.loop_weights = gtsam_kept
+        s.closure_weights = gtsam_kept
             .iter()
             .map(|&k| if k { 1.0 } else { 0.0 })
             .collect();
@@ -153,12 +153,12 @@ fn replay_a_runs_final_graph() {
             &positions,
             &free,
             &odometry,
-            &loops,
+            &closures,
             &solve_config,
         )
     };
     let agree = solution
-        .loop_weights
+        .closure_weights
         .iter()
         .zip(&gtsam_kept)
         .filter(|(w, g)| (**w >= 0.5) == **g)
@@ -172,10 +172,10 @@ fn replay_a_runs_final_graph() {
     let mut sorted = moved.clone();
     sorted.sort_by(f64::total_cmp);
     println!(
-        "{} keyframes, {} loops ({} kept, {} agree with GTSAM's GNC), solved in {:.2} s; vs GTSAM: median {:.3} m, max {:.3} m",
+        "{} keyframes, {} closures ({} kept, {} agree with GTSAM's GNC), solved in {:.2} s; vs GTSAM: median {:.3} m, max {:.3} m",
         rotations.len(),
-        loops.len(),
-        solution.loop_weights.iter().filter(|&&w| w >= 0.5).count(),
+        closures.len(),
+        solution.closure_weights.iter().filter(|&&w| w >= 0.5).count(),
         agree,
         started.elapsed().as_secs_f64(),
         sorted[sorted.len() / 2],

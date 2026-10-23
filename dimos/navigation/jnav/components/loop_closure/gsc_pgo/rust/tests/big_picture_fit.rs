@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The pose graph on a drifted square: a true loop closes it, a false one is voted out.
+//! The pose graph on a drifted square: a true closure closes it, a false one is voted out.
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
@@ -59,30 +59,30 @@ fn between(poses: &[(Mat3, Vec3)], from: usize, to: usize, variances: [f64; 6]) 
 }
 
 #[test]
-fn a_true_loop_closes_the_drift_and_a_false_one_is_rejected() {
+fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
     let (truth, odometry) = square(0.0005);
     let last = truth.len() - 1;
     let odometry_edges: Vec<Edge> = (1..=last)
         .map(|k| between(&odometry, k - 1, k, [1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
         .collect();
-    // the true loop: the walk ends where it started; the false one claims a far corner is the start
-    let true_loop = between(&truth, 0, last, [1e-3; 6]);
-    let mut false_loop = between(&truth, 0, 2 * SIDE, [1e-3; 6]);
-    false_loop.translation = [0.0, 0.5, 0.0];
+    // the true closure: the walk ends where it started; the false one claims a far corner is the start
+    let true_closure = between(&truth, 0, last, [1e-3; 6]);
+    let mut false_closure = between(&truth, 0, 2 * SIDE, [1e-3; 6]);
+    false_closure.translation = [0.0, 0.5, 0.0];
     let drifted_end = mat3::norm(&odometry[last].1);
     let solution = solve(
         &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
         &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
         &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
         &odometry_edges,
-        &[true_loop, false_loop],
+        &[true_closure, false_closure],
         &SolveConfig {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
         },
     );
-    assert_eq!(solution.loop_weights, vec![1.0, 0.0]);
+    assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
     let closed_end = mat3::norm(&solution.positions[last]);
     assert!(
         drifted_end > 1.0,
@@ -90,6 +90,6 @@ fn a_true_loop_closes_the_drift_and_a_false_one_is_rejected() {
     );
     assert!(
         closed_end < 0.05,
-        "the loop should close the end onto the start: {closed_end}"
+        "the closure should close the end onto the start: {closed_end}"
     );
 }

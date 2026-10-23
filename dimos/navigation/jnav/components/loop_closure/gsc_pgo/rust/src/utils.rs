@@ -15,7 +15,7 @@
 //! Standalone helpers for the native PGO module: odometry interpolation, quaternion slerp, the
 //! published-message builders and the inbound PointCloud2 parser.
 
-use dimos_gsc_pgo::gsc_pgo::{KeyPoseWithCloud, LoopEdgeEvent, LOOP_EDGE_RECORD_BYTES};
+use dimos_gsc_pgo::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::pointcloud::PointCloud;
 use lcm_msgs::geometry_msgs::{Point, Quaternion, Transform, TransformStamped, Vector3};
@@ -225,7 +225,7 @@ pub fn build_loop_closure_records(
     record_cloud(&fields, data, frame_id, ts)
 }
 
-const LOOP_EDGE_FIELDS: [(&str, u8); 12] = [
+const CLOSURE_EDGE_FIELDS: [(&str, u8); 12] = [
     ("x", F32),
     ("y", F32),
     ("z", F32),
@@ -240,18 +240,18 @@ const LOOP_EDGE_FIELDS: [(&str, u8); 12] = [
     ("ts", PointField::FLOAT64 as u8),
 ];
 
-/// loop_edges as packed records, one per lifecycle event (see `LoopEdgeEvent`).
-pub fn build_loop_edge_records(
-    events: &[LoopEdgeEvent],
+/// closure_edges as packed records, one per lifecycle event (see `ClosureEdgeEvent`).
+pub fn build_closure_edge_records(
+    events: &[ClosureEdgeEvent],
     key_poses: &[KeyPoseWithCloud],
     ts: f64,
     frame_id: &str,
 ) -> PointCloud2 {
-    let mut data = Vec::with_capacity(events.len() * LOOP_EDGE_RECORD_BYTES);
+    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
     for event in events {
         event.put_record(&mut data, key_poses);
     }
-    record_cloud(&LOOP_EDGE_FIELDS, data, frame_id, ts)
+    record_cloud(&CLOSURE_EDGE_FIELDS, data, frame_id, ts)
 }
 
 #[derive(Debug)]

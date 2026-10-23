@@ -46,18 +46,18 @@ class PGOConfig(NativeModuleConfig):
     keyframe_min_distance_meters: float = 0.5
 
     # Loop closure knobs
-    loop_search_radius: float = 3.0
-    loop_score_thresh: float = 0.15
-    loop_submap_half_range: int = 5
+    closure_search_radius: float = 3.0
+    closure_score_thresh: float = 0.15
+    closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # Voxel size (m) each incoming cloud is downsampled to before a keyframe stores it; 0 keeps clouds as they arrive
     keyframe_voxel_size: float = 0.0
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
-    loop_min_occupancy: int = 80
+    closure_min_occupancy: int = 80
     # Observability gate (Zhang 2016 / X-ICP degeneracy): higher = less false positive matches
     # 0 disables.
-    loop_min_degeneracy: float = 0.05
+    closure_min_degeneracy: float = 0.05
 
     # Where each pose graph snapshot's keyframes go for offline checks (f64 ts, raw xyz+q, corrected xyz+q), empty for never.
     dump_path: str = ""
@@ -72,44 +72,44 @@ class PGOConfig(NativeModuleConfig):
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
 
-    # Reject a loop whose match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) is
-    # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of loops
-    # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.loops.jsonl).
-    loop_yank_gate: bool = True
+    # Reject a closure whose match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) is
+    # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of closures
+    # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.closures.jsonl).
+    closure_yank_gate: bool = True
     # k in the yank gate's required confidence 1 - exp(-yank_z^2 / 2k^2)
-    loop_yank_gate_width: float = 1.0
-    # Divide yank by sqrt(keyframe gap) before scaling: odometry drift grows as a random walk between the loop's ends
-    loop_yank_per_sqrt_gap: bool = True
+    closure_yank_gate_width: float = 1.0
+    # Divide yank by sqrt(keyframe gap) before scaling: odometry drift grows as a random walk between the closure's ends
+    closure_yank_per_sqrt_gap: bool = True
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
-    loop_icp_dump_dir: str = ""
-    # With loop_yank_gate: re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
-    loop_extended_icp_max_keyframes: int = 16
-    # Loop-verification ICP: iteration cap and correspondence gate (m).
-    loop_icp_max_iterations: int = 50
-    loop_icp_max_correspondence_m: float = 10.0
+    closure_icp_dump_dir: str = ""
+    # With closure_yank_gate: re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
+    closure_extended_icp_max_keyframes: int = 16
+    # Closure-verification ICP: iteration cap and correspondence gate (m).
+    closure_icp_max_iterations: int = 50
+    closure_icp_max_correspondence_m: float = 10.0
 
-    # Each new loop re-solves the whole pose graph on a background thread from the odometry, with
-    # GNC (truncated least squares) keeping the loops that agree with the odometry and each other.
-    # loop_gnc_var_scale loosens each loop's ICP-fitness variance while GNC decides, and
-    # loop_gnc_inlier_probability sets its chi-squared cutoff (lower rejects more).
-    loop_gnc_var_scale: float = 10.0
-    loop_gnc_inlier_probability: float = 0.95
-    # Huber threshold on a kept loop's whitened residual in the final solve (0 = plain least squares).
-    loop_robust_huber_k: float = 1.345
+    # Each new closure re-solves the whole pose graph on a background thread from the odometry, with
+    # GNC (truncated least squares) keeping the closures that agree with the odometry and each other.
+    # closure_gnc_var_scale loosens each closure's ICP-fitness variance while GNC decides, and
+    # closure_gnc_inlier_probability sets its chi-squared cutoff (lower rejects more).
+    closure_gnc_var_scale: float = 10.0
+    closure_gnc_inlier_probability: float = 0.95
+    # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
+    closure_robust_huber_k: float = 1.345
     # A background solve is folded in once the map has grown by this fraction of its size at
     # dispatch (waiting for it if needed), so a replay gives the same graph however fast the machine
     # is. A solve's cost grows with the map (~2 ms per keyframe; keyframes come ~0.7 s apart), so 5%
     # leaves it several times the time it needs.
-    loop_gnc_apply_after_fraction: float = 0.05
+    closure_gnc_apply_after_fraction: float = 0.05
     # False folds a solve in as soon as it finishes, keyframes or not (a robot standing
-    # still at a loop still gets the closure); True keeps the keyframe schedule so replays repeat.
-    loop_gnc_deterministic: bool = True
-    loop_cooling: bool = False
+    # still at a closure still gets the closure); True keeps the keyframe schedule so replays repeat.
+    closure_gnc_deterministic: bool = True
+    closure_cooling: bool = False
 
     # "stiffness" in different dimensions.
     # Making roll/pitch stiff is important for mid360. irrelevant for go2 odom
     # These suit a robot on mostly level ground. A handheld rig or long stairs drifts vertically through a slow
-    # pitch bias, which stiff roll/pitch and z cannot absorb, so GNC rejects the true loop; there use
+    # pitch bias, which stiff roll/pitch and z cannot absorb, so GNC rejects the true closure; there use
     # odom_rot_roll_pitch_var = odom_rot_yaw_var and odom_trans_z_var = odom_trans_xy_var (office_555_loop1:
     # 36 m vertical drift, end-to-start 38.9 m -> 0.2 m).
     odom_rot_roll_pitch_var: float = 1e-8
@@ -120,7 +120,7 @@ class PGOConfig(NativeModuleConfig):
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale
     max_scan_queue: int = 5
-    # threads loop search and solves may use, leaving the other cores to the nav stack (0 = every core)
+    # threads closure search and solves may use, leaving the other cores to the nav stack (0 = every core)
     worker_threads: int = 2
 
 
@@ -138,9 +138,9 @@ class GscPGO(NativeModule):
     pose_graph: Out[PointCloud2]
     # a packed record per keyframe a solve moved: its pose before, then the delta (post = delta * pre)
     loop_closure_event: Out[PointCloud2]
-    # each loop candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
-    # with both keyframes' current positions and a confidence, for drawing loop edges
-    loop_edges: Out[PointCloud2]
+    # each closure candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
+    # with both keyframes' current positions and a confidence, for drawing closure edges
+    closure_edges: Out[PointCloud2]
 
     @rpc
     def stop(self) -> None:

@@ -196,6 +196,9 @@ pub fn dump_icp(
     bytes.push(icp.converged as u8);
     let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}{suffix}.icp"));
     if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
-        eprintln!("loop_icp_dump_dir: could not write {}: {e}", path.display());
+        eprintln!(
+            "closure_icp_dump_dir: could not write {}: {e}",
+            path.display()
+        );
     }
 }

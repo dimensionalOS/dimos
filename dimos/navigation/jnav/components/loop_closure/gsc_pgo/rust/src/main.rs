@@ -20,7 +20,7 @@
 //! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
 //!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
 //!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
-//!   loop_edges (each loop candidate's lifecycle). Loop
+//!   closure_edges (each closure candidate's lifecycle). Closure
 //!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
 //!   runtime via a captured Handle.
 
@@ -41,8 +41,8 @@ use lcm_msgs::tf2_msgs::TFMessage;
 mod utils;
 use tracing::{error, info, warn};
 use utils::{
-    build_loop_closure_records, build_loop_edge_records, build_odometry, build_pose_graph_records,
-    build_tf_message, extract_xyz,
+    build_closure_edge_records, build_loop_closure_records, build_odometry,
+    build_pose_graph_records, build_tf_message, extract_xyz,
 };
 
 // A keyframe pose change smaller than this waits to add up before it is sent.
@@ -63,7 +63,7 @@ macro_rules! config {
         }
         impl Config {
             fn pgo(&self) -> PgoConfig {
-                PgoConfig { $($pgo: self.$pgo.clone(),)* loop_record_strain: false, loop_yank_from_strain: false, loop_search_keyframes: 0 }
+                PgoConfig { $($pgo: self.$pgo.clone(),)* closure_record_strain: false, closure_yank_from_strain: false, closure_search_keyframes: 0 }
             }
         }
     };
@@ -78,31 +78,31 @@ config! {
     dump_path: String,
     // bounded scan FIFO depth (<= 0 = unbounded)
     max_scan_queue: i32,
-    // threads loop search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
+    // threads closure search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
     worker_threads: usize,
     ;
     keyframe_min_rotation_degrees: f64,
     keyframe_min_distance_meters: f64,
-    loop_search_radius: f64,
-    loop_score_thresh: f64,
-    loop_submap_half_range: i32,
+    closure_search_radius: f64,
+    closure_score_thresh: f64,
+    closure_submap_half_range: i32,
     submap_resolution: f64,
     keyframe_voxel_size: f64,
-    loop_min_occupancy: i32,
-    loop_min_degeneracy: f64,
-    loop_yank_gate: bool,
-    loop_yank_gate_width: f64,
-    loop_yank_per_sqrt_gap: bool,
-    loop_icp_dump_dir: String,
-    loop_extended_icp_max_keyframes: usize,
-    loop_robust_huber_k: f64,
-    loop_icp_max_iterations: u64,
-    loop_icp_max_correspondence_m: f64,
-    loop_gnc_var_scale: f64,
-    loop_gnc_inlier_probability: f64,
-    loop_gnc_apply_after_fraction: f64,
-    loop_gnc_deterministic: bool,
-    loop_cooling: bool,
+    closure_min_occupancy: i32,
+    closure_min_degeneracy: f64,
+    closure_yank_gate: bool,
+    closure_yank_gate_width: f64,
+    closure_yank_per_sqrt_gap: bool,
+    closure_icp_dump_dir: String,
+    closure_extended_icp_max_keyframes: usize,
+    closure_robust_huber_k: f64,
+    closure_icp_max_iterations: u64,
+    closure_icp_max_correspondence_m: f64,
+    closure_gnc_var_scale: f64,
+    closure_gnc_inlier_probability: f64,
+    closure_gnc_apply_after_fraction: f64,
+    closure_gnc_deterministic: bool,
+    closure_cooling: bool,
     odom_rot_roll_pitch_var: f64,
     odom_rot_yaw_var: f64,
     odom_trans_xy_var: f64,
@@ -162,10 +162,10 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     loop_closure_event: Output<PointCloud2>,
 
-    // Each loop candidate's lifecycle as it happens (proposed, gated, GNC votes, accepted,
-    // rejected, applied) with both keyframes' current positions, for drawing loop edges.
+    // Each closure candidate's lifecycle as it happens (proposed, gated, GNC votes, accepted,
+    // rejected, applied) with both keyframes' current positions, for drawing closure edges.
     #[output(encode = PointCloud2::encode)]
-    loop_edges: Output<PointCloud2>,
+    closure_edges: Output<PointCloud2>,
 
     #[config]
     config: Config,
@@ -191,7 +191,7 @@ impl GscPgoModule {
             corrected_odometry: self.corrected_odometry.clone(),
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
-            loop_edges: self.loop_edges.clone(),
+            closure_edges: self.closure_edges.clone(),
             tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
@@ -281,7 +281,7 @@ struct Worker {
     tf: Output<TFMessage>,
     pose_graph: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
-    loop_edges: Output<PointCloud2>,
+    closure_edges: Output<PointCloud2>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
@@ -332,23 +332,23 @@ impl Worker {
 
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
-        // Loop-edge events already sent on loop_edges.
+        // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
-        // Search diagnostics already written to <dump_path>.loops.jsonl.
+        // Search diagnostics already written to <dump_path>.closures.jsonl.
         let mut diagnostics_written = 0usize;
-        // The loop search running in the background, if any.
-        let mut loop_search: Option<
-            std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::LoopSearchResult>,
+        // The closure search running in the background, if any.
+        let mut closure_search: Option<
+            std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::ClosureSearchResult>,
         > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
             // Not deterministic: adopt a finished solve now, scans or not.
-            if !self.config.loop_gnc_deterministic && pgo.solve_pending() && pgo.update(true) {
+            if !self.config.closure_gnc_deterministic && pgo.solve_pending() && pgo.update(true) {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
             }
-            self.publish_loop_edges(&pgo, &mut edges_sent, &frame_id);
-            self.dump_loop_diagnostics(&pgo, &mut diagnostics_written);
+            self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
+            self.dump_closure_diagnostics(&pgo, &mut diagnostics_written);
             // Strict FIFO: process scans oldest-first (backlog bounded at
             // enqueue time). Loops back immediately when more remain, so a
             // burst drains at full speed rather than one-per-tick.
@@ -411,30 +411,30 @@ impl Worker {
                     .iter()
                     .map(|kp| (kp.rotation_global, kp.translation_global)),
             );
-            // A loop search that finished in the background lands now, so its loop joins this keyframe's update.
-            if loop_search
+            // A closure search that finished in the background lands now, so its closure joins this keyframe's update.
+            if closure_search
                 .as_ref()
                 .is_some_and(|search| search.is_finished())
             {
-                let search = loop_search.take().expect("checked above");
-                pgo.finish_loop_search(search.join().expect("loop search thread panicked"));
+                let search = closure_search.take().expect("checked above");
+                pgo.finish_closure_search(search.join().expect("closure search thread panicked"));
             }
             // Stages 1-2 run here on every keyframe; the best waiting proposal goes to the search thread when it is
             // free and no scans are waiting.
-            pgo.propose_loop();
+            pgo.propose_closure();
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
-            if !behind && loop_search.is_none() {
-                if let Some(search) = pgo.begin_loop_search() {
-                    loop_search = Some(
+            if !behind && closure_search.is_none() {
+                if let Some(search) = pgo.begin_closure_search() {
+                    closure_search = Some(
                         std::thread::Builder::new()
-                            .name("gsc-loop-search".into())
+                            .name("gsc-closure-search".into())
                             .spawn(move || search.run())
-                            .expect("spawn loop search thread"),
+                            .expect("spawn closure search thread"),
                     );
                 }
             }
             // a finished solve moves the keyframes (on the keyframe schedule when deterministic)
-            let moved = pgo.update(!self.config.loop_gnc_deterministic);
+            let moved = pgo.update(!self.config.closure_gnc_deterministic);
             self.publish_pose_changes(&pgo, &mut published, moved, cur_time, &frame_id);
 
             self.publish_corrected(
@@ -446,8 +446,7 @@ impl Worker {
                 &child_frame_id,
             );
 
-            // Pose graph on every keyframe (iSAM2 may have re-optimized prior
-            // poses on loop closure). Only GNC-kept loops are published as edges.
+            // every keyframe's current pose, each keyframe
             self.publish_graph(&pgo, cur_time, &frame_id);
         }
     }
@@ -463,10 +462,10 @@ impl Worker {
         }
     }
 
-    /// Append every loop search since the last call to `<dump_path>.loops.jsonl`: the candidate,
+    /// Append every closure search since the last call to `<dump_path>.closures.jsonl`: the candidate,
     /// its outcome and every input of the yank / confidence gate, for offline hypothesis tests.
-    fn dump_loop_diagnostics(&self, pgo: &GscPgo, written: &mut usize) {
-        let diagnostics = pgo.loop_diagnostics();
+    fn dump_closure_diagnostics(&self, pgo: &GscPgo, written: &mut usize) {
+        let diagnostics = pgo.closure_diagnostics();
         if self.config.dump_path.is_empty() || diagnostics.len() <= *written {
             return;
         }
@@ -495,23 +494,23 @@ impl Worker {
         let appended = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(format!("{}.loops.jsonl", self.config.dump_path))
+            .open(format!("{}.closures.jsonl", self.config.dump_path))
             .and_then(|mut file| file.write_all(lines.as_bytes()));
         if let Err(e) = appended {
-            warn!(error = %e, "Failed to dump the loop diagnostics.");
+            warn!(error = %e, "Failed to dump the closure diagnostics.");
         }
         *written = diagnostics.len();
     }
 
-    /// Send the loop-edge events since the last call, if any.
-    fn publish_loop_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
-        let events = pgo.loop_edge_events();
+    /// Send the closure-edge events since the last call, if any.
+    fn publish_closure_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
+        let events = pgo.closure_edge_events();
         if events.len() <= *sent {
             return;
         }
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-        let msg = build_loop_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
-        self.publish(&self.loop_edges, &msg, "loop_edges");
+        let msg = build_closure_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
+        self.publish(&self.closure_edges, &msg, "closure_edges");
         if !self.config.dump_path.is_empty() {
             use std::io::Write;
             let appended = std::fs::OpenOptions::new()
@@ -520,21 +519,19 @@ impl Worker {
                 .open(format!("{}.edges", self.config.dump_path))
                 .and_then(|mut file| file.write_all(&msg.data));
             if let Err(e) = appended {
-                warn!(error = %e, "Failed to dump the loop edges.");
+                warn!(error = %e, "Failed to dump the closure edges.");
             }
         }
         *sent = events.len();
     }
 
-    /// Send fast-reform consumers every keyframe pose change since they last
-    /// heard: a loop's update, and also iSAM2 relinearizing after earlier
-    /// loops or an adopted GNC solve, which move keyframes without a new loop.
+    /// Send fast-reform consumers every keyframe pose change since they last heard (an adopted solve).
     /// Changes too small to matter wait in `published` and add up.
     fn publish_pose_changes(
         &self,
         pgo: &GscPgo,
         published: &mut Vec<(Mat3, Vec3)>,
-        loop_closed: bool,
+        closure_closed: bool,
         ts: f64,
         frame_id: &str,
     ) {
@@ -548,7 +545,7 @@ impl Worker {
                 let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
                 mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
             });
-        if !loop_closed && !moved {
+        if !closure_closed && !moved {
             return;
         }
         let records = build_loop_closure_records(published, poses, ts, frame_id);
