@@ -67,11 +67,12 @@ def test_bbox_framing_rejects_corner_and_tiny() -> None:
     assert not bbox_framing_ok((5, 70, 40, 130), 200, 200)  # far off-center
 
 
-def test_instance_pool_requires_views_score_and_min_conf() -> None:
-    assert instance_pool_ok(n_views=3, semantic_score=0.32, sighting_confidences=(0.2, 0.3, 0.4))
-    assert not instance_pool_ok(n_views=2, semantic_score=0.9, sighting_confidences=(0.9, 0.9))
-    assert not instance_pool_ok(n_views=5, semantic_score=0.20, sighting_confidences=(0.9, 0.9))
-    assert not instance_pool_ok(n_views=5, semantic_score=0.7, sighting_confidences=(0.1, 0.8))
+def test_instance_pool_requires_min_views_only() -> None:
+    assert instance_pool_ok(n_views=3)
+    assert instance_pool_ok(n_views=5)
+    assert not instance_pool_ok(n_views=2)
+    assert not instance_pool_ok(n_views=2, min_views=3)
+    assert instance_pool_ok(n_views=2, min_views=2)
 
 
 def test_filter_and_propose_same_and_diff_pairs() -> None:

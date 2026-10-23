@@ -37,12 +37,9 @@ MIN_AREA_FRAC = 0.02
 MAX_AREA_FRAC = 0.50
 EDGE_MARGIN_FRAC = 0.02
 
-# Instance pool gates (localize Localization + sighting confidences).
-# Keep aligned with room-scale LocalizeParams.accept_score (0.32 in VQA generate);
-# a higher floor here silently drops every verified hit before pairing.
+# Instance pool: localize already verified the hit — only require enough views.
+# No second semantic/confidence floor here (those fight LocalizeParams.accept_score).
 MIN_INSTANCE_VIEWS = 3
-MIN_SEMANTIC_SCORE = 0.32
-MIN_SIGHTING_CONF = 0.18
 
 # Pair sampling — prefer temporally separated revisits over near-duplicate views.
 MAX_SAME_PAIRS_PER_INSTANCE = 2
@@ -117,21 +114,9 @@ def sighting_framing_ok(view: SightingView) -> bool:
     return bbox_framing_ok(view.bbox, width, height)
 
 
-def instance_pool_ok(
-    *,
-    n_views: int,
-    semantic_score: float,
-    sighting_confidences: tuple[float, ...],
-    min_views: int = MIN_INSTANCE_VIEWS,
-    min_score: float = MIN_SEMANTIC_SCORE,
-    min_sighting_conf: float = MIN_SIGHTING_CONF,
-) -> bool:
-    """High-certainty instance gate before pairing."""
-    if n_views < min_views or semantic_score < min_score:
-        return False
-    if not sighting_confidences:
-        return False
-    return min(sighting_confidences) >= min_sighting_conf
+def instance_pool_ok(*, n_views: int, min_views: int = MIN_INSTANCE_VIEWS) -> bool:
+    """True when localize reported enough distinct views (≥ ``min_views``, default 3)."""
+    return n_views >= min_views
 
 
 def views_from_localize(
@@ -189,13 +174,9 @@ def filter_instance_views(
     if not views:
         return ()
     head = views[0]
-    if not instance_pool_ok(
-        n_views=head.n_views,
-        semantic_score=head.semantic_score,
-        sighting_confidences=tuple(v.confidence for v in views),
-        min_views=min_views,
-    ):
+    if not instance_pool_ok(n_views=head.n_views, min_views=min_views):
         return ()
+    # Framing still picks agent-visible full frames; it is not an identity gate.
     return tuple(v for v in views if sighting_framing_ok(v))
 
 
