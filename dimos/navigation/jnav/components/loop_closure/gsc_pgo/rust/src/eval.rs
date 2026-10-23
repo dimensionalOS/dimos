@@ -19,7 +19,7 @@
 //! This deliberately bypasses the module/transport/replay scaffolding: it opens
 //! the SQLite recording directly, decodes the LCM blobs, and drives the same
 //! worker-loop logic as `main.rs` (pair each scan with the latest odom pose →
-//! add_key_pose → on keyframe: search_for_loop_pairs + update).
+//! add_key_pose → on keyframe: search_for_closure_pairs + update).
 //! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
 //! reuses `trajectory_metrics`.
 
@@ -30,8 +30,8 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use dimos_gsc_pgo::gsc_pgo::{
-    CloudWithPose, CommittedLoop, Config as PgoConfig, GscPgo, LoopCandidateDiag, PoseWithTime,
-    LOOP_EDGE_RECORD_BYTES,
+    ClosureCandidateDiag, CloudWithPose, CommittedClosure, Config as PgoConfig, GscPgo,
+    PoseWithTime, CLOSURE_EDGE_RECORD_BYTES,
 };
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
@@ -54,7 +54,7 @@ struct EvalConfig {
     subtract_odom_from_cloud: bool,
 }
 
-/// Serializable mirror of `LoopCandidateDiag` (the core struct carries no serde
+/// Serializable mirror of `ClosureCandidateDiag` (the core struct carries no serde
 /// derive so the PGO library stays dependency-free). NaN metrics serialize as
 /// JSON null, marking a value the rejecting path never computed.
 #[derive(Serialize)]
@@ -98,10 +98,10 @@ struct LoopDiag {
     strain: f64,
 }
 
-/// A committed loop's ICP-refined relative pose (target frame -> source), so an
+/// A committed closure's ICP-refined relative pose (target frame -> source), so an
 /// offline PCM pass can compose it with odometry. `rotation` is row-major 3x3.
 #[derive(Serialize)]
-struct CommittedLoopEdge {
+struct CommittedClosureEdge {
     source_id: usize,
     target_id: usize,
     rotation: [[f64; 3]; 3],
@@ -112,9 +112,9 @@ struct CommittedLoopEdge {
     gnc_weight: f64,
 }
 
-impl From<&CommittedLoop> for CommittedLoopEdge {
-    fn from(edge: &CommittedLoop) -> CommittedLoopEdge {
-        CommittedLoopEdge {
+impl From<&CommittedClosure> for CommittedClosureEdge {
+    fn from(edge: &CommittedClosure) -> CommittedClosureEdge {
+        CommittedClosureEdge {
             source_id: edge.source_id,
             target_id: edge.target_id,
             rotation: edge.rotation_offset,
@@ -125,8 +125,8 @@ impl From<&CommittedLoop> for CommittedLoopEdge {
     }
 }
 
-impl From<&LoopCandidateDiag> for LoopDiag {
-    fn from(diag: &LoopCandidateDiag) -> LoopDiag {
+impl From<&ClosureCandidateDiag> for LoopDiag {
+    fn from(diag: &ClosureCandidateDiag) -> LoopDiag {
         LoopDiag {
             outcome: diag.outcome.to_string(),
             source_id: diag.source_id,
@@ -190,23 +190,23 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
-    /// Per keyframe, ms the scan thread spends on it (add_key_pose + loop search), in order.
+    /// Per keyframe, ms the scan thread spends on it (add_key_pose + closure search), in order.
     keyframe_scan_thread_ms: Vec<f32>,
     /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
     keyframe_gnc_ms: Vec<f32>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
-    /// Count of loop-search outcomes by gate name (accepted + each reject gate).
+    /// Count of closure-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
-    /// One record per loop-search evaluation (accepted + rejected), with the
+    /// One record per closure-search evaluation (accepted + rejected), with the
     /// metric at each gate and the source/target locations.
-    loop_diagnostics: Vec<LoopDiag>,
+    closure_diagnostics: Vec<LoopDiag>,
     /// Total nonlinear error of the final factor graph (½·Σ whitened residual²,
     /// robust kernels applied) — how much all the constraints conflict.
     graph_error: f64,
-    /// Every committed loop's refined relative pose (target->source), in commit
+    /// Every committed closure's refined relative pose (target->source), in commit
     /// order — the raw constraints an offline consistency pass needs.
-    committed_loop_edges: Vec<CommittedLoopEdge>,
+    committed_closure_edges: Vec<CommittedClosureEdge>,
 }
 
 struct Args {
@@ -222,7 +222,7 @@ struct Args {
     lidar_tf: Option<[f64; 7]>,
     /// new-body pose in the odom body frame as "x,y,z,qx,qy,qz,qw": re-expresses every odom
     /// pose and scan in that frame, e.g. a level frame for an odometry whose body is a tilted
-    /// sensor (FAST-LIO on a pitched Mid-360), since loop search assumes level clouds.
+    /// sensor (FAST-LIO on a pitched Mid-360), since closure search assumes level clouds.
     body_tf: Option<[f64; 7]>,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
@@ -410,7 +410,7 @@ fn run() -> Result<(), String> {
         ),
         None => None,
     };
-    // Loop-edge events as packed records (`<path>.edges`), written as they happen.
+    // Closure-edge events as packed records (`<path>.edges`), written as they happen.
     let mut edges = match &args.event_dump {
         Some(path) => Some(
             std::fs::File::create(format!("{}.edges", path.display()))
@@ -472,9 +472,9 @@ fn run() -> Result<(), String> {
                 .iter()
                 .map(|kp| (kp.rotation_global, kp.translation_global)),
         );
-        pgo.search_for_loop_pairs();
-        let had_loop = pgo.has_loop();
-        if had_loop {
+        pgo.search_for_closure_pairs();
+        let had_closure = pgo.has_closure();
+        if had_closure {
             closures += 1;
         }
         keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
@@ -482,10 +482,10 @@ fn run() -> Result<(), String> {
         pgo.update(false);
         keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
         if let Some(events) = &mut events {
-            write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
+            write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
         }
         if let Some(edges) = &mut edges {
-            write_loop_edges(edges, &pgo, &mut edges_written)?;
+            write_closure_edges(edges, &pgo, &mut edges_written)?;
         }
     }
     pgo.finish();
@@ -494,7 +494,7 @@ fn run() -> Result<(), String> {
         write_pose_changes(events, &pgo, &mut published, false, ts)?;
     }
     if let Some(edges) = &mut edges {
-        write_loop_edges(edges, &pgo, &mut edges_written)?;
+        write_closure_edges(edges, &pgo, &mut edges_written)?;
     }
     if let Some(path) = &args.event_dump {
         write_keyframes(path, &pgo)?;
@@ -530,16 +530,19 @@ fn run() -> Result<(), String> {
     };
 
     let mut gate_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for diag in pgo.loop_diagnostics() {
+    for diag in pgo.closure_diagnostics() {
         *gate_counts.entry(diag.outcome.to_string()).or_insert(0) += 1;
     }
-    let loop_diagnostics: Vec<LoopDiag> =
-        pgo.loop_diagnostics().iter().map(LoopDiag::from).collect();
-    let graph_error = pgo.graph_error();
-    let committed_loop_edges: Vec<CommittedLoopEdge> = pgo
-        .committed_loops()
+    let closure_diagnostics: Vec<LoopDiag> = pgo
+        .closure_diagnostics()
         .iter()
-        .map(CommittedLoopEdge::from)
+        .map(LoopDiag::from)
+        .collect();
+    let graph_error = pgo.graph_error();
+    let committed_closure_edges: Vec<CommittedClosureEdge> = pgo
+        .committed_closures()
+        .iter()
+        .map(CommittedClosureEdge::from)
         .collect();
 
     let output = EvalOutput {
@@ -568,9 +571,9 @@ fn run() -> Result<(), String> {
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
         gate_counts,
-        loop_diagnostics,
+        closure_diagnostics,
         graph_error,
-        committed_loop_edges,
+        committed_closure_edges,
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
@@ -593,18 +596,18 @@ fn run() -> Result<(), String> {
 const POSE_CHANGE_M: f64 = 1e-3;
 const POSE_CHANGE_RAD: f64 = 1e-4;
 
-/// Append the loop-edge events since the last call as packed records.
-fn write_loop_edges(
+/// Append the closure-edge events since the last call as packed records.
+fn write_closure_edges(
     file: &mut std::fs::File,
     pgo: &GscPgo,
     written: &mut usize,
 ) -> Result<(), String> {
     use std::io::Write;
-    let events = &pgo.loop_edge_events()[*written..];
+    let events = &pgo.closure_edge_events()[*written..];
     if events.is_empty() {
         return Ok(());
     }
-    let mut data = Vec::with_capacity(events.len() * LOOP_EDGE_RECORD_BYTES);
+    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
     for event in events {
         event.put_record(&mut data, pgo.key_poses());
     }
@@ -615,13 +618,13 @@ fn write_loop_edges(
 }
 
 /// Append, as the module's loop_closure_records would, every keyframe's pose
-/// change since `published` when a loop closed or any keyframe moved:
+/// change since `published` when a closure closed or any keyframe moved:
 /// f64 ts, u32 count, then per keyframe pre xyz, id, ts, pre q (xyzw), dt, dq (f32).
 fn write_pose_changes(
     out: &mut std::fs::File,
     pgo: &GscPgo,
     published: &mut Vec<(mat3::Mat3, mat3::Vec3)>,
-    loop_closed: bool,
+    closure_closed: bool,
     ts: f64,
 ) -> Result<(), String> {
     use std::io::Write;
@@ -635,7 +638,7 @@ fn write_pose_changes(
             let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
             mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
         });
-    if !loop_closed && !moved {
+    if !closure_closed && !moved {
         return Ok(());
     }
     let count = poses.len().min(published.len());
