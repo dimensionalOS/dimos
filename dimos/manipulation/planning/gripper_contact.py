@@ -43,6 +43,7 @@ from numpy.typing import NDArray
 from scipy.spatial import cKDTree
 
 from dimos.manipulation.planning.factory import WorldBackend, create_kinematics, create_world
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
@@ -65,6 +66,9 @@ _GRIPPER_SELF_RADIUS = 0.15
 # Scene points this close (metres) to the object's points are the object's own
 # edge left outside its mask.
 _TARGET_EDGE = 0.01
+# IK steps per grasp. A reachable grasp nearly always gets there in far fewer;
+# one out of reach takes them all, so this sets the cost of a rejected grasp.
+_IK_ITERATIONS = 80
 # Edge (metres) of the cells that stand for the object's own points.
 _SURFACE_CELL = 0.001
 _TARGET = "grasp-contact/target"
@@ -97,7 +101,9 @@ class GraspContactChecker:
         self._world = create_world(backend=world_backend)
         self._world.load_model(prepare_robot_model(model))
         self._world.finalize()
-        self._kinematics = create_kinematics()
+        self._kinematics = create_kinematics(
+            config=PinkKinematicsConfig(max_iterations=_IK_ITERATIONS)
+        )
         self._joint_names = model.joint_names
         found = [g for g in self._world.get_prepared_model().planning_groups if g.id == group]
         if not found:
