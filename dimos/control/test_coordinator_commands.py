@@ -34,7 +34,7 @@ from typing import Any
 import pytest
 
 import dimos.control.coordinator as coord_mod
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, _rate_limited
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
@@ -357,3 +357,17 @@ class TestDescribeTask:
         assert ("twist_command", "broadcast") in desc["streams"]
         assert "reset_runtime_state" in desc["commands"]
         assert desc["commands"]["reset_runtime_state"]["params"] == ["reactivate"]
+
+
+def test_rate_limited_publish_drops_calls_within_the_period(monkeypatch):
+    sent = []
+    clock = [10.0]
+    monkeypatch.setattr("dimos.control.coordinator.time.monotonic", lambda: clock[0])
+    publish = _rate_limited(sent.append, 30.0)
+    for t in (0.0, 0.01, 0.02, 0.034, 0.05, 0.07):
+        clock[0] = 10.0 + t
+        publish(t)
+
+    assert sent == [0.0, 0.034, 0.07]
+    publish_all = sent.append
+    assert _rate_limited(publish_all, None) is publish_all

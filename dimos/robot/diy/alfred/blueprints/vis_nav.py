@@ -160,7 +160,7 @@ def vis_nav(
             # while driving normally, so no threshold separates good frames from bad.
             covariance_gate_translation_std=0.0,
             # Alfred is holonomic in the plane.
-            per_dimension_error_variance=Covariance(z=0.01, roll=0.01, pitch=0.01),
+            zero_velocity_variances=Covariance(z=0.01, roll=0.01, pitch=0.01),
             # Wheel odometry crosses the wifi link and can land seconds late.
             replay_buffer_seconds=2.0,
             # Every IMU publishes on the one imu topic; the filter sorts them by frame_id and

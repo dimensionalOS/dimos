@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 # tag, not rev: nix's fetchGit only searches the ref the url names, so a bare rev is
 # unfetchable. Cargo.lock still pins the exact commit.
-dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.1" }
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.5.0-beta3" }
 # Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.2.0"
@@ -25,5 +25,9 @@ validator = { version = "0.21", features = ["derive"] }
 
 [profile.release]
 lto = true
+
+# zenoh 1.10.1 plus upstream's startup-deadlock fix (eclipse-zenoh/zenoh issue 2581), which no release has yet.
+[patch.crates-io]
+zenoh = { git = "https://github.com/jeff-hykin/zenoh-vendor", tag = "zenoh-1.10.1-patch.2" }
 
 [workspace]

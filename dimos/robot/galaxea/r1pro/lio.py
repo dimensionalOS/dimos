@@ -16,16 +16,14 @@
 
 from __future__ import annotations
 
-import contextlib
 from functools import cache
-import os
 
-import psutil
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -42,6 +40,8 @@ class R1ProLioConfig(StaticTfPublisherConfig):
     lidar_frame: str = "lidar_pointlio_link"
     # The URDF's name for the same lidar.
     chassis_lidar_frame: str = "lidar_chassis_left_link"
+    # On when something else (dimSLAM) owns odom -> base_link: the mount then hangs under base_link instead of over it.
+    mount_under_base: bool = False
 
 
 @cache
@@ -62,15 +62,15 @@ def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
 
 
 def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
-    """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
+    """Point-LIO's frame to base_link, then the URDF's chassis-lidar edge; the first is lidar -> base unless ``mount_under_base``."""
     model = lio_model(config.lidar_frame, config.chassis_lidar_frame)
     base_to_chassis_lidar = joint_transform(model, config.chassis_lidar_frame)
     assert base_to_chassis_lidar.frame_id == config.base_frame
     base_to_lidar = base_to_chassis_lidar + joint_transform(model, config.lidar_frame)
-    return [-base_to_lidar, base_to_chassis_lidar]
+    return [base_to_lidar if config.mount_under_base else -base_to_lidar, base_to_chassis_lidar]
 
 
-def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
+def base_transform(odometry: Odometry, lidar_to_base: Transform) -> Transform:
     """Point-LIO's lidar pose carried through the mount to base_link."""
     odom_to_lidar = Transform(
         translation=odometry.pose.position,
@@ -78,7 +78,11 @@ def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
         frame_id=odometry.frame_id,
         ts=odometry.ts,
     )
-    odom_to_base = odom_to_lidar + lidar_to_base
+    return odom_to_lidar + lidar_to_base
+
+
+def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
+    odom_to_base = base_transform(odometry, lidar_to_base)
     return PoseStamped(
         ts=odometry.ts,
         frame_id=odometry.frame_id,
@@ -87,13 +91,26 @@ def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
     )
 
 
+def base_odometry(odometry: Odometry, lidar_to_base: Transform, base_frame: str) -> Odometry:
+    """The same pose as an Odometry (no twist: Point-LIO's is the lidar's, not base_link's)."""
+    odom_to_base = base_transform(odometry, lidar_to_base)
+    return Odometry(
+        ts=odometry.ts,
+        frame_id=odometry.frame_id,
+        child_frame_id=base_frame,
+        pose=Pose(odom_to_base.translation, odom_to_base.rotation),
+    )
+
+
 class R1ProLio(StaticTfPublisher):
-    """Hangs base_link under Point-LIO's lidar frame, and publishes base_link's pose from Point-LIO's odometry."""
+    """Hangs base_link under Point-LIO's lidar frame (or the reverse), and publishes base_link's pose from Point-LIO's odometry."""
 
     config: R1ProLioConfig
 
     odometry: In[Odometry]
     pose: Out[PoseStamped]
+    # The same pose as an Odometry, for a fusion module such as dimSLAM.
+    base_odometry: Out[Odometry]
 
     def transforms(self) -> list[Transform]:
         return mount_transforms(self.config)
@@ -101,42 +118,34 @@ class R1ProLio(StaticTfPublisher):
     @rpc
     def start(self) -> None:
         super().start()
-        self._lidar_to_base = mount_transforms(self.config)[0]
+        base_to_lidar = mount_transforms(self.config.model_copy(update={"mount_under_base": True}))[
+            0
+        ]
+        self._lidar_to_base = -base_to_lidar
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
 
     def _on_odometry(self, msg: Odometry) -> None:
         self.pose.publish(base_pose(msg, self._lidar_to_base))
+        self.base_odometry.publish(base_odometry(msg, self._lidar_to_base, self.config.base_frame))
 
 
-# Sharing the Orin's cores at load ~23, Point-LIO waited for a core ~60% of the time, ran 0.4-2 s behind and dropped scans: the robot stuttered in the viewer.
-POINTLIO_RESERVED_CORES = 2
+class PoseFromOdometry(Module):
+    """An Odometry's pose as a PoseStamped, for the planners that read one."""
 
-
-def set_affinity(pid: int, cores: set[int]) -> None:
-    """Every thread of ``pid``: an affinity is per thread, and threads made later inherit their creator's."""
-    with contextlib.suppress(FileNotFoundError):
-        for tid in os.listdir(f"/proc/{pid}/task"):
-            with contextlib.suppress(OSError):
-                os.sched_setaffinity(int(tid), cores)
-
-
-def run_pids() -> list[int]:
-    """This dimos run: the coordinator (this worker's forkserver's parent) and everything under it."""
-    coordinator = psutil.Process(psutil.Process().parent().ppid())
-    return [coordinator.pid, *(p.pid for p in coordinator.children(recursive=True))]
-
-
-class R1ProPointLio(PointLio):
-    """Point-LIO on the last cores, with the rest of the run moved off them."""
+    odometry: In[Odometry]
+    pose: Out[PoseStamped]
 
     @rpc
     def start(self) -> None:
         super().start()
-        if not hasattr(os, "sched_setaffinity") or self._process is None:
-            return
-        cpus = set(range(os.cpu_count() or 1))
-        reserved = set(sorted(cpus)[-POINTLIO_RESERVED_CORES:])
-        if reserved == cpus:
-            return
-        for pid in run_pids():
-            set_affinity(pid, reserved if pid == self._process.pid else cpus - reserved)
+        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+
+    def _on_odometry(self, msg: Odometry) -> None:
+        self.pose.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.pose.position,
+                orientation=msg.pose.orientation,
+            )
+        )

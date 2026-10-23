@@ -76,6 +76,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     max_range_m: float = Field(default=6.0, ge=0.0, le=1000.0)
     decimation: int = Field(default=4, ge=1, le=64)
     max_points: int = Field(default=0, ge=0, le=10000000)
+    # Frames taken per second at most; the rest are dropped on arrival. 0 takes every one.
+    max_rate_hz: float = Field(default=0.0, ge=0.0, le=1000.0)
     frame_id: str = ""
     # Keep only points whose height in height_frame (e.g. base_link) is within [min, max]; "" keeps all.
     height_frame: str = ""

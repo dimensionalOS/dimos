@@ -95,6 +95,8 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
+    # At most this often (None: every tick); each subscriber pays per message.
+    joint_state_hz: float | None = None
     # Transitional: goes away once every consumer reads per-robot streams.
     publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
@@ -902,7 +904,9 @@ class ControlCoordinator(Module):
 
         # Create and start tick loop
         publish_cb = (
-            self.coordinator_joint_state.publish if self.config.publish_joint_state else None
+            _rate_limited(self.coordinator_joint_state.publish, self.config.joint_state_hz)
+            if self.config.publish_joint_state
+            else None
         )
         publish_robot_cb = (
             self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
@@ -975,3 +979,20 @@ class ControlCoordinator(Module):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
+
+
+def _rate_limited(
+    publish: "Callable[[JointState], None]", hz: float | None
+) -> "Callable[[JointState], None]":
+    """``publish``, dropping calls that come sooner than 1 / ``hz`` after the last one passed."""
+    if hz is None:
+        return publish
+    next_t = [0.0]
+
+    def limited(msg: JointState) -> None:
+        now = time.monotonic()
+        if now >= next_t[0]:
+            next_t[0] = now + 1.0 / hz
+            publish(msg)
+
+    return limited
