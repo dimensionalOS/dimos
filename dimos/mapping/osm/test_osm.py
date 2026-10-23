@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Generator
+from functools import partial
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -28,19 +30,19 @@ from dimos.utils.data import get_data
 pytestmark = pytest.mark.self_hosted
 
 
-def _tile_callback(request: Request, context: Any) -> bytes:
+def _tile_callback(tiles: Path, request: Request, context: Any) -> bytes:
     parts = (request.url or "").split("/")
     zoom, x, y_png = parts[-3], parts[-2], parts[-1]
     y = y_png.removesuffix(".png")
-    tile_path = get_data("osm_map_test") / f"{zoom}_{x}_{y}.png"
     context.headers["Content-Type"] = "image/png"
-    return tile_path.read_bytes()
+    return (tiles / f"{zoom}_{x}_{y}.png").read_bytes()
 
 
 @pytest.fixture
 def mock_openstreetmap_org() -> Generator[None, None, None]:
+    tiles = get_data("osm_map_test")
     with requests_mock.Mocker() as m:
-        m.get(requests_mock.ANY, content=_tile_callback)
+        m.get(requests_mock.ANY, content=partial(_tile_callback, tiles))
         yield
 
 
