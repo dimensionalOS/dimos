@@ -1039,15 +1039,15 @@ def test_generate_dataset_cross_view_audits_rejected_pairs(
     ok_right = SightingView(
         query="box",
         instance_id="aaaa1111",
-        image=_image(8.0),
+        image=_image(12.0),
         bbox=(70.0, 70.0, 130.0, 130.0),
         confidence=0.7,
-        timestamp=8.0,
+        timestamp=12.0,
         n_views=5,
         semantic_score=0.7,
     )
 
-    _patch_cross_view_localize(monkeypatch)
+    _patch_cross_view_localize(monkeypatch, time_range=(0.0, 20.0))
     monkeypatch.setattr(
         "dimos.evals.vqa.generate.collect_query_instances",
         lambda *_a, **_k: {"aaaa1111": (good,)},

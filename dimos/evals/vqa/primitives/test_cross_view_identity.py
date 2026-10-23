@@ -76,17 +76,18 @@ def test_instance_pool_requires_views_score_and_min_conf() -> None:
 
 def test_filter_and_propose_same_and_diff_pairs() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
+    # Timestamps ≥ MIN_PAIR_TIME_GAP_S (8s) apart to model revisits.
     a = (
         _view(instance_id="a", bbox=centered, ts=1.0),
-        _view(instance_id="a", bbox=centered, ts=5.0),
-        _view(instance_id="a", bbox=centered, ts=9.0),
+        _view(instance_id="a", bbox=centered, ts=10.0),
+        _view(instance_id="a", bbox=centered, ts=20.0),
     )
     b = (
-        _view(instance_id="b", bbox=centered, ts=2.0, score=0.62),
-        _view(instance_id="b", bbox=centered, ts=8.0, score=0.62),
+        _view(instance_id="b", bbox=centered, ts=3.0, score=0.62),
+        _view(instance_id="b", bbox=centered, ts=15.0, score=0.62),
     )
     # Corner-only instance should vanish from same-pair pool.
-    corner = (_view(instance_id="c", bbox=(0.0, 0.0, 25.0, 25.0), ts=3.0, score=0.9),)
+    corner = (_view(instance_id="c", bbox=(0.0, 0.0, 25.0, 25.0), ts=4.0, score=0.9),)
 
     pairs = propose_identity_pairs({"a": a, "b": b, "c": corner})
     assert any(p.same_object and p.left.instance_id == "a" for p in pairs)
@@ -99,7 +100,7 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
 def test_answer_and_stack() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     left = _view(instance_id="a", bbox=centered, ts=1.0)
-    right = _view(instance_id="a", bbox=centered, ts=4.0)
+    right = _view(instance_id="a", bbox=centered, ts=10.0)
     from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
 
     same = IdentityPair(query="storage box", left=left, right=right, same_object=True)
@@ -111,7 +112,7 @@ def test_answer_and_stack() -> None:
     stacked = stack_pair_image(left.image, right.image)
     assert stacked.to_rgb().data.shape[1] > left.image.to_rgb().data.shape[1]
 
-    other = _view(instance_id="b", bbox=centered, ts=5.0)
+    other = _view(instance_id="b", bbox=centered, ts=12.0)
     diff = IdentityPair(query="storage box", left=left, right=other, same_object=False)
     assert (
         answer_cross_view_same_object(
@@ -125,7 +126,7 @@ def test_answer_rejects_bad_framing() -> None:
     from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
 
     bad = _view(instance_id="a", bbox=(0.0, 0.0, 20.0, 20.0), ts=1.0)
-    good = _view(instance_id="a", bbox=(70.0, 70.0, 130.0, 130.0), ts=4.0)
+    good = _view(instance_id="a", bbox=(70.0, 70.0, 130.0, 130.0), ts=10.0)
     pair = IdentityPair(query="storage box", left=bad, right=good, same_object=True)
     with pytest.raises(InsufficientEvidenceError):
         answer_cross_view_same_object(pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8)
@@ -166,7 +167,7 @@ def test_pair_case_id_sanitizes_slashes() -> None:
     pair = IdentityPair(
         query="cup/mug",
         left=_view(instance_id="a/1", bbox=centered, ts=1.0),
-        right=_view(instance_id="a/1", bbox=centered, ts=4.0),
+        right=_view(instance_id="a/1", bbox=centered, ts=10.0),
         same_object=True,
     )
     case_id = pair_case_id(pair, 0)
@@ -202,14 +203,14 @@ def test_pair_case_id_and_answer_mismatched_ids() -> None:
 
     centered = (70.0, 70.0, 130.0, 130.0)
     left = _view(instance_id="a", bbox=centered, ts=1.0)
-    right = _view(instance_id="b", bbox=centered, ts=4.0)
+    right = _view(instance_id="b", bbox=centered, ts=10.0)
     bad_same = IdentityPair(query="box", left=left, right=right, same_object=True)
     with pytest.raises(InsufficientEvidenceError, match="mismatched instance"):
         answer_cross_view_same_object(
             bad_same, first_clip_duration_s=0.5, second_clip_duration_s=0.8
         )
 
-    twin = _view(instance_id="a", bbox=centered, ts=5.0)
+    twin = _view(instance_id="a", bbox=centered, ts=12.0)
     bad_diff = IdentityPair(query="box", left=left, right=twin, same_object=False)
     with pytest.raises(InsufficientEvidenceError, match="identical instance"):
         answer_cross_view_same_object(

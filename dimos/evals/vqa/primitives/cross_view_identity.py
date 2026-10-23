@@ -41,10 +41,11 @@ MIN_INSTANCE_VIEWS = 3
 MIN_SEMANTIC_SCORE = 0.55
 MIN_SIGHTING_CONF = 0.25
 
-# Pair sampling.
+# Pair sampling — prefer temporally separated revisits over near-duplicate views.
 MAX_SAME_PAIRS_PER_INSTANCE = 2
 MAX_DIFF_PAIRS_PER_QUERY = 8
-MIN_PAIR_TIME_GAP_S = 1.0
+# Same physical object seen again after leaving / returning (not co-visible frames).
+MIN_PAIR_TIME_GAP_S = 8.0
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,7 @@ def _pick_same_pairs(
     max_pairs: int = MAX_SAME_PAIRS_PER_INSTANCE,
     min_gap_s: float = MIN_PAIR_TIME_GAP_S,
 ) -> list[IdentityPair]:
+    """Prefer first↔last revisit pairs (largest time gap) for same-instance identity."""
     ordered = sorted(views, key=lambda v: v.timestamp)
     candidates: list[tuple[float, SightingView, SightingView]] = []
     for left, right in itertools.combinations(ordered, 2):
@@ -204,6 +206,7 @@ def _pick_same_pairs(
         if gap < min_gap_s:
             continue
         candidates.append((gap, left, right))
+    # Largest gap first: earliest sighting vs a later revisit.
     candidates.sort(key=lambda row: -row[0])
     pairs: list[IdentityPair] = []
     used: set[float] = set()
