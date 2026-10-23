@@ -50,9 +50,7 @@ class ImageClip(Environment):
         paths = (path,) if isinstance(path, Path) else tuple(Path(p) for p in path)
         if not paths:
             raise ValueError("ImageClip requires at least one clip directory")
-        artifact_names = (
-            ("clip",) if len(paths) == 1 else _MULTI_STREAM_NAMES[: len(paths)]
-        )
+        artifact_names = ("clip",) if len(paths) == 1 else _MULTI_STREAM_NAMES[: len(paths)]
         super().__init__(paths=paths, agent_artifacts=artifact_names, **kwargs)
 
     def preflight(self, agent: Agent) -> None:
