@@ -390,6 +390,26 @@ pub fn icp_point_to_point(
     guess_translation: &Vec3,
     params: &IcpParams,
 ) -> IcpResult {
+    let tree = KdTree::build(target);
+    icp_point_to_point_with_tree(
+        source,
+        target,
+        &tree,
+        guess_rotation,
+        guess_translation,
+        params,
+    )
+}
+
+/// `icp_point_to_point` against a k-d tree the caller already built on `target`.
+pub fn icp_point_to_point_with_tree(
+    source: &[[f32; 3]],
+    target: &[[f32; 3]],
+    tree: &KdTree,
+    guess_rotation: &Mat3,
+    guess_translation: &Vec3,
+    params: &IcpParams,
+) -> IcpResult {
     let mut result = IcpResult {
         converged: false,
         rotation: *guess_rotation,
@@ -399,7 +419,6 @@ pub fn icp_point_to_point(
     if target.is_empty() || source.is_empty() {
         return result;
     }
-    let tree = KdTree::build(target);
     let max_dist_sqr = params.max_correspondence_distance * params.max_correspondence_distance;
 
     let mut guess = mat4_identity();

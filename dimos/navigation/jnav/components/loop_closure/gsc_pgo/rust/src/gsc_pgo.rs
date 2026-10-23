@@ -32,8 +32,8 @@ use crate::gnc::{
 use crate::gtsam::{symbol_key, FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{
-    self, cloud_degeneracy, icp_point_to_point, transform_cloud, voxel_downsample, IcpParams,
-    KdTree, PointCloud,
+    self, cloud_degeneracy, icp_point_to_point_with_tree, transform_cloud, voxel_downsample,
+    IcpParams, KdTree, PointCloud,
 };
 use crate::scan_context;
 
@@ -402,8 +402,8 @@ pub struct Config {
     /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
     pub loop_icp_dump_dir: String,
     /// With `loop_yank_gate`, a candidate whose single-scan confidence is too low for its yank gets
-    /// a second look on more data instead of an outright reject: seeded with the first ICP, the
-    /// source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
+    /// a second look on more data instead of an outright reject: each round seeded with the previous
+    /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
     /// keyframes near the matched one in time that those land within `loop_search_radius` of.
     /// Inliers are source points within sqrt(`loop_score_thresh`) of the target after ICP.
     /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
@@ -677,6 +677,7 @@ struct TimingStats {
     submap_s: f64,
     icp_s: f64,
     degeneracy_s: f64,
+    extended_icp_s: f64,
     gtsam_s: f64,
     smooth_calls: u64,
 }
@@ -747,6 +748,19 @@ impl GscPgo {
     }
 
     /// All per-search loop-closure diagnostic records accumulated so far.
+    /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, iSAM2 (smooth_and_update).
+    pub fn stage_seconds(&self) -> [(&'static str, f64); 6] {
+        let t = &self.timing;
+        [
+            ("scan_context", t.scan_context_s),
+            ("submap", t.submap_s),
+            ("icp", t.icp_s),
+            ("degeneracy", t.degeneracy_s),
+            ("extended_icp", t.extended_icp_s),
+            ("isam2", t.gtsam_s),
+        ]
+    }
+
     pub fn loop_diagnostics(&self) -> &[LoopCandidateDiag] {
         &self.loop_diagnostics
     }
@@ -863,7 +877,7 @@ impl GscPgo {
         cur_idx: usize,
         loop_idx: usize,
         source_cloud: &PointCloud,
-        target_cloud: &PointCloud,
+        target_tree: &KdTree,
         first: &IcpResult,
         diag: &mut LoopCandidateDiag,
     ) -> Option<IcpResult> {
@@ -873,15 +887,14 @@ impl GscPgo {
         }
         let max_distance = self.config.loop_icp_max_correspondence_m;
         // a point overlaps when it is within the RMS distance the ICP score gate allows (fitness is a mean squared distance)
-        let inliers = |source: &PointCloud, target: &PointCloud, icp: &IcpResult| {
-            let tree = KdTree::build(target);
+        let inliers = |source: &PointCloud, tree: &KdTree, icp: &IcpResult| {
             let limit = self.config.loop_score_thresh as f32;
             transform_cloud(source, &icp.rotation, &icp.translation)
                 .iter()
                 .filter(|p| matches!(tree.nearest(p), Some((_, d)) if d <= limit))
                 .count()
         };
-        let single = inliers(source_cloud, target_cloud, first);
+        let single = inliers(source_cloud, target_tree, first);
         diag.single_inliers = single;
         if single == 0 {
             return None;
@@ -898,6 +911,8 @@ impl GscPgo {
         };
         let half_range = self.config.loop_submap_half_range.max(0) as usize;
         let radius = self.config.loop_search_radius;
+        // each round starts from the previous round's alignment, which saw more of both places than the first ICP
+        let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
         let mut keyframes = 2;
         while keyframes <= max_keyframes {
             // never stack source keyframes into the stretch the target side is drawn from
@@ -906,12 +921,12 @@ impl GscPgo {
             if source_first >= cur_idx {
                 return None;
             }
-            // where the first ICP puts each stacked source keyframe
+            // where the seed puts each stacked source keyframe
             let placed: Vec<Vec3> = (source_first..=cur_idx)
                 .map(|k| {
                     mat3::add(
-                        &mat3::mat_vec(&first.rotation, &self.key_poses[k].translation_global),
-                        &first.translation,
+                        &mat3::mat_vec(&seed_rotation, &self.key_poses[k].translation_global),
+                        &seed_translation,
                     )
                 })
                 .collect();
@@ -923,13 +938,23 @@ impl GscPgo {
                         mat3::norm(&mat3::sub(p, &self.key_poses[j].translation_global)) < radius
                     })
             };
-            let source = self.stacked_cloud(source_first..=cur_idx);
+            // the stacked source is thinned to about the single scan's size, so a round costs about what the first ICP did;
+            // the target keeps full resolution so the inlier test below means the same thing in every round
+            let stacked = self.stacked_cloud(source_first..=cur_idx);
+            let thinning = (stacked.len() as f64 / source_cloud.len().max(1) as f64).max(1.0);
+            let source = if thinning > 1.0 {
+                voxel_downsample(&stacked, self.config.submap_resolution * thinning.sqrt())
+            } else {
+                stacked.clone()
+            };
             let target = self.stacked_cloud(target_ids.filter(|&j| near(j)));
-            let icp = icp_point_to_point(
+            let tree = KdTree::build(&target);
+            let icp = icp_point_to_point_with_tree(
                 &source,
                 &target,
-                &first.rotation,
-                &first.translation,
+                &tree,
+                &seed_rotation,
+                &seed_translation,
                 &params,
             );
             if !self.config.loop_icp_dump_dir.is_empty() {
@@ -943,12 +968,15 @@ impl GscPgo {
                     &format!("_x{keyframes}"),
                 );
             }
+            // inliers of the full stack, estimated from the thinned one's inlier fraction
             let extended = if icp.converged {
-                inliers(&source, &target, &icp)
+                (inliers(&source, &tree, &icp) as f64 * stacked.len() as f64
+                    / source.len().max(1) as f64)
+                    .round() as usize
             } else {
                 0
             };
-            let held_up = ((extended as f64 / source.len().max(1) as f64)
+            let held_up = ((extended as f64 / stacked.len().max(1) as f64)
                 / (single as f64 / source_cloud.len() as f64))
                 .min(1.0);
             let per_scan = diag.confidence * held_up;
@@ -958,7 +986,7 @@ impl GscPgo {
             let required = diag.yank_z * diag.yank_z / (2.0 * width * width);
             let confidence = 1.0 - (-evidence).exp();
             diag.extended_keyframes = cur_idx - source_first + 1;
-            diag.extended_source_points = source.len();
+            diag.extended_source_points = stacked.len();
             diag.extended_target_points = target.len();
             diag.extended_inliers = extended;
             diag.extended_fitness = icp.fitness;
@@ -973,6 +1001,7 @@ impl GscPgo {
             if evidence >= required {
                 return Some(icp);
             }
+            (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
             keyframes *= 2;
         }
         None
@@ -1702,9 +1731,11 @@ impl GscPgo {
         self.timing.submap_s += t0.elapsed().as_secs_f64();
 
         let t0 = std::time::Instant::now();
-        let icp = icp_point_to_point(
+        let target_tree = KdTree::build(&target_cloud);
+        let icp = icp_point_to_point_with_tree(
             &source_cloud,
             &target_cloud,
+            &target_tree,
             &init_rotation,
             &init_translation,
             &IcpParams {
@@ -1799,14 +1830,17 @@ impl GscPgo {
 
         self.score_candidate(&mut diag);
         if self.config.loop_yank_gate && diag.confidence < diag.required_confidence {
-            let Some(extended) = self.extended_icp(
+            let t0 = std::time::Instant::now();
+            let extended = self.extended_icp(
                 cur_idx,
                 loop_idx,
                 &source_cloud,
-                &target_cloud,
+                &target_tree,
                 &icp,
                 &mut diag,
-            ) else {
+            );
+            self.timing.extended_icp_s += t0.elapsed().as_secs_f64();
+            let Some(extended) = extended else {
                 diag.outcome = "yank_confidence_reject";
                 self.record_search(diag);
                 return;
