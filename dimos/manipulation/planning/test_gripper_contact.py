@@ -165,15 +165,11 @@ def test_xarm_rejects_the_table_and_a_neighbour(
 
 
 def test_gripper_config_steps_from_open_to_closed() -> None:
-    gripper = GripperConfig(
-        pad_links=("pad",), open_positions={"drive": 0.0}, closed_positions={"drive": 0.8}
-    )
+    gripper = GripperConfig(pad_links=("pad",), finger_joints={"drive": (0.0, 0.8)})
 
     assert [step["drive"] for step in gripper.joint_positions()] == pytest.approx(
         [0.0, 0.2, 0.4, 0.6, 0.8]
     )
-    with pytest.raises(ValueError, match="same joints"):
-        GripperConfig(pad_links=("pad",), open_positions={"drive": 0.0})
 
 
 def _cloud(*points: tuple[float, float, float]) -> PointCloud2:

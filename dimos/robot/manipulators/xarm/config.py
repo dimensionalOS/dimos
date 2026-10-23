@@ -67,8 +67,7 @@ def xarm_gripper_config(prefix: str = "") -> GripperConfig:
     """
     return GripperConfig(
         pad_links=(f"{prefix}left_finger", f"{prefix}right_finger"),
-        open_positions={f"{prefix}drive_joint": 0.0},
-        closed_positions={f"{prefix}drive_joint": 0.85},
+        finger_joints={f"{prefix}drive_joint": (0.0, 0.85)},
     )
 
 
