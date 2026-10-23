@@ -46,6 +46,11 @@ os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 from dotenv import load_dotenv
 import typer
 
+# Load before CLI imports freeze config/state paths, so a daemon re-exec and
+# later status/stop commands resolve the same registry. Keep tests isolated.
+if "PYTEST_VERSION" not in os.environ:
+    load_dotenv()
+
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
@@ -68,16 +73,12 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
-from dimos.core.global_config import ENV_FILE
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
     help="Dimensional CLI",
     no_args_is_help=True,
 )
-
-if ENV_FILE is not None:
-    load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
 RECORDERS = ("sqlite", "mcap")
@@ -154,7 +155,9 @@ main.add_typer(evals_app, name="evals")
 
 main.command()(cameracalibrate)
 main.command()(apriltag)
-main.command(name="rerun-bridge")(rerun_bridge_cmd)
+main.command(
+    name="rerun-bridge", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)(rerun_bridge_cmd)
 
 
 if __name__ == "__main__":

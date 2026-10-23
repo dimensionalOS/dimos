@@ -358,4 +358,4 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", side_effect=build)
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
-    assert popen.call_args.args[0] == "nix build -L .#dimos-memory-recorder"
+    assert popen.call_args.args[0] == "nix build -L path:."

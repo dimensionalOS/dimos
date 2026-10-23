@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
 import time
@@ -25,7 +26,6 @@ from typing import Any
 import pytest
 import websockets.asyncio.client as ws_client
 
-from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
@@ -99,17 +99,14 @@ class MockViewerPublisher:
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
-    original_port = global_config.rerun_websocket_server_port
-    # Port 0: bind an ephemeral port so parallel test workers never collide.
-    global_config.update(rerun_websocket_server_port=0)
+    # Port 0 avoids collisions between parallel test workers.
+    module = RerunWebSocketServer(port=0)
     try:
-        module = RerunWebSocketServer()
         module.start()
         wait_for_server(module.bound_port)
-        yield module  # type: ignore[misc]
-        module.stop()
+        yield module
     finally:
-        global_config.update(rerun_websocket_server_port=original_port)
+        module.stop()
 
 
 @pytest.fixture()
@@ -191,12 +188,30 @@ def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     asyncio.run(_send_bad())
 
 
+def test_websocket_url_is_dialable_for_the_bind_address() -> None:
+    module = RerunWebSocketServer(host="0.0.0.0", port=3031)
+    try:
+        assert module.websocket_url() == "ws://localhost:3031/ws"
+    finally:
+        module.stop()
+
+
+def test_websocket_url_waits_for_an_ephemeral_port() -> None:
+    module = RerunWebSocketServer(host="127.0.0.1", port=0)
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            # Modules start in parallel, so the bridge may ask before start().
+            url = pool.submit(module.websocket_url)
+            module.start()
+            assert url.result(timeout=5) == f"ws://127.0.0.1:{module.bound_port}/ws"
+    finally:
+        module.stop()
+
+
 def test_restart_is_rejected_and_state_is_cleared() -> None:
     """A stopped server rejects restart and drops its listener state."""
-    original_port = global_config.rerun_websocket_server_port
-    global_config.update(rerun_websocket_server_port=0)
+    module = RerunWebSocketServer(port=0)
     try:
-        module = RerunWebSocketServer()
         module.start()
         assert module.bound_port > 0
         module.stop()
@@ -205,7 +220,7 @@ def test_restart_is_rejected_and_state_is_cleared() -> None:
         with pytest.raises(RuntimeError, match="cannot be restarted"):
             module.start()
     finally:
-        global_config.update(rerun_websocket_server_port=original_port)
+        module.stop()
 
 
 def test_mixed_message_sequence(

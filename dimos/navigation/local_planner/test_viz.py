@@ -25,7 +25,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.go2 import GO2
-from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.local_planner.viz import (
     motion_visual_override,
     plan_clearance,
@@ -46,6 +45,14 @@ def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     return Path(frame_id="odom", poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)])
 
 
+def _stamp(plan: Path, speeds: NDArray[np.float64]) -> Path:
+    """Per-segment speeds as stamp deltas over the 0.1 m spacing, the planner's dialect."""
+    ts = np.concatenate([[0.0], np.cumsum(0.1 / speeds)])
+    for pose, t in zip(plan.poses, ts, strict=True):
+        pose.ts = float(t)
+    return plan
+
+
 def _rgba(boxes) -> NDArray[np.float64]:
     """rerun packs colors as u32 0xRRGGBBAA, not as rows."""
     packed = np.asarray(boxes.colors.pa_array.to_pylist(), dtype=np.uint32)
@@ -57,24 +64,25 @@ def _rgba(boxes) -> NDArray[np.float64]:
 def test_boxes_are_subsampled_by_arc_not_by_index() -> None:
     """Every waypoint would be an opaque wall hiding the geometry it shows."""
     plan = _plan()  # 3.9 m of plan discretised at 0.1 m
-    boxes = render_body(plan, stride_m=0.35)
+    boxes = render_body(plan, GO2, stride_m=0.35)
     n = len(boxes.centers.pa_array)
     assert 8 <= n <= 14, f"{n} boxes for 3.9 m at 0.35 m stride"
     # ...and the stride is what sets it, not the waypoint count
-    assert len(render_body(plan, stride_m=1.0).centers.pa_array) < n
+    assert len(render_body(plan, GO2, stride_m=1.0).centers.pa_array) < n
 
 
 def test_colour_tracks_the_precision_the_planner_stamped() -> None:
     """The colour channel is decoded from the path, not passed alongside it."""
-    plan = _plan()
-    tight = np.concatenate([np.full(15, 0.6), np.full(10, 0.02), np.full(15, 0.6)])
-    encode_precision(plan, tight, GO2)
+    fast, slow = GO2.max_speed, GO2.min_speed
+    plan = _stamp(
+        _plan(), np.concatenate([np.full(14, fast), np.full(11, slow), np.full(14, fast)])
+    )
 
     room = plan_clearance(plan, GO2)
     assert room is not None
     assert room.min() <= 0.05 and room.max() >= 0.34
 
-    colors = _rgba(render_body(plan))
+    colors = _rgba(render_body(plan, GO2))
     reds = [c for c in colors if c[0] > 200 and c[1] < 100]
     greens = [c for c in colors if c[1] > 200 and c[0] < 100]
     assert len(reds), "the pinched middle drew no at-floor box"
@@ -89,20 +97,20 @@ def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     must not manufacture a varying profile out of noise: every box comes out
     the same colour.
     """
-    plan = _plan()  # never passed through encode_precision
+    plan = _plan()  # never stamped
     room = plan_clearance(plan, GO2)
     assert room is not None and len(np.unique(np.round(room, 6))) == 1
-    colors = _rgba(render_body(plan))
+    colors = _rgba(render_body(plan, GO2))
     assert len({tuple(c[:3]) for c in colors}) == 1
 
 
 def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
     """An empty viewport reads as a dead module; a refusal must look refused."""
-    veto = render_body(Path(frame_id="odom", poses=[_pose(1.0, 2.0, 0.5)]))
+    veto = render_body(Path(frame_id="odom", poses=[_pose(1.0, 2.0, 0.5)]), GO2)
     assert veto is not None
     assert len(veto.centers.pa_array) == 1
     # an EMPTY path is different: hold the last good picture
-    assert render_body(Path(frame_id="odom", poses=[])) is None
+    assert render_body(Path(frame_id="odom", poses=[]), GO2) is None
 
 
 def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
@@ -117,14 +125,17 @@ def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
 def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> None:
     import rerun as rr
 
-    drawn = render_plan(_plan())
+    drawn = render_plan(_plan(), GO2)
     assert drawn is not None
     by_entity = {e: type(a) for e, a in drawn}
     assert by_entity == {"world/path": rr.Transform3D, "world/path/body": rr.Boxes3D}
     assert drawn[0] == ("world/path", rr.Transform3D(parent_frame="tf#/odom"))
     # a refusal stub is drawn too, so it is not mistaken for a dead module
-    veto = render_plan(Path(frame_id="odom", poses=[_pose(1.0, 2.0)]))
+    veto = render_plan(Path(frame_id="odom", poses=[_pose(1.0, 2.0)]), GO2)
     assert veto is not None and veto[-1][0] == "world/path/body"
     # an empty path is "no route": hold the last picture rather than blank it
-    assert render_plan(Path(frame_id="odom", poses=[])) is None
-    assert set(motion_visual_override(body_dilate_m=-0.03)) == {"world/path"}
+    assert render_plan(Path(frame_id="odom", poses=[]), GO2) is None
+    assert set(motion_visual_override(GO2, body_dilate_m=-0.03)) == {
+        "world/path",
+        "world/ground_support",
+    }

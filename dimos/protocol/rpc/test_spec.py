@@ -102,29 +102,6 @@ def test_call_sync_unsubscribes_timed_out_callback(mocker) -> None:
     unsubscribe.assert_called_once_with()
 
 
-# Try to add RedisRPC if available
-try:
-    from dimos.protocol.rpc.redisrpc import RedisRPC
-
-    @contextmanager
-    def redis_rpc_context():
-        """Context manager for RedisRPC implementation."""
-        server = RedisRPC()
-        client = RedisRPC()
-        server.start()
-        client.start()
-
-        try:
-            yield server, client
-        finally:
-            server.stop()
-            client.stop()
-
-    testdata.append((redis_rpc_context, "redis"))
-except (ImportError, ConnectionError):
-    print("RedisRPC not available")
-
-
 # Test functions that will be served
 def add_function(a: int, b: int) -> int:
     """Simple addition function for testing."""

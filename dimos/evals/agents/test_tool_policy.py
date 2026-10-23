@@ -26,6 +26,9 @@ import pytest
 from dimos.evals.agents.conftest import NativeHarness, ScriptedProvider
 from dimos.evals.agents.lib.pi_config import RunPaths
 
+# The Pi and dimcode CLIs are installed on the self-hosted runners only (bin/install-test-clis).
+pytestmark = pytest.mark.self_hosted
+
 
 def test_allowed_tools_execute_and_excluded_tools_do_not(
     harness: NativeHarness, provider: ScriptedProvider

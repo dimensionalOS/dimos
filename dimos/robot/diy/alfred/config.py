@@ -15,15 +15,36 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from functools import cache
 from typing import Any
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.openarm.config import OPENARM_DESCRIPTION_ROOT
+from dimos.utils.data import LfsPath
 
 DEFAULT_ADDRESS = "172.6.2.20:11323"
-ALFRED_URDF = Path(__file__).resolve().parent / "alfred.urdf"
+ALFRED_DESCRIPTION = LfsPath("alfred_description")
+ALFRED_URDF = ALFRED_DESCRIPTION / "urdf" / "alfred_v1.urdf"
+# The Mid-360 sees the lower body box out to 0.61 m.
+LIO_BLIND_M = 0.65
+
+
+@cache
+def alfred_model() -> RobotModel:
+    """The whole robot with the lift at its top stop and the arms hanging, every joint welded."""
+    model = RobotModel.from_file(
+        ALFRED_URDF,
+        package_paths={
+            "alfred_description": ALFRED_DESCRIPTION,
+            "openarm_description": OPENARM_DESCRIPTION_ROOT,
+        },
+    )
+    return model.with_fixed_joints(
+        *(joint.name for joint in model.load().joints if joint.type != "fixed")
+    )
 
 
 @dataclass(frozen=True)
@@ -31,7 +52,6 @@ class AlfredConfig:
     """Physical metadata used by Alfred navigation and sensor blueprints."""
 
     name: str
-    body_height: float
     height_clearance: float
     width_clearance: float
     mid360_ip: str
@@ -39,11 +59,8 @@ class AlfredConfig:
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
 
 
-ALFRED = AlfredConfig(
+ALFRED_HARDWARE = AlfredConfig(
     name="alfred",
-    # The vertical span the MLS planner requires to be free above a cell before it will
-    # plan through it. The mast reaches higher, but nothing up there is a collision risk.
-    body_height=0.5,
     height_clearance=2.0,  # meters
     width_clearance=1.0,
     # The Mid-360 is on the Jetson's wired 192.168.1.100/24 link.

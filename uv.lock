@@ -36,13 +36,14 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+dimos-cdrgen = false
 dimos-viewer = false
 dimos-lcm = false
-eclipse-zenoh = false
+lcm = false
 edgetam-dimos = false
+eclipse-zenoh = false
 can-motor-control = false
 ml-space-benchmark-ky135 = false
-lcm-dimos-fork = false
 md-babel-py = false
 dim-odom = false
 roboplan = false
@@ -1797,6 +1798,36 @@ wheels = [
 ]
 
 [[package]]
+name = "deptry"
+version = "0.25.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "packaging" },
+    { name = "requirements-parser" },
+    { name = "tomli" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/b2/50ccc99362ae7757342978b7ecb3b98e47fade721fd617d74db1948ec3a1/deptry-0.25.1.tar.gz", hash = "sha256:45c8cd982c85cd4faae573ddff6920de7eec735336db6973f26a765ae7950f7d", size = 509748, upload-time = "2026-03-18T23:22:18.139Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/1d/b538dc635e873b25360d761cfe1fa0ccd7d6c69b698047e552f33401e60d/deptry-0.25.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a4dd1148db24a1ddacfa8b840836c6019c2f864fcb7579dd089fd217606338c8", size = 1850319, upload-time = "2026-03-18T23:22:15.65Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/a9/511477a8f0ae4f6021d68a80bdca77e7ffb0722008dc24ee5d9ef49f5c88/deptry-0.25.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:c67c666d916ef12013c0772e40d78be0f21577a495d8d99ec5fcb18c332d393d", size = 1759259, upload-time = "2026-03-18T23:22:30.853Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/4b/c9f0bdda410912a6df79a789cb118fa29acae02a397794ead3c84adcda5c/deptry-0.25.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:58d39279828dbf4efc1abb40bf50a71b21499c36759bed5a8d8a3c0e3149b091", size = 1872012, upload-time = "2026-03-18T23:22:19.145Z" },
+    { url = "https://files.pythonhosted.org/packages/72/9c/6f6f9125bac74b5d5d2af89536cbdb3fa159b6466aa097b74e7e85e8e030/deptry-0.25.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:14bfcc28b4326ed8c6abb30691b19077d4ef8613cfba6c37ef5b1f471775bf6f", size = 1926575, upload-time = "2026-03-18T23:22:11.269Z" },
+    { url = "https://files.pythonhosted.org/packages/52/48/2a5e705a7f898295966ade67bd1223e2af96da433e25b39f6b9483ba2c7b/deptry-0.25.1-cp310-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:555f5f9a487899ec9bf301eecba1745e14d212c4b354f4d3a5fd691e907366d3", size = 2050816, upload-time = "2026-03-18T23:22:27.439Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/c6/50f189a894e1f3bf21266299112c8a06cb731838976e1b9a9cadd0b4a86e/deptry-0.25.1-cp310-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:18d21b3545ab2bfec53f3f45c6f5f201d55f713323327f8d12674505469ae6b7", size = 2145416, upload-time = "2026-03-18T23:22:24.682Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/6a/3f82f7a06217778282bc4456af1b4ffb3bc4b2c8e7891d00e8323f9ad0b8/deptry-0.25.1-cp310-abi3-win_amd64.whl", hash = "sha256:b59a560cb7dffb21832a98bb80d33d614cfb5630ea36ce21833eabf4eae3df99", size = 1718489, upload-time = "2026-03-18T23:22:28.589Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/7f/cd6b3ac8cf95f2f1c5c7a74ff6452e9098af89a9b56607381f677880641e/deptry-0.25.1-cp310-abi3-win_arm64.whl", hash = "sha256:6efffd8116fb9d2c45a251382ce4ce1c38dbb17179f581ec9231ed5390f7fc12", size = 1647020, upload-time = "2026-03-18T23:22:23.311Z" },
+    { url = "https://files.pythonhosted.org/packages/46/e7/b554568a84197c0a4177b51c9880b55e9861de08d9acfd914a08148a1faa/deptry-0.25.1-pp311-pypy311_pp73-macosx_10_12_x86_64.whl", hash = "sha256:30d64d4df1c08bc69de56cb0b4ec1f4cd9fa2e42582347d5b1eb25fd0e401745", size = 1846779, upload-time = "2026-03-18T23:22:21.887Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/63/38cf5ab4b81fcb1c58909ab0fe1ccc62b36f61c5f7d213a7d0474f620925/deptry-0.25.1-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:87bcd90f99a98bb059c7580bc315c3f87d97fe2db725530030bc974176834735", size = 1758420, upload-time = "2026-03-18T23:22:14.315Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/fb/234c333d5dfcc810bb3ca5b3b420355bdd759901c75e41f0441a9871a1cd/deptry-0.25.1-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:80f31eb5c520651b102568dd91f738222b250a3e44c9e95d4941322109b8d40a", size = 1870345, upload-time = "2026-03-18T23:22:29.734Z" },
+    { url = "https://files.pythonhosted.org/packages/59/62/cb63e5210d1ba36cf68cdc0e4fdea73e48f80ac3b7680228816f39ff696a/deptry-0.25.1-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:df88952a2bab7517ef23cb304b979199b28449e5d9db2e9ba9bc27a286ac852b", size = 1922759, upload-time = "2026-03-18T23:22:17.121Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/8c/e079c44ed98464930e83ca54ea5d40fec522d234e8428e06a1be7f6c7a9a/deptry-0.25.1-pp311-pypy311_pp73-musllinux_1_1_aarch64.whl", hash = "sha256:e6f7b8fa72932e51e86799b10dcd29381b2132dc799c790dca3b28ab08dffb28", size = 2049576, upload-time = "2026-03-18T23:22:12.797Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/f2/6a89ad9e5e8e9d37def57a28020d6d7fbcf900b2e5f4dfbbace349cdca91/deptry-0.25.1-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:e3fa3321078e11cd1ac3f10ce3ff0547731c53f9253b87c757a8749c76fe8fa9", size = 2144676, upload-time = "2026-03-18T23:22:26.319Z" },
+    { url = "https://files.pythonhosted.org/packages/04/9a/b3358690a1a47381d995c3d3587798ab2cd086baf4b839e35183599aa2e1/deptry-0.25.1-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:03c032c32492fde434736954fbcaff09c02bf207b0f793b77e9040300e34b344", size = 1715518, upload-time = "2026-03-18T23:22:20.486Z" },
+]
+
+[[package]]
 name = "dill"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1824,10 +1855,11 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.14"
+version = "0.0.15"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
+    { name = "attrs" },
     { name = "bleak" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
@@ -1844,6 +1876,7 @@ dependencies = [
     { name = "jsonlines" },
     { name = "keyring" },
     { name = "lazy-loader" },
+    { name = "lcm" },
     { name = "llvmlite" },
     { name = "lz4" },
     { name = "matplotlib" },
@@ -1861,12 +1894,15 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "pydantic" },
+    { name = "pydantic-core" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyturbojpeg" },
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reactivex" },
+    { name = "requests" },
     { name = "rerun-sdk" },
+    { name = "rich" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sortedcontainers" },
@@ -1875,20 +1911,24 @@ dependencies = [
     { name = "terminaltexteffects" },
     { name = "textual" },
     { name = "textual-serve" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "toolz" },
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "websocket-client" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
 agents = [
     { name = "faster-whisper" },
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "ollama" },
     { name = "openai" },
     { name = "openevals" },
@@ -1898,6 +1938,7 @@ all = [
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
+    { name = "av" },
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "coacd" },
@@ -1913,6 +1954,8 @@ all = [
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "ipykernel" },
     { name = "jinja2" },
@@ -1921,6 +1964,7 @@ all = [
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "lap" },
     { name = "manifold3d" },
     { name = "moondream" },
@@ -1947,10 +1991,12 @@ all = [
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "roboplan" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "tensorboard" },
     { name = "timm" },
     { name = "tokenizers" },
@@ -1963,6 +2009,7 @@ all = [
     { name = "uvicorn" },
     { name = "viser", extra = ["urdf"] },
     { name = "warp-lang" },
+    { name = "watchfiles" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
     { name = "yourdfpy" },
@@ -1981,6 +2028,8 @@ base = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -1988,6 +2037,7 @@ base = [
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
@@ -1998,15 +2048,18 @@ base = [
     { name = "python-multipart" },
     { name = "python-socketio" },
     { name = "rerun-sdk" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
+    { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 control = [
@@ -2052,6 +2105,8 @@ manipulation = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -2059,6 +2114,7 @@ manipulation = [
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "lap" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2079,10 +2135,12 @@ manipulation = [
     { name = "pyyaml" },
     { name = "rerun-sdk" },
     { name = "roboplan" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
@@ -2090,6 +2148,7 @@ manipulation = [
     { name = "ultralytics" },
     { name = "uvicorn" },
     { name = "viser", extra = ["urdf"] },
+    { name = "watchfiles" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
     { name = "yourdfpy" },
@@ -2109,11 +2168,13 @@ perception = [
     { name = "chromadb" },
     { name = "edgetam-dimos" },
     { name = "einops" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "lap" },
     { name = "moondream" },
     { name = "omegaconf" },
     { name = "pillow" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "timm" },
     { name = "tokenizers" },
@@ -2148,16 +2209,17 @@ sim = [
 ]
 space = [
     { name = "faster-whisper" },
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "ml-space-benchmark-ky135" },
     { name = "ollama" },
     { name = "openai" },
     { name = "openevals" },
-    { name = "requests" },
     { name = "sounddevice" },
 ]
 spot = [
@@ -2175,6 +2237,8 @@ unitree = [
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -2182,6 +2246,7 @@ unitree = [
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
@@ -2192,16 +2257,19 @@ unitree = [
     { name = "python-multipart" },
     { name = "python-socketio" },
     { name = "rerun-sdk" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 unitree-dds = [
@@ -2215,6 +2283,8 @@ unitree-dds = [
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -2222,6 +2292,7 @@ unitree-dds = [
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "lap" },
     { name = "mcap" },
     { name = "moondream" },
@@ -2233,10 +2304,12 @@ unitree-dds = [
     { name = "python-multipart" },
     { name = "python-socketio" },
     { name = "rerun-sdk" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "timm" },
     { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
@@ -2244,6 +2317,7 @@ unitree-dds = [
     { name = "unitree-sdk2py-dimos" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 visualization = [
@@ -2260,11 +2334,14 @@ web = [
     { name = "python-socketio" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "starlette" },
     { name = "uvicorn" },
+    { name = "watchfiles" },
 ]
 webrtc = [
     { name = "aiohttp" },
     { name = "aiortc" },
+    { name = "av" },
 ]
 
 [package.dev-dependencies]
@@ -2288,7 +2365,9 @@ lint = [
     { name = "aiortc" },
     { name = "can-motor-control" },
     { name = "chromadb" },
+    { name = "deptry" },
     { name = "dimos", extra = ["visualization", "web", "webrtc"] },
+    { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2357,11 +2436,14 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "build" },
     { name = "can-motor-control" },
     { name = "chromadb" },
+    { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
+    { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2402,6 +2484,8 @@ tests = [
     { name = "torchreid" },
     { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "tqdm" },
+    { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
     { name = "ultralytics" },
@@ -2411,12 +2495,15 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "build" },
     { name = "can-motor-control" },
     { name = "chromadb" },
+    { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
     { name = "dim-odom" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "space", "unitree", "visualization", "web", "webrtc"] },
+    { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
     { name = "googlemaps" },
@@ -2459,6 +2546,8 @@ tests-self-hosted = [
     { name = "torchreid" },
     { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "tqdm" },
+    { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
     { name = "ultralytics" },
@@ -2474,6 +2563,8 @@ requires-dist = [
     { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
+    { name = "attrs", specifier = ">=25.4" },
+    { name = "av", marker = "extra == 'webrtc'", specifier = ">=16.1" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
@@ -2493,7 +2584,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", specifier = ">=0.1.4" },
+    { name = "dimos-lcm", specifier = ">=0.1.6" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2510,6 +2601,8 @@ requires-dist = [
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
+    { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
+    { name = "huggingface-hub", marker = "extra == 'perception'", specifier = ">=0.36" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "imagecodecs", specifier = ">=2024.6.1" },
     { name = "ipykernel", marker = "extra == 'misc'" },
@@ -2522,8 +2615,10 @@ requires-dist = [
     { name = "langchain-huggingface", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "langchain-ollama", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "langchain-openai", marker = "extra == 'agents'", specifier = ">=1,<2" },
+    { name = "langgraph", marker = "extra == 'agents'", specifier = ">=1.0" },
     { name = "lap", marker = "extra == 'perception'", specifier = ">=0.5.12" },
     { name = "lazy-loader" },
+    { name = "lcm", specifier = ">=1.5.3" },
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
@@ -2559,6 +2654,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'learning'" },
     { name = "pycollada", marker = "extra == 'planning'" },
     { name = "pydantic" },
+    { name = "pydantic-core" },
     { name = "pydantic-settings", specifier = ">=2.11.0,<3" },
     { name = "pygame", marker = "extra == 'control'", specifier = ">=2.6.1" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
@@ -2572,10 +2668,12 @@ requires-dist = [
     { name = "qpsolvers", extras = ["proxqp"], specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
-    { name = "requests", marker = "extra == 'space'" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
+    { name = "rich", specifier = ">=14.3" },
     { name = "roboplan", marker = "extra == 'planning'", specifier = ">=0.7.0,<0.8.0" },
+    { name = "safetensors", marker = "extra == 'perception'", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
@@ -2583,6 +2681,7 @@ requires-dist = [
     { name = "soundfile", marker = "extra == 'web'" },
     { name = "sqlite-vec", specifier = ">=0.1.7" },
     { name = "sse-starlette", marker = "extra == 'web'", specifier = ">=2.2.1" },
+    { name = "starlette", marker = "extra == 'web'", specifier = ">=0.52" },
     { name = "structlog", specifier = ">=25.5.0,<26" },
     { name = "tensorboard", marker = "extra == 'misc'", specifier = "==2.20.0" },
     { name = "terminaltexteffects", specifier = "==0.12.2" },
@@ -2590,6 +2689,7 @@ requires-dist = [
     { name = "textual-serve", specifier = ">=1.1.1,<2" },
     { name = "timm", marker = "extra == 'perception'", specifier = ">=1.0.15" },
     { name = "tokenizers", marker = "extra == 'perception'", specifier = ">=0.21" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "toolz", specifier = ">=1.1.0" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
@@ -2605,7 +2705,9 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'planning'", specifier = ">=1.0.29" },
     { name = "warp-lang", marker = "extra == 'cuda'", specifier = ">=1.13" },
+    { name = "watchfiles", marker = "extra == 'web'", specifier = ">=1.0" },
     { name = "websocket-client", specifier = ">=1.8" },
+    { name = "websockets", specifier = ">=16.0" },
     { name = "xacro", marker = "extra == 'control'" },
     { name = "xarm-python-sdk", marker = "extra == 'control'", specifier = ">=1.17.0" },
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
@@ -2628,7 +2730,9 @@ lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2696,12 +2800,15 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "build", specifier = ">=1.2.2" },
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2742,6 +2849,8 @@ tests = [
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "tqdm", specifier = ">=4.67" },
+    { name = "traitlets", specifier = ">=5.14" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
@@ -2751,14 +2860,17 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "build", specifier = ">=1.2.2" },
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "space", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2801,6 +2913,8 @@ tests-self-hosted = [
     { name = "torchreid", specifier = "==0.2.5" },
     { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "tqdm", specifier = ">=4.67" },
+    { name = "traitlets", specifier = ">=5.14" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "trimesh", specifier = ">=4.0.0" },
     { name = "ultralytics", specifier = ">=8.3.70" },
@@ -2811,18 +2925,35 @@ tests-self-hosted = [
 ]
 
 [[package]]
+name = "dimos-cdrgen"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "empy" },
+    { name = "lark" },
+    { name = "rosbags" },
+    { name = "setuptools" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "wheel" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/1a/31327fa4bb2a240783d0b41e315be2a4485eabf07ab032f49c6328f5f51b/dimos_cdrgen-0.1.0.tar.gz", hash = "sha256:69ea4955e64a769d56d4bd5e0fff44c98f96c29c5608125cd011cef2740624f0", size = 75010, upload-time = "2026-10-15T05:00:09.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/9c/086701c3249ed2caabe83cea008c3e08bd6063c48a1df852fbca6aadff50/dimos_cdrgen-0.1.0-py3-none-any.whl", hash = "sha256:6731e8900f7e61af419b8c77599587f32677c9d64f27ac15f5e78be4b76bc011", size = 70183, upload-time = "2026-10-15T05:00:08.098Z" },
+]
+
+[[package]]
 name = "dimos-lcm"
-version = "0.1.4"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foxglove-websocket" },
-    { name = "lcm-dimos-fork" },
+    { name = "lcm" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/05/2c1d03a588ede64ea19c5c22ee72d2a4ac5e5e29c452920aa0e56a578fad/dimos_lcm-0.1.4.tar.gz", hash = "sha256:4cef49c386860b94bd18a5da8b0a195459f56d883eaf7ede4fe297167bb773da", size = 303907, upload-time = "2026-09-22T20:19:47.059Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/39/2e9e0e229e9bfe2d597cf1fb9e3871dd804c85c530344675da98823dc3ca/dimos_lcm-0.1.6.tar.gz", hash = "sha256:96dcb5f7b8416559221d79d77195118a9a5e802a9117420702534b44462f0dee", size = 153015, upload-time = "2026-10-17T13:27:47.363Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/d0/f93e2a2d9062ad0b3981b80db12b34494d231917243ab213265e926b5fa9/dimos_lcm-0.1.4-py3-none-any.whl", hash = "sha256:65efc67a5055b8d53a885bb46a7f49cc6bd07929cbd18403784efe65e186d3a2", size = 593548, upload-time = "2026-09-22T20:19:45.404Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/9f/993eec0b2fae4b73a87fef45b506e4a130a92aa8a893eb0e6c3e95ded68b/dimos_lcm-0.1.6-py3-none-any.whl", hash = "sha256:f55e637ff853f6a8bfa2fd47900367a9ac23f571946ea04c74705dfb293777e8", size = 727525, upload-time = "2026-10-17T13:27:45.412Z" },
 ]
 
 [[package]]
@@ -3044,6 +3175,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/b0/05a5b4d49749602b12e13d1871f8e6d1fe6db806eda75f6f57bb4f1acf6f/embreex-4.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cb0872f5bc231f465b840b122847acbaf468ac48f49bfaff127c5347ec0db94f", size = 14529899, upload-time = "2026-04-22T19:46:56.824Z" },
     { url = "https://files.pythonhosted.org/packages/b5/96/625e035f3433071c91de07e66265a261be7bb708367f785000f93d7a992a/embreex-4.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:6c092ee1adf5c48b7430c7ae3902943863745e54b4aef4327ecb3473e0a299d7", size = 13119305, upload-time = "2026-04-22T19:46:59.329Z" },
 ]
+
+[[package]]
+name = "empy"
+version = "4.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/0a/c500fc4c8f48cac08b76b8987070b178f0549534584ac1f414066700a3f9/empy-4.2.tar.gz", hash = "sha256:86f15e1da9743e79a2e9b2cbacf1a13d0b7fb1835b6254eb253c978b72287f4f", size = 166069, upload-time = "2024-08-25T23:32:09.946Z" }
 
 [[package]]
 name = "etils"
@@ -4972,6 +5109,15 @@ wheels = [
 ]
 
 [[package]]
+name = "lark"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/60/bc7622aefb2aee1c0b4ba23c1446d3e30225c8770b38d7aedbfb65ca9d5a/lark-1.2.2.tar.gz", hash = "sha256:ca807d0162cd16cef15a8feecb862d7319e7a09bdb13aef927968e45040fed80", size = 252132, upload-time = "2024-08-13T19:49:00.652Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2d/00/d90b10b962b4277f5e64a78b6609968859ff86889f5b898c1a778c06ec00/lark-1.2.2-py3-none-any.whl", hash = "sha256:c2276486b02f0f1b90be155f2c8ba4a8e194d42775786db622faccd652d8e80c", size = 111036, upload-time = "2024-08-13T19:48:58.603Z" },
+]
+
+[[package]]
 name = "lazy-loader"
 version = "0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -4984,20 +5130,40 @@ wheels = [
 ]
 
 [[package]]
-name = "lcm-dimos-fork"
-version = "1.5.2.post1"
+name = "lcm"
+version = "1.5.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/06/53/26e5c821858fff27ed9bf5be6e848a63db89bcd6a0c4cb8546dce3396a7d/lcm_dimos_fork-1.5.2.post1.tar.gz", hash = "sha256:3ec3703605ea1ea2f82ab327d73eb7fddf3775c1365e4a112314e11f389ad72f", size = 5538346, upload-time = "2026-06-03T07:09:31.465Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/59/81490fca92a3df85dc5bf656f98fdfd91b1f0f489abe806057e71c87cb53/lcm_dimos_fork-1.5.2.post1-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:78f8abba25e0a48d6c6e616064cf60336de730838819d5fdd97c5464705c905f", size = 3501132, upload-time = "2026-06-03T07:09:25.987Z" },
-    { url = "https://files.pythonhosted.org/packages/41/0d/8ab9a6e2894f02e1deaa49640d8a108a0ed04f9ef273691f7551da40d5e2/lcm_dimos_fork-1.5.2.post1-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:d96406f6d7dede356e9abb41d99191eed2dbf0ac50a1b8276e254bcf6c747c91", size = 2861833, upload-time = "2026-06-03T07:09:28.212Z" },
-    { url = "https://files.pythonhosted.org/packages/39/0f/fc280fd9a2e9eb5ebd40ad8631715d251f6471be3c1c8cae5ef068a4849c/lcm_dimos_fork-1.5.2.post1-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:d4b59cbc8314e7dd0c92f9efd72e070b4a95cb3f7316aa63745b3b5fad80e71a", size = 2882418, upload-time = "2026-06-03T07:09:21.198Z" },
-    { url = "https://files.pythonhosted.org/packages/45/50/8c640088b7722d11d6c1acec133afa44e344cbb5c25236f3ca9b8bdb0d4e/lcm_dimos_fork-1.5.2.post1-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:e36c02538a5f4f3b7c4bf9cf7f130001deb4087e6c4ab2b87a92b63b5800eaf5", size = 3501233, upload-time = "2026-06-03T07:09:18.794Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/e3/c2f4e3d67129caf105f9dade2c0a77755ea1d11e0bf13eb6041e8bf69954/lcm_dimos_fork-1.5.2.post1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:ca37f8bda7733084e3a840ca71df139413fa9d7187ef39eb31425301fc8effaa", size = 2861890, upload-time = "2026-06-03T07:09:16.256Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/9d/f19698bc9888c0e7d1244b02e20cb4f4fa83617f046760e7f2f21799008b/lcm_dimos_fork-1.5.2.post1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:3ad82221708a7510edd7ea484733efe40c82bdb553816679b4cc0d8967d1b9be", size = 2882420, upload-time = "2026-06-03T07:09:09.346Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/f8/0e300ecb1f5719a42adaadd009c27b6543576172e55f5070c8eec3e6093e/lcm_dimos_fork-1.5.2.post1-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:75bd1fc3d6365bb47d1ee95c0b5dd267ca5516b393fcbc393e8c35bfb22c34b2", size = 3501253, upload-time = "2026-06-03T07:09:11.773Z" },
-    { url = "https://files.pythonhosted.org/packages/8d/bf/1673d451d032cff65214692e2431858800e4baecee32f68a9ccfe19919b8/lcm_dimos_fork-1.5.2.post1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:c3c4827d7d9d618270b70c564dacbc142dbce5dc03566510ba698bfebf2830b0", size = 2861845, upload-time = "2026-06-03T07:09:14.2Z" },
-    { url = "https://files.pythonhosted.org/packages/87/3a/a31d94a20c3ac5d6fd3fa89b2de66dbf6a7f01551fdff29d9a5fbf02cba6/lcm_dimos_fork-1.5.2.post1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:700294567efed85e96f2ae435b7c55d8702e15f3d06154f56216c1be5c85b322", size = 2882574, upload-time = "2026-06-03T07:09:23.407Z" },
+    { url = "https://files.pythonhosted.org/packages/10/2e/dfbd9736c51dc276f42f8bfed10590e151aa0f70c9f1a5f59015be2e7558/lcm-1.5.3-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:c54d71f7e1331a49db4721226d2f8d5a2b78d7929473b20ada5f4a7e74ea9854", size = 3509094, upload-time = "2026-09-24T16:32:55.337Z" },
+    { url = "https://files.pythonhosted.org/packages/49/54/39afa8273f496932bd53258948256b4f2bb233cd70fdc3b9dc6031197938/lcm-1.5.3-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:5a85f9e3dd3a9188f9e4eb32a9c26b7a1aaba9da8086ff7e98d9889f66e5504a", size = 2870083, upload-time = "2026-09-24T16:32:57.408Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/2a/4f953b7c8ba535782b8b49a3c5ee929f854da378f20f20231a5100a22f5c/lcm-1.5.3-cp310-cp310-manylinux_2_28_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:744d8013cf5aec078ad190ebccd2917c28f58fafeb43f32b67d0e8df89973a3c", size = 2865118, upload-time = "2026-09-24T16:32:59.363Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/97/096d74fbd043e8cc1a74338f59d62276bca791dea468ace44d4646959265/lcm-1.5.3-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:a3468440b3e47ac26559d1327f4c73a67352bf683224648c9da82a9adab64eff", size = 2892842, upload-time = "2026-09-24T16:33:01.968Z" },
+    { url = "https://files.pythonhosted.org/packages/af/00/c09a686078b7a1063af44ba4fd48b01f296351c5400be67158d2c8f99b2b/lcm-1.5.3-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:e16c95e0c33a0a4e785bb714d06f009a47f19f85629a56042131685f08a15a8f", size = 1530091, upload-time = "2026-09-24T16:33:03.537Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/26/7ad5cd461dd2c517882b1c8db0cb490ce09e0a9032a45a86b7600cf1440e/lcm-1.5.3-cp310-cp310-musllinux_1_2_armv7l.whl", hash = "sha256:834ed55e56e40e9707b9f58c85401a635a5276b9924137e003af47f08cefb7ac", size = 1373405, upload-time = "2026-09-24T16:33:04.908Z" },
+    { url = "https://files.pythonhosted.org/packages/71/b7/5d2d758a165ad808017c0ca5e8c6b42cf399b5bedc9fc703d3de503b3ace/lcm-1.5.3-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:658468f27fe25e8b084836f3623410c4b9159d3d2658892b8e4e12fb31f5fc69", size = 1581048, upload-time = "2026-09-24T16:33:06.315Z" },
+    { url = "https://files.pythonhosted.org/packages/19/97/30c3d56e5da90437f4145c0fab087c3dbca7a893d6b907509588e172f04b/lcm-1.5.3-cp310-cp310-win32.whl", hash = "sha256:839a044da723f1fdfaeae11a831691e7f6331803b0b0d1e0ad7424feed067060", size = 4213111, upload-time = "2026-09-24T16:33:13.865Z" },
+    { url = "https://files.pythonhosted.org/packages/11/e1/4136325c828effe6cdf86552ec1068383b02df30bdf9e400fe729e661327/lcm-1.5.3-cp310-cp310-win_amd64.whl", hash = "sha256:b591797b4d02840d0fec4ce9c35eb1a51b673b0dba96b48f5e7c27f2148e648d", size = 4432189, upload-time = "2026-09-24T16:33:08.771Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/af/0e8b1126f373b39f2ac4dbfc5491fb15f12192b2775e213ac9b7dc5fa3ff/lcm-1.5.3-cp310-cp310-win_arm64.whl", hash = "sha256:45e12554bb049317fa8e17067e17002472eda346e324df60b7d6f52ac8e37c16", size = 4299358, upload-time = "2026-09-24T16:33:11.214Z" },
+    { url = "https://files.pythonhosted.org/packages/08/83/da474e7c44490d84c02fac5db37ec3932a80315b1bced0a8d13e4c8f7ecc/lcm-1.5.3-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:5e953f1fe27760d6775075e262abf9f320b6d0f318c17808765a82b1caf87041", size = 3509054, upload-time = "2026-09-24T16:33:16.146Z" },
+    { url = "https://files.pythonhosted.org/packages/27/f4/4e865881df26b2f89f614613818655a0410f86db240655f85510fea4a764/lcm-1.5.3-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:92732d4521c05c4c012a51a418287b20c413eca611174c461b3c2801262ccd47", size = 2870134, upload-time = "2026-09-24T16:33:18.063Z" },
+    { url = "https://files.pythonhosted.org/packages/79/4f/79a901aa70a642453003f86858bcb07f369f599f1ec9858c5110e113aa36/lcm-1.5.3-cp311-cp311-manylinux_2_28_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:dfdbebaba43b016874c97e9d1bfcfea001f630ec38b873bb50c9c44dc3f4d98b", size = 2864990, upload-time = "2026-09-24T16:33:20.136Z" },
+    { url = "https://files.pythonhosted.org/packages/92/18/4c2af578018f19aae17d23fa22307737f4965a7d9d247d8f2756d423b87e/lcm-1.5.3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:1d4eb1e1a3fe20242a7149d6d56192f652d25701feae18d9774b4f69f10ef445", size = 2892752, upload-time = "2026-09-24T16:33:22.429Z" },
+    { url = "https://files.pythonhosted.org/packages/be/56/8bb8d171b2d78cb5c47810ecdd8f809562f1a547a9dfab7099eb511ad91f/lcm-1.5.3-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:107c3e17872112af7c6ccc2ff9ad03472ac905b00c8bb196144c99d4cabfbaa2", size = 1530090, upload-time = "2026-09-24T16:33:23.718Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/73/a1358443090ee18e916fa047e99cec53d860954ebfa09113530d82a3c5fc/lcm-1.5.3-cp311-cp311-musllinux_1_2_armv7l.whl", hash = "sha256:679047d864493ea3f236f68a5982c4da3ba3529fd1ca66af843595bd657664ce", size = 1373405, upload-time = "2026-09-24T16:33:25.023Z" },
+    { url = "https://files.pythonhosted.org/packages/89/50/4e51f9930e1c6d3a796be3769ad69322edaaed63f54beef64fcc1bea2a92/lcm-1.5.3-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:25e72755d278cb8abd30de6d5fe273945abe69f4eaeafc22198439341947c4f4", size = 1581047, upload-time = "2026-09-24T16:33:26.573Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/85/38c841811655c8ae50c6cc7c35f83067c38e9d63b40605b392662c0a8ca9/lcm-1.5.3-cp311-cp311-win32.whl", hash = "sha256:621a33adaff471c4f745df26074915937bf9848d86c6d58e84b5ba696407f2b0", size = 4213000, upload-time = "2026-09-24T16:33:34.744Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/a3/09711f36f70fff1918ba2f53e2b39b43409739825f01b517929baf3c12a4/lcm-1.5.3-cp311-cp311-win_amd64.whl", hash = "sha256:2335b340538981a675a0967fdd2251ee08c4c688c1a956d8a4de88e317d44dca", size = 4432242, upload-time = "2026-09-24T16:33:29.062Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/70/e7a74c4a1de7a37e5039eb3b63fe4f7b8137afeb091974a80528351088dc/lcm-1.5.3-cp311-cp311-win_arm64.whl", hash = "sha256:b60190067a94f11df6af1b9ec1508c460d0c32d5c179933a00f64cae0c9b6a84", size = 4299344, upload-time = "2026-09-24T16:33:31.616Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/8b/b50152878c5b16c3c31a8e69b95c2bc18e0c4eb7e8b043675dd179cbfe1d/lcm-1.5.3-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:590da83628816a506f8eb1bdb8a011cb80ec582177106d5b3e1327dc22d5a664", size = 3509106, upload-time = "2026-09-24T16:33:38.425Z" },
+    { url = "https://files.pythonhosted.org/packages/75/2f/ffe0f2bdfa6c9d4abe1bcff0849caf22ac717901833fd887629d891d6359/lcm-1.5.3-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:d0b6a59a4adb2016f7c696321e3d43d22c1881f02e34a1be7e9673ae29efc53a", size = 2870155, upload-time = "2026-09-24T16:33:40.909Z" },
+    { url = "https://files.pythonhosted.org/packages/66/fc/c3d325fad5ee79c5e718ff1dcb98b906f55bc896c73a01deb2b2eec2547c/lcm-1.5.3-cp312-cp312-manylinux_2_28_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:dbb958f2555ad113cfcd5be0f3d358f3a4aed4d1fbaf7dc02d273d1166839a19", size = 2865024, upload-time = "2026-09-24T16:33:42.878Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/fd/991435ef3bd0e2758cd0c6f27607d7da0ebc20a30a3818327d3214fe8c5b/lcm-1.5.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:697542c081780499384595066238dd64f5751dc945e210712df57fecb24dc6ad", size = 2892809, upload-time = "2026-09-24T16:33:44.809Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/72/0779e6cc2140e04b1cd4689a2ee38c770e42964570a0ecf6be237f48e24c/lcm-1.5.3-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:ea6a78a276afd503ae8867959db891ae5a2fbd27d0f1b7ea5a19e3904eaed35f", size = 1530115, upload-time = "2026-09-24T16:33:46.651Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/a1/4532a8a371d5abc106f943c8d655ec83ecd96205cb578e9bfec89e75ad7f/lcm-1.5.3-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:55d2220dbdf1504fde36b8cbede4e7f54e82209800a8f3189228a372b1d6f32b", size = 1373440, upload-time = "2026-09-24T16:33:48.391Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/8c/9e111cd903c2f49bc1fa3f7423f1a6369fe3fdfae7e7d99edb0bd99d1099/lcm-1.5.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:4f662faf3fe783d0b2b1acf8a9387e95aa73e035d99a095c667435a0bc09188e", size = 1581170, upload-time = "2026-09-24T16:33:50.495Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/a2/b08a8741bbb8985f73a6b4153274886c7630d33001a307b4facf6c76b002/lcm-1.5.3-cp312-cp312-win32.whl", hash = "sha256:e060489c6fc4042b10d8f77586dfe08cf08167ccb92d4a970a4b12d913e581f3", size = 4213144, upload-time = "2026-09-24T16:33:58.191Z" },
+    { url = "https://files.pythonhosted.org/packages/17/11/dbfb47f99f23c97ccfb9b5e0a242d4d64a444f316c35627959d23355c0a6/lcm-1.5.3-cp312-cp312-win_amd64.whl", hash = "sha256:1fbe78efb88c73b7ed6db091a7478443697449ee30338f697ce0a27f70c5819d", size = 4432335, upload-time = "2026-09-24T16:33:52.966Z" },
+    { url = "https://files.pythonhosted.org/packages/75/86/49d3b9af504cba8cb0c9ae3fc1ce3124480e5639716e23845ffcd85bd2a6/lcm-1.5.3-cp312-cp312-win_arm64.whl", hash = "sha256:3f7853390e1e14e8906489650d9926e5b09c9eff6f8704546a9c93415dbe2b9f", size = 4299410, upload-time = "2026-09-24T16:33:55.288Z" },
 ]
 
 [[package]]
@@ -9053,6 +9219,18 @@ wheels = [
 ]
 
 [[package]]
+name = "requirements-parser"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/1a/5f3c22d38bf1d87d1f4a961489d9eba35c4370a21395562d94410cdd0e73/requirements_parser-0.13.1.tar.gz", hash = "sha256:78811383b2089b6c5197a1431bc2c12ff950245edca39a23eea3460782038dd3", size = 22783, upload-time = "2026-06-18T07:52:25.291Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/f9/15b44d5e4401b0013bbcefe3c09d7bfddcce28cc3d41b1d3077bcedf5b1f/requirements_parser-0.13.1-py3-none-any.whl", hash = "sha256:6e385663eb32589d16e5b22bb6e5251a57908e73803ffff438b53cd6ea2056e0", size = 14926, upload-time = "2026-06-18T07:52:24.171Z" },
+]
+
+[[package]]
 name = "rerun-sdk"
 version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -9317,6 +9495,23 @@ wheels = [
 ]
 
 [[package]]
+name = "rosbags"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lz4" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ruamel-yaml" },
+    { name = "typing-extensions" },
+    { name = "zstandard" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f3/2f/b6d11cc9fac4003b284e2c152b5c34ca5b6d26caf5f6979118e2d588a0d7/rosbags-0.11.0.tar.gz", hash = "sha256:e73bbe79a15d7f539653375278ffca6c48e56b5c2ada4a4531de0b17737cbc46", size = 254438, upload-time = "2025-10-15T09:49:54.453Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/75/b66d992a87539cd9e0070bca6ba49694b9258a4f9bc905d0576354d7864a/rosbags-0.11.0-py3-none-any.whl", hash = "sha256:2ce27d8dc37f554f10bf5962f665331ce16f43aba304c6c233eb15fab05b61ab", size = 137920, upload-time = "2025-10-15T09:49:50.329Z" },
+]
+
+[[package]]
 name = "rpds-py"
 version = "0.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -9394,6 +9589,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/a4/c2292b95246b9165cc43a0c3757e80995d58bc9b43da5cb47ad6e3535213/rtree-1.4.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:f155bc8d6bac9dcd383481dee8c130947a4866db1d16cb6dff442329a038a0dc", size = 1555140, upload-time = "2025-08-13T19:31:58.031Z" },
     { url = "https://files.pythonhosted.org/packages/74/25/5282c8270bfcd620d3e73beb35b40ac4ab00f0a898d98ebeb41ef0989ec8/rtree-1.4.1-py3-none-win_amd64.whl", hash = "sha256:efe125f416fd27150197ab8521158662943a40f87acab8028a1aac4ad667a489", size = 389358, upload-time = "2025-08-13T19:31:59.247Z" },
     { url = "https://files.pythonhosted.org/packages/3f/50/0a9e7e7afe7339bd5e36911f0ceb15fed51945836ed803ae5afd661057fd/rtree-1.4.1-py3-none-win_arm64.whl", hash = "sha256:3d46f55729b28138e897ffef32f7ce93ac335cb67f9120125ad3742a220800f0", size = 355253, upload-time = "2025-08-13T19:32:00.296Z" },
+]
+
+[[package]]
+name = "ruamel-yaml"
+version = "0.19.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/3b/ebda527b56beb90cb7652cb1c7e4f91f48649fbcd8d2eb2fb6e77cd3329b/ruamel_yaml-0.19.1.tar.gz", hash = "sha256:53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993", size = 142709, upload-time = "2026-01-02T16:50:31.84Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/0c/51f6841f1d84f404f92463fc2b1ba0da357ca1e3db6b7fbda26956c3b82a/ruamel_yaml-0.19.1-py3-none-any.whl", hash = "sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93", size = 118102, upload-time = "2026-01-02T16:50:29.201Z" },
 ]
 
 [[package]]
@@ -11389,6 +11593,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/06/28/55bc3e107a56fdcf7d5022cb32b8c21d98a9cc2df5cd9f3b93e10419099e/whatthepatch-1.0.7.tar.gz", hash = "sha256:9eefb4ebea5200408e02d413d2b4bc28daea6b78bb4b4d53431af7245f7d7edf", size = 34612, upload-time = "2024-11-16T17:21:22.153Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/93/af1d6ccb69ab6b5a00e03fa0cefa563f9862412667776ea15dd4eece3a90/whatthepatch-1.0.7-py3-none-any.whl", hash = "sha256:1b6f655fd31091c001c209529dfaabbabdbad438f5de14e3951266ea0fc6e7ed", size = 11964, upload-time = "2024-11-16T17:21:20.761Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.48.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
 ]
 
 [[package]]

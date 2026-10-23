@@ -38,6 +38,7 @@ zero-gravity startup and can optionally place the gripper in free-drive.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
 import platform
@@ -97,7 +98,7 @@ def _socketcan_channel_error(channel: str) -> str | None:
     except FileNotFoundError:
         return (
             f"SocketCAN interface {channel!r} does not exist. The HHS adapter must be "
-            "bound to the Linux gs_usb driver; pass its interface with --can-port."
+            "bound to the Linux gs_usb driver; pass its interface in ControlCoordinator hardware.address."
         )
     except (OSError, ValueError) as exc:
         return f"cannot read SocketCAN interface {channel!r}: {exc}"
@@ -111,7 +112,7 @@ def _socketcan_channel_error(channel: str) -> str | None:
         return (
             f"SocketCAN interface {channel!r} belongs to kernel driver {driver!r}, not "
             f"the HHS adapter driver {_A1Z_SOCKETCAN_DRIVER!r}. Pass the HHS SocketCAN "
-            "interface with --can-port."
+            "interface in ControlCoordinator hardware.address."
         )
     if not flags & 0x1:
         return (
@@ -138,12 +139,17 @@ class GalaxeaA1ZAdapter:
         self,
         address: str = "a1zcan",
         *,
-        config: A1ZConfig | None = None,
+        config: A1ZConfig | Mapping[str, Any] | None = None,
         dof: int = _A1Z_DOF,
     ) -> None:
         if not address:
             raise ValueError("A1Z CAN interface must not be empty")
-        self._config = config or A1ZConfig()
+        if config is None:
+            self._config = A1ZConfig()
+        elif isinstance(config, A1ZConfig):
+            self._config = config
+        else:
+            self._config = A1ZConfig(**config)
         expected_dof = _A1Z_DOF + int(self._config.gripper is not None)
         if dof != expected_dof:
             raise ValueError(

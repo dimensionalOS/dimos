@@ -15,14 +15,23 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
+from pathlib import Path
 
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
+from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.memory import tap
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.porcelain.dimos import Dimos, _resolve_target
+from dimos.utils.testing.waiting import wait_until
 
 
 class TickerModule(Module):
@@ -44,6 +53,77 @@ class TickerModule(Module):
                 i += 1
         except asyncio.CancelledError:
             pass
+
+
+class RecordingSource(Module):
+    odom: Out[PoseStamped]
+
+    @rpc
+    def emit(self, ts: float) -> None:
+        self.odom.publish(PoseStamped(ts=ts))
+
+
+class RuntimeRecordingSource(Module):
+    odom: Out[PoseStamped]
+    runtime_pose: Out[PoseStamped]
+    ignored: Out[PoseStamped]
+    raw: Out[dict]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.odom.publish(PoseStamped(ts=2.0))
+        self.runtime_pose.publish(PoseStamped(ts=3.0))
+        self.ignored.publish(PoseStamped(ts=4.0))
+        self.raw.publish({"value": 5})
+
+
+@pytest.fixture(params=["zenoh", "lcm"])
+def recording_app(app, tmp_path: Path, monkeypatch, request):
+    global_config.update(
+        n_workers=1,
+        viewer="none",
+        transport=request.param,
+        record="sqlite",
+        record_engine="python",
+        replay=False,
+    )
+    monkeypatch.setattr(global_config, "record_topics", "odom,runtime_*,raw")
+    monkeypatch.setattr(tap, "recording_dir", lambda: tmp_path)
+    app.run(RecordingSource)
+    try:
+        yield app
+    finally:
+        # These parent-side transports outlive the manual recording context.
+        for transport in app._coordinator.transports.values():
+            transport.stop()
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_run_adds_streams_to_active_recording(recording_app, tmp_path: Path, remote) -> None:
+    app = recording_app
+    coordinator = app._coordinator
+    with ExitStack() as stack:
+        target = app
+        if remote:
+            coordinator.start_rpc_service()
+            target = Dimos.connect()
+            stack.callback(target.stop)
+        with tap.recording(coordinator):
+            with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
+                app.RecordingSource.emit(1.0)
+                wait_until(lambda: "odom" in store.list_streams(), timeout=5)
+                target.run(RuntimeRecordingSource)
+                wait_until(
+                    lambda: "runtime_pose" in store.list_streams()
+                    and store.stream("odom", PoseStamped).count() >= 2,
+                    timeout=5,
+                )
+
+    with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
+        assert sorted(store.list_streams()) == ["odom", "runtime_pose"]
+        assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
+        assert [o.ts for o in store.stream("runtime_pose", PoseStamped)] == [3.0]
 
 
 def test_resolve_module_class():
@@ -125,6 +205,11 @@ def test_peek_stream_returns_published_value(app):
 def test_restart_before_run(app):
     with pytest.raises(RuntimeError, match="No modules are running"):
         app.restart(StressTestModule)
+
+
+def test_unload_before_run(app):
+    with pytest.raises(RuntimeError, match="No modules are running"):
+        app.unload(StressTestModule)
 
 
 def test_stop_is_idempotent(app):
@@ -232,33 +317,58 @@ def test_restart_no_reload(running_app):
     assert result == "pong"
 
 
+def test_unload_removes_only_that_module(running_app):
+    running_app.run(TickerModule)
+
+    running_app.unload(TickerModule)
+
+    assert "TickerModule" not in running_app._source.list_module_names()
+    assert running_app.skills.ping() == "pong"
+
+
+def test_unload_module_that_is_not_running(running_app):
+    with pytest.raises(ValueError, match="TickerModule is not deployed"):
+        running_app.unload(TickerModule)
+
+
 def test_skills_accessible(running_app):
     skills = running_app.skills
     assert "ping" in dir(skills)
 
 
 def test_connected_run_by_name_adds_module(running_app, client):
-    client.run("mcp-server")
-    assert "McpServer" in client._source.list_module_names()
-    assert "McpServer" in running_app._source.list_module_names()
+    client.run("demo-calculator-skill")
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
+    assert "DemoCalculatorSkill" in running_app._source.list_module_names()
     assert {module.instance_name for module in client.list_modules()} >= {
         "StressTestModule",
-        "McpServer",
+        "DemoCalculatorSkill",
     }
 
 
 def test_connected_run_by_class_adds_module(client):
-    client.run(McpServer)
-    assert "McpServer" in client._source.list_module_names()
+    client.run(DemoCalculatorSkill)
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
 
 
-def test_connected_run_by_blueprint_object(client):
-    client.run(McpServer.blueprint())
+def test_connected_run_by_blueprint_object(client, mcp_port, mcp_url):
+    client.run(McpServer.blueprint(host="localhost", port=mcp_port))
     assert "McpServer" in client._source.list_module_names()
+    assert client.McpServer.mcp_url() == mcp_url
 
 
 def test_connected_restart_no_reload(client):
     client.restart(StressTestModule, reload_source=False)
+    assert client.skills.ping() == "pong"
+
+
+def test_connected_unload_removes_only_that_module(running_app, client):
+    client.run(TickerModule)
+
+    client.unload(TickerModule)
+
+    assert "TickerModule" not in client._source.list_module_names()
+    assert "TickerModule" not in running_app._source.list_module_names()
     assert client.skills.ping() == "pong"
 
 

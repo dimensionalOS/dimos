@@ -42,7 +42,7 @@ Run it:
 ```bash
 dimsim dev --scene my-room
 # or via dimos:
-dimos --simulation dimsim --dimsim-scene=my-room run unitree-go2-basic
+dimos --simulation dimsim run unitree-go2-basic --go2connection.dimsim.scene=my-room
 ```
 
 ## Edit a scene

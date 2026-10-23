@@ -22,7 +22,6 @@ from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -52,7 +51,6 @@ class GlobalPlanner(Resource):
     _goal_reached: bool = False
     _thread: Thread | None = None
 
-    _global_config: GlobalConfig
     _navigation_map: NavigationMap
     _navigation_map_near: NavigationMap
     _local_planner: LocalPlanner
@@ -74,19 +72,30 @@ class GlobalPlanner(Resource):
     _max_path_deviation: float = 0.9
     _replanning_enabled: bool = True
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(
+        self,
+        *,
+        robot_width: float,
+        robot_rotation_diameter: float,
+        nerf_speed: float = 1.0,
+        simulation: bool = False,
+    ) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
 
-        self._global_config = global_config
-        self._navigation_map = NavigationMap(self._global_config, "voronoi")
-        self._navigation_map_near = NavigationMap(self._global_config, "gradient")
+        self._robot_rotation_diameter = robot_rotation_diameter
+        self._navigation_map = NavigationMap(robot_width, "voronoi")
+        self._navigation_map_near = NavigationMap(robot_width, "gradient")
         self._local_planner = LocalPlanner(
-            self._global_config, self._navigation_map, self._goal_tolerance
+            self._navigation_map,
+            self._goal_tolerance,
+            robot_width=robot_width,
+            nerf_speed=nerf_speed,
+            simulation=simulation,
         )
 
         stuck_threshold = self._stuck_threshold
-        if global_config.simulation:
+        if simulation:
             stuck_threshold = 1.0
 
         self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
@@ -383,7 +392,7 @@ class GlobalPlanner(Resource):
 
         center = costmap.world_to_grid(robot_pos)
         center_x, center_y = int(center.x), int(center.y)
-        cells = int(self._global_config.robot_rotation_diameter / 2 / costmap.resolution) + 1
+        cells = int(self._robot_rotation_diameter / 2 / costmap.resolution) + 1
 
         height, width = costmap.grid.shape
         y0, y1 = max(0, center_y - cells), min(height, center_y + cells + 1)
@@ -427,4 +436,4 @@ class GlobalPlanner(Resource):
 
     def _reset_safe_goal_clearance(self) -> None:
         with self._lock:
-            self._safe_goal_clearance = self._global_config.robot_rotation_diameter / 2
+            self._safe_goal_clearance = self._robot_rotation_diameter / 2

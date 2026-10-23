@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import replace
+import pickle
 
 import pytest
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.module import Module, ModuleConfig
 from dimos.hosted.fragment import HostFragment, PythonFragmentPayload
 
@@ -29,41 +28,24 @@ class PayloadModule(Module):
     config: PayloadConfig
 
 
-def _fragment(label: str) -> HostFragment:
+def test_fragment_round_trips_the_blueprint_and_the_roots_values() -> None:
     blueprint = PayloadModule.blueprint()
-    config = BlueprintConfigParser(blueprint).parse(
-        environ={},
-        overrides={"payloadmodule": {"label": label}},
-    )
-    return HostFragment.create(
+    fragment = HostFragment.create(
         run_id="run-1",
-        generation=1,
         host_id="host-1",
-        application_name="fragment-test",
-        application_revision="revision-1",
-        payload=PythonFragmentPayload(blueprint=blueprint, config=config),
+        revision="revision-1",
+        payload=PythonFragmentPayload(
+            blueprint=blueprint, overrides={"payloadmodule": {"label": "configured"}}
+        ),
     )
-
-
-def test_fragment_round_trip_preserves_blueprint_config_identity() -> None:
-    fragment = _fragment("configured")
 
     payload = fragment.load_payload()
 
-    payload.config.assert_matches(payload.blueprint)
-    assert payload.config.module_kwargs("payloadmodule")["label"] == "configured"
+    assert [a.module for a in payload.blueprint.blueprints] == [PayloadModule]
+    assert payload.overrides == {"payloadmodule": {"label": "configured"}}
 
 
-def test_fragment_digest_covers_configuration() -> None:
-    first = _fragment("first")
-    second = _fragment("second")
-
-    assert first.payload_digest != second.payload_digest
-
-
-def test_fragment_rejects_tampered_payload_before_deserialization() -> None:
-    fragment = _fragment("configured")
-    tampered = replace(fragment, payload=fragment.payload + b"tampered")
-
-    with pytest.raises(ValueError, match="digest"):
-        tampered.load_payload()
+def test_fragment_rejects_a_foreign_payload() -> None:
+    fragment = HostFragment("run-1", "host-1", "revision-1", pickle.dumps({"not": "a payload"}))
+    with pytest.raises(TypeError, match="PythonFragmentPayload"):
+        fragment.load_payload()

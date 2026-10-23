@@ -233,8 +233,30 @@ def decode_pointcloud2(buf: bytes) -> PointCloud2:
     )
     arr = w.data.view(dt)
     xyz = np.stack([arr["x"], arr["y"], arr["z"]], axis=-1).astype(np.float32)
-    inten = arr["intensity"].astype(np.float32) if dt.names and "intensity" in dt.names else None
-    return PointCloud2.from_numpy(xyz, frame, ts, inten)
+    names = set(dt.names or ())
+
+    def field(*keys: str) -> np.ndarray | None:
+        return next((arr[k] for k in keys if k in names), None)
+
+    inten, time_s, line, tag = (
+        field("intensity"),
+        field("time"),
+        field("ring", "line"),
+        field("tag"),
+    )
+    return PointCloud2.from_numpy(
+        xyz,
+        frame,
+        ts,
+        intensities=None if inten is None else inten.astype(np.float32),
+        # per-point `time` is seconds after the header stamp; dimos carries it as u32 ns,
+        # which holds 4.29 s (a scan the L1 stalled through spans longer)
+        offset_times=None
+        if time_s is None
+        else np.round(np.clip(np.nan_to_num(time_s), 0.0, 4.29) * 1e9),
+        tags=tag,
+        lines=line,
+    )
 
 
 # sensor_msgs/CompressedImage

@@ -52,9 +52,8 @@ _MACOS_IFACE = "lo0"
 
 class VirtualMid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/virtual_mid360"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../target/release/virtual_mid360"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/virtual_mid360"
+    build_command: str | None = "nix build -L path:."
     # The rust binary reads its config as a JSON object on stdin (required).
     stdin_config: bool = True
     # Keep the Python-only NIC knobs out of the CLI args mirrored to the binary.

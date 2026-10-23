@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compile one resolved Blueprint into immutable per-Host fragments."""
+"""Place one resolved Blueprint on Hosts and compile it into immutable per-Host fragments."""
 
 from __future__ import annotations
 
@@ -20,101 +20,56 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
-from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
 from dimos.core.coordination.blueprints import (
     Blueprint,
     BlueprintAtom,
     HostedPlacement,
-    ModuleRef,
-    TransportSpec,
 )
-from dimos.core.coordination.module_coordinator import _verify_no_name_conflicts
-from dimos.core.module import is_module_type
-from dimos.core.transport import ZenohTransport, pZenohTransport
-from dimos.hosted.daemon import HostDescriptor
-from dimos.hosted.fragment import (
-    BoundaryStream,
-    HostFragment,
-    PythonFragmentPayload,
-    RemoteModuleReference,
-    run_module_rpc_name,
-    run_stream_base_topic,
-    run_stream_key,
+from dimos.core.coordination.module_coordinator import (
+    resolve_module_refs,
+    stream_name_types,
+    verify_no_name_conflicts,
 )
-from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
+from dimos.hosted.fragment import HostFragment, PythonFragmentPayload, RemoteModuleReference
+from dimos.hosted.protocol import HostDescriptor, run_module_rpc_name
+from dimos.hosted.tags import missing
 
-HOSTED_GLOBAL_OVERRIDES: Mapping[str, Any] = MappingProxyType({"transport": "zenoh"})
-
-StreamKey = tuple[str, type]
-_SCHEDULABLE_HOST_STATES = frozenset({"available", "running"})
+# Config sections every fragment keeps; the others are module names.
+_SHARED_SECTIONS = ("g", "transports")
 
 
 def compile_fragments(
     blueprint: Blueprint,
-    config: ParsedBlueprintConfig,
-    assignments: Mapping[str, str] | None = None,
+    assignments: Mapping[str, str],
     *,
     run_id: str,
-    generation: int,
-    application_name: str,
-    application_revision: str,
-    hosts: Iterable[HostDescriptor] = (),
-    local_host_id: str | None = None,
+    revision: str,
+    overrides: Mapping[str, Any] | None = None,
+    global_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, HostFragment]:
-    """Compile a Blueprint into one immutable fragment per assigned Host.
+    """One immutable fragment per Host in ``assignments`` (module name -> Host ID).
 
-    Explicit ``assignments`` remain available for callers that already resolved
-    placement. Otherwise, the Blueprint's ``hosted()`` metadata is resolved
-    automatically against ``hosts``; modules without that metadata stay on the
-    controlling Host.
+    ``overrides`` is the blueprint root's explicit configuration by section; each fragment
+    gets its own modules' sections plus the shared ones.
     """
-    _validate_metadata(run_id, generation, application_name, application_revision)
-    config.assert_matches(blueprint)
-    _verify_no_name_conflicts(blueprint)
-
-    host_descriptors = tuple(hosts)
-    resolved_assignments: Mapping[str, str]
-    if assignments is None:
-        resolved_assignments = resolve_hosted_assignments(
-            blueprint,
-            host_descriptors,
-            local_host_id=local_host_id if local_host_id is not None else f"local-{run_id}",
-            application_revision=application_revision,
-        )
-    else:
-        if host_descriptors or local_host_id is not None:
-            raise ValueError("Pass either explicit assignments or hosts, not both")
-        resolved_assignments = assignments
+    if not run_id:
+        raise ValueError("run_id must not be empty")
+    if not revision:
+        raise ValueError("revision must not be empty")
+    verify_no_name_conflicts(blueprint)
 
     atoms = tuple(blueprint.active_blueprints)
     atom_names = {atom.name for atom in atoms}
-    assignment_names = set(resolved_assignments)
-    if missing := atom_names - assignment_names:
-        raise ValueError(f"Placement is missing modules: {', '.join(sorted(missing))}")
+    assignment_names = set(assignments)
+    if unplaced := atom_names - assignment_names:
+        raise ValueError(f"Placement is missing modules: {', '.join(sorted(unplaced))}")
     if unknown := assignment_names - atom_names:
         raise ValueError(f"Placement contains unknown modules: {', '.join(sorted(unknown))}")
-    if invalid_hosts := sorted(
-        name
-        for name, host_id in resolved_assignments.items()
-        if not isinstance(host_id, str) or not host_id
-    ):
-        raise ValueError(f"Placement has empty Host IDs for: {', '.join(invalid_hosts)}")
-
-    host_ids = sorted(set(resolved_assignments.values()))
-    if len(host_ids) > 1 and (blueprint.requirement_checks or blueprint.configurator_checks):
-        raise ValueError(
-            "Multi-Host fragments do not yet support Blueprint requirements or configurators"
-        )
-
-    resolved_references = _resolve_module_references(blueprint)
-    stream_endpoints = _stream_endpoints(blueprint)
-    boundary_keys = {
-        key
-        for key, endpoint_names in stream_endpoints.items()
-        if len({resolved_assignments[name] for name in endpoint_names}) > 1
-    }
+    host_ids = sorted(set(assignments.values()))
+    atoms_by_name = {atom.name: atom for atom in atoms}
+    resolved_references = resolve_module_refs(blueprint)
     disabled_atoms = tuple(
         atom for atom in blueprint.blueprints if atom not in blueprint.active_blueprints
     )
@@ -122,59 +77,39 @@ def compile_fragments(
     fragments: dict[str, HostFragment] = {}
     for host_id in host_ids:
         local_atoms = tuple(
-            _with_rpc_name(atom, run_id, host_id)
+            _with_run_identity(atom, run_id, host_id)
             for atom in atoms
-            if resolved_assignments[atom.name] == host_id
+            if assignments[atom.name] == host_id
         )
         local_names = {atom.name for atom in local_atoms}
         remote_references = tuple(
-            _remote_module_reference(
-                run_id,
-                consumer_name,
-                reference_name,
-                provider,
-                resolved_assignments[provider.name],
+            RemoteModuleReference(
+                consumer_name=consumer_name,
+                reference_name=reference_name,
+                provider_name=provider_name,
+                provider_host_id=assignments[provider_name],
+                rpcs=frozenset(atoms_by_name[provider_name].module.rpcs),
+                rpc_name=run_module_rpc_name(run_id, assignments[provider_name], provider_name),
             )
-            for (consumer_name, reference_name), provider in sorted(resolved_references.items())
-            if resolved_assignments[consumer_name] == host_id
-            and resolved_assignments[provider.name] != host_id
+            for (consumer_name, reference_name), provider_name in sorted(
+                resolved_references.items()
+            )
+            if assignments[consumer_name] == host_id and assignments[provider_name] != host_id
         )
-        local_stream_keys = {
-            key
-            for key, endpoint_names in stream_endpoints.items()
-            if local_names.intersection(endpoint_names)
+        local_blueprint = _local_blueprint(blueprint, local_atoms, disabled_atoms)
+        local_overrides = {
+            section: values
+            for section, values in (overrides or {}).items()
+            if section in local_names or section in _SHARED_SECTIONS
         }
-        local_boundaries = tuple(
-            _boundary_stream(run_id, key)
-            for key in sorted(
-                boundary_keys.intersection(local_stream_keys),
-                key=lambda item: (item[0], item[1].__module__, item[1].__qualname__),
-            )
-        )
-        local_blueprint = _local_blueprint(
-            blueprint,
-            run_id,
-            local_atoms,
-            disabled_atoms,
-            local_names,
-            local_stream_keys,
-            local_boundaries,
-            single_host=len(host_ids) == 1,
-        )
-        local_config = config.subset_for(
-            local_blueprint,
-            global_overrides=HOSTED_GLOBAL_OVERRIDES,
-        )
         fragments[host_id] = HostFragment.create(
             run_id=run_id,
-            generation=generation,
             host_id=host_id,
-            application_name=application_name,
-            application_revision=application_revision,
+            revision=revision,
             payload=PythonFragmentPayload(
                 blueprint=local_blueprint,
-                config=local_config,
-                boundary_streams=local_boundaries,
+                overrides=local_overrides,
+                global_overrides=dict(global_overrides or {}),
                 remote_module_references=remote_references,
             ),
         )
@@ -186,19 +121,17 @@ def resolve_hosted_assignments(
     blueprint: Blueprint,
     hosts: Iterable[HostDescriptor],
     *,
-    local_host_id: str,
-    application_revision: str,
+    local_host_id: str | None,
+    revision: str,
 ) -> dict[str, str]:
-    """Resolve Blueprint placement metadata to one Host ID per active module."""
-    if not local_host_id:
-        raise ValueError("local_host_id must not be empty")
-    if not application_revision:
-        raise ValueError("application_revision must not be empty")
+    """One Host ID per active module; unplaced and ``local`` ones go to ``local_host_id``."""
+    if not revision:
+        raise ValueError("revision must not be empty")
 
     atoms = tuple(blueprint.active_blueprints)
     active_names = {atom.name for atom in atoms}
     descriptors = tuple(hosts)
-    _validate_host_descriptors(descriptors, local_host_id)
+    _validate_host_descriptors(descriptors)
 
     parents = {name: name for name in active_names}
 
@@ -226,9 +159,6 @@ def resolve_hosted_assignments(
     for placement in placements:
         union(placement.module_names)
 
-    for (consumer_name, _reference_name), provider in _resolve_module_references(blueprint).items():
-        union((consumer_name, provider.name))
-
     units: dict[str, list[str]] = defaultdict(list)
     for atom in atoms:
         units[find(atom.name)].append(atom.name)
@@ -242,11 +172,7 @@ def resolve_hosted_assignments(
     placement_units = [tuple(sorted(names)) for names in units.values()]
     placement_units.sort(
         key=lambda names: (
-            not any(
-                isinstance(constraint.host, str)
-                for name in names
-                for constraint in constraints_by_name[name]
-            ),
+            not any(constraint.host for name in names for constraint in constraints_by_name[name]),
             names,
         )
     )
@@ -262,7 +188,7 @@ def resolve_hosted_assignments(
             constraints,
             descriptors,
             local_host_id=local_host_id,
-            application_revision=application_revision,
+            revision=revision,
             commitments=commitments,
         )
         assignments.update(dict.fromkeys(names, host_id))
@@ -272,14 +198,27 @@ def resolve_hosted_assignments(
     return assignments
 
 
-def _validate_host_descriptors(descriptors: tuple[HostDescriptor, ...], local_host_id: str) -> None:
+def _validate_host_descriptors(descriptors: tuple[HostDescriptor, ...]) -> None:
     ids = [descriptor.host_id for descriptor in descriptors]
     if any(not host_id for host_id in ids):
         raise ValueError("Discovered Hosts must have non-empty Host IDs")
     if len(set(ids)) != len(ids):
         raise ValueError("Discovered Hosts contain duplicate Host IDs")
-    if local_host_id in ids:
-        raise ValueError(f"Local Host ID {local_host_id!r} collides with a discovered Host")
+
+
+def _local_host(
+    unit_label: str,
+    descriptors: tuple[HostDescriptor, ...],
+    local_host_id: str | None,
+    revision: str,
+) -> str:
+    """The local Host's ID for a unit that stays with the blueprint root, if it can take it."""
+    local = next((d for d in descriptors if d.host_id == local_host_id), None)
+    if local is None:
+        raise ValueError(f"Placement unit {unit_label} needs a live local Host, found none")
+    if reasons := _host_rejection_reasons(local, {}, revision):
+        raise ValueError(f"Local Host {local.name} cannot take {unit_label}: {', '.join(reasons)}")
+    return local.host_id
 
 
 def _select_host_for_unit(
@@ -287,21 +226,23 @@ def _select_host_for_unit(
     constraints: tuple[HostedPlacement, ...],
     descriptors: tuple[HostDescriptor, ...],
     *,
-    local_host_id: str,
-    application_revision: str,
+    local_host_id: str | None,
+    revision: str,
     commitments: Mapping[str, int],
 ) -> str:
-    if not constraints:
-        return local_host_id
-
-    local = any(constraint.host is None for constraint in constraints)
-    remote = any(constraint.host is not None for constraint in constraints)
-    exact_hosts = {
-        constraint.host for constraint in constraints if isinstance(constraint.host, str)
-    }
-    required_tags = frozenset(tag for constraint in constraints for tag in constraint.tags)
-
     unit_label = ", ".join(module_names)
+    if not constraints:
+        return _local_host(unit_label, descriptors, local_host_id, revision)
+
+    local = any(constraint.local for constraint in constraints)
+    remote = any(not constraint.local for constraint in constraints)
+    exact_hosts = {constraint.host for constraint in constraints if constraint.host}
+    required_tags = {k: v for constraint in constraints for k, v in constraint.tags.items()}
+    minimum: dict[str, float] = {}
+    for constraint in constraints:
+        for key, floor in constraint.minimum.items():
+            minimum[key] = max(floor, minimum.get(key, floor))
+
     if local and remote:
         raise ValueError(
             f"Placement unit {unit_label} combines local and remote hosted constraints"
@@ -312,7 +253,7 @@ def _select_host_for_unit(
             f"{', '.join(sorted(exact_hosts))}"
         )
     if local:
-        return local_host_id
+        return _local_host(unit_label, descriptors, local_host_id, revision)
 
     exact_host = next(iter(exact_hosts), None)
     candidates = descriptors
@@ -333,14 +274,15 @@ def _select_host_for_unit(
     accepted = tuple(
         descriptor
         for descriptor in candidates
-        if not _host_rejection_reasons(descriptor, required_tags, application_revision)
+        if not _host_rejection_reasons(descriptor, required_tags, revision, minimum)
     )
     if not accepted:
         selector = f"host={exact_host!r}" if exact_host is not None else "any Host"
-        tags = f", tags={sorted(required_tags)}" if required_tags else ""
+        tags = f", tags={missing({}, required_tags)}" if required_tags else ""
+        tags += f", minimum={minimum}" if minimum else ""
         discovered = "; ".join(
             f"{host.name} ({host.host_id}): "
-            f"{', '.join(_host_rejection_reasons(host, required_tags, application_revision)) or 'selector mismatch'}"
+            f"{', '.join(_host_rejection_reasons(host, required_tags, revision, minimum)) or 'selector mismatch'}"
             for host in descriptors
         )
         raise ValueError(
@@ -348,218 +290,68 @@ def _select_host_for_unit(
             f"Discovered: {discovered or 'none'}"
         )
 
-    return min(accepted, key=lambda host: (commitments[host.host_id], host.host_id)).host_id
+    prefer = next((c.prefer for c in constraints if c.prefer), None)
+    return min(
+        accepted,
+        key=lambda host: (
+            -_numeric_tag(host, prefer),
+            commitments[host.host_id],
+            host.host_id,
+        ),
+    ).host_id
+
+
+def _numeric_tag(host: HostDescriptor, key: str | None) -> float:
+    """The tag as a number for ``prefer`` ranking; absent or non-numeric ranks last."""
+    if key is None:
+        return 0.0
+    try:
+        return float(host.tags[key])
+    except (KeyError, ValueError):
+        return float("-inf")
 
 
 def _host_rejection_reasons(
     descriptor: HostDescriptor,
-    required_tags: frozenset[str],
-    application_revision: str,
+    required_tags: Mapping[str, str | bool],
+    revision: str,
+    minimum: Mapping[str, float] | None = None,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
-    if descriptor.state not in _SCHEDULABLE_HOST_STATES:
-        reasons.append(f"state is {descriptor.state}")
-    if missing_tags := required_tags - descriptor.tags:
-        reasons.append(f"missing tags {sorted(missing_tags)}")
-    host_revision = descriptor.versions.get(
-        "application_revision", descriptor.versions.get("dimos")
-    )
-    if host_revision is not None and str(host_revision) != application_revision:
-        reasons.append(
-            f"application revision is {host_revision!s}, expected {application_revision}"
-        )
+    if missing_tags := missing(descriptor.tags, required_tags):
+        reasons.append(f"missing tags {missing_tags}")
+    for key, floor in (minimum or {}).items():
+        if _numeric_tag(descriptor, key) < floor:
+            reasons.append(f"{key} is {descriptor.tags.get(key, 'missing')}, needs >= {floor:g}")
+    if descriptor.revision != revision:
+        reasons.append(f"revision is {descriptor.revision}, expected {revision}")
     return tuple(reasons)
 
 
-def _validate_metadata(
-    run_id: str,
-    generation: int,
-    application_name: str,
-    application_revision: str,
-) -> None:
-    if not run_id:
-        raise ValueError("run_id must not be empty")
-    if generation < 1:
-        raise ValueError("generation must be at least 1")
-    if not application_name:
-        raise ValueError("application_name must not be empty")
-    if not application_revision:
-        raise ValueError("application_revision must not be empty")
-
-
-def _stream_endpoints(blueprint: Blueprint) -> dict[StreamKey, tuple[str, ...]]:
-    endpoints: dict[StreamKey, list[str]] = defaultdict(list)
-    for atom in blueprint.active_blueprints:
-        for stream in atom.streams:
-            name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-            if isinstance(name, str):
-                endpoints[name, stream.type].append(atom.name)
-    return {key: tuple(names) for key, names in endpoints.items()}
-
-
-def _boundary_stream(run_id: str, stream_key: StreamKey) -> BoundaryStream:
-    name, message_type = stream_key
-    return BoundaryStream(
-        name=name,
-        message_type=message_type,
-        key_expr=run_stream_key(run_id, name, message_type),
-    )
-
-
-def _boundary_transport(run_id: str, boundary: BoundaryStream) -> TransportSpec:
-    if getattr(boundary.message_type, "lcm_encode", None) is None:
-        return pZenohTransport.spec(boundary.key_expr)
-    return ZenohTransport.spec(
-        run_stream_base_topic(run_id, boundary.name),
-        boundary.message_type,
-    )
-
-
-def _with_rpc_name(
-    atom: BlueprintAtom,
-    run_id: str,
-    host_id: str,
-) -> BlueprintAtom:
-    kwargs = dict(atom.kwargs)
-    kwargs["rpc_name"] = run_module_rpc_name(run_id, host_id, atom.name)
+def _with_run_identity(atom: BlueprintAtom, run_id: str, host_id: str) -> BlueprintAtom:
+    """The atom with its run-scoped RPC name."""
+    kwargs = {**atom.kwargs, "rpc_name": run_module_rpc_name(run_id, host_id, atom.name)}
     return replace(atom, kwargs=kwargs)
-
-
-def _remote_module_reference(
-    run_id: str,
-    consumer_name: str,
-    reference_name: str,
-    provider: BlueprintAtom,
-    provider_host_id: str,
-) -> RemoteModuleReference:
-    return RemoteModuleReference(
-        consumer_name=consumer_name,
-        reference_name=reference_name,
-        provider_name=provider.name,
-        provider_host_id=provider_host_id,
-        provider_type=provider.module,
-        rpc_name=run_module_rpc_name(run_id, provider_host_id, provider.name),
-    )
 
 
 def _local_blueprint(
     source: Blueprint,
-    run_id: str,
     local_atoms: tuple[BlueprintAtom, ...],
     disabled_atoms: tuple[BlueprintAtom, ...],
-    local_names: set[str],
-    local_stream_keys: set[StreamKey],
-    boundaries: tuple[BoundaryStream, ...],
-    *,
-    single_host: bool,
 ) -> Blueprint:
-    transports = {
-        key: transport
-        for key, transport in source.transport_map.items()
-        if key in local_stream_keys
-    }
-    for boundary in boundaries:
-        transports[boundary.name, boundary.message_type] = _boundary_transport(
-            run_id,
-            boundary,
-        )
-
-    remappings = {
-        key: value for key, value in source.remapping_map.items() if key[0] in local_names
-    }
-    global_overrides = {**source.global_config_overrides, **HOSTED_GLOBAL_OVERRIDES}
-    return Blueprint(
+    """The source Blueprint cut down to ``local_atoms``; disabled atoms and checks travel with every fragment."""
+    local_names = {atom.name for atom in local_atoms}
+    local = Blueprint(
         blueprints=local_atoms + disabled_atoms,
         disabled_modules_tuple=source.disabled_modules_tuple,
-        transport_map=MappingProxyType(transports),
-        global_config_overrides=MappingProxyType(global_overrides),
-        remapping_map=MappingProxyType(remappings),
-        requirement_checks=source.requirement_checks if single_host else (),
-        configurator_checks=source.configurator_checks if single_host else (),
+        transport_map=MappingProxyType({}),
+        global_config_overrides=source.global_config_overrides,
+        remapping_map=MappingProxyType(
+            {key: value for key, value in source.remapping_map.items() if key[0] in local_names}
+        ),
+        requirement_checks=source.requirement_checks,
+        configurator_checks=source.configurator_checks,
     )
-
-
-def _atom_namespace(instance_name: str) -> str:
-    return instance_name.rsplit("/", 1)[0] if "/" in instance_name else ""
-
-
-def _namespace_levels(instance_name: str) -> tuple[str, ...]:
-    levels: list[str] = []
-    namespace = _atom_namespace(instance_name)
-    while namespace:
-        levels.append(namespace)
-        namespace = _atom_namespace(namespace)
-    levels.append("")
-    return tuple(levels)
-
-
-def _matches_reference(candidate: BlueprintAtom, requested: type) -> bool:
-    if is_module_type(requested):
-        return issubclass(candidate.module, requested)
-    return spec_structural_compliance(candidate.module, requested)
-
-
-def _resolve_reference_target(
-    blueprint: Blueprint,
-    consumer: BlueprintAtom,
-    reference: ModuleRef,
-) -> BlueprintAtom | None:
-    replacement = blueprint.remapping_map.get((consumer.name, reference.name))
-    requested = (
-        cast("type", replacement)
-        if is_module_type(replacement) or is_spec(replacement)
-        else reference.spec
-    )
-
-    possible: list[BlueprintAtom] = []
-    for namespace in _namespace_levels(consumer.name):
-        possible = [
-            candidate
-            for candidate in blueprint.active_blueprints
-            if candidate is not consumer
-            and _atom_namespace(candidate.name) == namespace
-            and _matches_reference(candidate, requested)
-        ]
-        if possible:
-            break
-
-    if not possible:
-        disabled = any(
-            atom.module in blueprint.disabled_modules_tuple and _matches_reference(atom, requested)
-            for atom in blueprint.blueprints
-        )
-        if reference.optional or disabled:
-            return None
-        raise ValueError(
-            f"Module reference {consumer.name}.{reference.name} has no provider in the Blueprint"
-        )
-
-    valid = (
-        possible
-        if is_module_type(requested)
-        else [
-            candidate
-            for candidate in possible
-            if spec_annotation_compliance(candidate.module, requested)
-        ]
-    )
-    if len(possible) == 1:
-        return possible[0]
-    if len(valid) == 1:
-        return valid[0]
-    candidates = ", ".join(sorted(candidate.name for candidate in possible))
-    raise ValueError(
-        f"Module reference {consumer.name}.{reference.name} is ambiguous: {candidates}"
-    )
-
-
-def _resolve_module_references(
-    blueprint: Blueprint,
-) -> dict[tuple[str, str], BlueprintAtom]:
-    resolved: dict[tuple[str, str], BlueprintAtom] = {}
-    for consumer in blueprint.active_blueprints:
-        for reference in consumer.module_refs:
-            provider = _resolve_reference_target(blueprint, consumer, reference)
-            if provider is not None:
-                resolved[consumer.name, reference.name] = provider
-    return resolved
+    local_streams = stream_name_types(local)
+    transports = {k: t for k, t in source.transport_map.items() if k in local_streams}
+    return replace(local, transport_map=MappingProxyType(transports))

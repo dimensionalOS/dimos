@@ -428,7 +428,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --xarm7-ip <ip>
+dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -448,6 +448,12 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+A manipulation stack that plans around a camera-built voxel map adds
+`manipulation_mapping()` from
+[`common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) (self
+filter, voxel mapper, `PointCloudBoxFilter`), which feeds `ManipulationModule`'s
+`voxel_map` input.
 
 ### Streaming pose-target control
 
@@ -524,7 +530,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and hardware config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
@@ -536,3 +542,5 @@ planner is locked for its whole native call.
 | [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
+
+Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

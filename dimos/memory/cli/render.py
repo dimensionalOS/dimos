@@ -126,8 +126,11 @@ def render_store(
     """
     import rerun as rr
 
+    from dimos.core.introspection.utils import GROUP_COLORS
     from dimos.memory.utils.progress import progress
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.msgs.nav_msgs.Path import Path as NavPath
+    from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+    from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
     from dimos.visualization.rerun.init import rerun_init
 
     if out is None:
@@ -196,7 +199,12 @@ def render_store(
             rr.log(entity(image_name), pinhole)
             print(f"  {image_name}: pinhole from camera_info (frame {frame!r} at +{at - t0:.2f}s)")
 
+    tf_tree = TfFrameTree()
+    mesh_colours: Any = None
+    path_colours: dict[str, tuple[int, int, int]] = {}
     for name, stream, _ in renderable:
+        path = entity(name)
+        attached: str | None = None
         with progress(stream.count(), label=name) as report:
             for obs in stream:
                 if seconds is not None and obs.ts - t0 > seconds:
@@ -205,13 +213,44 @@ def render_store(
                     report(obs)
                     continue
                 rr.set_time("time", duration=obs.ts - t0)
-                data = obs.data.to_rerun()
-                path = entity(name)
+                if isinstance(obs.data, TFMessage):  # absolute tf paths, like the bridge
+                    for tf_path, arch in obs.data.to_rerun(tf_tree):
+                        rr.log(tf_path, arch)
+                    report(obs)
+                    continue
+                if isinstance(obs.data, TriangleMesh):  # the bridge's mesh theme
+                    if mesh_colours is None:
+                        from dimos.mapping.experimental.mesh import MeshColours
+
+                        mesh_colours = MeshColours()
+                    for entry in mesh_colours(obs.data):
+                        rr.log(entry.path, entry.archetype, static=entry.static)
+                    report(obs)
+                    continue
+                if isinstance(obs.data, NavPath):  # thin, at true height, one colour per stream
+                    # The blueprint graph palette, assigned in stream order so paths stay distinct.
+                    hex_colour = GROUP_COLORS[len(path_colours) % len(GROUP_COLORS)]
+                    colour = path_colours.setdefault(
+                        name,
+                        (
+                            int(hex_colour[1:3], 16),
+                            int(hex_colour[3:5], 16),
+                            int(hex_colour[5:7], 16),
+                        ),
+                    )
+                    data = obs.data.to_rerun(color=colour, z_offset=0.0, radii=0.015)
+                else:
+                    data = obs.data.to_rerun()
                 if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
                     for sub, arch in data:
                         rr.log(f"{path}/{sub}", arch)
                 else:
                     rr.log(path, data)
+                # Pin the entity to its message frame so tf places it, as the bridge does.
+                frame_id = getattr(obs.data, "frame_id", None)
+                if frame_id and frame_id != attached and not isinstance(data, rr.Transform3D):
+                    rr.log(path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    attached = frame_id
                 report(obs)
 
     rr.rerun_shutdown()  # flush + close the .rrd before opening it

@@ -40,7 +40,6 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.tf_pose import TfPose
 from dimos.navigation.trajectory_follower.fancy.controller import TrajectoryController
 from dimos.navigation.trajectory_follower.fancy.laws import hinted
@@ -83,7 +82,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival (m)
     # The planner's own body: the law decodes the path stamps with its governor band.
-    embodiment: Embodiment = GO2
+    embodiment: Embodiment
     # The pose is the `path.frame_id -> base_frame` edge on tf, read each tick.
     base_frame: str = "base_link"
     # Deadman: zero the twist once the held path is this old, measured from arrival; must clear the ~1 Hz replan cadence.

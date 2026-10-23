@@ -23,10 +23,16 @@ from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
+    RoboPlanPointCloudSelfFilter,
+)
+from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
@@ -184,3 +190,52 @@ def planner(
     if visualization is not None:
         module_kwargs["visualization"] = visualization
     return ManipulationModule.blueprint(**module_kwargs)
+
+
+def manipulation_mapping(
+    *,
+    self_filter_model: RobotModel,
+    voxel_size: float,
+    world_frame: str = "world",
+) -> Blueprint:
+    """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
+
+    Three modules in a row: a self filter drops the robot's own returns, a
+    voxel mapper collects the rest, and a box filter lets pick-and-place leave
+    the object it is picking out of the map. The box filter's output is named
+    ``voxel_map``, so ManipulationModule's input of that name connects by
+    itself. The camera's ``pointcloud`` output must be switched on.
+
+    Args:
+        self_filter_model: The robot whose returns are dropped. Parts left out of
+            this model, such as a gripper, stay in the map.
+        voxel_size: Edge of one map cell, metres. Give ManipulationModule the
+            same ``voxel_map_resolution``, or its octree will not line up with
+            the map.
+        world_frame: Fixed frame the map is built and published in.
+    """
+    return autoconnect(
+        RoboPlanPointCloudSelfFilter.blueprint(
+            model=self_filter_model,
+            state_tolerance_s=0.1,
+            # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
+            # tolerance cannot bracket a ~92ms publish period and drops most
+            # clouds. One full period admits them all, and the arm holds still
+            # while scanning, so a transform a period old describes the same pose.
+            tf_tolerance_s=0.1,
+            tf_forward_tolerance_s=0.1,
+        ),
+        # Tabletop reach, not a room-scale lidar sweep.
+        RayTracingVoxelMap.blueprint(
+            voxel_size=voxel_size,
+            world_frame=world_frame,
+            max_range=2.0,
+        ),
+        PointCloudBoxFilter.blueprint(),
+    ).remappings(
+        [
+            (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
+            (PointCloudBoxFilter, "cloud", "global_map"),
+            (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
+        ]
+    )

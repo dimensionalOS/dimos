@@ -64,6 +64,13 @@ Reaching off the machine is opt-in
 
 Every one of these unpins the listener back to zenoh's all-interfaces default.
 
+`--zenoh-domain office2` (or `ZENOH_DOMAIN=office2`) keeps every stream of the run under
+`dimos-domains/office2/` instead of `dimos/`, so runs sharing a fabric never cross. A hosted
+run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
+rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
+dials the robot's router on its own still shows such a run. With `topics` set it only listens to
+its own domain. `dimos topic` and `dimos record` show the domain's keys.
+
 **Two ways to override for one run or for your shell:**
 
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
@@ -499,6 +506,5 @@ python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchma
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
 | `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
-| `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

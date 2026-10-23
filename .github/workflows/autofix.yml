@@ -6,7 +6,7 @@ permissions: {}
 
 jobs:
   lint:
-    timeout-minutes: 1
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -30,5 +30,24 @@ jobs:
         run: uv run ruff format
       - name: uv lock
         run: uv lock
+
+      - name: Did native/ or a module's flake or Cargo files change?
+        id: shared
+        run: |
+          set -euo pipefail
+          base=${{ github.event.pull_request.base.sha }}
+          git fetch --quiet --depth 1 origin "$base"
+          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Nix
+        if: steps.shared.outputs.changed == 'true'
+        run: bash docker/ros/install-nix.sh
+      - name: Relock the modules onto this revision
+        if: steps.shared.outputs.changed == 'true'
+        run: python3 bin/relock-shared-flakes
+
       - name: autofix.ci
         uses: autofix-ci/action@v1

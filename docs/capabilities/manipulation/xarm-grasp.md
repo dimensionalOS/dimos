@@ -11,12 +11,11 @@ room scene with `--simulation`:
 | `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
-dimos run xarm-grasp-graspgenx --xarm7-ip 192.168.1.x     # hardware
-dimos run xarm-grasp-graspgenx --simulation mujoco        # the room scene
+dimos run xarm-grasp-graspgenx --controlcoordinator.addresses '{"arm": "192.168.1.x"}'  # hardware
+dimos run xarm-grasp-graspgenx --simulation mujoco                                       # the room scene
 ```
 
-Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
-`--simulation` set and everything reverts to MuJoCo regardless of the IP.
+On hardware the arm needs its address, from the flag above or a saved config file (see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration)). With `--simulation` a saved address is ignored and everything runs in MuJoCo.
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
@@ -60,18 +59,33 @@ the registered objects:
 camera pointcloud
   -> RoboPlanPointCloudSelfFilter   drops robot surface returns using RoboPlan
   -> RayTracingVoxelMap             accumulates occupied cells in the world frame
+  -> PointCloudBoxFilter            leaves out the cells inside named boxes
   -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
 ```
 
-`XARM_GRASP_VOXEL_SIZE` is shared by the mapper and planner octree so their
-cells line up. The blueprint enables the camera's `pointcloud` output, which is
-off by default on both the RealSense and MuJoCo camera. The self filter drops a
-whole cloud if its full joint state or sensor/base TF is missing at capture time.
+The blueprint adds this chain with `manipulation_mapping()` from
+`dimos/robot/manipulators/common/blueprints.py`. `XARM_GRASP_VOXEL_SIZE` is
+shared by the mapper and planner octree so their cells line up. The blueprint
+enables the camera's `pointcloud` output, which is off by default on both the
+RealSense and MuJoCo camera. The self filter drops a whole cloud if its full
+joint state or sensor/base TF is missing at capture time.
 
 Because the target object is itself mapped geometry, a collision-checked plan
 into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
+
+For that checked approach, and for every plan made while the object is held,
+`PickAndPlaceModule` asks `PointCloudBoxFilter.set_box` to leave out the cells
+in a box around the target's point cloud, grown by `target_clearance` (3 cm on
+each side, which also covers the table cells under it). Once the jaws have
+closed on the object, the same box is set again on the tool tip's TF frame, so
+it moves with the gripper: the wrist camera keeps mapping whatever the gripper
+holds. Each change re-sends the last map at once. The box is cleared when the
+pick ends without holding anything, or once the arm has backed away after a
+release. Neighbouring objects stay obstacles: a pregrasp that would sweep the
+gripper into the object next to the target is still refused, with
+`IK failed: COLLISION` as the reason.
 
 ## Seeing the proposals
 

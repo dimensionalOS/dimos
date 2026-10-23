@@ -20,14 +20,6 @@ import time
 from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 from plum import dispatch
 
-# Import the actual LCM header type that's returned from decoding
-try:
-    from lcm_msgs.std_msgs.Header import (  # type: ignore[import-not-found]
-        Header as DecodedLCMHeader,
-    )
-except ImportError:
-    DecodedLCMHeader = None
-
 
 class Header(LCMHeader):  # type: ignore[misc]
     msg_name = "std_msgs.Header"
@@ -77,7 +69,7 @@ class Header(LCMHeader):  # type: ignore[misc]
     @dispatch  # type: ignore[no-redef]
     def __init__(self, header: object) -> None:
         """Initialize from a decoded LCM header object."""
-        # Handle the case where we get an lcm_msgs.std_msgs.Header.Header object
+        # Handle any decoded header object that has seq, stamp and frame_id
         if hasattr(header, "seq") and hasattr(header, "stamp") and hasattr(header, "frame_id"):
             super().__init__(seq=header.seq, stamp=header.stamp, frame_id=header.frame_id)
         else:

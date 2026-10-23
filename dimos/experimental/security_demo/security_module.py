@@ -21,6 +21,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import numpy as np
 from dimos_lcm.std_msgs import String, Bool
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -104,13 +105,15 @@ State = Literal["IDLE", "PATROLLING", "FOLLOWING"]
 
 
 class SecurityModuleConfig(ModuleConfig):
+    robot_width: float = Field(default_factory=lambda m: m["g"].robot_width)
+    robot_rotation_diameter: float = Field(default_factory=lambda m: m["g"].robot_rotation_diameter)
     camera_info: CameraInfo
     follow_frequency: float = 20.0
 
 
-def _create_router(global_config: GlobalConfig) -> PatrolRouter:
+def _create_router(robot_width: float) -> PatrolRouter:
     clearance_multiplier = 0.5
-    clearance_radius_m: float = global_config.robot_width * clearance_multiplier
+    clearance_radius_m: float = robot_width * clearance_multiplier
     return create_patrol_router("coverage", clearance_radius_m)
 
 
@@ -153,7 +156,7 @@ class SecurityModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        self._router: PatrolRouter = _create_router(self.config.g)
+        self._router: PatrolRouter = _create_router(self.config.robot_width)
         self._visual_servo = _create_visual_servo(self.config, self.config.g)
         self._detector = YoloPersonDetector()
         self._tracker = EdgeTAMProcessor()
@@ -206,7 +209,7 @@ class SecurityModule(Module):
 
         self._planner_spec.set_replanning_enabled(False)
         self._planner_spec.set_safe_goal_clearance(
-            self.config.g.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
+            self.config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
         )
 
         self._stop_event.clear()

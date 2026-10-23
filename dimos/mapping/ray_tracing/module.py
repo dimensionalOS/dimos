@@ -32,9 +32,8 @@ TF_MATCH_TOLERANCE_S = 0.1
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/mapping/ray_tracing/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../target/release/voxel_ray_tracing"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/voxel_ray_tracing"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.08
@@ -79,12 +78,14 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     tf_wait_timeout_s: float = 0.05
     # Worker threads for parallel map work.
     worker_threads: int = 4
-    # Edge of the square regions a seeded map is handed on in and the map viz publishes by.
+    # Edge of the square regions a seeded map is handed on in.
     region_m: float = 4.0
-    # Publish the regions whose chunks changed every Nth frame, zero for never.
+    # Edge of the square cells the map viz publishes by, at least a chunk edge.
+    viz_cell_m: float = 4.0
+    # Publish the cells whose chunks changed every Nth frame, zero for never.
     viz_emit_every: int = 0
-    # Unchanged regions published per viz tick, round robin.
-    viz_sweep_regions: int = 2
+    # Unchanged cells published per viz tick, round robin.
+    viz_sweep_cells: int = 32
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

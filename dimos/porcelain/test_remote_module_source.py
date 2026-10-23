@@ -196,6 +196,25 @@ def test_connect_restart_invalidates_cache(client):
     assert client.skills.ping() == "pong"
 
 
+def test_connect_unload_stops_stream_subscriptions(client, stream_module, collected):
+    stream = client.get_module("remote/streams").get_stream("messages")
+    (channel,) = [s.channel for s in client.list_streams("remote/streams") if s.name == "messages"]
+    received, event, callback = collected
+    stream.subscribe(callback)
+    stream_module.emit("messages", b"before unload")
+    assert event.wait(timeout=5.0)
+    event.clear()
+
+    client.unload(StreamModule)
+    publisher = pLCMTransport(channel)
+    try:
+        publisher.publish(b"after unload")
+        assert not event.wait(timeout=1.0)
+    finally:
+        publisher.stop()
+    assert received == [b"before unload"]
+
+
 def test_connect_run_by_name_adds_module(running_app, client):
     client.run("mcp-server")
     assert "McpServer" in client._source.list_module_names()
@@ -242,6 +261,26 @@ def test_get_module_class_name_raises_when_ambiguous():
 
         module = source.get_module("robot1/namedremotemodule")
         assert module.ping_name() == "robot1/namedremotemodule"
+
+
+def test_unload_by_class_name_requires_a_single_instance():
+    with _remote_source_with_instances(
+        "robot0/namedremotemodule", "robot1/namedremotemodule"
+    ) as source:
+        with pytest.raises(ValueError, match="Multiple instances"):
+            source.unload_module_by_class_name("NamedRemoteModule")
+
+        assert sorted(source.list_module_names()) == [
+            "robot0/namedremotemodule",
+            "robot1/namedremotemodule",
+        ]
+
+
+def test_unload_single_named_instance_by_class_name():
+    with _remote_source_with_instances("robot0/namedremotemodule") as source:
+        source.unload_module_by_class_name("NamedRemoteModule")
+
+        assert source.list_module_names() == []
 
 
 def test_cached_class_lookup_becomes_ambiguous_after_live_module_addition():

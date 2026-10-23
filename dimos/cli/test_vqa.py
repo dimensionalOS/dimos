@@ -50,9 +50,12 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--start" in output
     assert "--stop" in output
     assert "--stride" in output
+    assert "--quality-window" in output
+    assert "--min-brightness" in output
+    assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
-    assert "absent or empty" in output
+    assert "absent or" in output and "empty" in output
 
 
 def test_vqa_run_cli_declares_standalone_dataset_input() -> None:
@@ -151,6 +154,52 @@ def test_vqa_generate_cli_accepts_frame_range(
                 output=tmp_path,
             ),
             None,
+        )
+    ]
+
+
+def test_vqa_generate_cli_accepts_quality_window_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--start",
+            "0",
+            "--stop",
+            "100",
+            "--quality-window",
+            "0.5",
+            "--min-brightness",
+            "0.1",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=100,
+            quality_window=0.5,
+            min_brightness=0.1,
+            output=tmp_path,
         )
     ]
 

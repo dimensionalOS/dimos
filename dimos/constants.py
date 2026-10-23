@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import sys
 
 try:
     # Not a dependency, just the best way to get config path if available.
@@ -26,6 +27,18 @@ else:
     CONFIG_DIR = Path(GLib.get_user_config_dir()) / "dimos"
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
+
+# Per-boot files of running daemons; a plain `ssh host cmd` has no XDG_RUNTIME_DIR.
+_USER_RUN = Path(f"/run/user/{os.getuid()}") if hasattr(os, "getuid") else None
+if os.environ.get("XDG_RUNTIME_DIR"):
+    RUNTIME_DIR = Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
+elif sys.platform == "darwin":
+    # _CS_DARWIN_USER_TEMP_DIR from <unistd.h>. os.confstr_names doesn't list it.
+    RUNTIME_DIR = Path(os.confstr(65537)) / "dimos"
+elif _USER_RUN is not None and _USER_RUN.is_dir():
+    RUNTIME_DIR = _USER_RUN / "dimos"
+else:
+    RUNTIME_DIR = STATE_DIR
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
