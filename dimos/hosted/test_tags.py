@@ -43,7 +43,7 @@ def test_every_tagger_answers_on_this_machine() -> None:
 @pytest.mark.parametrize("node", ["/dev/nvidia0", "/dev/nvgpu", "/dev/nvhost-gpu"])
 def test_gpu_tagger_reads_device_nodes(node: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", lambda self: str(self) == node)
-    monkeypatch.setattr(tags, "nvidia_smi_gpus", lambda: [])
+    monkeypatch.setattr(tags, "nvidia_smi_gpus", list)
     assert tags.gpu_tags() == {"gpu": "", "gpu_count": "1"}
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert tags.gpu_tags() == {}

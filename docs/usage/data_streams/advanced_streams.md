@@ -53,9 +53,11 @@ slow_results = []
 
 safe.subscribe(lambda x: fast_results.append(x))
 
+
 def slow_handler(x):
     time.sleep(0.15)
     slow_results.append(x)
+
 
 safe.subscribe(slow_handler)
 
@@ -106,16 +108,17 @@ from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs import Image
 
+
 class MLModel(Module):
     color_image: In[Image]
-    def start(self):
-       # no reactivex, simple callback
-       self.color_image.subscribe(...)
-       # backpressured
-       self.color_image.observable().subscribe(...)
-       # non-backpressured - will pile up queue
-       self.color_image.pure_observable().subscribe(...)
 
+    def start(self):
+        # no reactivex, simple callback
+        self.color_image.subscribe(...)
+        # backpressured
+        self.color_image.observable().subscribe(...)
+        # non-backpressured - will pile up queue
+        self.color_image.pure_observable().subscribe(...)
 ```
 
 ## Getting Values Synchronously
@@ -127,21 +130,18 @@ If you are doing this periodically as a part of a processing loop, it is very li
 (TODO we should actually make this example actually executable)
 
 ```python skip
-    self.color_image.observable().pipe(
-        # takes the best image from a stream every 200ms,
-        # ensuring we are feeding our detector with highest quality frames
-        quality_barrier(lambda x: x["quality"], target_frequency=0.2),
-
-        # converts Image into Person detections
-        ops.map(detect_person),
-
-        # converts Detection2D to Twist pointing in the direction of a detection
-        ops.map(detection2d_to_twist),
-
-        # emits the latest value every 50ms making our control loop run at 20hz
-        # despite detections running at 200ms
-        ops.sample(0.05),
-    ).subscribe(self.twist.publish) # shoots off the Twist out of the module
+self.color_image.observable().pipe(
+    # takes the best image from a stream every 200ms,
+    # ensuring we are feeding our detector with highest quality frames
+    quality_barrier(lambda x: x["quality"], target_frequency=0.2),
+    # converts Image into Person detections
+    ops.map(detect_person),
+    # converts Detection2D to Twist pointing in the direction of a detection
+    ops.map(detection2d_to_twist),
+    # emits the latest value every 50ms making our control loop run at 20hz
+    # despite detections running at 200ms
+    ops.sample(0.05),
+).subscribe(self.twist.publish)  # shoots off the Twist out of the module
 ```
 
 If you'd still like to switch to synchronous fetching, we provide two approaches, `getter_hot()` and `getter_cold()`
@@ -243,7 +243,7 @@ from dimos.utils.reactive import getter_hot
 
 source = rx.interval(0.1).pipe(ops.take(10))
 
-get_val = getter_hot(source, timeout=5.0) # blocks until first message, with 5s timeout
+get_val = getter_hot(source, timeout=5.0)  # blocks until first message, with 5s timeout
 # alternatively not to block (but get_val() might return None)
 # get_val = getter_hot(source, nonblocking=True)
 

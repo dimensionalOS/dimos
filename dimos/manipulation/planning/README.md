@@ -97,15 +97,13 @@ module = ManipulationModule(
     model=config,
     planning_timeout=10.0,
     enable_viz=True,
-    world_backend="drake",                # RoboPlan is the default
-    planner={"backend": "rrt_connect"},    # RoboPlan is the default
+    world_backend="drake",  # RoboPlan is the default
+    planner={"backend": "rrt_connect"},  # RoboPlan is the default
     trajectory_parametrization={"backend": "simple_trapezoid"},
-    kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
+    kinematics={"backend": "drake_optimization"},  # Or "jacobian" / "pink"
 )
 module.start()
-module.plan_to_joints(
-    {"arm": JointState(position=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])}
-)
+module.plan_to_joints({"arm": JointState(position=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])})
 module.execute()  # Sends to coordinator
 ```
 

@@ -13,25 +13,25 @@
 # limitations under the License.
 
 try:
-    from geometry_msgs.msg import Vector3 as Vector3
+    from geometry_msgs.msg import Vector3
 except ImportError:
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3 as Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 try:
     from geometry_msgs.msg import (
-        Point as Point,
-        Pose as Pose,
-        Quaternion as Quaternion,
-        Twist as Twist,
+        Point,
+        Pose,
+        Quaternion,
+        Twist,
     )
-    from nav_msgs.msg import OccupancyGrid as OccupancyGrid, Odometry as Odometry
-    from std_msgs.msg import Header as Header
+    from nav_msgs.msg import OccupancyGrid, Odometry
+    from std_msgs.msg import Header
 except ImportError:
     from dimos_lcm.geometry_msgs import (
-        Point as Point,
-        Pose as Pose,
-        Quaternion as Quaternion,
-        Twist as Twist,
+        Point,
+        Pose,
+        Quaternion,
+        Twist,
     )
-    from dimos_lcm.nav_msgs import OccupancyGrid as OccupancyGrid, Odometry as Odometry
-    from dimos_lcm.std_msgs import Header as Header
+    from dimos_lcm.nav_msgs import OccupancyGrid, Odometry
+    from dimos_lcm.std_msgs import Header

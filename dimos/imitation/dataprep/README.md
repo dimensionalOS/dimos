@@ -64,7 +64,10 @@ recorded streams to exist.
 
 ```python no-result
 from dimos.imitation.dataprep.schema import (
-    DataPrepConfig, FeatureSpec, OutputConfig, SyncConfig,
+    DataPrepConfig,
+    FeatureSpec,
+    OutputConfig,
+    SyncConfig,
 )
 
 joints = ["arm/joint1", "arm/gripper"]
@@ -72,14 +75,20 @@ config = DataPrepConfig(
     source="data/recordings/session.db",
     observation={
         "observation.state": FeatureSpec(
-            stream="coordinator_joint_state", field="position",
-            dtype="float32", shape=(2,), names=joints,
+            stream="coordinator_joint_state",
+            field="position",
+            dtype="float32",
+            shape=(2,),
+            names=joints,
         ),
     },
     action={
         "action": FeatureSpec(
-            stream="applied_joint_position_command", field="position",
-            dtype="float32", shape=(2,), names=joints,
+            stream="applied_joint_position_command",
+            field="position",
+            dtype="float32",
+            shape=(2,),
+            names=joints,
             source_kind="joint_position_updates",
         ),
     },

@@ -80,7 +80,7 @@ continuing. Allow space for a small joint offset and a 1 cm vertical translation
 Save the initial joints before moving:
 
 ```python skip
-print(arm.info)   # Group ID, joint order, and capabilities.
+print(arm.info)  # Group ID, joint order, and capabilities.
 print(arm.state())
 initial = arm.joints()  # Fresh NumPy array in arm.info.joint_names order.
 q = initial.copy()
@@ -173,9 +173,12 @@ cancellation. Use `app.find_module_by_spec(ManipulationSpec)` for direct typed d
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 motion = arm.rpc
-planned = motion.plan_to_joints({
-    arm.info.id: JointState(position=arm.joints() + 0.01),
-}, speed_scale=0.2)
+planned = motion.plan_to_joints(
+    {
+        arm.info.id: JointState(position=arm.joints() + 0.01),
+    },
+    speed_scale=0.2,
+)
 if planned.succeeded and planned.plan is not None:
     print(motion.preview_plan(planned.plan))
     print(motion.get_visualization_url())

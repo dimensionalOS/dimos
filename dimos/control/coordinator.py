@@ -102,12 +102,12 @@ class ControlCoordinatorConfig(ModuleConfig):
     publish_frame_poses: bool = False
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
-    hardware: list[HardwareComponent] = field(default_factory=lambda: [])
+    hardware: list[HardwareComponent] = field(default_factory=list)
     # Device addresses by hardware id (an IP, a CAN interface, a serial port),
     # applied when the stack runs on hardware. In simulation the blueprint's
     # simulated adapters stay, so one saved robot configuration serves both.
     addresses: dict[str, str] = field(default_factory=dict)
-    tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    tasks: list[TaskConfig] = field(default_factory=list)
 
 
 class ControlCoordinator(Module):
