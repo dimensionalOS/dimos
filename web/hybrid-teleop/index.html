@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<!-- Operator page for the hybrid-teleop-sim blueprint: the arm camera, the
-     operator hold status, an e-stop, and buttons to ask for an operator or to
-     end the hold (take over or resume). On a relay that needs a viewer token,
-     open it with ?token=...
+<!-- Operator page for the hybrid-teleop-sim blueprint: the arm camera, a 3D
+     view of the scene's point cloud, the operator hold status, an e-stop, and
+     buttons to ask for an operator or to end the hold (take over or resume).
+     On a relay that needs a viewer token, open it with ?token=...
      Run:  dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop -->
 <html lang="en">
   <head>
@@ -44,17 +44,35 @@
         flex: 2;
         min-width: 0;
       }
-      #camera {
+      #camera,
+      #cloud {
         position: relative;
         background: #000;
         border-radius: 6px;
         overflow: hidden;
       }
       #camera canvas,
-      #camera video {
+      #camera video,
+      #cloud canvas {
         display: block;
         width: 100%;
         height: auto;
+      }
+      #cloud {
+        margin-top: 12px;
+      }
+      #cloud canvas {
+        cursor: grab;
+        touch-action: none;
+      }
+      #cloud-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      #cloud-reset {
+        padding: 2px 10px;
       }
       aside {
         flex: 1;
@@ -143,6 +161,18 @@
           <video id="camera-video" autoplay muted playsinline hidden></video>
         </div>
         <div id="camera-info" class="muted">waiting for camera</div>
+        <div id="cloud">
+          <canvas
+            id="cloud-canvas"
+            width="640"
+            height="480"
+            title="Drag to turn, wheel to zoom, right or shift drag to pan"
+          ></canvas>
+        </div>
+        <div id="cloud-bar">
+          <span id="cloud-info" class="muted">3D view: waiting for point cloud</span>
+          <button id="cloud-reset">Reset view</button>
+        </div>
       </section>
       <aside>
         <button id="estop">E-STOP</button>
@@ -171,7 +201,7 @@
       </aside>
     </main>
     <script type="module">
-      import { connect } from "/sdk.js";
+      import { connect, inflateVoxels } from "/sdk.js";
 
       const $ = (selector) => document.querySelector(selector);
       const token = new URLSearchParams(location.search).get("token");
@@ -232,6 +262,255 @@
           ? `${canvas.width} x ${canvas.height}, ${snapshot.stats.hz.toFixed(1)} fps`
           : "waiting for camera";
       });
+
+      // 3D view camera. It orbits `target` (a world point, metres) from
+      // `distance` metres away; yaw turns it about the world z axis and pitch
+      // lifts it above the ground (radians). project() and unproject() work in
+      // cloud-canvas pixels.
+      const cloudCanvas = $("#cloud-canvas");
+      const FOV = (50 * Math.PI) / 180; // vertical field of view, radians
+      const NEAR = 0.02; // closest drawn depth, metres
+      const HOME_VIEW = { target: [0.4, 0, 0.1], yaw: -2.7, pitch: 0.75, distance: 0.95 };
+      const view = structuredClone(HOME_VIEW);
+      let cam; // eye position and axes for the current view, set by updateCamera()
+
+      const updateCamera = () => {
+        const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+        const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw);
+        const back = [cp * cy, cp * sy, sp]; // unit vector from target to eye
+        const forward = back.map((v) => -v);
+        const right = [-sy, cy, 0];
+        const up = [ // right x forward
+          right[1] * forward[2] - right[2] * forward[1],
+          right[2] * forward[0] - right[0] * forward[2],
+          right[0] * forward[1] - right[1] * forward[0],
+        ];
+        cam = {
+          eye: view.target.map((t, i) => t + view.distance * back[i]),
+          forward,
+          right,
+          up,
+          focal: cloudCanvas.height / 2 / Math.tan(FOV / 2), // pixels
+          cx: cloudCanvas.width / 2,
+          cy: cloudCanvas.height / 2,
+        };
+      };
+      updateCamera();
+
+      // A world point (x, y, z in metres) as [px, py, depth in metres] on the
+      // canvas, or null when it is behind the near plane.
+      const project = ([x, y, z]) => {
+        const dx = x - cam.eye[0], dy = y - cam.eye[1], dz = z - cam.eye[2];
+        const depth = dx * cam.forward[0] + dy * cam.forward[1] + dz * cam.forward[2];
+        if (depth < NEAR) return null;
+        const rx = dx * cam.right[0] + dy * cam.right[1] + dz * cam.right[2];
+        const ry = dx * cam.up[0] + dy * cam.up[1] + dz * cam.up[2];
+        return [
+          cam.cx + (cam.focal * rx) / depth,
+          cam.cy - (cam.focal * ry) / depth,
+          depth,
+        ];
+      };
+
+      // The world ray under canvas pixel (px, py): { origin, direction }, with
+      // origin at the eye (metres) and direction a unit vector.
+      const unproject = (px, py) => {
+        const a = (px - cam.cx) / cam.focal, b = (cam.cy - py) / cam.focal;
+        const d = [0, 1, 2].map((i) => cam.forward[i] + a * cam.right[i] + b * cam.up[i]);
+        const norm = Math.hypot(...d);
+        return { origin: [...cam.eye], direction: d.map((v) => v / norm) };
+      };
+
+      // Orbit: left drag turns, right or shift drag pans, the wheel zooms.
+      cloudCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+      cloudCanvas.addEventListener("pointerdown", (e) => {
+        cloudCanvas.setPointerCapture(e.pointerId);
+      });
+      cloudCanvas.addEventListener("pointermove", (e) => {
+        if (e.buttons === 0) return;
+        const scale = cloudCanvas.width / cloudCanvas.clientWidth; // CSS px to canvas px
+        const dx = e.movementX * scale, dy = e.movementY * scale;
+        if (e.buttons & 2 || e.shiftKey) {
+          const metresPerPixel = view.distance / cam.focal;
+          for (let i = 0; i < 3; i++) {
+            view.target[i] += (-dx * cam.right[i] + dy * cam.up[i]) * metresPerPixel;
+          }
+        } else {
+          view.yaw -= dx * 0.01;
+          view.pitch = Math.min(1.55, Math.max(-1.55, view.pitch + dy * 0.01));
+        }
+        requestCloudDraw();
+      });
+      cloudCanvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        view.distance = Math.min(
+          10,
+          Math.max(0.1, view.distance * Math.exp(e.deltaY * 0.001)),
+        );
+        requestCloudDraw();
+      }, { passive: false });
+      $("#cloud-reset").addEventListener("click", () => {
+        Object.assign(view, structuredClone(HOME_VIEW));
+        requestCloudDraw();
+      });
+
+      // Point cloud. Each voxels.zlib.v1 frame is inflated to voxel centres
+      // (x, y, z in metres, world frame) and drawn as squares the size of a
+      // voxel, nearest in front, coloured from blue (low) to yellow (high).
+      const CLOUD = "scene_pointcloud";
+      const cloudCtx = cloudCanvas.getContext("2d");
+      const splatCanvas = document.createElement("canvas");
+      splatCanvas.width = cloudCanvas.width;
+      splatCanvas.height = cloudCanvas.height;
+      const splatCtx = splatCanvas.getContext("2d");
+      const splat = splatCtx.createImageData(splatCanvas.width, splatCanvas.height);
+      const splatPixels = new Uint32Array(splat.data.buffer); // RGBA, little-endian
+      const splatDepth = new Float32Array(splatPixels.length);
+      const LOW = [60, 120, 230], HIGH = [255, 210, 70]; // RGB of the lowest and highest voxel
+      const RAMP = Uint32Array.from({ length: 256 }, (_, i) => {
+        const [r, g, b] = LOW.map((v, c) => Math.round(v + ((HIGH[c] - v) * i) / 255));
+        return (255 << 24) | (b << 16) | (g << 8) | r; // RGBA bytes as one little-endian word
+      });
+      let cloud = null; // { points, res, zMin, zMax } of the newest drawn frame
+      let cloudHz = 0, drawMs = 0;
+
+      const drawSegment = (a, b) => {
+        // Clip the part behind the near plane, then draw what is left.
+        let p = project(a), q = project(b);
+        if (!p && !q) return;
+        if (!p || !q) {
+          const depth = (v) =>
+            [0, 1, 2].reduce((s, i) => s + (v[i] - cam.eye[i]) * cam.forward[i], 0);
+          const da = depth(a), db = depth(b), t = (NEAR * 1.001 - da) / (db - da);
+          const cut = project([0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t));
+          if (!cut) return;
+          if (!p) p = cut;
+          else q = cut;
+        }
+        cloudCtx.moveTo(p[0], p[1]);
+        cloudCtx.lineTo(q[0], q[1]);
+      };
+
+      const drawPoints = () => {
+        const { points, res, zMin, zMax } = cloud;
+        const w = splatCanvas.width, h = splatCanvas.height;
+        const [ex, ey, ez] = cam.eye, [fx, fy, fz] = cam.forward;
+        const [rx, ry, rz] = cam.right, [ux, uy, uz] = cam.up;
+        const zScale = 255 / Math.max(zMax - zMin, 1e-6);
+        splatPixels.fill(0);
+        splatDepth.fill(Infinity);
+        for (let k = 0; k < points.length; k += 3) {
+          const dx = points[k] - ex, dy = points[k + 1] - ey, dz = points[k + 2] - ez;
+          const depth = dx * fx + dy * fy + dz * fz;
+          if (depth < NEAR) continue;
+          const f = cam.focal / depth;
+          const px = cam.cx + (dx * rx + dy * ry + dz * rz) * f;
+          const py = cam.cy - (dx * ux + dy * uy + dz * uz) * f;
+          const size = Math.min(8, Math.max(1, Math.ceil(res * f)));
+          const left = Math.round(px - size / 2), top = Math.round(py - size / 2);
+          const x0 = Math.max(0, left), x1 = Math.min(w, left + size);
+          const y0 = Math.max(0, top), y1 = Math.min(h, top + size);
+          const color = RAMP[Math.round((points[k + 2] - zMin) * zScale)];
+          for (let y = y0; y < y1; y++) {
+            for (let i = y * w + x0, end = y * w + x1; i < end; i++) {
+              if (depth < splatDepth[i]) {
+                splatDepth[i] = depth;
+                splatPixels[i] = color;
+              }
+            }
+          }
+        }
+        splatCtx.putImageData(splat, 0, 0);
+        cloudCtx.drawImage(splatCanvas, 0, 0);
+      };
+
+      const drawCloud = () => {
+        const start = performance.now();
+        updateCamera();
+        cloudCtx.fillStyle = "#0b0c0e";
+        cloudCtx.fillRect(0, 0, cloudCanvas.width, cloudCanvas.height);
+        // Ground grid at z = 0, 0.1 m apart.
+        cloudCtx.beginPath();
+        for (let i = -5; i <= 10; i++) drawSegment([i / 10, -0.6, 0], [i / 10, 0.6, 0]);
+        for (let i = -6; i <= 6; i++) drawSegment([-0.5, i / 10, 0], [1, i / 10, 0]);
+        cloudCtx.strokeStyle = "#262a30";
+        cloudCtx.lineWidth = 1;
+        cloudCtx.stroke();
+        if (cloud) drawPoints();
+        // World axes, 0.2 m long: x red, y green, z blue.
+        cloudCtx.lineWidth = 2;
+        cloudCtx.font = "12px system-ui, sans-serif";
+        for (
+          const [axis, color, tip] of [
+            ["x", "#ff5c5c", [0.2, 0, 0]],
+            ["y", "#6fcf8f", [0, 0.2, 0]],
+            ["z", "#5c9dff", [0, 0, 0.2]],
+          ]
+        ) {
+          cloudCtx.beginPath();
+          drawSegment([0, 0, 0], tip);
+          cloudCtx.strokeStyle = cloudCtx.fillStyle = color;
+          cloudCtx.stroke();
+          const label = project(tip);
+          if (label) cloudCtx.fillText(axis, label[0] + 4, label[1] - 4);
+        }
+        drawMs = performance.now() - start;
+        renderCloudInfo();
+      };
+
+      let drawQueued = false;
+      const requestCloudDraw = () => {
+        if (drawQueued) return;
+        drawQueued = true;
+        requestAnimationFrame(() => {
+          drawQueued = false;
+          drawCloud();
+        });
+      };
+
+      const renderCloudInfo = () => {
+        if (!cloud) return;
+        const channel = session.status.get().manifest?.channels.find((c) => c.ch === CLOUD);
+        const frame = channel?.params?.frame_id ?? "unknown frame";
+        $("#cloud-info").textContent = `3D view: ${
+          cloud.points.length / 3
+        } voxels, ${+(cloud.res * 100).toFixed(2)} cm, ${frame}, ${
+          cloudHz.toFixed(1)
+        } fps, draw ${drawMs.toFixed(1)} ms`;
+      };
+
+      let inflating = false, cloudPending = false;
+      const inflateClouds = async () => {
+        inflating = true;
+        while (cloudPending) {
+          cloudPending = false;
+          const value = session.store.get(CLOUD)?.value;
+          if (!value) continue;
+          try {
+            const points = await inflateVoxels(value);
+            let zMin = Infinity, zMax = -Infinity;
+            for (let k = 2; k < points.length; k += 3) {
+              zMin = Math.min(zMin, points[k]);
+              zMax = Math.max(zMax, points[k]);
+            }
+            cloud = { points, res: value.res, zMin, zMax };
+            requestCloudDraw();
+          } catch {
+            // A frame that does not inflate leaves the last good cloud on screen.
+          }
+        }
+        inflating = false;
+      };
+      session.store.subscribe(CLOUD, () => {
+        cloudPending = true;
+        if (!inflating) inflateClouds();
+      });
+      // Keeps the relay sending frames; the store above sees each one.
+      session.subscribe(CLOUD, (snapshot) => {
+        cloudHz = snapshot.stats.hz;
+        renderCloudInfo();
+      });
+      requestCloudDraw();
 
       // Hold status. Before the first message the hold is treated as off.
       let hold = null;

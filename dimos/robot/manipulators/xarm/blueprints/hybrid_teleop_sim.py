@@ -16,8 +16,9 @@
 
 The same modules as xarm-perception-sim, on a coordinator that also runs the
 operator hold and takes hold and e-stop commands and sends their status as
-streams. The camera, both statuses and both commands also go to the page in
-web/hybrid-teleop: run `dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
+streams. The camera, a point cloud of the scene, both statuses and both
+commands also go to the page in web/hybrid-teleop: run
+`dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -176,7 +178,18 @@ hybrid_teleop_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
+    # The page's 3D view: rays from the wrist camera (80 x 60, about 1 cm
+    # apart on the table) give world-frame points at 5 Hz. Renamed so they do
+    # not mix with the object clouds ObjectSceneRegistrationModule sends on
+    # "pointcloud".
+    MujocoSimModule.blueprint(
+        **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
+        enable_pointcloud=True,
+        enable_mujoco_lidar=True,
+        mujoco_lidar_raycast_width=80,
+        mujoco_lidar_raycast_height=60,
+        mujoco_lidar_voxel_size=0.01,
+    ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",
@@ -208,6 +221,15 @@ hybrid_teleop_sim = autoconnect(
                 delivery="latest",
                 max_hz=15.0,
                 params={"quality": 75},
+            ),
+            # frame_id is for the page only; the encoder reads res (metres).
+            Channel(
+                "scene_pointcloud",
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=5.0,
+                params={"res": 0.01, "frame_id": "world"},
             ),
             Channel(
                 "operator_hold_status",
