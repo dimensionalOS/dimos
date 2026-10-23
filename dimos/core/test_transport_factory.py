@@ -20,7 +20,6 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import (
     DDSTransport,
     LCMTransport,
-    ROSTransport,
     ZenohTransport,
     pLCMTransport,
     pZenohTransport,
@@ -177,7 +176,7 @@ def test_factory_preserves_pickle_for_python_types(config, message_type):
     assert isinstance(transport, expected)
 
 
-@pytest.mark.parametrize("transport_type", [ROSTransport, DDSTransport])
+@pytest.mark.parametrize("transport_type", [DDSTransport])
 def test_generated_messages_require_ros_dds_type_adapters(transport_type):
     with pytest.raises(TypeError, match="type adapter"):
         transport_type("generated", Int32)
