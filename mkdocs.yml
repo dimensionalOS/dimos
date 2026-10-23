@@ -90,6 +90,20 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            allow_inspection: false
+            docstring_style: google
+            docstring_options:
+              warn_missing_types: false
+            show_signature_annotations: true
+            separate_signature: true
+            show_docstring_attributes: true
+            extensions:
+              - griffe_pydantic
   # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
   - awesome-nav
   # click a diagram or screenshot to open it full size

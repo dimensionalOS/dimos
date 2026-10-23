@@ -530,6 +530,9 @@ tests-self-hosted = [
     "dim-odom>=0.4.1",
 ]
 docs = [
+    "mkdocstrings[python]==1.0.7",
+    "mkdocstrings-python==2.0.9",
+    "griffe-pydantic==1.3.2",
     "mkdocs-awesome-nav>=3.3.0",
     "mkdocs-glightbox>=0.5.2",
     "mkdocs-material>=9.7.7",
@@ -539,6 +542,9 @@ docs = [
 dev = [
     "optuna>=4.9.0",
 ]
+
+[tool.uv.dependency-groups]
+docs = {requires-python = ">=3.11"}
 
 [tool.uv]
 required-version = ">=0.9.25"
@@ -704,7 +710,7 @@ exclude = [
 line-ending = "lf"
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252"]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252", "D405", "D416"]
 ignore = [
     # TODO: All of these should be fixed, but it's easier commit autofixes first
     "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
@@ -723,6 +729,9 @@ ignore = [
 "experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]

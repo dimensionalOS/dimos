@@ -34,7 +34,7 @@ from typing import Any
 class SkillResult:
     """What a ``@skill`` call did, written for the agent to read.
 
-    Args:
+    Attributes:
         message: Plain statement of what happened, e.g. "Opened the gripper; it
             reads 0.08 m".
         duration_ms: Wall time the skill took, in milliseconds. The ``@skill``

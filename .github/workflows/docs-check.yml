@@ -1,0 +1,34 @@
+name: Check docs API
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "misc/mkdocs/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "dimos/control/tasks/gripper_task/gripper_task.py"
+      - "dimos/manipulation/grasping/grasp_gen_x/module.py"
+      - "dimos/protocol/service/spec.py"
+      - ".github/workflows/docs-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Install docs dependencies
+        run: uv sync --only-group docs --frozen
+      - name: Verify API HTML and allow unannotated functions
+        run: uv run --no-sync python misc/mkdocs/verify_api_docs.py
+      - name: Build docs
+        run: uv run --no-sync mkdocs build --strict
