@@ -17,6 +17,8 @@ from __future__ import annotations
 import importlib
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+from dimos.memory.codecs.cdr import CdrCodec
+
 T = TypeVar("T")
 
 
@@ -38,6 +40,8 @@ def codec_for(payload_type: type[Any] | None = None, sample: Any = None) -> Code
     from dimos.memory.codecs.pickle import PickleCodec
 
     if payload_type is not None:
+        if hasattr(payload_type, "__msgtype__"):
+            return CdrCodec(payload_type)
         from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
         if issubclass(payload_type, Image):
@@ -115,6 +119,8 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory.codecs.jpeg import JpegCodec
 
         return JpegCodec()
+    if name == "cdr":
+        return CdrCodec(resolve_payload_type(payload_module))
     if name == "lcm":
         from dimos.memory.codecs.lcm import LcmCodec
 

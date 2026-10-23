@@ -32,9 +32,26 @@ pub struct McapRecordingStore {
 
 impl McapRecordingStore {
     pub fn open(path: &str, streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
+        for stream in streams {
+            if stream.codec == crate::Codec::Cdr {
+                stream
+                    .cdr_schema
+                    .as_ref()
+                    .context("CDR MCAP requires its complete schema")?
+                    .validate()?;
+            }
+        }
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
+        let profile = if streams
+            .iter()
+            .all(|stream| stream.codec == crate::Codec::Cdr)
+        {
+            "ros2"
+        } else {
+            "dimos"
+        };
         let options = WriteOptions::new()
-            .profile("dimos")
+            .profile(profile)
             .library("dimos-memory-recorder")
             .compression(Some(Compression::Zstd))
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
@@ -50,10 +67,17 @@ impl McapRecordingStore {
                 ("dimos.port".to_string(), stream.port.clone()),
                 (
                     "dimos.observation_time".to_string(),
-                    "publish_time".to_string(),
+                    if stream.cdr_schema.is_some() {
+                        "log_time"
+                    } else {
+                        "publish_time"
+                    }
+                    .to_string(),
                 ),
             ]);
-            let schema_id = if let Some(schema) = &stream.json_schema {
+            let schema_id = if let Some(schema) = &stream.cdr_schema {
+                writer.add_schema(&schema.name, "ros2msg", schema.data.as_bytes())?
+            } else if let Some(schema) = &stream.json_schema {
                 writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
             } else {
                 0
@@ -145,6 +169,7 @@ mod tests {
     fn mcap_rejects_negative_source_time_instead_of_writing_zero() {
         let file = NamedTempFile::new().unwrap();
         let stream = Arc::new(StreamConfig {
+            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
             payload_type: "dimos.msgs.std_msgs.String.String".into(),
@@ -190,6 +215,7 @@ mod tests {
     fn mcap_preserves_zero_source_time_and_rejects_invalid_reception_time() {
         let file = NamedTempFile::new().unwrap();
         let stream = Arc::new(StreamConfig {
+            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
             payload_type: "dimos.msgs.std_msgs.String.String".into(),

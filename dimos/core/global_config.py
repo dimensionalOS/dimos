@@ -47,6 +47,7 @@ class GlobalConfig(BaseSettings):
     replay_db: str = "go2_short"
     record: Literal["", "sqlite", "mcap"] = ""
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
+    record_executable: str | None = None  # Optional prebuilt Rust recorder path.
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
     # How every zenoh session this process opens joins the network.

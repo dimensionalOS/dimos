@@ -30,6 +30,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
+from dimos.experimental.memory.cdr_schema import cdr_name, recording_schema
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
@@ -57,6 +58,14 @@ class RustRecordingPlan:
 
 def prepare_rust_recorder() -> Path:
     """Build the native recorder when it is unavailable or explicitly requested."""
+    if global_config.record_executable is not None:
+        executable = Path(global_config.record_executable).expanduser().resolve()
+        if not executable.is_file():
+            raise FileNotFoundError(f"Rust recorder executable not found: {executable}")
+        if not os.access(executable, os.X_OK):
+            raise PermissionError(f"Rust recorder is not executable: {executable}")
+        return executable
+
     config = RustRecorderConfig()
     rust_dir, executable_path = config.resolve_paths()
     executable = Path(executable_path)
@@ -103,9 +112,12 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
+        generated = cdr_name(payload_type) is not None
+        if not generated and (
+            not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode")
+        ):
             logger.info(
-                "--record: stream is not a DimOS LCM message type; skipped",
+                "--record: stream is not a supported message type; skipped",
                 stream=name,
                 payload_type=str(payload_type),
             )
@@ -131,7 +143,10 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
                 port=port,
                 name=name,
                 payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
-                codec="jpeg" if issubclass(payload_type, Image) else "lcm",
+                codec="cdr"
+                if generated
+                else ("jpeg" if issubclass(payload_type, Image) else "lcm"),
+                cdr_schema=recording_schema(payload_type) if generated else None,
             )
         )
         topics[port] = transport.channel
@@ -299,4 +314,6 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
+        if process.returncode == 0:
+            logger.info("Recording saved", artifact_path=str(self.plan.path))
         self._process = None

@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, TypeVar
+from unittest.mock import Mock
 
 import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.core.transport import PubSubTransport
+from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -31,8 +34,10 @@ from dimos.experimental.memory.rust_recorder import (
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
+from dimos.messages.geometry_msgs.msg import PoseStamped as NativePoseStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
 class SampleRustRecorder(RustRecorder):
@@ -48,19 +53,14 @@ class UnsupportedRustRecorder(RustRecorder):
     values: In[Unsupported]
 
 
-class FakeTransport:
-    def __init__(self, channel: str) -> None:
-        self.channel = channel
-
-    def stop(self) -> None:
-        pass
-
-
 TRecorder = TypeVar("TRecorder", bound=RustRecorder)
 
 
 @pytest.fixture
-def make_recorder() -> Any:
+def make_recorder(mocker) -> Any:
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
     recorders: list[RustRecorder] = []
 
     def make(recorder_type: type[TRecorder], **kwargs: Any) -> TRecorder:
@@ -75,7 +75,7 @@ def make_recorder() -> Any:
 
 def connect(recorder: RustRecorder, **channels: str) -> None:
     for name, channel in channels.items():
-        getattr(recorder, name).transport = FakeTransport(channel)  # type: ignore[assignment]
+        getattr(recorder, name).transport = Mock(spec=PubSubTransport, channel=channel)
 
 
 def test_specs_use_native_defaults_remapping_and_configured_workers(
@@ -209,7 +209,7 @@ def test_unsupported_python_payload_fails_before_native_process_starts(
     )
     connect(recorder, values="/values")
 
-    with pytest.raises(TypeError, match="only supports LCM-backed messages"):
+    with pytest.raises(TypeError, match="supports legacy LCM or registered CDR messages"):
         recorder._stream_specs()
 
 
@@ -369,3 +369,49 @@ def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder
     spawn.assert_not_called()
     start.assert_called_once_with(recorder)
     assert not path.exists()
+
+
+class GeneratedRustRecorder(RustRecorder):
+    pose: In[NativePoseStamped]
+
+
+def test_generated_values_resolve_cdr_and_full_schema_without_legacy_type_copy(
+    tmp_path, make_recorder
+):
+    recorder = make_recorder(
+        GeneratedRustRecorder,
+        store=RustSqliteStoreConfig(path=str(tmp_path / "native.db")),
+        record_tf=False,
+    )
+    connect(recorder, pose="example/pose")
+    specs = recorder._stream_specs()
+    assert len(specs) == 1
+    assert specs[0].codec == "cdr"
+    assert specs[0].cdr_schema == recording_schema(NativePoseStamped)
+    assert (
+        specs[0].payload_type == f"{NativePoseStamped.__module__}.{NativePoseStamped.__qualname__}"
+    )
+    recorder._prepare_store(specs)
+    with SqliteStore(path=str(tmp_path / "native.db")) as store:
+        assert store.stream("pose").data_type is NativePoseStamped
+
+
+def test_generated_values_cannot_silently_select_a_legacy_wire_codec(tmp_path, make_recorder):
+    recorder = make_recorder(
+        GeneratedRustRecorder,
+        store=RustSqliteStoreConfig(path=str(tmp_path / "native.db")),
+        record_tf=False,
+        stream_codecs={"pose": "lcm"},
+    )
+    connect(recorder, pose="example/pose")
+    with pytest.raises(TypeError, match="LCM-backed"):
+        recorder._stream_specs()
+    assert not (tmp_path / "native.db").exists()
+
+
+def test_cdr_stream_schema_is_required_and_cannot_leak_into_other_codecs():
+    options = dict(port="pose", name="pose", payload_type="geometry_msgs/msg/PoseStamped")
+    with pytest.raises(ValueError, match="requires its resolved schema"):
+        RustStreamSpec(**options, codec="cdr")
+    with pytest.raises(ValueError, match="other codecs must not carry one"):
+        RustStreamSpec(**options, codec="lcm", cdr_schema=recording_schema(NativePoseStamped))

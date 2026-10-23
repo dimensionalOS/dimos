@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental native recorder for high-throughput LCM-backed memory streams."""
+"""Experimental native recorder for legacy LCM and generated CDR streams."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
+from dimos.experimental.memory.cdr_schema import cdr_name, recording_schema
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
@@ -37,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
+_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json", "cdr"}
 
 
 class RustStreamSpec(BaseModel):
@@ -49,6 +50,7 @@ class RustStreamSpec(BaseModel):
     codec: str
     timestamp_field: str | None = None
     json_schema: dict[str, Any] | None = None
+    cdr_schema: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _json_options(self) -> RustStreamSpec:
@@ -56,6 +58,10 @@ class RustStreamSpec(BaseModel):
             self.timestamp_field is not None or self.json_schema is not None
         ):
             raise ValueError("JSON options require the json codec")
+        if (self.codec == "cdr") != (self.cdr_schema is not None):
+            raise ValueError(
+                "The cdr codec requires its resolved schema; other codecs must not carry one"
+            )
         return self
 
 
@@ -220,7 +226,9 @@ class RustRecorder(NativeModule):
         for port_name, port in self.inputs.items():
             if getattr(port, "_transport", None) is None:
                 continue
-            if port is self.tf:
+            if port is self.tf and not self.config.record_tf:
+                continue
+            if port is self.tf and cdr_name(port.type) is None:
                 if self.config.record_tf:
                     specs.append(
                         RustStreamSpec(
@@ -243,6 +251,7 @@ class RustRecorder(NativeModule):
                     codec=codec,
                     timestamp_field=self.config.stream_timestamp_fields.get(stream_name),
                     json_schema=self.config.stream_json_schemas.get(stream_name),
+                    cdr_schema=recording_schema(port.type) if codec == "cdr" else None,
                 )
             )
 
@@ -261,12 +270,14 @@ class RustRecorder(NativeModule):
 
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
+        if cdr_name(payload_type) is not None:
+            return "cdr"
         if issubclass(payload_type, Image):
             return "jpeg"
         if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
             return "lcm"
         raise TypeError(
-            f"RustRecorder only supports LCM-backed messages, got {payload_type.__qualname__}"
+            f"RustRecorder supports legacy LCM or registered CDR messages, got {payload_type.__qualname__}"
         )
 
     @staticmethod
@@ -276,6 +287,10 @@ class RustRecorder(NativeModule):
                 f"Unsupported native codec {codec!r} for stream {stream_name!r}; "
                 f"choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
             )
+        if codec == "cdr":
+            if cdr_name(payload_type) is None:
+                raise TypeError("The cdr codec requires a generated, registry-owned message type")
+            return
         if codec == "json" and payload_type is not String:
             raise TypeError("JSON codec requires std_msgs.String")
         if codec == "jpeg" and not issubclass(payload_type, Image):

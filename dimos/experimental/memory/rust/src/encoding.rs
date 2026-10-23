@@ -35,6 +35,10 @@ pub(crate) fn encode(
     observation: DecodedObservation,
 ) -> Result<StoredObservation> {
     let data = match stream.codec {
+        Codec::Cdr => match observation.payload {
+            DecodedPayload::Cdr(data) => data,
+            _ => return Err(anyhow!("CDR storage requires a CDR transport payload")),
+        },
         Codec::Lcm => lcm_encode(observation.payload)?,
         Codec::Json => match observation.payload {
             DecodedPayload::Json(data) => data,
@@ -53,7 +57,9 @@ fn lcm_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
     Ok(match payload {
         DecodedPayload::Lcm(data) => data,
         DecodedPayload::Image(image) => image.encode(),
-        DecodedPayload::Json(_) => return Err(anyhow!("LCM codec cannot store JSON payload")),
+        DecodedPayload::Json(_) | DecodedPayload::Cdr(_) => {
+            return Err(anyhow!("LCM codec cannot store non-LCM payload"))
+        }
     })
 }
 
