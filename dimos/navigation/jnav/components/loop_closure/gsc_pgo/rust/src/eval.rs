@@ -392,6 +392,12 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
+    /// Per keyframe, ms the scan thread spends on it (add_key_pose + loop search + smooth_and_update), in order.
+    keyframe_scan_thread_ms: Vec<f32>,
+    /// Per keyframe, ms in the GNC step (a background thread in the live module, inline here).
+    keyframe_gnc_ms: Vec<f32>,
+    /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
+    stage_seconds: BTreeMap<String, f64>,
     /// Count of loop-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
     /// One record per loop-search evaluation (accepted + rejected), with the
@@ -616,6 +622,8 @@ fn run() -> Result<(), String> {
     };
     let mut edges_written = 0usize;
     let started = Instant::now();
+    let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
+    let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
     for scan in &scans {
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
             continue;
@@ -657,6 +665,7 @@ fn run() -> Result<(), String> {
             frame_id: latest.frame_id.clone(),
         };
 
+        let step_started = Instant::now();
         if !pgo.add_key_pose(&cloud_with_pose) {
             continue;
         }
@@ -671,7 +680,10 @@ fn run() -> Result<(), String> {
             closures += 1;
         }
         pgo.smooth_and_update();
+        keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+        let gnc_started = Instant::now();
         pgo.step_gnc();
+        keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_loop, latest.ts)?;
         }
@@ -751,6 +763,13 @@ fn run() -> Result<(), String> {
         data_duration_s,
         runtime_s,
         realtime_factor,
+        keyframe_scan_thread_ms,
+        keyframe_gnc_ms,
+        stage_seconds: pgo
+            .stage_seconds()
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
         gate_counts,
         loop_diagnostics,
         graph_error,
