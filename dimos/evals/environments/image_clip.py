@@ -50,7 +50,10 @@ class ImageClip(Environment):
         paths = (path,) if isinstance(path, Path) else tuple(Path(p) for p in path)
         if not paths:
             raise ValueError("ImageClip requires at least one clip directory")
-        super().__init__(paths=paths, **kwargs)
+        artifact_names = (
+            ("clip",) if len(paths) == 1 else _MULTI_STREAM_NAMES[: len(paths)]
+        )
+        super().__init__(paths=paths, agent_artifacts=artifact_names, **kwargs)
 
     def preflight(self, agent: Agent) -> None:
         if agent.config.modules:
@@ -84,6 +87,7 @@ class ImageClip(Environment):
             raise ValueError(
                 f"ImageClip supports at most {len(_MULTI_STREAM_NAMES)} clips per case"
             )
+        artifacts: dict[str, Path] = {}
         for name, clip_dir in zip(names, self.config.paths, strict=True):
             manifest = load_clip_manifest(clip_dir)
             stream = recording.stream(name, Image)
@@ -94,7 +98,5 @@ class ImageClip(Environment):
                 image = Image.from_file(frame_path)
                 stream.append(image, ts=entry.ts)
             streams.append(stream)
-        artifact: Path | tuple[Path, ...] = (
-            self.config.paths[0] if len(self.config.paths) == 1 else self.config.paths
-        )
-        return RunningEnvironment(mcp_url="", streams=tuple(streams), artifacts={"clip": artifact})
+            artifacts[name] = Path(clip_dir)
+        return RunningEnvironment(mcp_url="", streams=tuple(streams), artifacts=artifacts)
