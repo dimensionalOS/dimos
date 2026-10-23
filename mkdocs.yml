@@ -105,8 +105,6 @@ plugins:
             show_root_heading: true
             show_root_full_path: false
             show_docstring_attributes: true
-            extensions:
-              - misc/mkdocs/namespace_packages.py:DimosNamespaces
   # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
   - awesome-nav
   # click a diagram or screenshot to open it full size

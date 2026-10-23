@@ -135,28 +135,3 @@ The coordinator settles each component when it starts, once the execution mode i
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
 The robot config helpers (`xarm7_hardware`, `piper_hardware`, `a1z_hardware`, `a750_hardware`, ...) also take an explicit `address=` for a blueprint of your own. OpenYAM selects its CAN device with `openyam_hardware(bus_devices={"openyam": "can1"})`; that lands in `adapter_kwargs.runtime_config.bus_devices`, not in `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
-
-## Configuration API
-
-Field types and defaults come from the Python source. Field descriptions explain
-their meaning and units. Configuration models use `Attributes:` sections.
-
-### Gripper control task
-
-::: dimos.control.tasks.gripper_task.gripper_task.GripperControlTaskConfig
-    options:
-      merge_init_into_class: true
-      members: false
-
-### GraspGenX gripper sweep volume
-
-::: dimos.manipulation.grasping.grasp_gen_x.module.SweepVolumeGripperConfig
-    options:
-      show_if_no_docstring: true
-      members:
-        - extents_open
-        - offset_open
-        - extents_half_open
-        - offset_half_open
-        - fingertip_depth
-        - family

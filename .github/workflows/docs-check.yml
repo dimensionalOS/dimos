@@ -1,4 +1,4 @@
-name: Check docs API
+name: Check docs
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  docs-api:
+  docs-build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,7 +26,5 @@ jobs:
           enable-cache: true
       - name: Install docs dependencies
         run: uv sync --only-group docs --frozen
-      - name: Verify API HTML and allow unannotated functions
-        run: uv run --no-sync python misc/mkdocs/verify_api_docs.py
       - name: Build docs
         run: uv run --no-sync mkdocs build --strict

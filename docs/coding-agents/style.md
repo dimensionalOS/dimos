@@ -15,8 +15,8 @@ express. Do not repeat the fields in a constructor `Args:` section unless a
 handwritten constructor takes different inputs.
 
 Keep types in Python annotations, rather than copying them into descriptions.
-The [configuration reference](/docs/usage/configuration.md#configuration-api)
-renders available annotations and defaults from the source.
+MkDocs is configured to parse Google docstrings and show existing annotations
+when API references are added. This change does not add API reference pages.
 
 Ruff checks recognized section headings for capitalization and a trailing colon
 with `D405` and `D416`, using the Google convention. These rules do not reject
