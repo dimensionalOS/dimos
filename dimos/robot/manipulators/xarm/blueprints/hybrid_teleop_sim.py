@@ -15,16 +15,26 @@
 """Simulated xArm7 pick-and-place stack that an operator can hold.
 
 The same modules as xarm-perception-sim, on a coordinator that also runs the
-operator hold and takes hold commands and sends hold status as streams. The
-camera, the hold status and the hold commands also go to the page in
+operator hold and takes hold and e-stop commands and sends their status as
+streams. The camera, both statuses and both commands also go to the page in
 web/hybrid-teleop: run `dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import time
+from typing import Any
+
+from dimos_lcm.std_msgs import Bool
+from reactivex.disposable import Disposable
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
+    OPERATOR_HOLD_TASK_NAME,
+    HoldRoute,
+    OperatorEstopStatus,
     OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
@@ -47,22 +57,37 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_robot_config,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.web.cockpit import Channel, cockpit
 
+logger = setup_logger()
+
 
 class OperatorHoldCoordinator(ControlCoordinator):
-    """Add the ports the operator_hold task card reads and reports on.
+    """Add the ports the operator_hold task card reads and reports on, plus an e-stop.
 
     ``operator_hold_command`` takes an OperatorHoldCommand that requests or
     acknowledges the hold. ``operator_hold_status`` carries every
-    OperatorHoldStatus the hold task sends. Combine it with another coordinator
-    subclass by inheriting from both, e.g.
+    OperatorHoldStatus the hold task sends.
+
+    ``operator_estop`` takes a Bool: True stops, False clears. Stop latches
+    E-STOP on every task that has ``set_estop``, requests the hold (route
+    "failsafe", reason "e-stop") so every joint is frozen where it is, and
+    cancels the running trajectory. Clear only releases the E-STOP latch: the
+    hold stays on until the operator acknowledges it. ``operator_estop_status``
+    sends an OperatorEstopStatus once at start and on every ``set_estop``.
+
+    Combine it with another coordinator subclass by inheriting from both, e.g.
     ``class MyCoordinator(OperatorHoldCoordinator, TeleopControlCoordinator)``.
     """
 
     operator_hold_command: In[OperatorHoldCommand]
     operator_hold_status: Out[OperatorHoldStatus]
+    operator_estop: In[Bool]
+    operator_estop_status: Out[OperatorEstopStatus]
+
+    _estopped: bool = False
 
     @rpc
     def add_task(
@@ -76,6 +101,68 @@ class OperatorHoldCoordinator(ControlCoordinator):
         if added and isinstance(task, OperatorHoldTask):
             task.set_status_publisher(self.operator_hold_status.publish)
         return added
+
+    @rpc
+    def start(self) -> None:
+        """Start the coordinator, listen on operator_estop and send the current e-stop state."""
+        super().start()
+        try:
+            self.register_disposable(
+                Disposable(self.operator_estop.subscribe(self._on_estop_command))
+            )
+        except Exception:
+            logger.warning(
+                "Could not subscribe to operator_estop; e-stop works over the set_estop RPC only",
+                exc_info=True,
+            )
+        self._publish_estop_status()
+
+    @rpc
+    def set_estop(self, estopped: bool) -> bool:
+        """Latch (True) or clear (False) E-STOP on every task that has set_estop.
+
+        The new state also goes out on operator_estop_status.
+        """
+        try:
+            return super().set_estop(estopped)
+        finally:
+            self._estopped = estopped
+            if not estopped:
+                logger.info("E-STOP cleared at coordinator")
+            self._publish_estop_status()
+
+    def _on_estop_command(self, msg: Bool) -> None:
+        """Stop (True) or clear (False) from one operator_estop message."""
+        if msg.data:
+            # Latch first. The hold is requested before the trajectory is
+            # cancelled so no tick passes with nothing commanding the arm.
+            steps: list[tuple[str, Callable[[], Any]]] = [
+                ("set_estop", lambda: self.set_estop(True)),
+                (
+                    "request hold",
+                    lambda: self.task_invoke(
+                        OPERATOR_HOLD_TASK_NAME,
+                        "request",
+                        {"route": HoldRoute.FAILSAFE.value, "reason": "e-stop"},
+                    ),
+                ),
+                ("cancel trajectory", self.cancel_trajectory),
+            ]
+        else:
+            steps = [("set_estop", lambda: self.set_estop(False))]
+        for name, step in steps:
+            try:
+                step()
+            except Exception:
+                logger.exception("E-stop step failed", step=name, estop=msg.data)
+
+    def _publish_estop_status(self) -> None:
+        try:
+            self.operator_estop_status.publish(
+                OperatorEstopStatus(estopped=self._estopped, stamp=time.time())
+            )
+        except Exception:
+            logger.exception("Publishing e-stop status failed")
 
 
 _xarm7_sim_hw = make_xarm7_sim_hardware()
@@ -136,6 +223,21 @@ hybrid_teleop_sim = autoconnect(
                 publish="shared",
                 encoding="operator_hold_command.json.v1",
                 max_hz=5.0,
+            ),
+            Channel(
+                "operator_estop",
+                Bool,
+                dir="tx",
+                publish="shared",
+                encoding="bool.json.v1",
+                max_hz=5.0,
+            ),
+            Channel(
+                "operator_estop_status",
+                OperatorEstopStatus,
+                max_hz=5.0,
+                paced=True,
+                resend_on_subscribe=True,
             ),
         ]
     ),

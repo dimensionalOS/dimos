@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!-- Operator page for the hybrid-teleop-sim blueprint: the arm camera, the
-     operator hold status, and buttons to ask for an operator or acknowledge
-     the hold. On a relay that needs a viewer token, open it with ?token=...
+     operator hold status, an e-stop, and buttons to ask for an operator or to
+     end the hold (take over or resume). On a relay that needs a viewer token,
+     open it with ?token=...
      Run:  dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop -->
 <html lang="en">
   <head>
@@ -103,6 +104,27 @@
         opacity: 0.4;
         cursor: default;
       }
+      #estop {
+        padding: 16px;
+        border-color: #ff5c5c;
+        background: #c62828;
+        font-size: 22px;
+        font-weight: 700;
+      }
+      #estop-state {
+        padding: 8px;
+        border-radius: 6px;
+        background: #c62828;
+        font-weight: 700;
+        text-align: center;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      .row button {
+        flex: 1;
+      }
       #log {
         min-height: 1.4em;
         font-size: 12px;
@@ -123,6 +145,9 @@
         <div id="camera-info" class="muted">waiting for camera</div>
       </section>
       <aside>
+        <button id="estop">E-STOP</button>
+        <button id="estop-clear" disabled>Clear e-stop</button>
+        <div id="estop-state" hidden>E-STOP ACTIVE</div>
         <div id="hold-card">
           <div class="muted">Operator hold</div>
           <div id="hold-state">no status yet</div>
@@ -138,7 +163,10 @@
           </dl>
         </div>
         <button id="request">Request operator</button>
-        <button id="acknowledge" disabled>Acknowledge</button>
+        <div class="row">
+          <button id="takeover" disabled>Take over</button>
+          <button id="resume" disabled>Resume</button>
+        </div>
         <div id="log" class="muted"></div>
       </aside>
     </main>
@@ -224,7 +252,7 @@
         $("#hold-unheld").textContent = unheld.join(", ");
         $("#hold-unheld").hidden = $("#hold-unheld-label").hidden = unheld.length === 0;
         $("#request").disabled = on;
-        $("#acknowledge").disabled = !on;
+        $("#takeover").disabled = $("#resume").disabled = !on;
       };
       session.subscribe("operator_hold_status", (snapshot) => {
         hold = snapshot.slot?.value ?? null;
@@ -232,14 +260,25 @@
       });
       setInterval(renderHold, 1000);
 
-      // Hold buttons. The log line shows how the last publish settled.
-      const send = async (command) => {
+      // E-stop status. Before the first message the e-stop is treated as clear.
+      session.subscribe("operator_estop_status", (snapshot) => {
+        const estopped = snapshot.slot?.value?.estopped === true;
+        $("#estop-state").hidden = !estopped;
+        $("#estop-clear").disabled = !estopped;
+      });
+
+      // Buttons. The log line shows how the last publish settled.
+      const send = async (
+        command,
+        channel = "operator_hold_command",
+        label = command.action,
+      ) => {
         const time = new Date().toLocaleTimeString();
         try {
-          await session.publish("operator_hold_command", command);
-          $("#log").textContent = `${time} ${command.action}: acked`;
+          await session.publish(channel, command);
+          $("#log").textContent = `${time} ${label}: acked`;
         } catch (e) {
-          $("#log").textContent = `${time} ${command.action}: ${e.outcome ?? "failed"} ${
+          $("#log").textContent = `${time} ${label}: ${e.outcome ?? "failed"} ${
             e.code ?? e.message
           }`;
         }
@@ -248,7 +287,20 @@
         "click",
         () => send({ action: "request", route: "manual", reason: "operator request" }),
       );
-      $("#acknowledge").addEventListener("click", () => send({ action: "acknowledge" }));
+      $("#takeover").addEventListener(
+        "click",
+        () => send({ action: "acknowledge", intent: "takeover" }),
+      );
+      $("#resume").addEventListener(
+        "click",
+        () => send({ action: "acknowledge", intent: "resume" }),
+      );
+      // operator_estop takes a bare JSON boolean: true stops, false clears.
+      $("#estop").addEventListener("click", () => send(true, "operator_estop", "stop"));
+      $("#estop-clear").addEventListener(
+        "click",
+        () => send(false, "operator_estop", "clear"),
+      );
     </script>
   </body>
 </html>

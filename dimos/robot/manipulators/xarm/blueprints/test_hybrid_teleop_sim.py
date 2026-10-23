@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Operator hold through the coordinator: request, preempt, reject, publish, acknowledge.
+"""Operator hold through the coordinator: request, preempt, reject, publish, acknowledge, e-stop.
 
 A rig wires one mock arm, one mock twist base, the canonical trajectory task
 and the hold task into a real OperatorHoldCoordinator, then ticks it by hand
@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from unittest.mock import MagicMock
 
+from dimos_lcm.std_msgs import Bool
 import pytest
 
 from dimos.control.components import (
@@ -43,6 +44,7 @@ from dimos.control.task import (
 )
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
+    OperatorEstopStatus,
     OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
@@ -92,6 +94,29 @@ class TeleopStub(BaseControlTask):
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         pass
+
+
+class EstopStub(BaseControlTask):
+    """Idle task that records the last set_estop call; None until the first one."""
+
+    def __init__(self) -> None:
+        self._name = "estop_stub"
+        self.estopped: bool | None = None
+
+    def claim(self) -> ResourceClaim:
+        return ResourceClaim(joints=frozenset(), priority=0, mode=ControlMode.SERVO_POSITION)
+
+    def is_active(self) -> bool:
+        return False
+
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        return None
+
+    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+        pass
+
+    def set_estop(self, estopped: bool) -> None:
+        self.estopped = estopped
 
 
 def _trajectory() -> JointTrajectory:
@@ -353,3 +378,55 @@ class TestPorts:
                 coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
         finally:
             coordinator.stop()
+
+
+class TestEstopPort:
+    @pytest.fixture
+    def estop(self, rig: Rig) -> tuple[EstopStub, list[OperatorEstopStatus]]:
+        stub = EstopStub()
+        rig.coordinator.add_task(stub)
+        statuses: list[OperatorEstopStatus] = []
+        rig.coordinator.operator_estop_status.subscribe(statuses.append)
+        return stub, statuses
+
+    def test_stop_latches_holds_cancels_and_reports(self, rig, estop):
+        stub, statuses = estop
+        rig.coordinator.execute_trajectory(_trajectory())
+        rig.tick()
+
+        rig.coordinator._on_estop_command(Bool(data=True))
+
+        assert stub.estopped is True
+        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
+        hold = rig.hold_task.get_status()
+        assert hold.on and hold.route == "failsafe" and hold.reason == "e-stop"
+        assert statuses[-1].estopped is True and statuses[-1].stamp > 0.0
+        rig.tick()
+        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+
+    def test_clear_releases_the_latch_but_not_the_hold(self, rig, estop):
+        stub, statuses = estop
+        rig.coordinator._on_estop_command(Bool(data=True))
+
+        rig.coordinator._on_estop_command(Bool(data=False))
+
+        assert stub.estopped is False
+        assert rig.hold_task.get_status().on
+        assert [status.estopped for status in statuses] == [True, False]
+
+    def test_start_listens_and_sends_the_state_stop_unsubscribes(self):
+        coordinator = OperatorHoldCoordinator(publish_joint_state=False)
+        transport = MagicMock()
+        coordinator.operator_estop.transport = transport
+        statuses: list[OperatorEstopStatus] = []
+        coordinator.operator_estop_status.subscribe(statuses.append)
+        try:
+            coordinator.start()
+            assert [status.estopped for status in statuses] == [False]
+
+            on_message = transport.subscribe.call_args.args[0]
+            on_message(Bool(data=True))
+            assert statuses[-1].estopped is True
+        finally:
+            coordinator.stop()
+        transport.subscribe.return_value.assert_called_once_with()

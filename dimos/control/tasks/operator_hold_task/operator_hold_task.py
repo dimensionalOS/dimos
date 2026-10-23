@@ -92,11 +92,27 @@ class OperatorHoldCommand:
         route: Who asks for the hold: "manual", "failsafe" or "agent" (the
             HoldRoute values); read by "request" only.
         reason: Free text shown to the operator; read by "request" only.
+        intent: What the operator does after an acknowledge, e.g. "takeover"
+            or "resume". The hold task does not read it.
     """
 
     action: str
     route: str = HoldRoute.MANUAL.value
     reason: str = ""
+    intent: str = ""
+
+
+@dataclass(frozen=True)
+class OperatorEstopStatus:
+    """Whether a coordinator's e-stop is latched.
+
+    Attributes:
+        estopped: True while the e-stop is latched.
+        stamp: Unix time in seconds this status was produced.
+    """
+
+    estopped: bool
+    stamp: float
 
 
 _HOLD_ACTIONS = ("request", "acknowledge")
@@ -109,8 +125,8 @@ def decode_operator_hold_command(value: dict[str, Any]) -> OperatorHoldCommand:
 
     Args:
         value: Parsed JSON: ``{"action": "request", "route": "manual",
-            "reason": "..."}`` or ``{"action": "acknowledge"}``. route defaults
-            to "manual" and reason to "".
+            "reason": "..."}`` or ``{"action": "acknowledge", "intent":
+            "resume"}``. route defaults to "manual", reason and intent to "".
     """
     if not isinstance(value, dict):
         raise ValueError(f"operator hold command must be an object, got {type(value).__name__}")
@@ -120,10 +136,11 @@ def decode_operator_hold_command(value: dict[str, Any]) -> OperatorHoldCommand:
     route = value.get("route", HoldRoute.MANUAL.value)
     if route not in _HOLD_ROUTES:
         raise ValueError(f"route must be one of {_HOLD_ROUTES}, got {route!r}")
-    reason = value.get("reason", "")
-    if not isinstance(reason, str):
-        raise ValueError(f"reason must be a string, got {type(reason).__name__}")
-    return OperatorHoldCommand(action=action, route=route, reason=reason)
+    reason, intent = value.get("reason", ""), value.get("intent", "")
+    for key, text in (("reason", reason), ("intent", intent)):
+        if not isinstance(text, str):
+            raise ValueError(f"{key} must be a string, got {type(text).__name__}")
+    return OperatorHoldCommand(action=action, route=route, reason=reason, intent=intent)
 
 
 def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:

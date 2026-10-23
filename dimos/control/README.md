@@ -167,6 +167,14 @@ time, unheld joints); the same status goes out on `operator_hold_status`
 once a second while on and once more on acknowledge. After acknowledge
 nothing resumes by itself: the next task to command a joint takes it.
 
+`OperatorHoldCoordinator` also takes an e-stop on `operator_estop`, a `Bool`
+(a web page sends a bare JSON `true` or `false` with the `bool.json.v1`
+encoding). True latches `set_estop(True)`, requests the hold (route
+`failsafe`, reason `e-stop`) and cancels the running trajectory; False only
+calls `set_estop(False)`, so the hold stays on until someone acknowledges it.
+`operator_estop_status` sends an `OperatorEstopStatus` (`estopped`, and
+`stamp` in unix seconds) at start and on every `set_estop`.
+
 ## Control Modes
 
 Tasks output commands in one of three modes:

@@ -176,9 +176,9 @@ def test_command_with_an_unknown_action_raises():
 
 
 def test_decoder_reads_page_commands():
-    assert decode_operator_hold_command({"action": "acknowledge"}) == OperatorHoldCommand(
-        action="acknowledge"
-    )
+    assert decode_operator_hold_command(
+        {"action": "acknowledge", "intent": "resume"}
+    ) == OperatorHoldCommand(action="acknowledge", intent="resume")
     assert decode_operator_hold_command(
         {"action": "request", "route": "agent", "reason": "need help"}
     ) == OperatorHoldCommand(action="request", route="agent", reason="need help")
@@ -196,6 +196,7 @@ def test_decoder_reads_page_commands():
         ({"action": "release"}, "action"),
         ({"action": "request", "route": "typo"}, "route"),
         ({"action": "request", "reason": 3}, "reason"),
+        ({"action": "acknowledge", "intent": None}, "intent"),
         ("request", "object"),
     ],
 )
