@@ -38,7 +38,9 @@ jobs:
             dimos/message_utils/test_image_compression.py \
             dimos/message_utils/test_camera_info.py \
             dimos/message_utils/test_time.py \
-            dimos/message_utils/test_geometry.py
+            dimos/message_utils/test_geometry.py \
+            dimos/message_utils/test_pointcloud.py \
+            dimos/message_utils/test_pointcloud_colors.py
       - name: Test native SDK
         run: |
           cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml
