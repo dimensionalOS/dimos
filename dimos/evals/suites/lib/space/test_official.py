@@ -28,7 +28,6 @@ from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.evals import cli
-from dimos.evals.agents.text_question import TextQuestion
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites import space_map_sketching
 from dimos.evals.suites.lib.space.data import SpacePaths, load_examples, setup
@@ -142,12 +141,9 @@ def test_native_standard_cli_preserves_prompt_and_official_score(
     mocker.patch("dimos.evals.runner.EvalRunner", return_value=runner)
     mocker.patch.object(space_map_sketching, "SUITE", SpaceSuite())
     # Only the provider is replaced; suite discovery, execution and grading stay real.
-    mocker.patch.object(
-        cli,
-        "agent_class",
-        return_value=lambda **kwargs: TextQuestion(
-            chat_model=FakeListChatModel(responses=responses), **kwargs
-        ),
+    mocker.patch(
+        "dimos.agents.mcp.mcp_client.init_model",
+        return_value=FakeListChatModel(responses=responses),
     )
     result = CliRunner().invoke(
         cli.app,
@@ -155,7 +151,7 @@ def test_native_standard_cli_preserves_prompt_and_official_score(
             "run",
             "dimos.evals.suites.space_map_sketching",
             "--agent",
-            "dimos.evals.agents.text_question",
+            "dimos.evals.agents.single_call",
             "--limit",
             "2",
         ],

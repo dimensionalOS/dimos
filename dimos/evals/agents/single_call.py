@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared model invocation and tracing for agents that answer in one call."""
+"""One model call over the prompt, with provider tracing."""
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from contextlib import ExitStack
 from pathlib import Path
 import time
@@ -39,15 +38,15 @@ Blocks = list[str | dict[str, Any]]
 
 
 class SingleCallAgentConfig(ModelAgentConfig):
-    system_prompt: str | None = "Answer the question using only the provided observations."
+    system_prompt: str | None = None
     chat_model: BaseChatModel | None = None
-    request_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    max_retries: int | None = Field(default=None, ge=0)
-    max_output_tokens: int | None = Field(default=None, gt=0)
+    request_timeout_s: float | None = Field(default=60.0, gt=0, allow_inf_nan=False)
+    max_retries: int | None = Field(default=0, ge=0)
+    max_output_tokens: int | None = Field(default=2048, gt=0)
 
 
 class SingleCallAgent(Agent):
-    """Encode observations, call a chat model once, and record the result.
+    """Send the prompt to a chat model once and record the result.
 
     ``chat_model`` injects a LangChain model, including a fake for offline evals.
     Otherwise ``model`` uses the production model factory with wire tracing.
@@ -59,9 +58,9 @@ class SingleCallAgent(Agent):
         if self.config.allowed_tools:
             raise ValueError(f"{type(self).__name__} has no tools")
 
-    @abstractmethod
     def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
-        """The observations this agent includes before the instruction."""
+        """Subclasses can prepend observations to the prompt."""
+        return []
 
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float

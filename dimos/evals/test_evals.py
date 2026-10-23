@@ -394,7 +394,7 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
 def test_question_answer_encodes_the_recording_into_one_call(
     dataset: str, tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    clock = mocker.patch("dimos.evals.agents.lib.single_call.time")
+    clock = mocker.patch("dimos.evals.agents.single_call.time")
     clock.time.return_value = 1_700_000_000.0
     clock.monotonic.side_effect = [10.0, 10.25]
     chat = FakeListChatModel(responses=["4"])
@@ -811,7 +811,7 @@ def test_suites_and_agents_importable() -> None:
         "mcp_client_adapter",
         "pi",
         "dimcode",
-        "text_question",
+        "single_call",
     }
     for module_name in agents:
         assert callable(load_agent(module_name).run), module_name
@@ -837,7 +837,7 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(ValidationError, match="model"):
         load_agent("dimos.evals.agents.mcp_client_adapter", ["model=gpt-4o"])
     with pytest.raises(TypeError, match="0 agents"):
-        load_agent("dimos.evals.agents.lib.single_call")
+        load_agent("dimos.evals.agents.base")
     with pytest.raises(ValidationError, match="modules"):
         load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server mcp-client"])
     with pytest.raises(ValidationError, match="frames_per_stream"):

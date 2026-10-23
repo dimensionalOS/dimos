@@ -17,7 +17,8 @@ from pytest_mock import MockerFixture
 
 from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.text_question import TextQuestion
+from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.agents.single_call import SingleCallAgent
 from dimos.evals.suites.lib.space import suite
 from dimos.evals.suites.lib.space.constants import SELECTED_INDICES
 from dimos.evals.suites.lib.space.data import Example
@@ -38,17 +39,20 @@ def test_suite_loads_once_and_remains_lazy(mocker: MockerFixture) -> None:
     load.assert_called_once()
 
 
-def test_space_rejects_prompt_augmentation_before_execution() -> None:
+@pytest.mark.parametrize("agent_type", [Blind, QuestionAnswer])
+def test_space_rejects_prompt_augmentation_before_execution(
+    agent_type: type[SingleCallAgent],
+) -> None:
     environment = SpacePrompt()
     with pytest.raises(ValueError, match="without an added system prompt"):
-        environment.preflight(TextQuestion(system_prompt="Extra guidance"))
-    with pytest.raises(ValueError, match="TextQuestion"):
-        environment.preflight(Blind())
-    environment.preflight(TextQuestion())
+        environment.preflight(SingleCallAgent(system_prompt="Extra guidance"))
+    with pytest.raises(ValueError, match="SingleCallAgent"):
+        environment.preflight(agent_type(system_prompt=None))
+    environment.preflight(SingleCallAgent())
 
 
 def test_timeout_is_never_scored_as_a_wrong_answer() -> None:
     grade = Grade(OfficialSpace(), Example(0, {"question": "q"}))
-    trajectory = TrajectoryBuilder("q", name="TextQuestion", model="test").build("timeout")
+    trajectory = TrajectoryBuilder("q", name="SingleCallAgent", model="test").build("timeout")
     with pytest.raises(RuntimeError, match="did not complete: timeout"):
         grade(Outcome(trajectory=trajectory, artifacts={}))

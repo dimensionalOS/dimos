@@ -26,6 +26,8 @@ PASSTHROUGH_ENV: tuple[str, ...] = (
     "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
 )  # fmt: skip
 
+OBSERVATION_SYSTEM_PROMPT = "Answer the question using only the provided observations."
+
 # Upper bound on one bash tool call, seconds.
 MAX_TOOL_SECONDS = 300.0
 

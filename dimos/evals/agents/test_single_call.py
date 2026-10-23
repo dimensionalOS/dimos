@@ -21,17 +21,21 @@ from typing import Any
 import httpx
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_ollama import ChatOllama
+from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp.mcp_client import init_model
-from dimos.evals.agents.lib import single_call
+from dimos.evals.agents import single_call
+from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.pi import PiAdapter
-from dimos.evals.agents.text_question import TextQuestion
+from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.agents.single_call import SingleCallAgent
 from dimos.evals.environments.prompt import Prompt
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment
+from dimos.memory.store.memory import MemoryStore
 
 
 @dataclass
@@ -112,7 +116,10 @@ def completed_answer(outcome: Outcome) -> float:
         ("gpt-5-test", "input", "max_output_tokens", "input_text", "gpt-5-test-resolved"),
     ],
 )
-def test_text_question_uses_original_prompt_and_provider_limits(
+@pytest.mark.parametrize(
+    ("options", "expected_limit"), [({}, 2048), ({"max_output_tokens": 37}, 37)]
+)
+def test_single_call_uses_original_prompt_and_provider_limits(
     provider: ProviderState,
     tmp_path: Path,
     mocker: MockerFixture,
@@ -121,12 +128,14 @@ def test_text_question_uses_original_prompt_and_provider_limits(
     token_key: str,
     content_type: str,
     resolved: str,
+    options: dict[str, Any],
+    expected_limit: int,
 ) -> None:
     client = mocker.spy(single_call, "tracing_http_client")
     prompt = "Frame 1: red → blue.\nFrame 2: blue → green.\nChoose 1 or 2."
     case = EvalCase(id="text", inputs=prompt, environment=Prompt(), grade=completed_answer)
     runner = EvalRunner(out_dir=tmp_path)
-    result = runner.run([case], TextQuestion(model=model, max_output_tokens=37))[0]
+    result = runner.run([case], SingleCallAgent(model=model, **options))[0]
 
     assert result.score == 1.0 and not result.error
     assert len(provider.requests) == 1
@@ -134,7 +143,8 @@ def test_text_question_uses_original_prompt_and_provider_limits(
     (message,) = payload[payload_key]
     assert message["role"] == "user"
     assert message["content"] == [{"type": content_type, "text": prompt}]
-    assert payload[token_key] == 37
+    assert payload[token_key] == expected_limit
+    assert set(provider.requests[0].extensions["timeout"].values()) == {60.0}
     assert "tools" not in payload
     assert client.spy_return.is_closed
     saved = json.loads(Path(result.trajectory).read_text())
@@ -161,7 +171,7 @@ def test_provider_timeout_retains_trajectory_and_closes_owned_client(
         id="timeout", inputs="answer", environment=Prompt(), grade=completed_answer, timeout_s=1.0
     )
     result = runner.run(
-        [case], TextQuestion(model="openai:gpt-4o", request_timeout_s=request_timeout_s)
+        [case], SingleCallAgent(model="openai:gpt-4o", request_timeout_s=request_timeout_s)
     )[0]
 
     assert result.ended_by == "timeout" and "no completed model answer" in result.error
@@ -187,7 +197,7 @@ def test_provider_failure_does_not_retry_or_discard_trajectory(
     provider.status = 503
     runner = EvalRunner(out_dir=tmp_path)
     case = EvalCase(id="failure", inputs="answer", environment=Prompt(), grade=completed_answer)
-    result = runner.run([case], TextQuestion(model="openai:gpt-4o"))[0]
+    result = runner.run([case], SingleCallAgent(model="openai:gpt-4o"))[0]
 
     assert result.ended_by == "error" and "test provider unavailable" in result.error
     assert not result.passed and result.final_answer == ""
@@ -203,7 +213,7 @@ def test_absent_system_prompt_and_injected_model_are_preserved(
 ) -> None:
     chat = FakeListChatModel(responses=["2"])
     generate = mocker.spy(FakeListChatModel, "generate")
-    agent = TextQuestion(chat_model=chat, system_prompt=system_prompt)
+    agent = SingleCallAgent(chat_model=chat, system_prompt=system_prompt)
     trajectory = agent.run("original", Prompt().start(()), tmp_path, timeout_s=1)
 
     assert trajectory.final_answer == "2"
@@ -231,7 +241,7 @@ def test_ollama_factory_applies_output_limit_and_preserves_client_ownership(
 def test_prompt_environment_rejects_modules() -> None:
     environment = Prompt()
     with pytest.raises(ValueError, match="cannot launch"):
-        environment.preflight(TextQuestion(modules=("mcp-server",)))
+        environment.preflight(SingleCallAgent(modules=("mcp-server",)))
     with pytest.raises(ValueError, match="cannot launch"):
         environment.start(("mcp-server",))
 
@@ -241,8 +251,58 @@ def test_prompt_environment_rejects_native_agent_tools() -> None:
         Prompt().preflight(PiAdapter())
 
 
-def test_text_question_rejects_robot_context(tmp_path: Path) -> None:
-    agent = TextQuestion(chat_model=FakeListChatModel(responses=["2"]))
-    env = RunningEnvironment(mcp_url="http://localhost:9990/mcp", streams=(), artifacts={})
-    with pytest.raises(ValueError, match="prompt-only"):
-        agent.run("question", env, tmp_path, timeout_s=1)
+def test_single_call_ignores_streams_and_mcp(tmp_path: Path, mocker: MockerFixture) -> None:
+    agent = SingleCallAgent(chat_model=FakeListChatModel(responses=["2"]))
+    generate = mocker.spy(FakeListChatModel, "generate")
+    with MemoryStore() as store:
+        stream = store.stream("observations", str)
+        stream.append("This must not enter the prompt", ts=1.0)
+        env = RunningEnvironment(
+            mcp_url="http://localhost:9990/mcp", streams=(stream,), artifacts={}
+        )
+        trajectory = agent.run("question", env, tmp_path, timeout_s=1)
+    (message,) = generate.call_args.args[1][0]
+    assert message.type == "human"
+    assert message.content == [{"type": "text", "text": "question"}]
+    assert trajectory.final_answer == "2"
+
+
+@pytest.mark.parametrize("agent_type", [QuestionAnswer, Blind])
+def test_recording_agents_preserve_provider_defaults(
+    provider: ProviderState,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    agent_type: type[SingleCallAgent],
+) -> None:
+    factory = mocker.patch("dimos.agents.mcp.mcp_client.init_model", wraps=init_model)
+    with MemoryStore() as store:
+        stream = store.stream("observations", str)
+        stream.append("recorded observation", ts=1.0)
+        env = RunningEnvironment(mcp_url="", streams=(stream,), artifacts={})
+        trajectory = agent_type(model="openai:gpt-4o").run("question", env, tmp_path, timeout_s=1.0)
+    assert trajectory.final_answer == "2"
+    assert len(provider.requests) == 1
+    system, _ = json.loads(provider.requests[0].content)["messages"]
+    assert system == {
+        "role": "system",
+        "content": "Answer the question using only the provided observations.",
+    }
+    for option in ("timeout", "max_retries", "max_tokens"):
+        assert factory.call_args.kwargs[option] is None
+
+
+@pytest.mark.parametrize("agent_type", [SingleCallAgent, QuestionAnswer, Blind])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"request_timeout_s": 0},
+        {"request_timeout_s": float("inf")},
+        {"max_retries": -1},
+        {"max_output_tokens": 0},
+    ],
+)
+def test_request_limits_reject_invalid_overrides(
+    agent_type: type[SingleCallAgent], options: dict[str, Any]
+) -> None:
+    with pytest.raises(ValidationError):
+        agent_type(**options)

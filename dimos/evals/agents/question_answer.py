@@ -22,11 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
-from dimos.evals.agents.lib.single_call import (
+from dimos.evals.agents.single_call import (
     Blocks,
     SingleCallAgent,
     SingleCallAgentConfig,
 )
+from dimos.evals.constants import OBSERVATION_SYSTEM_PROMPT
 from dimos.evals.types import RunningEnvironment
 
 if TYPE_CHECKING:
@@ -53,6 +54,10 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
 
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
+    system_prompt: str | None = OBSERVATION_SYSTEM_PROMPT
+    request_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    max_retries: int | None = Field(default=None, ge=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
     frames_per_stream: int = Field(default=8, ge=1)
 
 

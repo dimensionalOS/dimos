@@ -22,7 +22,7 @@ from functools import cached_property
 from typing import overload
 
 from dimos.evals.agents.base import Agent
-from dimos.evals.agents.text_question import TextQuestion
+from dimos.evals.agents.single_call import SingleCallAgent
 from dimos.evals.environments.prompt import Prompt
 from dimos.evals.suites.lib.space.constants import SELECTED_INDICES
 from dimos.evals.suites.lib.space.data import Example, SpacePaths, load_examples
@@ -35,8 +35,8 @@ CASE_TIMEOUT_S = 60.0
 class SpacePrompt(Prompt):
     def preflight(self, agent: Agent) -> None:
         super().preflight(agent)
-        if not isinstance(agent, TextQuestion):
-            raise ValueError("SPACE text QA requires the tool-free TextQuestion agent")
+        if type(agent) is not SingleCallAgent:
+            raise ValueError("SPACE text QA requires SingleCallAgent")
         if agent.config.system_prompt:
             raise ValueError("SPACE questions must be sent without an added system prompt")
 

@@ -45,7 +45,7 @@ explicit output budget:
 
 ```bash skip
 uv run --no-sync dimos evals run dimos.evals.suites.space_map_sketching \
-  --agent dimos.evals.agents.text_question \
+  --agent dimos.evals.agents.single_call \
   --set model=gpt-5.6-luna --set max_output_tokens=16384
 uv run --no-sync dimos evals score space /path/to/run-directory
 ```
@@ -61,7 +61,7 @@ per layout across ten layouts, with five correct answers per answer position.
 This avoids repeated answer-position variants in a file-order prefix. `--limit`
 can restrict a run to fewer cases.
 
-The suite uses `TextQuestion` and the existing model factory to send only the
+The suite uses `SingleCallAgent` and the existing model factory to send only the
 original question, without a system prompt, observations, tools, labels, or
 metadata. For OpenAI, the agent defaults to a 60-second provider timeout, zero
 retries, and 2,048 output tokens. The example raises that cap because reasoning
@@ -91,7 +91,7 @@ With the repository's test dependencies installed, run the tests that need no
 external benchmark data:
 
 ```bash skip
-uv run --no-sync pytest dimos/evals/suites/lib/space dimos/evals/agents/test_text_question.py
+uv run --no-sync pytest dimos/evals/suites/lib/space dimos/evals/agents/test_single_call.py
 ```
 
 Run the official evaluator integration tests:

@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
-from dimos.evals.agents.lib.single_call import Blocks, SingleCallAgent
+from pydantic import Field
+
+from dimos.evals.agents.single_call import Blocks, SingleCallAgent, SingleCallAgentConfig
+from dimos.evals.constants import OBSERVATION_SYSTEM_PROMPT
 from dimos.evals.types import RunningEnvironment
 
 BLIND_BLOCK: dict[str, str] = {
@@ -25,8 +28,17 @@ BLIND_BLOCK: dict[str, str] = {
 }
 
 
+class BlindConfig(SingleCallAgentConfig):
+    system_prompt: str | None = OBSERVATION_SYSTEM_PROMPT
+    request_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    max_retries: int | None = Field(default=None, ge=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+
+
 class Blind(SingleCallAgent):
     """One model call, instruction only. Never reads the recording."""
+
+    config: BlindConfig
 
     def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
         return [BLIND_BLOCK]
