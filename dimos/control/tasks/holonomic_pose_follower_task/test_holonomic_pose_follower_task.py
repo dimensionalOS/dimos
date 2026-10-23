@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.control.benchmarking.paths import (
@@ -40,6 +41,8 @@ from dimos.control.benchmarking.tuning import TuningConfig
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_task import (
     DEFAULT_ARTIFACT_PATH,
+    HolonomicPoseFollowerTask,
+    HolonomicPoseFollowerTaskConfig,
     create_task,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -376,3 +379,34 @@ def test_configure_refused_while_active_and_accepts_unknown_kwargs():
     assert task._config.speed == 0.7
     task.start_path(straight_rotate(), _pose())
     assert not task.configure(speed=0.3)
+
+
+@pytest.mark.parametrize("joint_names", [[], _JOINTS[:2], [*_JOINTS, "go2/extra"]])
+def test_create_task_rejects_joint_count_other_than_three(joint_names):
+    with pytest.raises(ValidationError, match="joint_names"):
+        create_task(
+            SimpleNamespace(name="holo", joint_names=joint_names, priority=10, params={}),
+            None,
+        )
+
+
+@pytest.mark.parametrize("joint_names", [[], _JOINTS[:2], [*_JOINTS, "go2/extra"]])
+def test_constructor_rejects_joint_count_other_than_three(joint_names):
+    with pytest.raises(ValueError, match="needs 3 joints"):
+        HolonomicPoseFollowerTask(
+            "holo",
+            HolonomicPoseFollowerTaskConfig(joint_names=joint_names),
+        )
+
+
+def test_create_task_rejects_joint_names_in_params():
+    with pytest.raises(ValueError, match="TaskConfig, not in params"):
+        create_task(
+            SimpleNamespace(
+                name="holo",
+                joint_names=_JOINTS,
+                priority=10,
+                params={"joint_names": _JOINTS[:2]},
+            ),
+            None,
+        )
