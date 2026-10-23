@@ -35,7 +35,7 @@ CONTACT_MARGIN = 0.005
 OBSTACLE_MARGIN = 0.003
 # Where the objects stand, in reach of the arm.
 X = 0.4
-# The table's points; its octree cells fill z -6 to 0 mm.
+# The table's points; its octree cells fill z -3 to 0 mm.
 TABLE_Z = -0.001
 
 
@@ -117,20 +117,25 @@ def test_xarm_keeps_a_grasp_with_the_pads_on_the_box_sides(xarm: GraspContactChe
 
 
 @pytest.mark.self_hosted
-def test_xarm_rejects_a_fingertip_resting_on_top_of_the_box(xarm: GraspContactChecker) -> None:
-    # The left finger straight over the box, its tip on the box's top face.
-    resting = _top_down(0.0, XARM_LEFT_FINGER_Y, 0.06 - XARM_TIP_BEHIND_TCP)
+def test_xarm_rejects_a_fingertip_pressing_into_the_top_of_the_box(
+    xarm: GraspContactChecker,
+) -> None:
+    # The left finger straight over the box, its tip 2 mm into the box's top face.
+    pressing = _top_down(0.0, XARM_LEFT_FINGER_Y, 0.058 - XARM_TIP_BEHIND_TCP)
 
-    assert not _clear(xarm, resting, BOX)
+    assert not _clear(xarm, pressing, BOX)
 
 
 @pytest.mark.self_hosted
-def test_xarm_rejects_pads_pressing_into_a_box_wider_than_the_open_jaws(
+def test_xarm_open_pads_may_come_near_but_not_into_the_object(
     xarm: GraspContactChecker,
 ) -> None:
-    # The open pads stand 8.89 cm apart; this box is 9.2 cm across them.
+    # The open pads stand 8.89 cm apart: 1.5 mm clear of an 8.6 cm box, 1.5 mm
+    # into a 9.2 cm one.
+    near = _box((0.0, 0.0, 0.03), (0.04, 0.086, 0.06))
     wide = _box((0.0, 0.0, 0.03), (0.04, 0.092, 0.06))
 
+    assert _clear(xarm, _top_down(0.0, 0.0, 0.03), near)
     assert not _clear(xarm, _top_down(0.0, 0.0, 0.03), wide)
 
 

@@ -74,9 +74,9 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # dropped. None, or a robot model without a gripper config, tries every grasp
     # the provider gives.
     robot: RobotModelConfig | None = None
-    # About this close (metres) to the target is a touch.
+    # Only the gripper's pads may come within about this distance (metres) of the target.
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
-    # About this close (metres) to another scene point is a touch.
+    # Nothing may come within about this distance (metres) of another scene point.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
 
 

@@ -17,18 +17,19 @@
 The check runs in a planning world of its own, built from the robot config with
 the gripper's finger joints added so it can move them. For each grasp, the arm's
 inverse kinematics puts the tool tip on the grasp (no solution rejects it), and
-the world then says whether the robot is collision free:
+the world then says whether the robot keeps clear:
 
-- Open, nothing may touch the object or the scene: fingers already touching the
-  object would have to push it aside to get there.
-- At each closing step, only the pad links (``GripperConfig.pad_links``) may
-  touch the object, and nothing may touch the scene. The fingers stop at the
-  first step where a pad touches the object; later steps are not checked.
+- Open, only the pad links (``GripperConfig.pad_links``) may come near the
+  object, and none may touch it: fingers already pressing on the object would
+  have to push it aside to get there. Nothing may come near the scene.
+- At each closing step the same holds, until the first step where anything
+  touches. There the pads may touch the object; later steps are not checked.
 
-The object and the scene are octree obstacles. Each point fills the octree cell
-it falls in, and the cells sit on a fixed grid, so an obstacle reaches between 0
-and one cell edge past its points. A cell edge of twice a margin puts it about
-one margin out, on average.
+Near means within about a margin. The object and the scene are octree
+obstacles: each point fills the grid cell it falls in, so a cell one margin
+wide reaches between 0 and one margin past its points. The object's points
+also make a second octree of 1 mm cells, which a link touches only when it
+reaches a point.
 """
 
 from __future__ import annotations
@@ -64,7 +65,10 @@ _GRIPPER_SELF_RADIUS = 0.15
 # Scene points this close (metres) to the object's points are the object's own
 # edge left outside its mask.
 _TARGET_EDGE = 0.01
+# Edge (metres) of the cells that stand for the object's own points.
+_SURFACE_CELL = 0.001
 _TARGET = "grasp-contact/target"
+_SURFACE = "grasp-contact/surface"
 _SCENE = "grasp-contact/scene"
 
 
@@ -124,8 +128,10 @@ class GraspContactChecker:
             scene: Camera points with the object masked out, metres, same frame.
             tips: Where each gripper's tool tip is now, metres, same frame; scene
                 points near them are the robot's own gripper and are ignored.
-            contact_margin: About this close (metres) to the object is a touch.
-            obstacle_margin: About this close (metres) to a scene point is a touch.
+            contact_margin: Only the pads may come within about this distance
+                (metres) of the object.
+            obstacle_margin: Nothing may come within about this distance (metres)
+                of a scene point.
             seed: The robot's joint positions now (radians, metres for a sliding
                 joint), where the IK starts; joints left out start at home.
         """
@@ -158,15 +164,19 @@ class GraspContactChecker:
             target: Points of the object being grasped, shape (M, 3), metres.
             scene: Other points the robot must not touch, shape (K, 3), metres.
             frame_id: Frame of the grasps and points: the planning world's frame.
-            contact_margin: About this close (metres) to the object is a touch.
-            obstacle_margin: About this close (metres) to a scene point is a touch.
+            contact_margin: Only the pads may come within about this distance
+                (metres) of the object.
+            obstacle_margin: Nothing may come within about this distance (metres)
+                of a scene point.
             seed: The robot's joint positions now (radians, metres for a sliding
                 joint), where the IK starts; joints left out start at home.
         """
         world = self._world
         world.clear_obstacles()
-        object_ = _octree(_TARGET, target, 2.0 * contact_margin, frame_id)
-        for obstacle in (object_, _octree(_SCENE, scene, 2.0 * obstacle_margin, frame_id)):
+        pads = self._gripper.pad_links
+        near = _octree(_TARGET, target, contact_margin, frame_id, touch_links=pads)
+        surface = _octree(_SURFACE, target, _SURFACE_CELL, frame_id)
+        for obstacle in (near, surface, _octree(_SCENE, scene, obstacle_margin, frame_id)):
             if obstacle is not None:
                 world.add_obstacle(obstacle)
         start = {
@@ -190,10 +200,10 @@ class GraspContactChecker:
                 )
                 if (pose := next(touching, None)) is not None:
                     first_touch[index] = pose
-        # At that step only the pads may touch the object: let them, and ask again.
+        # At that step the pads may touch the object: let them, and ask again.
         # Every earlier step touched nothing, so it passes either way.
-        if first_touch and object_ is not None:
-            world.update_obstacle(replace(object_, touch_links=self._gripper.pad_links))
+        if first_touch and surface is not None:
+            world.update_obstacle(replace(surface, touch_links=pads))
         for index, pose in first_touch.items():
             clear[index] = world.check_config_collision_free(pose)
         return clear
@@ -255,8 +265,17 @@ def scene_obstacles(
     return points
 
 
-def _octree(name: str, points: NDArray[np.float64], cell: float, frame_id: str) -> Obstacle | None:
-    """Points as an octree obstacle with cells of edge ``cell`` (metres); None for no points."""
+def _octree(
+    name: str,
+    points: NDArray[np.float64],
+    cell: float,
+    frame_id: str,
+    touch_links: tuple[str, ...] = (),
+) -> Obstacle | None:
+    """Points as an octree obstacle with cells of edge ``cell`` (metres); None for no points.
+
+    ``touch_links`` names the robot links allowed to touch it.
+    """
     finite = np.asarray(points, dtype=np.float64).reshape((-1, 3))
     finite = finite[np.all(np.isfinite(finite), axis=1)]
     if not len(finite):
@@ -267,6 +286,7 @@ def _octree(name: str, points: NDArray[np.float64], cell: float, frame_id: str) 
         pose=PoseStamped(frame_id=frame_id),
         points=tuple((x, y, z) for x, y, z in finite.tolist()),
         octree_resolution=cell,
+        touch_links=touch_links,
     )
 
 
