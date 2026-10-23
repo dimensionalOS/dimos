@@ -28,6 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
@@ -53,6 +54,22 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "left_outer_knuckle"),
     ("link6", "right_outer_knuckle"),
 ]
+
+
+def xarm_gripper_config(prefix: str = "") -> GripperConfig:
+    """Which xArm Gripper links may touch a grasped object, and how it closes.
+
+    drive_joint runs 0.0 (open) to 0.85 rad (closed); the other knuckles and
+    fingers mimic it in the URDF.
+
+    Args:
+        prefix: Prefix the robot model puts on every link and joint name.
+    """
+    return GripperConfig(
+        pad_links=(f"{prefix}left_finger", f"{prefix}right_finger"),
+        finger_joints={f"{prefix}drive_joint": (0.0, 0.85)},
+    )
+
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
@@ -322,6 +339,7 @@ def make_xarm_model_config(
         collision_exclusion_pairs=(
             collision_exclusions if add_gripper and robot_type == "xarm" else []
         ),
+        gripper=xarm_gripper_config(prefix) if add_gripper and robot_type == "xarm" else None,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
