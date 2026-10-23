@@ -823,26 +823,9 @@ def test_generation_request_defaults_output_under_state_directory() -> None:
     assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-frames"
 
 
-def test_generation_request_cross_view_mode_defaults_output_suffix() -> None:
-    request = GenerationRequest(dataset="recordings/go2_short.db", queries=("storage box",))
-
-    assert request.cross_view
-    assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-cross-view"
-
-
-def test_generation_request_rejects_mixing_frame_and_cross_view() -> None:
-    with pytest.raises(ValidationError, match="cross-view"):
-        GenerationRequest(dataset="go2_short", start=0, stop=10, queries=("chair",))
-
-
-def test_generation_request_rejects_time_window_without_query() -> None:
-    with pytest.raises(ValidationError, match="from_s/duration_s"):
-        GenerationRequest(dataset="go2_short", image_index=0, from_s=1.0)
-
-
-def test_generate_dataset_cross_view_writes_cases(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_materialize_cross_view_from_shared_localize_views(tmp_path: Path) -> None:
+    """Cross-view uses localize window sightings + color_frames (no second localize)."""
+    from dimos.evals.vqa.generate import _materialize_cross_view_clips
     from dimos.evals.vqa.primitives.cross_view_identity import SightingView
     from dimos.msgs.sensor_msgs.Image import ImageFormat
 
@@ -862,153 +845,54 @@ def test_generate_dataset_cross_view_writes_cases(
             semantic_score=0.7,
         )
 
-    class _Stream:
-        def after(self, _t: float) -> _Stream:
-            return self
-
-        def before(self, _t: float) -> _Stream:
-            return self
-
-    _patch_cross_view_localize(monkeypatch, time_range=(10.0, 110.0), lidar=_Stream())
-    monkeypatch.setattr(
-        "dimos.evals.vqa.generate.collect_query_instances",
-        lambda _query, _hits, _answers: {
-            # Timestamps must lie inside the localize window (from_s + duration).
+    color_frames = tuple((float(t), _image(float(t))) for t in range(10, 50))
+    views_by_query = {
+        "storage box": {
             "aaaa1111": (_view("aaaa1111", 20.0), _view("aaaa1111", 40.0)),
             "bbbb2222": (_view("bbbb2222", 25.0),),
-        },
+        }
+    }
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "audit").mkdir()
+    cases, labels, stats = _materialize_cross_view_clips(
+        staging,
+        [],
+        [],
+        color_frames=color_frames,
+        views_by_query=views_by_query,
+        min_views=3,
     )
+    assert stats["question_count"] >= 1
+    assert len(cases) == len(labels) == stats["question_count"]
+    assert all(case.clips is not None and case.image is None for case in cases)
+    assert any((staging / "assets" / "clips").rglob("manifest.json"))
+    assert "first_clip" in cases[0].question and "second_clip" in cases[0].question
 
-    output = tmp_path / "cross-view"
-    result = generate_dataset(
-        GenerationRequest(
-            dataset="recording.db",
-            queries=("storage box",),
-            min_views=3,
-            duration_s=60.0,
-            output=output,
-        )
+
+def test_materialize_cross_view_empty_views_is_noop(tmp_path: Path) -> None:
+    from dimos.evals.vqa.generate import _materialize_cross_view_clips
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "audit").mkdir()
+    cases, labels, stats = _materialize_cross_view_clips(
+        staging,
+        [],
+        [],
+        color_frames=(),
+        views_by_query={"chair": {}},
+        min_views=3,
     )
-
-    assert result.output == output
-    assert len(result.cases) >= 1
-    assert all(case.clips is not None and case.image is None for case in result.cases)
-    assert (output / "cases.jsonl").is_file()
-    assert (output / "labels.jsonl").is_file()
-    assert (output / "audit" / "run.json").is_file()
-    assert any((output / "assets" / "clips").rglob("manifest.json"))
-    question = result.cases[0].question
-    assert "first_clip" in question and "second_clip" in question
+    assert cases == [] and labels == []
+    assert stats["question_count"] == 0
+    assert stats["n_pairs_proposed"] == 0
 
 
-def _patch_cross_view_localize(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    time_range: tuple[float, float] = (0.0, 10.0),
-    lidar: object | None = None,
-) -> None:
-    from dimos.msgs.sensor_msgs.Image import ImageFormat
-    from dimos.perception.localize.tools.tool_localize import GO2_PARAMS
-
-    class _Obs:
-        def __init__(self, ts: float) -> None:
-            rgb = np.full((32, 32, 3), 40, dtype=np.uint8)
-            self.ts = ts
-            self.data = Image.from_numpy(
-                rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts
-            )
-
-    class _Store:
-        def start(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-        def stream(self, _name: str, _type: object = None) -> list[_Obs]:
-            lo, hi = time_range
-            step = max((hi - lo) / 40.0, 0.25)
-            ts_values = [lo + i * step for i in range(int((hi - lo) / step) + 1)]
-            return [_Obs(ts) for ts in ts_values]
-
-    class _Rig:
-        def __init__(self) -> None:
-            self.lidar = lidar
-            self.tf = object()
-
-        @classmethod
-        def from_store(cls, _store: object) -> _Rig:
-            return cls()
-
-        def time_range(self) -> tuple[float, float]:
-            return time_range
-
-    class _Dan:
-        embedder = object()
-
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def __enter__(self) -> _Dan:
-            return self
-
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-        def localize(self, queries: list[str], **_kwargs: object) -> list[list[object]]:
-            return [[] for _ in queries]
-
-    monkeypatch.setattr("dimos.memory.cli.dataset.open_dataset", lambda _name: _Store())
-    monkeypatch.setattr("dimos.perception.localize.rig.Rig", _Rig)
-    monkeypatch.setattr("dimos.perception.localize.rig.window_tf", lambda *_a, **_k: object())
-    monkeypatch.setattr("dimos.perception.localize.dandetect.DanDetector", _Dan)
-    monkeypatch.setattr(
-        "dimos.perception.localize.localize.embed_index", lambda *_a, **_k: object()
-    )
-    monkeypatch.setattr(
-        "dimos.perception.localize.tools.tool_localize.parse_params",
-        lambda *_a, **_k: (GO2_PARAMS, {"min_views": 2}),
-    )
-
-
-def test_generate_dataset_cross_view_rejects_empty_pairs(
+def test_materialize_cross_view_audits_rejected_pairs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _patch_cross_view_localize(monkeypatch, lidar=None)
-    monkeypatch.setattr(
-        "dimos.evals.vqa.generate.collect_query_instances",
-        lambda *_a, **_k: {},
-    )
-
-    with pytest.raises(ValueError, match="no answerable pairs"):
-        generate_dataset(
-            GenerationRequest(
-                dataset="recording.db",
-                queries=("chair",),
-                output=tmp_path / "empty-cross-view",
-            )
-        )
-
-
-def test_generate_dataset_cross_view_rejects_bad_window(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    # from_s past the recording end → after >= hi when duration_s is unset.
-    _patch_cross_view_localize(monkeypatch, time_range=(5.0, 6.0))
-    with pytest.raises(ValueError, match="before must be greater"):
-        generate_dataset(
-            GenerationRequest(
-                dataset="recording.db",
-                queries=("chair",),
-                from_s=2.0,
-                output=tmp_path / "bad-window",
-            )
-        )
-
-
-def test_generate_dataset_cross_view_audits_rejected_pairs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+    from dimos.evals.vqa.generate import _materialize_cross_view_clips
     from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair, SightingView
     from dimos.msgs.sensor_msgs.Image import ImageFormat
 
@@ -1046,12 +930,7 @@ def test_generate_dataset_cross_view_audits_rejected_pairs(
         n_views=5,
         semantic_score=0.7,
     )
-
-    _patch_cross_view_localize(monkeypatch, time_range=(0.0, 20.0))
-    monkeypatch.setattr(
-        "dimos.evals.vqa.generate.collect_query_instances",
-        lambda *_a, **_k: {"aaaa1111": (good,)},
-    )
+    color_frames = tuple((float(t), _image(float(t))) for t in range(0, 20))
     monkeypatch.setattr(
         "dimos.evals.vqa.generate.propose_identity_pairs",
         lambda *_a, **_k: (
@@ -1059,23 +938,27 @@ def test_generate_dataset_cross_view_audits_rejected_pairs(
             IdentityPair(query="box", left=good, right=ok_right, same_object=True),
         ),
     )
-
-    result = generate_dataset(
-        GenerationRequest(
-            dataset="recording.db",
-            queries=("box",),
-            output=tmp_path / "reject-mix",
-        )
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "audit").mkdir()
+    cases, _labels, stats = _materialize_cross_view_clips(
+        staging,
+        [],
+        [],
+        color_frames=color_frames,
+        views_by_query={"box": {"aaaa1111": (good,)}},
+        min_views=3,
     )
-    assert len(result.cases) == 1
-    audit = json.loads((tmp_path / "reject-mix" / "audit" / "pairs.json").read_text())
+    assert len(cases) == 1
+    assert stats["rejected_question_count"] == 1
+    audit = json.loads((staging / "audit" / "pairs.json").read_text())
     assert any(row["status"] == "rejected" for row in audit)
     assert any(row["status"] == "answered" for row in audit)
 
 
 def test_answer_question_rejects_cross_view_on_frame_path() -> None:
     image = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8))
-    with pytest.raises(InsufficientEvidenceError, match="generate_dataset with --query"):
+    with pytest.raises(InsufficientEvidenceError, match="with --with-localize"):
         answer_question(
             QuestionProposal(family="cross_view_same_object", object_names=("box",)),
             image,
@@ -1379,6 +1262,15 @@ def test_generation_request_rejects_queries_without_localize_flag() -> None:
             dataset="go2_short",
             image_index=4,
             localize_queries=("chair",),
+        )
+
+
+def test_generation_request_rejects_evidence_without_localize_flag(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="localize_evidence"):
+        GenerationRequest(
+            dataset="go2_short",
+            image_index=4,
+            localize_evidence=tmp_path / "localize_evidence.json",
         )
 
 

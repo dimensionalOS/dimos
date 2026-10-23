@@ -46,32 +46,6 @@ def generate(
         max=1,
         help="Drop frames at or below this brightness before QualityWindow (requires --quality-window)",
     ),
-    query: list[str] | None = typer.Option(
-        None,
-        "--query",
-        help=(
-            "Cross-view mode: object category to localize (repeatable). "
-            "Omits the single-frame family bucket; emits cross_view_same_object pairs."
-        ),
-    ),
-    from_s: float = typer.Option(
-        0.0,
-        "--from",
-        help="Cross-view mode: start offset into the recording (seconds)",
-    ),
-    duration: float | None = typer.Option(
-        None,
-        help="Cross-view mode: how much of the recording to use (seconds)",
-    ),
-    params: str = typer.Option(
-        "go2",
-        help='Cross-view mode: localize params preset or JSON, e.g. go2 or {"base":"go2"}',
-    ),
-    min_views: int = typer.Option(
-        3,
-        min=1,
-        help="Cross-view mode: minimum distinct camera poses per identity instance",
-    ),
     output: Path | None = typer.Option(
         None,
         help="Destination directory; must be absent or empty",
@@ -80,9 +54,9 @@ def generate(
         False,
         "--with-localize/--no-with-localize",
         help=(
-            "Optionally discover objects (YOLO-E), verify them with Dan localize over a "
-            "padded window, then add localize families (unique / nearest / next-to / "
-            "any-ahead) from verified hits (off by default)"
+            "Run Dan localize once over a padded window: ego memory clips + "
+            "cross_view_same_object pairs from the same hits / first-sighting "
+            "timestamps / color frames (off by default)"
         ),
     ),
     localize_query: list[str] = typer.Option(
@@ -110,12 +84,26 @@ def generate(
             "Use 0 to publish every answered localize case"
         ),
     ),
+    min_views: int = typer.Option(
+        3,
+        min=1,
+        help="With --with-localize: minimum distinct camera poses per cross-view identity instance",
+    ),
+    localize_evidence: Path | None = typer.Option(
+        None,
+        "--localize-evidence",
+        help=(
+            "Reuse a prior audit/localize_evidence.json (lightweight instance ids, "
+            "names, coords, first_seen, sighting timestamps+bbox). Skips Dan when "
+            "dataset/window match; still reads color frames from the recording"
+        ),
+    ),
 ) -> None:
-    """Generate a standalone VQA dataset.
+    """Generate a standalone VQA dataset from selected color_image frames.
 
-    Without ``--query``, runs the single-frame family bucket over selected
-    color_image indices. With ``--query``, runs Dan localize and writes
-    ``cross_view_same_object`` cases instead.
+    ``--with-localize`` runs Dan localize once and adds ego + cross-view cases from
+    that shared evidence (no separate cross-view-only pass). Pass
+    ``--localize-evidence`` to skip Dan on a later run.
     """
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
@@ -137,11 +125,8 @@ def generate(
             localize_queries=tuple(localize_query),
             localize_pad_s=localize_pad,
             localize_coverage_k=localize_coverage_k,
-            queries=tuple(query or ()),
-            from_s=from_s,
-            duration_s=duration,
-            params=params,
             min_views=min_views,
+            localize_evidence=localize_evidence,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:
@@ -158,25 +143,18 @@ def run(
     """Evaluate a generated standalone VQA dataset."""
     # Keep evaluation implementation imports out of global CLI startup.
     from dimos.evals.cli import agent_kwargs, load_agent, run_provenance
-    from dimos.evals.runner import EvalRunner, summarize
-    from dimos.evals.vqa.suite import load_suite, source_record
+    from dimos.evals.runner import run_suite
+    from dimos.evals.vqa.suite import load_suite
 
-    runner = EvalRunner()
-    overrides = [f"model={model}"] if model else []
-    try:
-        results = runner.run(
-            load_suite(dataset),
-            load_agent(agent, overrides),
-            provenance=run_provenance(source_record(dataset), agent, agent_kwargs(overrides)),
-        )
-    except (ValueError, OSError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    for result in results:
-        status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
-        detail = result.error or f"answer={result.final_answer[:60]!r}"
-        typer.echo(f"{status:5} {result.case_id:30} {detail}")
-    summary = summarize(results)
-    typer.echo(
-        f"\n{summary.n} cases | mean {summary.mean_score:.2f} | "
-        f"pass {summary.pass_rate:.0%} | errors {summary.errors} | {runner.run_dir}"
+    suite = load_suite(dataset)
+    results = run_suite(
+        suite,
+        load_agent(agent, **agent_kwargs(model=model or None)),
+        provenance=run_provenance(
+            command=("evals", "vqa", "run"),
+            agent=agent,
+            model=model or None,
+            suite=str(dataset),
+        ),
     )
+    typer.echo(f"Wrote {len(results)} evaluation result(s)")

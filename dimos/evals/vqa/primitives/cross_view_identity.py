@@ -42,7 +42,7 @@ EDGE_MARGIN_FRAC = 0.02
 MIN_INSTANCE_VIEWS = 3
 
 # Pair sampling — prefer temporally separated revisits over near-duplicate views.
-MAX_SAME_PAIRS_PER_INSTANCE = 2
+MAX_SAME_PAIRS_PER_INSTANCE = 1  # one first↔last revisit per instance
 MAX_DIFF_PAIRS_PER_QUERY = 8
 # Same-instance: revisit after leaving (not near-duplicate co-visible frames).
 MIN_SAME_PAIR_TIME_GAP_S = 8.0

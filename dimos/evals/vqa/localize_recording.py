@@ -69,15 +69,22 @@ _ROOM_LOCALIZE_PARAMS = LocalizeParams(
 
 @dataclass(frozen=True)
 class LocalizeWindowResult:
-    """Verified hits plus a rig whose tf covers the localize window."""
+    """Verified hits plus a rig whose tf covers the localize window.
+
+    Built once per ``--with-localize`` run and shared by ego + cross-view families:
+    coordinates / instance ids on ``named_hits``, first-sighting times, dense
+    ``color_frames``, and per-query multi-view sightings for identity pairs.
+    """
 
     named_hits: tuple[tuple[str, Localization], ...]
     rig: Rig
     queries: tuple[str, ...]
     # Earliest Detection3DPC.ts per Localization.instance_id in this window.
     first_seen_by_instance: dict[str, float] = field(default_factory=dict)
-    # color_image frames in the window for ego memory clips.
+    # color_image frames in the window for ego / cross-view memory clips.
     color_frames: tuple[tuple[float, Image], ...] = ()
+    # query → instance_id → framing sightings (from localize traces; no second pass).
+    views_by_query: dict[str, dict[str, tuple]] = field(default_factory=dict)
 
 
 def robot_pose_xyz_yaw(
@@ -262,8 +269,11 @@ def localize_window(
 
         from dimos.perception.localize.localize import LocalizeTrace
 
+        from dimos.evals.vqa.primitives.cross_view_identity import collect_query_instances
+
         named: list[tuple[str, Localization]] = []
         first_seen_by_instance: dict[str, float] = {}
+        views_by_query: dict[str, dict[str, tuple]] = {}
         traces = [LocalizeTrace() for _ in query_list]
         with DanDetector(embedder, detector, segmenter) as dan:
             index = embed_index(rig, dan.embedder, after, before)
@@ -276,6 +286,8 @@ def localize_window(
             )
             for query, hits, trace in zip(query_list, results, traces, strict=True):
                 logger.info(f"localize verification {query!r}: {len(hits)} hit(s)")
+                by_id = collect_query_instances(query, hits, list(trace.answers))
+                views_by_query[query] = by_id
                 for hit, sightings in zip(hits, trace.answers, strict=True):
                     named.append((query, hit))
                     times = [float(s.ts) for s in sightings]
@@ -300,6 +312,7 @@ def localize_window(
             queries=tuple(query_list),
             first_seen_by_instance=first_seen_by_instance,
             color_frames=tuple(color_frames),
+            views_by_query=views_by_query,
         )
     finally:
         store.stop()

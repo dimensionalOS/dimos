@@ -58,10 +58,11 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--localize-pad" in output
     # Rich may truncate the long flag name in the help table.
     assert "localize-cover" in output
-    assert "--query" in output
-    assert "--from" in output
-    assert "--params" in output
     assert "--min-views" in output
+    assert "localize-evidence" in output
+    assert "--query" not in output
+    assert "--from" not in output
+    assert "--params" not in output
     assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
@@ -348,10 +349,13 @@ def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatc
     assert "Traceback" not in result.output
 
 
-def test_vqa_generate_cli_accepts_cross_view_query(
+def test_vqa_generate_cli_accepts_with_localize_min_views(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen: list[GenerationRequest] = []
+    evidence = tmp_path / "prior" / "localize_evidence.json"
+    evidence.parent.mkdir()
+    evidence.write_text("{}")
 
     def fake_generate(
         request: GenerationRequest, config: VqaGenerationConfig | None = None
@@ -368,20 +372,21 @@ def test_vqa_generate_cli_accepts_cross_view_query(
             "vqa",
             "generate",
             "recording.db",
-            "--query",
-            "storage box",
-            "--query",
-            "chair",
-            "--from",
+            "--start",
+            "0",
+            "--stop",
             "10",
-            "--duration",
-            "30",
-            "--params",
-            "go2",
+            "--with-localize",
+            "--localize-query",
+            "storage box",
+            "--localize-query",
+            "chair",
             "--min-views",
             "4",
+            "--localize-evidence",
+            str(evidence),
             "--output",
-            str(tmp_path),
+            str(tmp_path / "out"),
         ],
     )
 
@@ -389,12 +394,13 @@ def test_vqa_generate_cli_accepts_cross_view_query(
     assert seen == [
         GenerationRequest(
             dataset="recording.db",
-            queries=("storage box", "chair"),
-            from_s=10.0,
-            duration_s=30.0,
-            params="go2",
+            start=0,
+            stop=10,
+            with_localize=True,
+            localize_queries=("storage box", "chair"),
             min_views=4,
-            output=tmp_path,
+            localize_evidence=evidence,
+            output=tmp_path / "out",
         )
     ]
 
