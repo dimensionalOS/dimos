@@ -116,6 +116,10 @@ def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
 class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
+    # Checking grasps for contact takes seconds; a module sharing this process,
+    # such as ControlCoordinator, would stall for as long.
+    dedicated_worker = True
+
     config: PickAndPlaceModuleConfig
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
