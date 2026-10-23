@@ -162,8 +162,7 @@ def run(
     for result in results:
         status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
         detail = result.error or (
-            f"score={result.score:.2f} steps={result.steps} "
-            f"answer={result.final_answer[:60]!r}"
+            f"score={result.score:.2f} steps={result.steps} answer={result.final_answer[:60]!r}"
         )
         typer.echo(f"{status:5} {result.case_id:30} {detail} ({result.duration_s:.1f}s)")
     summary = summarize(results)
