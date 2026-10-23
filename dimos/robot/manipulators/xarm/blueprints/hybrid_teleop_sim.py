@@ -15,7 +15,9 @@
 """Simulated xArm7 pick-and-place stack that an operator can hold.
 
 The same modules as xarm-perception-sim, on a coordinator that also runs the
-operator hold and takes hold commands and sends hold status as streams.
+operator hold and takes hold commands and sends hold status as streams. The
+camera, the hold status and the hold commands also go to the page in
+web/hybrid-teleop: run `dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -45,6 +48,7 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.web.cockpit import Channel, cockpit
 
 
 class OperatorHoldCoordinator(ControlCoordinator):
@@ -108,4 +112,31 @@ hybrid_teleop_sim = autoconnect(
         instance_name="ControlCoordinator",
     ),
     RerunBridgeModule.blueprint(),
+    cockpit(
+        channels=[
+            Channel(
+                "color_image",
+                Image,
+                encoding="jpeg.v1",
+                delivery="latest",
+                max_hz=15.0,
+                params={"quality": 75},
+            ),
+            Channel(
+                "operator_hold_status",
+                OperatorHoldStatus,
+                max_hz=5.0,
+                paced=True,
+                resend_on_subscribe=True,
+            ),
+            Channel(
+                "operator_hold_command",
+                OperatorHoldCommand,
+                dir="tx",
+                publish="shared",
+                encoding="operator_hold_command.json.v1",
+                max_hz=5.0,
+            ),
+        ]
+    ),
 )

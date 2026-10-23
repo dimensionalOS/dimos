@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<!-- Operator page for the hybrid-teleop-sim blueprint: the arm camera, the
+     operator hold status, and buttons to ask for an operator or acknowledge
+     the hold. On a relay that needs a viewer token, open it with ?token=...
+     Run:  dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DimOS operator assist</title>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #15171a;
+        color: #e4e6e8;
+        color-scheme: dark;
+        font: 14px/1.4 system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 12px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .muted {
+        color: #9aa0a6;
+      }
+      main {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      #camera-column {
+        flex: 2;
+        min-width: 0;
+      }
+      #camera {
+        position: relative;
+        background: #000;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      #camera canvas,
+      #camera video {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      aside {
+        flex: 1;
+        min-width: 260px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #hold-card {
+        background: #1f2226;
+        border: 1px solid #2c3036;
+        border-radius: 6px;
+        padding: 12px 14px;
+      }
+      #hold-state {
+        font-size: 40px;
+        font-weight: 700;
+      }
+      #hold-card.on #hold-state {
+        color: #ff8a3d;
+      }
+      #hold-card.off #hold-state {
+        color: #6fcf8f;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+        margin: 8px 0 0;
+      }
+      dt {
+        color: #9aa0a6;
+      }
+      dd {
+        margin: 0;
+      }
+      button {
+        padding: 10px;
+        border: 1px solid #3a3f46;
+        border-radius: 6px;
+        background: #2a2e34;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #log {
+        min-height: 1.4em;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Operator assist</h1>
+      <div id="connection" class="muted">connecting</div>
+    </header>
+    <main>
+      <section id="camera-column">
+        <div id="camera">
+          <canvas id="camera-canvas" width="640" height="480"></canvas>
+          <video id="camera-video" autoplay muted playsinline hidden></video>
+        </div>
+        <div id="camera-info" class="muted">waiting for camera</div>
+      </section>
+      <aside>
+        <div id="hold-card">
+          <div class="muted">Operator hold</div>
+          <div id="hold-state">no status yet</div>
+          <dl>
+            <dt>route</dt>
+            <dd id="hold-route">-</dd>
+            <dt>reason</dt>
+            <dd id="hold-reason">-</dd>
+            <dt>since</dt>
+            <dd id="hold-since">-</dd>
+            <dt id="hold-unheld-label" hidden>not held</dt>
+            <dd id="hold-unheld" hidden></dd>
+          </dl>
+        </div>
+        <button id="request">Request operator</button>
+        <button id="acknowledge" disabled>Acknowledge</button>
+        <div id="log" class="muted"></div>
+      </aside>
+    </main>
+    <script type="module">
+      import { connect } from "/sdk.js";
+
+      const $ = (selector) => document.querySelector(selector);
+      const token = new URLSearchParams(location.search).get("token");
+      const session = token ? connect({ token }) : connect();
+
+      session.status.subscribe(() => {
+        const s = session.status.get();
+        $("#connection").textContent = `${s.transport.phase}, robot: ${
+          s.watchedRobot?.id ?? "none"
+        }`;
+      });
+
+      // Camera. jpeg.v1 frames are drawn on the canvas at their own size; a
+      // WebRTC relay delivers a MediaStreamTrack instead, shown in the video.
+      const canvas = $("#camera-canvas");
+      const ctx = canvas.getContext("2d");
+      const video = $("#camera-video");
+      let pending = null; // newest JPEG bytes not drawn yet
+      let drawing = false;
+
+      const drawFrames = async () => {
+        drawing = true;
+        while (pending) {
+          const bytes = pending;
+          pending = null;
+          try {
+            const blob = new Blob([bytes], { type: "image/jpeg" });
+            const bitmap = await createImageBitmap(blob);
+            if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+              canvas.width = bitmap.width;
+              canvas.height = bitmap.height;
+            }
+            ctx.drawImage(bitmap, 0, 0);
+            bitmap.close();
+          } catch {
+            // A frame that does not decode leaves the last good one on screen.
+          }
+        }
+        drawing = false;
+      };
+
+      session.store.subscribe("color_image", () => {
+        const value = session.store.get("color_image")?.value;
+        if (typeof MediaStreamTrack !== "undefined" && value instanceof MediaStreamTrack) {
+          if (video.srcObject?.getTracks()[0] !== value) {
+            video.srcObject = new MediaStream([value]);
+          }
+          video.hidden = false;
+          canvas.hidden = true;
+        } else if (value instanceof Uint8Array) {
+          pending = value;
+          if (!drawing) drawFrames();
+        }
+      });
+      // Keeps the relay sending frames; the store above sees each one.
+      session.subscribe("color_image", (snapshot) => {
+        $("#camera-info").textContent = snapshot.slot
+          ? `${canvas.width} x ${canvas.height}, ${snapshot.stats.hz.toFixed(1)} fps`
+          : "waiting for camera";
+      });
+
+      // Hold status. Before the first message the hold is treated as off.
+      let hold = null;
+      const elapsed = (startedAt) => {
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+      };
+      const renderHold = () => {
+        const on = hold?.on === true;
+        const unheld = on ? (hold.unheld ?? []) : [];
+        $("#hold-state").textContent = hold === null ? "no status yet" : on ? "ON" : "OFF";
+        $("#hold-card").classList.toggle("on", on);
+        $("#hold-card").classList.toggle("off", hold !== null && !on);
+        $("#hold-route").textContent = on ? hold.route : "-";
+        $("#hold-reason").textContent = on ? hold.reason : "-";
+        $("#hold-since").textContent = on ? elapsed(hold.started_at) : "-";
+        $("#hold-unheld").textContent = unheld.join(", ");
+        $("#hold-unheld").hidden = $("#hold-unheld-label").hidden = unheld.length === 0;
+        $("#request").disabled = on;
+        $("#acknowledge").disabled = !on;
+      };
+      session.subscribe("operator_hold_status", (snapshot) => {
+        hold = snapshot.slot?.value ?? null;
+        renderHold();
+      });
+      setInterval(renderHold, 1000);
+
+      // Hold buttons. The log line shows how the last publish settled.
+      const send = async (command) => {
+        const time = new Date().toLocaleTimeString();
+        try {
+          await session.publish("operator_hold_command", command);
+          $("#log").textContent = `${time} ${command.action}: acked`;
+        } catch (e) {
+          $("#log").textContent = `${time} ${command.action}: ${e.outcome ?? "failed"} ${
+            e.code ?? e.message
+          }`;
+        }
+      };
+      $("#request").addEventListener(
+        "click",
+        () => send({ action: "request", route: "manual", reason: "operator request" }),
+      );
+      $("#acknowledge").addEventListener("click", () => send({ action: "acknowledge" }));
+    </script>
+  </body>
+</html>
