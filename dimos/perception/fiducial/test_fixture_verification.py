@@ -18,11 +18,12 @@ import cv2
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.geometry import transform_matrix
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.fiducial.fixture_verification import (
     BoardLayout,
@@ -146,7 +147,9 @@ def test_synthetic_packed_board_detects_all_twelve_ids_and_layout_homography(
 
     corners_by_id: dict[int, np.ndarray] = {}
     for corner_set, id_arr in zip(corners, ids, strict=True):
-        corners_by_id[int(id_arr[0])] = np.asarray(corner_set, dtype=np.float32).reshape(4, 2)
+        corners_by_id[int(np.asarray(id_arr).reshape(-1)[0])] = np.asarray(
+            corner_set, dtype=np.float32
+        ).reshape(4, 2)
 
     geom = verify_board_layout_geometry(corners_by_id, layout)
     assert geom.ok, f"layout homography failed p95={geom.layout_error_px_p95}"
@@ -159,24 +162,17 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
     width, height = 1920, 1080
     bgr = _synthetic_packed_apriltag_board_bgr(layout, width=width, height=height)
     ts = 10_000.0
-    cam_info = CameraInfo.from_intrinsics(
-        1400.0,
-        1400.0,
-        width / 2.0,
-        height / 2.0,
-        width,
-        height,
-        frame_id="camera_optical",
+    header = Header(stamp=time_from_seconds(ts), frame_id="camera_optical")
+    cam_info = camera_info_from_intrinsics(
+        fx=1400, fy=1400, cx=width / 2, cy=height / 2, width=width, height=height, header=header
     )
-    cam_info.ts = ts
-
-    image = Image.from_opencv(bgr, frame_id="camera_optical", ts=ts)
-    world_T_optical = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="world",
+    image = image_from_array(bgr, encoding="bgr8", header=header)
+    world_T_optical = TransformStamped(
+        header=Header(stamp=header.stamp, frame_id="world"),
         child_frame_id="camera_optical",
-        ts=ts,
+        transform=Transform(
+            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+        ),
     )
     detections = detect_markers_in_image(
         image,
@@ -199,8 +195,9 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
         for tag_id in range(12):
             tr = view.get(marker_parent, f"fixture/marker_{tag_id}", ts, 0.1)
             assert tr is not None, f"missing marker {tag_id}"
-            assert np.all(np.isfinite(tr.to_matrix()))
+            assert np.all(np.isfinite(transform_matrix(tr.transform)))
     finally:
+        view.dispose()
         mod.stop()
 
 

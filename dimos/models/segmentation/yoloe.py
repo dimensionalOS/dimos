@@ -23,7 +23,8 @@ import numpy as np
 from numpy.typing import NDArray
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils.image import image_to_bgr
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -58,7 +59,7 @@ class _YoloeVisualPromptSegmentationDetector(Yoloe2DDetector):
             raise RuntimeError("YOLO-E segmentation requires visual box prompts")
         with self._lock:
             results = self.model.predict(
-                source=image.to_opencv(),
+                source=image_to_bgr(image),
                 device=self.device,
                 conf=self.conf,
                 iou=0.6,

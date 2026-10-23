@@ -29,6 +29,8 @@ from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTr
 import av
 import numpy as np
 
+from dimos.message_utils.image import image_to_rgb, image_view
+from dimos.messages.sensor_msgs.msg import Image as CdrImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
@@ -72,13 +74,13 @@ class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
         self._loop: asyncio.AbstractEventLoop = loop
-        self._latest: Image | None = None
+        self._latest: Image | CdrImage | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
         self._first_mono: float | None = None
         self._new_frame = asyncio.Event()
-        self._dropped: set[ImageFormat] = set()
+        self._dropped: set[str] = set()
 
     def arm(self) -> None:
         """Discard buffered frames; start delivering from now.
@@ -89,7 +91,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._consumed_seq = self._frame_seq
         self._armed = True
 
-    def set_latest(self, img: Image) -> None:
+    def set_latest(self, img: Image | CdrImage) -> None:
         """Publish the latest frame. Called from the producer (stream) thread.
 
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
@@ -106,26 +108,37 @@ class CameraVideoTrack(VideoStreamTrack):
         except RuntimeError:
             return
 
-    def _to_av(self, img: Image) -> av.VideoFrame | None:
+    def _to_av(self, img: Image | CdrImage) -> av.VideoFrame | None:
         """None, logged once per source format, for what neither to_rgb() nor
         av takes (DEPTH float32, a malformed array). Never raises: recv() runs
         in aiortc's sender task, which ends the track on an exception."""
         try:
-            frame = img if img.format in _AV_FORMAT_MAP else img.to_rgb()
-            data = frame.data
+            if isinstance(img, CdrImage):
+                formats = {
+                    "bgr8": "bgr24",
+                    "rgb8": "rgb24",
+                    "bgra8": "bgra",
+                    "rgba8": "rgba",
+                    "mono8": "gray",
+                }
+                data = image_view(img) if img.encoding in formats else image_to_rgb(img)
+                av_format = formats.get(img.encoding, "rgb24")
+            else:
+                frame = img if img.format in _AV_FORMAT_MAP else img.to_rgb()
+                data = frame.data
+                av_format = _AV_FORMAT_MAP[frame.format]
             h, w = data.shape[:2]
             if h % 2 or w % 2:
                 # libx264 takes yuv420p, whose chroma planes are half-size: an
                 # odd width or height fails avcodec_open2 in aiortc's sender
                 # task, past this guard. The last row/column is cropped.
                 data = np.ascontiguousarray(data[: h - h % 2, : w - w % 2])
-            return av.VideoFrame.from_ndarray(data, format=_AV_FORMAT_MAP[frame.format])
+            return av.VideoFrame.from_ndarray(data, format=av_format)
         except Exception as e:
-            if img.format not in self._dropped:
-                self._dropped.add(img.format)
-                logger.warning(
-                    "video track: dropping %s/%s frames: %s", img.format.value, img.data.dtype, e
-                )
+            encoding = img.encoding if isinstance(img, CdrImage) else img.format.value
+            if encoding not in self._dropped:
+                self._dropped.add(encoding)
+                logger.warning("video track: dropping %s frames: %s", encoding, e)
             return None
 
     async def recv(self) -> av.VideoFrame:

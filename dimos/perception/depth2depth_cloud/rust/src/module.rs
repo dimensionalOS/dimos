@@ -31,16 +31,42 @@ use std::time::{Duration, Instant};
 use depth2depth::{
     Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
 };
-use dimos_module::pointcloud::extract_xyz;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
+use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImage;
+use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
+use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+use dimos_generated_messages::std_msgs::msg::header::Header;
+
+use dimos_module::cdr;
+use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{Isometry3, Point3};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::undistort::{Lens, UndistortMap};
+
+fn extract_xyz(cloud: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
+    let offset = |name: &str| {
+        cloud
+            .fields
+            .iter()
+            .find(|field| {
+                field.name == name && field.datatype == PointField::FLOAT32 && field.count == 1
+            })
+            .map(|field| field.offset as usize)
+            .ok_or(ExtractError("missing a scalar float32 xyz field"))
+    };
+    extract_xyz_rows(
+        &cloud.data,
+        [cloud.width as usize, cloud.height as usize],
+        [cloud.point_step as usize, cloud.row_step as usize],
+        [offset("x")?, offset("y")?, offset("z")?],
+        cloud.is_bigendian,
+    )
+}
 
 const TIMING_REPORT_EVERY: Duration = Duration::from_secs(5);
 /// Scans up to this far after a frame still anchor it...
@@ -75,9 +101,6 @@ pub struct Config {
     /// Lidar points farther than this from the camera are not anchors.
     #[validate(range(min = 0.1, max = 200.0))]
     max_anchor_range_m: f64,
-    /// Largest gap between a stamp and the transform used for it.
-    #[validate(range(min = 0.0, max = 5.0))]
-    tf_tolerance_s: f64,
     /// Frames and scans wait this long for their transform before they are dropped.
     #[validate(range(min = 0.0, max = 2.0))]
     max_tf_lag_s: f64,
@@ -122,19 +145,19 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "depth2depth_cloud", setup = start, teardown = stop)]
 pub struct Depth2DepthCloud {
-    #[input(decode = CompressedImage::decode, handler = on_image)]
+    #[input(decode = cdr::decode, handler = on_image)]
     image: Input<CompressedImage>,
 
-    #[input(decode = CameraInfo::decode, handler = on_camera_info)]
+    #[input(decode = cdr::decode, handler = on_camera_info)]
     camera_info: Input<CameraInfo>,
 
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
     #[tf]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     depth_cloud: Output<PointCloud2>,
 
     #[config]
@@ -353,7 +376,10 @@ impl Worker {
             let newest = self.shared.frames.lock().unwrap().back().map(|image| {
                 let frame_id =
                     resolve_frame_id(&cfg.frame_id, &info.header.frame_id, &image.header.frame_id);
-                (frame_id.to_string(), seconds(&image.header.stamp))
+                (
+                    frame_id.to_string(),
+                    image.header.stamp.clone(),
+                )
             });
             let Some((frame_id, stamp)) = newest else {
                 frame_arrived.await;
@@ -362,13 +388,13 @@ impl Worker {
             let wait = Duration::from_secs_f64(cfg.max_tf_lag_s);
             let lookup = |target: &str| {
                 let tf = self.tf.clone();
-                let (target, frame_id) = (target.to_string(), frame_id.clone());
+                let (target, frame_id, stamp) =
+                    (target.to_string(), frame_id.clone(), stamp.clone());
                 async move {
                     target.is_empty()
                         || tf
                             .lookup(&target, &frame_id)
-                            .at(stamp)
-                            .tolerance(cfg.tf_tolerance_s)
+                            .at(stamp.clone())
                             .within(wait)
                             .await
                             .is_some()
@@ -385,7 +411,7 @@ impl Worker {
                             .frames
                             .lock()
                             .unwrap()
-                            .retain(|image| seconds(&image.header.stamp) > stamp);
+                            .retain(|image| (image.header.stamp.sec, image.header.stamp.nanosec) > (stamp.sec, stamp.nanosec));
                     }
                 }
             }
@@ -418,8 +444,8 @@ impl Worker {
             };
             let decoded = Instant::now();
             if !undistort.as_ref().is_some_and(|(held, held_width, _)| {
-                held.K == info.K
-                    && held.D == info.D
+                held.k == info.k
+                    && held.d == info.d
                     && held.distortion_model == info.distortion_model
                     && held.width == info.width
                     && *held_width == width
@@ -560,18 +586,19 @@ impl Worker {
                 scan_arrived.await;
                 continue;
             };
-            let stamp = seconds(&msg.header.stamp);
+            let query_stamp = msg.header.stamp.clone();
             let Some(world_from_lidar) = self
                 .tf
                 .lookup(&cfg.world_frame, &msg.header.frame_id)
-                .at(stamp)
-                .tolerance(cfg.tf_tolerance_s)
+                .at(query_stamp)
                 .within(Duration::from_secs_f64(cfg.max_tf_lag_s))
                 .await
             else {
                 continue;
             };
-            let pose = isometry(&world_from_lidar);
+            let Ok(pose) = dimos_module::tf::isometry(&world_from_lidar) else {
+                continue;
+            };
             let points = match extract_xyz(&msg) {
                 Ok(points) => points,
                 Err(error) => {
@@ -587,6 +614,7 @@ impl Worker {
                     [p.x as f32, p.y as f32, p.z as f32]
                 })
                 .collect();
+            let stamp = seconds(&msg.header.stamp);
             let mut history = self.shared.history.lock().unwrap();
             history.push_back(Scan { stamp, points });
             let newest = history.iter().map(|scan| scan.stamp).fold(stamp, f64::max);
@@ -604,7 +632,10 @@ impl Worker {
                     &info.header.frame_id,
                     &image.header.frame_id,
                 );
-                let poses = self.poses(frame_id, seconds(&image.header.stamp))?;
+                let poses = self.poses(
+                    frame_id,
+                    image.header.stamp.clone(),
+                )?;
                 Some((i, (frame_id.to_string(), poses)))
             })?;
         let image = frames.drain(..=index).next_back()?;
@@ -616,15 +647,10 @@ impl Worker {
         })
     }
 
-    fn poses(&self, frame_id: &str, stamp: f64) -> Option<Poses> {
+    fn poses(&self, frame_id: &str, stamp: Time) -> Option<Poses> {
         let pose = |target: &str| {
-            let transform = self
-                .tf
-                .lookup(target, frame_id)
-                .at(stamp)
-                .tolerance(self.config.tf_tolerance_s)
-                .get()?;
-            Some(isometry(&transform))
+            let transform = self.tf.lookup(target, frame_id).at(stamp.clone()).get()?;
+            dimos_module::tf::isometry(&transform).ok()
         };
         let optional = |target: &str| match target {
             "" => Some(None),
@@ -712,10 +738,10 @@ fn decode_rgb(image: &CompressedImage, scale: usize) -> Option<(Vec<u8>, usize, 
 }
 
 fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCloud2 {
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.into(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     let data: Vec<u8> = points
@@ -725,23 +751,18 @@ fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCl
         .collect();
     PointCloud2 {
         header: Header {
-            seq: source.seq,
             stamp: source.stamp.clone(),
             frame_id,
         },
         height: 1,
-        width: points.len() as i32,
+        width: points.len() as u32,
         fields: vec![field("x", 0), field("y", 4), field("z", 8)],
         is_bigendian: false,
         point_step: 12,
-        row_step: 12 * points.len() as i32,
+        row_step: 12 * points.len() as u32,
         data,
         is_dense: true,
     }
-}
-
-fn isometry(transform: &dimos_module::tf::Transform) -> Isometry3<f64> {
-    Isometry3::from_parts(transform.translation().into(), transform.rotation())
 }
 
 /// A configured size, or the derived one when it is 0.
@@ -754,7 +775,7 @@ fn or_derived(configured: usize, derived: usize) -> usize {
 }
 
 fn seconds(stamp: &Time) -> f64 {
-    stamp.sec as f64 + stamp.nsec as f64 * 1e-9
+    stamp.sec as f64 + stamp.nanosec as f64 * 1e-9
 }
 
 /// Config, then calibration, then image frame, since drivers stamp frames nobody publishes a transform for.
@@ -825,6 +846,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_cloud_roundtrips_cdr_with_exact_negative_and_epoch_stamps() {
+        for stamp in [
+            Time {
+                sec: -1,
+                nanosec: 999_999_999,
+            },
+            Time {
+                sec: 1_700_000_000,
+                nanosec: 123_456_789,
+            },
+        ] {
+            let header = Header {
+                stamp: stamp.clone(),
+                frame_id: "camera".into(),
+            };
+            let cloud = make_cloud(&[[1., 2., 3.]], &header, "optical".into());
+            let received: PointCloud2 = cdr::decode(&cdr::encode(&cloud).unwrap()).unwrap();
+            assert_eq!(received.header.stamp.sec, stamp.sec);
+            assert_eq!(received.header.stamp.nanosec, stamp.nanosec);
+            assert_eq!(received.header.frame_id, "optical");
+            assert_eq!(extract_xyz(&received).unwrap(), vec![[1., 2., 3.]]);
+        }
+    }
+
+    #[test]
     fn a_stage_behind_takes_the_newest_item_and_counts_the_ones_it_missed() {
         let latest = Latest::default();
         latest.put(1);
@@ -845,8 +891,12 @@ mod tests {
     #[test]
     fn a_non_jpeg_format_is_refused_rather_than_fed_to_the_decoder() {
         let png = CompressedImage {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
             format: "png".into(),
-            ..Default::default()
+            data: Vec::new(),
         };
         assert!(decode_rgb(&png, 1).is_none());
     }
@@ -854,8 +904,7 @@ mod tests {
     #[test]
     fn the_cloud_carries_the_points_and_the_source_stamp() {
         let header = Header {
-            seq: 7,
-            stamp: Time { sec: 3, nsec: 4 },
+            stamp: Time { sec: 3, nanosec: 4 },
             frame_id: "image".into(),
         };
         let cloud = make_cloud(
@@ -867,7 +916,7 @@ mod tests {
             (
                 cloud.width,
                 cloud.header.frame_id.as_str(),
-                cloud.header.stamp.nsec
+                cloud.header.stamp.nanosec
             ),
             (2, "camera", 4)
         );

@@ -17,6 +17,7 @@
 import json
 from pathlib import Path
 import sys
+from typing import get_args, get_origin, get_type_hints
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -24,6 +25,7 @@ else:
     import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
+from dimos.core.stream import IO, In, Out
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
@@ -55,12 +57,14 @@ def test_rust_struct_has_every_config_key() -> None:
 def test_ports_match_registry() -> None:
     def ports(cls: type) -> set[str]:
         return {
-            name
-            for name, hint in cls.__annotations__.items()
-            if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
+            name for name, hint in get_type_hints(cls).items() if get_origin(hint) in (In, Out, IO)
         } - {"config"}
 
     manifest = tomllib.loads(_RUST_MANIFEST.read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)
+    hints = get_type_hints(RealSenseCamera)
+    for name, expected in {**registry["outputs"], **registry["inputs"]}.items():
+        value_type = get_args(hints[name])[0]
+        assert value_type.__msgtype__ == expected

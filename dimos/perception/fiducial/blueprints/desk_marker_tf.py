@@ -27,12 +27,15 @@ from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.message_utils.camera_info import camera_info_from_yaml
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.time import time_from_nanoseconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
@@ -61,8 +64,9 @@ def create_desk_webcam(
 def create_desk_camera_info(
     camera_info_yaml: str | Path = DEFAULT_DESK_CAMERA_INFO_YAML,
 ) -> CameraInfo:
-    camera_info = CameraInfo.from_yaml(str(camera_info_yaml))
-    camera_info.frame_id = DESK_CAMERA_FRAME_ID
+    camera_info = camera_info_from_yaml(
+        camera_info_yaml, header=Header(frame_id=DESK_CAMERA_FRAME_ID, stamp=Time(sec=0, nanosec=0))
+    )
     return camera_info
 
 
@@ -124,28 +128,30 @@ class DeskStaticTfModule(Module):
         super().stop()
 
     def publish_static_chain(self) -> None:
-        ts = time.time()
-        self._last_publish_ts = ts
+        stamp = time_from_nanoseconds(time.time_ns())
+        self._last_publish_ts = stamp.sec + stamp.nanosec / 1e9
         roll, pitch, yaw = self.config.camera_rotation_rpy_rad
         x, y, z = self.config.camera_translation_m
-
         self.tf.publish(
             TFMessage(
-                Transform(
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    frame_id=self.config.world_frame,
-                    child_frame_id=self.config.base_frame,
-                    ts=ts,
-                ),
-                Transform(
-                    # Default desk camera pose: about 25 cm forward and 15 cm above base_link.
-                    translation=Vector3(x, y, z),
-                    rotation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
-                    frame_id=self.config.base_frame,
-                    child_frame_id=self.config.camera_optical_frame,
-                    ts=ts,
-                ),
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=stamp, frame_id=self.config.world_frame),
+                        child_frame_id=self.config.base_frame,
+                        transform=Transform(
+                            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
+                    ),
+                    TransformStamped(
+                        header=Header(stamp=stamp, frame_id=self.config.base_frame),
+                        child_frame_id=self.config.camera_optical_frame,
+                        transform=Transform(
+                            translation=Vector3(x=x, y=y, z=z),
+                            rotation=quaternion_from_euler(roll, pitch, yaw),
+                        ),
+                    ),
+                ]
             )
         )
 
@@ -167,8 +173,7 @@ desk_marker_tf = autoconnect(
 ).transports(
     {
         ("detections", MarkerDetectionStreamModule): LCMTransport(
-            "/marker_detection/detections",
-            Detection3DArray,
+            "/marker_detection/detections", Detection3DArray
         ),
     }
 )
