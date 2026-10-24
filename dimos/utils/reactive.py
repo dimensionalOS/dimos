@@ -32,53 +32,68 @@ T = TypeVar("T")
 class _LatestBackpressureObserver(ObserverBase[Any]):
     """Observer wrapper applying "latest wins" backpressure.
 
-    While a message is processed in a worker thread, only the most recent
-    incoming message is retained; intermediate ones are dropped. When processing
-    finishes, the retained message (if any) is delivered next.
+    While a message is processed, only the most recent incoming message is
+    retained; intermediate ones are dropped. When processing finishes, the
+    retained message (if any) is delivered next.
 
-    Inlined from the abandoned `rxpy_backpressure` package
-
-    Copyright (c) rxpy_backpressure
-    License MIT, Mark Haynes, 2019
+    Delivery happens on a single resident worker thread per observer, started
+    on the first message and released after ``idle_s`` seconds without work.
+    The previous implementation (inlined from the abandoned `rxpy_backpressure`
+    package, MIT, Mark Haynes, 2019) started a new ``threading.Thread`` for
+    every delivered message. Each short-lived thread that touches CUDA leaves
+    ~1 MB of per-thread state behind: a GPU detector behind ``backpressure()``
+    at 5 Hz grew by ~270 MB/min on a Jetson Orin Nano (8 GB) and starved the
+    graph within 15 minutes. One worker thread keeps the memory flat.
     """
 
-    def __init__(self, wrapped: Any) -> None:
+    idle_s: float = 5.0
+
+    def __init__(self, wrapped: Any, idle_s: float | None = None) -> None:
         self._wrapped = wrapped
-        self._locked = False
-        self._message_cache: Any = None
-        self._error_cache: Any = None
+        if idle_s is not None:
+            self.idle_s = idle_s
+        self._cond = threading.Condition()
+        self._pending: tuple[str, Any] | None = None  # ("next" | "error", payload)
+        self._worker: threading.Thread | None = None
+        self._completed = False
+
+    def _submit(self, kind: str, payload: Any) -> None:
+        with self._cond:
+            self._pending = (kind, payload)
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run, name="backpressure-latest", daemon=True
+                )
+                self._worker.start()
+            self._cond.notify()
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                while self._pending is None:
+                    if self._completed:
+                        return
+                    if not self._cond.wait(timeout=self.idle_s) and self._pending is None:
+                        # Idle: release the thread; the next message starts a fresh one.
+                        self._worker = None
+                        return
+                kind, payload = self._pending
+                self._pending = None
+            if kind == "next":
+                self._wrapped.on_next(payload)
+            else:
+                self._wrapped.on_error(payload)
 
     def on_next(self, message: Any) -> None:
-        if self._locked:
-            self._message_cache = message
-        else:
-            self._locked = True
-            threading.Thread(target=self._process_next, args=(message,)).start()
-
-    def _process_next(self, message: Any) -> None:
-        self._wrapped.on_next(message)
-        if self._message_cache is not None:
-            threading.Thread(target=self._process_next, args=(self._message_cache,)).start()
-            self._message_cache = None
-        else:
-            self._locked = False
+        self._submit("next", message)
 
     def on_error(self, error: Any) -> None:
-        if self._locked:
-            self._error_cache = error
-        else:
-            self._locked = True
-            threading.Thread(target=self._process_error, args=(error,)).start()
-
-    def _process_error(self, error: Any) -> None:
-        self._wrapped.on_error(error)
-        if self._error_cache:
-            threading.Thread(target=self._process_error, args=(self._error_cache,)).start()
-            self._error_cache = None
-        else:
-            self._locked = False
+        self._submit("error", error)
 
     def on_completed(self) -> None:
+        with self._cond:
+            self._completed = True
+            self._cond.notify()
         self._wrapped.on_completed()
 
 
