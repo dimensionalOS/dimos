@@ -92,6 +92,7 @@ class ModuleCoordinator(Resource):
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
         self._remote_module_ref_clients: list[RPCClient] = []
         self._started = False
+        self._stopped = False
         self._modules_lock = threading.RLock()
         self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
@@ -104,22 +105,15 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
+        with self._modules_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+
         with self._rpc_lock:
             if self._coordinator_rpc is not None:
                 self._coordinator_rpc.stop()
                 self._coordinator_rpc = None
-
-        for name, module in reversed(self._deployed_modules.items()):
-            logger.info("Stopping module...", module=module.remote_name)
-            try:
-                module.stop()
-            except Exception:
-                logger.error("Error stopping module", module=name, exc_info=True)
-            logger.info("Module stopped.", module=module.remote_name)
-
-        for client in self._remote_module_ref_clients:
-            client.stop_rpc_client()
-        self._remote_module_ref_clients.clear()
 
         def _stop_manager(m: WorkerManager) -> None:
             try:
@@ -128,6 +122,18 @@ class ModuleCoordinator(Resource):
                 logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
+
+        # Workers own module.stop(). Sending fire-and-forget stop RPCs here
+        # races their cleanup and invokes module-specific teardown twice.
+        for name, module in self._deployed_modules.items():
+            try:
+                module.stop_rpc_client()
+            except Exception:
+                logger.error("Error closing module RPC client", module=name, exc_info=True)
+
+        for client in self._remote_module_ref_clients:
+            client.stop_rpc_client()
+        self._remote_module_ref_clients.clear()
 
     def start_rpc_service(self, *, name: str | None = None) -> None:
         """Expose the coordinator's API as RPC methods under an optional name."""

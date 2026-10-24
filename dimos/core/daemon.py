@@ -23,7 +23,7 @@ import signal
 import sys
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -140,24 +140,18 @@ def install_signal_handlers(
     *,
     sigint: bool = True,
 ) -> None:
-    """Install SIGTERM/SIGINT handlers that stop the coordinator, sweep the run and exit.
+    """Install SIGTERM/SIGINT handlers that request shutdown through the main loop.
 
     When `sigint` is False, only SIGTERM is wired. This is useful for foreground
-    mode where the default SIGINT behavior (`KeyboardInterrupt`) should be
-    preserved so Ctrl+C produces a visible traceback.
+    mode where the default SIGINT behavior (`KeyboardInterrupt`) is preserved.
+
+    The watchdog sweeps strays after exit. Sweeping here would kill and reap
+    multiprocessing's resource tracker before its owning interpreter cleans up.
     """
 
     def _shutdown(signum: int, frame: object) -> None:
-        logger.info("Received signal, shutting down", signal=signum)
-        try:
-            coordinator.stop()
-        except Exception:
-            logger.error("Error during coordinator stop", exc_info=True)
-        try:
-            kill_run_processes(run_id)
-        except Exception:
-            logger.error("Error during run-process sweep", exc_info=True)
-        sys.exit(0)
+        logger.info("Received signal, shutting down", signal=signum, run_id=run_id)
+        coordinator.shutdown()
 
     signal.signal(signal.SIGTERM, _shutdown)
     if sigint:

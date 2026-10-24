@@ -16,7 +16,7 @@ import copy
 from enum import Enum
 from importlib import resources
 import sys
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
 
@@ -376,6 +376,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._camera_info_stop = Event()
         self.connection = make_connection(
             self.config.ip,
             self.config,
@@ -396,6 +397,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def start(self) -> None:
         super().start()
+        self._camera_info_stop.clear()
         if not hasattr(self, "connection"):
             return
         self.connection.start()
@@ -440,21 +442,25 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def stop(self) -> None:
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
+        self._camera_info_stop.set()
         try:
             self.liedown()
         except Exception:
             logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
-        if self.connection:
-            try:
-                self.connection.stop()
-            except Exception:
-                logger.warning("connection stop failed", exc_info=True)
-
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
-        super().stop()
+        try:
+            # Cancel and drain stream callbacks before closing the replay DB
+            # or disconnecting the backend they read from.
+            super().stop()
+        finally:
+            if self.connection:
+                try:
+                    self.connection.stop()
+                except Exception:
+                    logger.warning("connection stop failed", exc_info=True)
 
     @classmethod
     def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
@@ -491,9 +497,9 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
-        while True:
+        while not self._camera_info_stop.is_set():
             self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
-            time.sleep(1.0)
+            self._camera_info_stop.wait(1.0)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

@@ -103,7 +103,12 @@ class PatrollingModule(Module):
         return "Patrol stopped."
 
     async def _stop_patrolling(self) -> None:
-        if self._patrol_task is not None and not self._patrol_task.done():
+        if self._patrol_task is None:
+            # Idle shutdown must not issue planner RPCs or a new navigation
+            # goal while the rest of the stack is being stopped.
+            self.stop_tool("start_patrol")
+            return
+        if not self._patrol_task.done():
             self._patrol_task.cancel()
             try:
                 await self._patrol_task
