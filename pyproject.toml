@@ -648,6 +648,7 @@ DEP003 = [
 # Keys match dependency spelling, including case, in this deptry release.
 # Explicit mappings also work when an optional dependency is not installed.
 bosdyn-client = "bosdyn"
+dreamlabs-client = "dream"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
