@@ -54,7 +54,6 @@ class RobotModelConfig(ModuleConfig):
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
-    gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill

@@ -67,7 +67,6 @@ def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
     assert config.joint_names == OPENYAM_ARM_JOINTS
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
-    assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
     assert config.home_joints == OPENYAM_HOME_JOINTS
     download.assert_not_called()
 
@@ -166,7 +165,6 @@ def test_openyam_basic_trajectory_accepts_all_hardware_joints(blueprint: Bluepri
         "openyam_gripper",
         [OPENYAM_GRIPPER_JOINT],
     )
-    assert gripper.name == f"{make_openyam_model_config().gripper_hardware_id}_gripper"
 
 
 @pytest.mark.parametrize(

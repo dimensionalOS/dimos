@@ -128,6 +128,5 @@ def make_a750_model_config() -> RobotModelConfig:
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
-        gripper_hardware_id="arm",
         home_joints=A750_HOME_JOINTS,
     )

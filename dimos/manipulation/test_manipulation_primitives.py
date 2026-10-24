@@ -16,7 +16,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from pytest_mock import MockerFixture
@@ -24,6 +24,7 @@ from pytest_mock import MockerFixture
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
+    CommandStatus,
     ExecutionResult,
     ExecutionStatus,
     ManipulationSpec,
@@ -41,6 +42,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 
 
@@ -49,7 +51,6 @@ def _model(
     groups: tuple[PlanningGroupDefinition, ...] = (
         PlanningGroupDefinition("tool", ("j0",), "base", "tcp"),
     ),
-    gripper: bool = False,
     home: list[float] | None = None,
 ) -> RobotModelConfig:
     joint_names = list(dict.fromkeys(name for group in groups for name in group.joint_names))
@@ -58,7 +59,6 @@ def _model(
         joint_names=joint_names,
         base_link="base",
         home_joints=home,
-        gripper_hardware_id="arm" if gripper else None,
         planning_groups=list(groups),
     )
 
@@ -114,7 +114,8 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True, home=[0.3]))
+    _set_groups(module, _model(home=[0.3]))
+    module.config.gripper_tasks = {"tool": "arm_gripper"}
     module._init_joints = JointState(name=["j0"], position=[-0.2])
     module._world_monitor.current_group_joint_state.return_value = JointState(
         name=["j0"], position=[0.1]
@@ -136,7 +137,7 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
 
 def test_get_state_skips_gripper_telemetry_without_control_hardware(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=False))
+    _set_groups(module, _model())
     module._world_monitor.current_group_joint_state.return_value = JointState(
         name=["j0"], position=[0.1]
     )
@@ -150,7 +151,8 @@ def test_get_state_skips_gripper_telemetry_without_control_hardware(module_facto
 
 def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True))
+    _set_groups(module, _model())
+    module.config.gripper_tasks = {"tool": "arm_gripper"}
     module._control_coordinator.task_invoke.return_value = True
 
     result = module.set_gripper_position(0.4, "tool")
@@ -163,7 +165,9 @@ def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
 
 def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, make_openyam_model_config())
+    model = make_openyam_model_config()
+    _set_groups(module, model)
+    module.config.gripper_tasks = {"manipulator": "openyam_gripper"}
     coordinator = module._control_coordinator
     coordinator.task_invoke.return_value = True
 
@@ -180,6 +184,61 @@ def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factor
 
     assert module.get_state().groups["manipulator"].gripper_position == pytest.approx(0.4)
     coordinator.task_invoke.assert_called_once_with("openyam_gripper", "get_normalized", {})
+
+
+def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) -> None:
+    module = module_factory()
+    model = dual_openyam_model_config()
+    model.planning_groups.append(PlanningGroupDefinition("both", tuple(model.joint_names), "base"))
+    _set_groups(module, model)
+    module.config.gripper_tasks = {"left_manipulator": "clamp_a", "right_manipulator": "clamp_b"}
+    invoke = module._control_coordinator.task_invoke
+    invoke.return_value = True
+
+    assert {info.id: info.has_gripper for info in module.list_planning_groups()} == {
+        "left_manipulator": True,
+        "right_manipulator": True,
+        "both": False,
+    }
+    assert module.set_gripper_position(0.2, "left_manipulator").succeeded
+    assert module.set_gripper_position(0.8, "right_manipulator").succeeded
+    assert module.set_gripper_position(0.5).status is CommandStatus.REJECTED
+    assert module.set_gripper_position(0.5, "both").status is CommandStatus.REJECTED
+    assert invoke.call_args_list == [
+        call("clamp_a", "set_normalized", {"values": [0.2]}),
+        call("clamp_b", "set_normalized", {"values": [0.8]}),
+    ]
+    invoke.reset_mock()
+    invoke.side_effect = [[0.2], [0.8]]
+    module._world_monitor.current_group_joint_state.return_value = None
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    snapshot = module.get_state()
+
+    assert {name: state.gripper_position for name, state in snapshot.groups.items()} == {
+        "left_manipulator": 0.2,
+        "right_manipulator": 0.8,
+        "both": None,
+    }
+    assert invoke.call_args_list == [
+        call("clamp_a", "get_normalized", {}),
+        call("clamp_b", "get_normalized", {}),
+    ]
+
+
+def test_unbound_group_does_not_infer_a_gripper_from_registered_tasks(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, _model())
+    module._control_coordinator.list_tasks.return_value = ["arm_gripper"]
+    module._world_monitor.current_group_joint_state.return_value = None
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    result = module.set_gripper_position(0.4, "tool")
+
+    assert result.status is CommandStatus.REJECTED
+    assert not module.list_planning_groups()[0].has_gripper
+    assert module.get_state().groups["tool"].gripper_position is None
+    module._control_coordinator.task_invoke.assert_not_called()
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
@@ -218,7 +277,8 @@ def test_explicit_group_must_support_requested_capability(module_factory) -> Non
 
 def test_omitted_group_selects_unique_capable_group(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True))
+    _set_groups(module, _model())
+    module.config.gripper_tasks = {"tool": "arm_gripper"}
 
     result = module._resolve_gripper_group(None)
 
