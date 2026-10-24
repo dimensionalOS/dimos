@@ -23,6 +23,38 @@ import typer
 app = typer.Typer(help="Generate and evaluate standalone visual question-answering datasets.")
 
 
+def _parse_memory_window(item: str) -> tuple[float, float]:
+    start_text, sep, stop_text = item.partition(":")
+    if not sep:
+        raise typer.BadParameter(f"window must be START:STOP, got {item!r}")
+    try:
+        start, stop = float(start_text), float(stop_text)
+    except ValueError as exc:
+        raise typer.BadParameter(f"window bounds must be numbers, got {item!r}") from exc
+    if stop <= start:
+        raise typer.BadParameter(f"window stop must be greater than start, got {item!r}")
+    return start, stop
+
+
+@app.command("memory-rows")
+def memory_rows(
+    dataset: str = typer.Argument(help="Recording name or path (e.g. go2_short)"),
+    output: Path = typer.Option(..., "-o", "--output", help="Output JSON path"),
+    window: list[str] = typer.Option(
+        ...,
+        "--window",
+        help="Relative-second window as START:STOP; repeat for multiple windows",
+    ),
+) -> None:
+    """Emit odom ``displacement`` / ``path_length`` memory eval rows as JSON."""
+    from dimos.evals.vqa.odom_rows import memory_rows as build_memory_rows, write_rows
+
+    windows = [_parse_memory_window(item) for item in window]
+    rows = build_memory_rows(dataset, windows)
+    write_rows(output, rows)
+    typer.echo(f"wrote {len(rows)} rows to {output}")
+
+
 @app.command("generate")
 def generate(
     dataset: str = typer.Argument(

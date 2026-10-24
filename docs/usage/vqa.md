@@ -52,6 +52,21 @@ projects valid points into the image, keeps the nearest camera-depth point per p
 inside each object mask, and derives robust range statistics. Keeping dataset access and calibration
 preparation outside the primitive lets range estimation operate only on explicit geometry.
 
+## Odom memory rows (`displacement` / `path_length`)
+
+Numeric odom memory cases are part of the same VQA tooling surface. Emit JSON rows from privileged
+odom windows (suites such as `go2_vqa` load the JSON):
+
+```bash skip
+dimos evals vqa memory-rows go2_short \
+  --window 0:20 --window 0:31 \
+  -o go2_vqa.json
+```
+
+Each row is tagged with `family` (`displacement` or `path_length`), a numeric answer `a`, and a
+scoring `band`. These stay outside the image multiple-choice author until VQA grows a numeric answer
+path; generation and CLI already live under `dimos/evals/vqa` and `dimos evals vqa`.
+
 ## Question Families
 
 The image-only question author selects object names and applicable families. It does not produce
