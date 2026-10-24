@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import re
 import signal
 import sys
 from unittest import mock
@@ -156,30 +155,45 @@ class TestRunEntryCRUD:
         assert loaded.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
 
 
+@pytest.fixture
+def run_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    for name in ("LOG_DIR", "RECORDINGS_DIR", "REGISTRY_DIR"):
+        monkeypatch.setattr(run_registry, name, tmp_path / name)
+    return tmp_path
+
+
 class TestGenerateRunId:
-    """test_generate_run_id_format — timestamp + sanitized blueprint name."""
+    def test_counts_up(self, run_dirs: Path):
+        (run_dirs / "LOG_DIR" / "20261022-205315-7d5d-unitree-go2").mkdir(parents=True)
+        (run_dirs / "RECORDINGS_DIR" / "2026-10-22_08-53-15pm-EEST").mkdir(parents=True)
+        assert generate_run_id("unitree-go2") == "001-unitree-go2"
+        assert generate_run_id("nav") == "002-nav"
 
-    def test_generate_run_id_format(self):
-        rid = generate_run_id("unitree-go2")
-        # Pattern: YYYYMMDD-HHMMSS-<4 hex>-<name>
-        assert re.match(r"^\d{8}-\d{6}-[0-9a-f]{4}-unitree-go2$", rid), f"unexpected format: {rid}"
+    def test_counter_spans_dirs(self, run_dirs: Path):
+        (run_dirs / "RECORDINGS_DIR" / "041-unitree-go2").mkdir(parents=True)
+        assert generate_run_id("unitree-go2") == "042-unitree-go2"
 
-    def test_same_second_runs_differ(self):
-        assert generate_run_id("unitree-go2") != generate_run_id("unitree-go2")
+    def test_checkouts_share_the_registry(self, run_dirs: Path, monkeypatch: pytest.MonkeyPatch):
+        assert generate_run_id("go2") == "001-go2"
+        monkeypatch.setattr(run_registry, "LOG_DIR", run_dirs / "other_checkout")
+        assert generate_run_id("go2") == "002-go2"
 
-    def test_blueprint_round_trips(self):
+    def test_claim_is_not_a_run(self, run_dirs: Path):
+        generate_run_id("go2")
+        assert list_runs(alive_only=False) == []
+        assert cleanup_stale() == 0
+        assert (run_dirs / "REGISTRY_DIR" / "001-go2.json").exists()
+
+    def test_blueprint_round_trips(self, run_dirs: Path):
         assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
         assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
         assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
+        assert blueprint_from_run_id("1234-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("downloads") is None
+        assert blueprint_from_run_id("2026-10-22_08-53-15pm-EEST") is None
 
-    def test_sanitizes_slashes(self):
-        rid = generate_run_id("path/to/bp")
-        assert "/" not in rid
-
-    def test_sanitizes_spaces(self):
-        rid = generate_run_id("my blueprint")
-        assert " " not in rid
+    def test_sanitizes(self, run_dirs: Path):
+        assert generate_run_id("path/to/bp my") == "001-path-to-bp-my"
 
 
 class TestCleanupStale:
