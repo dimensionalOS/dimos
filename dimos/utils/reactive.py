@@ -53,31 +53,25 @@ class _LatestBackpressureObserver(ObserverBase[Any], DisposableBase):
         self._cond = threading.Condition()
         self._pending: tuple[str, Any] | None = None  # ("next" | "error", payload)
         self._worker: threading.Thread | None = None
-        self._completed = False
         self._disposed = False
 
     def _submit(self, kind: str, payload: Any) -> None:
         with self._cond:
-            if self._disposed or self._completed:
+            if self._disposed:
                 return
             self._pending = (kind, payload)
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._run, name="backpressure-latest", daemon=True
                 )
-                try:
-                    self._worker.start()
-                except BaseException:
-                    self._worker = None
-                    self._pending = None
-                    raise
+                self._worker.start()
             self._cond.notify()
 
     def _run(self) -> None:
         try:
             while True:
                 with self._cond:
-                    while self._pending is None and not self._disposed and not self._completed:
+                    while self._pending is None and not self._disposed:
                         self._cond.wait()
                     if self._disposed or self._pending is None:
                         return
@@ -120,18 +114,11 @@ class _LatestBackpressureObserver(ObserverBase[Any], DisposableBase):
         self._submit("error", error)
 
     def on_completed(self) -> None:
-        with self._cond:
-            if self._disposed or self._completed:
-                return
-            self._completed = True
+        with self._cond:  # Condition() wraps an RLock, so dispose() may re-enter it.
             wrapped = self._wrapped
-            self._cond.notify()
-        try:
-            assert wrapped is not None
-            wrapped.on_completed()
-        finally:
             self.dispose()
-            wrapped = None
+        if wrapped is not None:
+            wrapped.on_completed()
 
 
 # Observable ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
@@ -162,12 +149,7 @@ def backpressure(
 
         def _subscribe(observer, sch=None):  # type: ignore[no-untyped-def]
             latest = _LatestBackpressureObserver(observer)
-            try:
-                upstream = base.subscribe(latest, scheduler=sch)
-            except BaseException:
-                latest.dispose()
-                raise
-            return CompositeDisposable(latest, upstream)
+            return CompositeDisposable(latest, base.subscribe(latest, scheduler=sch))
 
         return rx.create(_subscribe)
 
