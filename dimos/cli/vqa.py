@@ -50,6 +50,40 @@ def generate(
         None,
         help="Destination directory; must be absent or empty",
     ),
+    with_localize: bool = typer.Option(
+        False,
+        "--with-localize/--no-with-localize",
+        help=(
+            "Optionally discover objects (YOLO-E), verify them with Dan localize over a "
+            "padded window, then add localize families (unique / nearest / next-to / "
+            "any-ahead) from verified hits (off by default)"
+        ),
+    ),
+    localize_query: list[str] = typer.Option(
+        [],
+        "--localize-query",
+        help=(
+            "Optional override object queries for localize (repeatable). "
+            "When omitted with --with-localize, names are discovered from the recording"
+        ),
+    ),
+    localize_pad: float = typer.Option(
+        10.0,
+        "--localize-pad",
+        # Match GenerationRequest.localize_pad_s (gt=0); zero collapses single-frame windows.
+        min=1e-9,
+        help="Seconds to pad before/after selected frame timestamps for the localize window",
+    ),
+    localize_coverage_k: int | None = typer.Option(
+        None,
+        "--localize-coverage-k",
+        min=0,
+        help=(
+            "With --with-localize, keep at most K published localize cases per frame "
+            "(default 5), round-robining ego question types across frames. "
+            "Use 0 to publish every answered localize case"
+        ),
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.
@@ -68,6 +102,10 @@ def generate(
             stride=stride,
             quality_window=quality_window,
             min_brightness=min_brightness,
+            with_localize=with_localize,
+            localize_queries=tuple(localize_query),
+            localize_pad_s=localize_pad,
+            localize_coverage_k=localize_coverage_k,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:
