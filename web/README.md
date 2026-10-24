@@ -8,13 +8,14 @@ documentation lives in [`docs/web/`](../docs/web/index.md):
 - [Wire protocol](../docs/web/protocol.md): framing, messages, and the WebTransport workarounds this
   code depends on.
 
-| Directory   | What it is                                               |
-| ----------- | -------------------------------------------------------- |
-| `shared/`   | the wire protocol and the manifest, with golden fixtures |
-| `relay/`    | the WebTransport relay (Deno)                            |
-| `sdk/`      | `@dimos/sdk`, the viewer library the cockpit is built on |
-| `cockpit/`  | the cockpit app (Vite + React)                           |
-| `examples/` | zero-build SDK pages                                     |
+| Directory         | What it is                                                  |
+| ----------------- | ----------------------------------------------------------- |
+| `shared/`         | the wire protocol and the manifest, with golden fixtures    |
+| `relay/`          | the WebTransport relay (Deno)                               |
+| `sdk/`            | `@dimos/sdk`, the viewer library the cockpit is built on    |
+| `cockpit/`        | the cockpit app (Vite + React)                              |
+| `blueprint_view/` | the gateway's blueprint view (Vite + React, on dimos-react) |
+| `examples/`       | zero-build SDK pages                                        |
 
 The Python side (the bridge module, the protocol mirror, the authoring API) is under `dimos/web/`.
 

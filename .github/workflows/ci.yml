@@ -324,7 +324,6 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
 
       - name: Run pre-commit
         env:
@@ -572,6 +571,18 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
 
+      - name: Blueprint view type-check
+        working-directory: web/blueprint_view
+        run: deno task check
+
+      - name: Blueprint view vitest
+        working-directory: web/blueprint_view
+        run: deno task test
+
+      - name: Blueprint view build
+        working-directory: web/blueprint_view
+        run: deno task build
+
       # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
@@ -653,11 +664,12 @@ jobs:
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
+      # and nothing creates it until the relay tests first run deno.
       - name: Install Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
       # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')

@@ -6,17 +6,20 @@
     "jsr:@std/crypto@1": "1.1.0",
     "jsr:@std/fmt@^1.0.9": "1.0.9",
     "jsr:@std/internal@^1.0.12": "1.0.12",
+    "npm:@deno/vite-plugin@^1.0.5": "1.0.6_vite@7.3.2__@types+node@24.12.2__picomatch@4.0.5_@types+node@24.12.2",
     "npm:@fontsource-variable/inter@^5.3.0": "5.3.0",
     "npm:@fontsource-variable/jetbrains-mono@^5.3.0": "5.3.0",
     "npm:@peculiar/x509@2": "2.0.0",
     "npm:@types/node@^24.10.1": "24.12.2",
-    "npm:@types/react-dom@^19.2.0": "19.2.3_@types+react@19.2.17",
-    "npm:@types/react@^19.2.0": "19.2.17",
+    "npm:@types/react-dom@^19.2.0": "19.3.0_@types+react@19.3.0",
+    "npm:@types/react@^19.2.0": "19.3.0",
+    "npm:@types/react@^19.3.0": "19.3.0",
+    "npm:@types/three@0.180": "0.180.0",
     "npm:@types/three@0.186": "0.186.0",
     "npm:@vitejs/plugin-react@^5.1.0": "5.2.0_vite@7.3.2__@types+node@24.12.2__picomatch@4.0.5_@babel+core@7.29.7_@types+node@24.12.2",
     "npm:happy-dom@^20.11.1": "20.11.1",
-    "npm:react-dom@^19.2.0": "19.2.8_react@19.2.8",
-    "npm:react@^19.2.0": "19.2.8",
+    "npm:react-dom@^19.2.0": "19.3.1_react@19.3.1",
+    "npm:react@^19.2.0": "19.3.1",
     "npm:reflect-metadata@0.2": "0.2.2",
     "npm:three@0.186": "0.186.0",
     "npm:typescript@*": "5.9.3",
@@ -186,6 +189,12 @@
       "dependencies": [
         "@babel/helper-string-parser",
         "@babel/helper-validator-identifier"
+      ]
+    },
+    "@deno/vite-plugin@1.0.6_vite@7.3.2__@types+node@24.12.2__picomatch@4.0.5_@types+node@24.12.2": {
+      "integrity": "sha512-Sh5XqvFuKAwjARTesi0n6xRpEXm1V0UeqKh+SxIrexCofxOaieNDMqXZD02RiZCg0mrJ43V8eCMuVrDfq6mLmg==",
+      "dependencies": [
+        "vite"
       ]
     },
     "@dimforge/rapier3d-compat@0.12.0": {
@@ -650,20 +659,32 @@
         "undici-types"
       ]
     },
-    "@types/react-dom@19.2.3_@types+react@19.2.17": {
-      "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+    "@types/react-dom@19.3.0_@types+react@19.3.0": {
+      "integrity": "sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==",
       "dependencies": [
         "@types/react"
       ]
     },
-    "@types/react@19.2.17": {
-      "integrity": "sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw==",
+    "@types/react@19.3.0": {
+      "integrity": "sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==",
       "dependencies": [
         "csstype"
       ]
     },
     "@types/stats.js@0.17.4": {
       "integrity": "sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA=="
+    },
+    "@types/three@0.180.0": {
+      "integrity": "sha512-ykFtgCqNnY0IPvDro7h+9ZeLY+qjgUWv+qEvUt84grhenO60Hqd4hScHE7VTB9nOQ/3QM8lkbNE+4vKjEpUxKg==",
+      "dependencies": [
+        "@dimforge/rapier3d-compat",
+        "@tweenjs/tween.js",
+        "@types/stats.js",
+        "@types/webxr",
+        "@webgpu/types",
+        "fflate",
+        "meshoptimizer@0.22.0"
+      ]
     },
     "@types/three@0.186.0": {
       "integrity": "sha512-mxYSBpDC+D0pLfSP6sW4WZTcT+nrtmZcimMqnVmy36Hte3XpeYSrvgg4TRdaM1GemGog1AWzI5qL2VoIfMXbJQ==",
@@ -673,7 +694,7 @@
         "@types/stats.js",
         "@types/webxr",
         "fflate",
-        "meshoptimizer"
+        "meshoptimizer@1.1.1"
       ]
     },
     "@types/webxr@0.5.24": {
@@ -757,6 +778,9 @@
         "loupe",
         "tinyrainbow"
       ]
+    },
+    "@webgpu/types@0.1.74": {
+      "integrity": "sha512-lgiI4hbuLcI9unnm2cL/tvCaQU45dp0xcLWJh5uB/9MBGvIA4F8XIk7nSiBeg+K4xWGYwgZKn80LmERI5CxoTA=="
     },
     "asn1js@3.0.10": {
       "integrity": "sha512-S2s3aOytiKdFRdulw2qPE51MzjzVOisppcVv7jVFR+Kw0kxwvFrDcYA0h7Ndqbmj0HkMIXYWaoj7fli8kgx1eg==",
@@ -863,7 +887,6 @@
         "@esbuild/win32-ia32",
         "@esbuild/win32-x64"
       ],
-      "scripts": true,
       "bin": true
     },
     "escalade@3.2.0": {
@@ -892,8 +915,7 @@
     },
     "fsevents@2.3.3": {
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
-      "os": ["darwin"],
-      "scripts": true
+      "os": ["darwin"]
     },
     "gensync@1.0.0-beta.2": {
       "integrity": "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="
@@ -939,6 +961,9 @@
         "@jridgewell/sourcemap-codec"
       ]
     },
+    "meshoptimizer@0.22.0": {
+      "integrity": "sha512-IebiK79sqIy+E4EgOr+CAw+Ke8hAspXKzBd0JdgEmPHiAwmvEj2S4h1rfvo+o/BnfEYd/jAOg5IeeIjzlzSnDg=="
+    },
     "meshoptimizer@1.1.1": {
       "integrity": "sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g=="
     },
@@ -981,8 +1006,8 @@
     "pvutils@1.1.5": {
       "integrity": "sha512-KTqnxsgGiQ6ZAzZCVlJH5eOjSnvlyEgx1m8bkRJfOhmGRqfo5KLvmAlACQkrjEtOQ4B7wF9TdSLIs9O90MX9xA=="
     },
-    "react-dom@19.2.8_react@19.2.8": {
-      "integrity": "sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==",
+    "react-dom@19.3.1_react@19.3.1": {
+      "integrity": "sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==",
       "dependencies": [
         "react",
         "scheduler"
@@ -991,8 +1016,8 @@
     "react-refresh@0.18.0": {
       "integrity": "sha512-QgT5//D3jfjJb6Gsjxv0Slpj23ip+HtOpnNgnb2S5zU3CB26G/IDPGoy4RJB42wzFE46DRsstbW6tKHoKbhAxw=="
     },
-    "react@19.2.8": {
-      "integrity": "sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw=="
+    "react@19.3.1": {
+      "integrity": "sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw=="
     },
     "reflect-metadata@0.2.2": {
       "integrity": "sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q=="
@@ -1032,8 +1057,8 @@
       ],
       "bin": true
     },
-    "scheduler@0.27.0": {
-      "integrity": "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="
+    "scheduler@0.28.0": {
+      "integrity": "sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw=="
     },
     "semver@6.3.1": {
       "integrity": "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==",
@@ -1193,13 +1218,95 @@
       "integrity": "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="
     }
   },
+  "remote": {
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/app_provider.tsx": "ba92a81a9350c50eec5b34aa582ed9ebee06b00dd2e6722f106a4b48d1a1882c",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/camera/depth_types.ts": "a05887957274a12702c5dcbee823289a72e45c0129c3f7a25690d990d289910c",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/colormaps.ts": "0b9ed8a26e4c16ec7b2577563006ffaa373f501924b4584b526f85ed18c67fd6",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/camera.tsx": "2d7e3cf0e38abe17f4dc4e8fa7d0dfbc32715b16c6e077f80736aa9bf23be882",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/controls.tsx": "c2070c7982204bad4927b8967858103e4cf367ef7f73b600ee0d8608787db4e6",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/data.tsx": "de2e6773be6c5b3eea6a1c8b19df4714b2b1b1061d7e7d0fccc061a6e2c97a03",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/desktop_frame.tsx": "9549ffd35ae84b87b3fd8e3420fb7f73a6a57dfeadf377f22bdd652e0b5e11a0",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/feedback.tsx": "152eeea2cc65d45c9caae86ec466b24b3e83dc1b063e0bcf5c6b776aa1dbd3e4",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/icon.tsx": "adbba3beee3a54505c75901a36a59f635825a4cecf84003993859498842c3707",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/input_devices.tsx": "59ca256291e8f5aa355c573d312e67ecf2c7f6de36ff6bc6a7cd49a987644569",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/layout.tsx": "00a3c774e941cd1c283a50a4666a68f4ae37db50d7ffb81bcbc249740642cde6",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/media.tsx": "19b4bd5c55e204ad7317a98e55d57eb72441ca1e9fd85f15f3f9183de9d297a7",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/nav.tsx": "4542db9f3d93e26cf951d8975bc923ab7bfa5ce5dbacca4f99f258ac3266c97b",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/settings.tsx": "9edcddaad0ab744e90a610bd4b76297d1f8c5ce37b3f58213bf8a1f145cfdd15",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/structured_log.tsx": "59f3bae062716093d93f15a9e81eb51bff27c16091a30c9133972779e626c71a",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/text.tsx": "0a68034ec4aab87e419dcb8826da5f9c0d3b474810739df650b04e0eceb537eb",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/thumbstick.tsx": "7b344b36fd32c8bd0cad9938d475b432b3bb611bc486c7cc84066aedbb8f7ff0",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/topics.tsx": "3ea8074559bfbe1d7a34560b4ba206c2bcf933c94b4ff4ccb6bf673c626618c7",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/traceback.tsx": "0b421cadd75b396ac04463ff39fd9be96f0bc93ee62bba7c3cf7e046b11f6537",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/components/view_panel.tsx": "97a78f5051cdebacf288597a087632e319cecddb01105ffef6c88cb8b31b872e",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/cx.ts": "7520f1bc577178716e51097a95f9e0d4b7b2a5ab472fc4e9c4a01f2db462270e",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/data.ts": "89f275deedb9747df72bb4c4595603f87beef55c25a5cd80dc6978a6832f7ccf",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph.ts": "a68776a9a07d79e016db9eb6092bf23eb2e1522ee5f916b63d13ee1003ce4fd4",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph/blueprint_graph.tsx": "d28ba5c4a9471862b9ece8864855ec8b975c7c39a04c88df19595871f61348e7",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph/graph_controls.tsx": "f2f141c27c2712d87baec65bed6d1ec783edbaaf69341af0a7de216148a97a82",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph/graph_view.tsx": "7ca54cc596002b14ca51ad386ed0aa6ed0f0ece6f51b896ef8d943df7c61cc27",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph/layout.ts": "a9bbe4a5b6b6f2f1e8e994deb39a798ffd859c01d809f15575ae152bec164ce9",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph/paths.ts": "f90ee8e0210377c4863f04ac7aeaaa98c6c07bed71fe76f72fadab464ae1a81d",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/hooks.ts": "34377d44a1a9255dc3949ff60eb9bfdbc4d37bf91938a660f56edb82851e18e4",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/icons_data.ts": "73ae8cbda7d60eb0bf3eb95e4ad7b8b011e389a336ab9cd24e4f50cec58c6675",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/index.ts": "8f41eb6b3514cfa69ba19aed83aa9d57fb200b72e659681da99b78eb27166e95",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/input/gamepad.ts": "87ee50117bfac30917dd36a55fe6961e374a2746ef1d59ed9fa3b8fcf0046d14",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/input/stick.ts": "a117c6e42899dafad237f106baca4b813c60c3dd281b539cab416f9167ea291a",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/lcm.ts": "e797133747923bc9a9e8b8bd12116ac9596393e46f5952d92e79a8aaf57e3b68",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/settings.ts": "0a9846a0ab2cbf5beb0f5a8f5f0fe5e8be8e108af9d06d6382a1f4a55a1083b3",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/base.ts": "5b1c12a80221c6c77c89f9d90065095e157378a02aa5d0ac8ccee9123c9dcd8f",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/controls.ts": "019c5c6d05956b9c9b1879937b5bf61c1b2b3b4f37407f2a909308987c2abcaa",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/data.ts": "ae4b7d52fec962570415844a98dfb98ec262615b82f728ad3b0e2e466019a156",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/feedback.ts": "d2bfe59df26fdb64e1b41cb41d6007a92c83079f02bfb66f31311459c9a1fc5d",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/graph.ts": "8de8e6b25e7ae8577eadb89e370ca1443afa21e9e0bd457d825f7c5f168a9143",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/input_devices.ts": "403746871f8427f6c9b2debbb183e313f30953f02ca3c8f62f5bf57c2e71423a",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/layout.ts": "9b313ec893b7ebe5a9a61d8a8ddbb32796ae72f89caef90cff89f737307a90b7",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/logs.ts": "d22824e06a094ab44f3fe90c147e225b71da858ea6a8767d65680546b1019ccc",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/media.ts": "480b71265b627488b63746fdd6e6492ec20a48bbe74b74434c9fb80ae163775c",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/nav.ts": "c023a44df8da5ebf974cefa46c553aa320e5140c68569368b915ff4931a9710c",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/scene.ts": "fdefb8fae326c5213a800f6ba14b7ec0ae5c1f0fd56289afe9ac7ef0e86e02fe",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/settings.ts": "d282121a928ea38116818f1aeacc91fbd77f88f769b9179ea13e2ebde0ccac87",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/text.ts": "fd0292108871d306a3327ff41605ec93b67220ce351b08ea60e344210ab7ffd6",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/topics.ts": "afd62b269ab69413d355cafbb12999e7ae279e81680eb1a773791d17b9fff358",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/styles/view_panel.ts": "c89ca5b51b357e29f67b200e0bffd00207084255eab8cdce4be8115c247789d9",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/theme/css.ts": "fc9579d6b1c0160ee811c777353e15e84f03b774982603e75ea5c96e8aa84053",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/theme/provider.tsx": "d400e86eb4c6ceafdb95993c81769594bc5ed7ea28da7900ba01f1e35422b7c7",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/theme/theme.ts": "f27e0cc5b4e763dc7c7096e18785cbbeebc5c32e4db86412b8085c490979ddbc",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/theme/tokens.ts": "baebc62585f4bf7f20357b84a55e3d3c91927830b387bac62bfbaaa4f0dc2ff9",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/three/store.ts": "3a76681cce651d3a87e046fdeaffe782a5b1c7d3064a41b771604ffc323c1cf8",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/url_state.tsx": "aa8c44ae4f710e7e6dfcf32c7f8bb43ca8779b50f8efb85fad7e6bac6d11652a",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/vendor/dim-app/topic.js": "336340c04e917b0419181f087ab89c716be59f84daf09664f9657a009d44cade",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/vendor/dim-app/vendor/zenoh-gateway/vendor/fzstd.js": "601216c5967095b88c883c6b6a82601732e71c845cce8c251f294f5ccac5cfbe",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/vendor/dim-app/vendor/zenoh-gateway/zenoh_gateway.js": "89362a14bc446e39b564b6fcaec0d3ada5aef1f3c150ec017eebdbe1c7627276",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/vendor/dim-app/zenoh.js": "ec3c3f77a95b8021765e2827cb51db4b5c6a2a9961c6bd00d579e6c5750968df",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/vendor/lcm_schemas.js": "baa989691a821e48eaa2789bdd3706b28a95977e872ac4a22b311e15f6cb331e"
+  },
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
       "jsr:@std/cli@1",
-      "jsr:@std/crypto@1"
+      "jsr:@std/crypto@1",
+      "npm:@types/react-dom@^19.3.0",
+      "npm:@types/react@^19.3.0",
+      "npm:react-dom@^19.2.0",
+      "npm:react@^19.2.0"
     ],
     "members": {
+      "blueprint_view": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@deno/vite-plugin@^1.0.5",
+            "npm:@types/react-dom@^19.2.0",
+            "npm:@types/react@^19.2.0",
+            "npm:@vitejs/plugin-react@^5.1.0",
+            "npm:happy-dom@^20.11.1",
+            "npm:react-dom@^19.2.0",
+            "npm:react@^19.2.0",
+            "npm:vite@^7.1.0",
+            "npm:vitest@^3.2.4"
+          ]
+        }
+      },
       "cockpit": {
         "packageJson": {
           "dependencies": [

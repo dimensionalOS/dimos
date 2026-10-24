@@ -73,3 +73,7 @@ UPLOAD_ETA_WARMUP_S = 1.0
 UPLOAD_PROGRESS_EMIT_S = 0.4
 # cloud account: account checks are cached this long; ?fresh= forces one
 ACCOUNT_CACHE_S = 20.0
+# blueprint view: a first `vite build` of the view's frontend (deno installs its npm packages) can take minutes
+VIEW_BUILD_TIMEOUT_S = 300.0
+# msgs.js: building the message decoders bundle, past this it answers 503
+MSGS_BUILD_TIMEOUT_S = 120.0

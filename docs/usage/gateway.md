@@ -30,6 +30,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; DELETE cancels it, or logs out with none pending), `uploads` (queue a recording, retry, cancel) |
+| views | `blueprint_view?name=` (a blueprint's graph, config and logs), `msgs.js` (decoders for dimos messages), `source?file=` |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
 ## Examples
@@ -46,8 +47,15 @@ await post("active/modules/unitreeskillcontainer/rpcs/execute_sport_command", { 
 const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)).json() // then ?after=${page.offset}
 ```
 
-Live launch phases (and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
+Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
 (`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`).
+
+Decode dimos messages in a page with `msgs.js`:
+
+```js
+const app = new DimApp({ msgDecodeEndpoint: "../../dimos-gateway/msgs.js" }) // DimApp from ./dim-app/mod.js
+app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
+```
 
 ## Running it yourself
 

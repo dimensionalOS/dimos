@@ -132,3 +132,11 @@ def test_a_launch_whose_child_exits_is_published_as_failed(
     client: TestClient, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
     watch_a_launch(client, state, sent, watchers, "fail", "failed")
+
+
+def test_a_terminal_run_starting_or_ending_is_a_launch_event() -> None:
+    sent: list[str] = []
+    bus = events.Bus("ns", lambda key, _payload: sent.append(key))
+    for run_id in (None, "run-1", "run-1", None):
+        bus.active({"runId": run_id, "launch": None})
+    assert sent == ["ns/dimos/events/launch"] * 3

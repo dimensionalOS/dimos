@@ -37,3 +37,7 @@ runs:
       shell: bash
       working-directory: web/cockpit
       run: deno task build
+    - name: Build blueprint view dist
+      shell: bash
+      working-directory: web/blueprint_view
+      run: deno task build

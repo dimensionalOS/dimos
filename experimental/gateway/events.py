@@ -74,6 +74,7 @@ class Bus:
         self.namespace = namespace
         self.put = put
         self.launch_key: tuple[Any, ...] | None = None
+        self.live_run_id: str | None = None
 
     def send(self, event: dict[str, Any]) -> None:
         if self.put is None or self.namespace is None:
@@ -81,10 +82,16 @@ class Bus:
         self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
 
     def launch(self, launch: dict[str, Any] | None) -> None:
-        key = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        launch_part = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        key = (launch_part, self.live_run_id)
         if key != self.launch_key:
             self.launch_key = key
             self.send({"type": "launch", "launch": launch})
+
+    def active(self, active: dict[str, Any]) -> None:
+        """launches.active()'s view: a run started outside the gateway (a terminal) starting or ending is news too."""
+        self.live_run_id = active["runId"]
+        self.launch(active["launch"])
 
 
 async def set_on_changes(
@@ -154,7 +161,7 @@ async def watch_launch(
     try:
         while True:
             try:
-                bus.launch(await asyncio.to_thread(launches.current_launch))
+                bus.active(await asyncio.to_thread(launches.active))
                 if stats is not None:
                     await asyncio.to_thread(stats.stop_if_nothing_runs)
                 failure = ""

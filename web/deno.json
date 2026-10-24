@@ -3,7 +3,8 @@
     "./relay",
     "./shared",
     "./sdk",
-    "./cockpit"
+    "./cockpit",
+    "./blueprint_view"
   ],
   "unstable": [
     "net"
@@ -12,7 +13,13 @@
   "imports": {
     "@std/assert": "jsr:@std/assert@^1",
     "@std/cli": "jsr:@std/cli@^1",
-    "@std/crypto": "jsr:@std/crypto@^1"
+    "@std/crypto": "jsr:@std/crypto@^1",
+    "react": "npm:react@^19.2.0",
+    "react/": "npm:/react@^19.2.0/",
+    "react-dom": "npm:react-dom@^19.2.0",
+    "react-dom/": "npm:/react-dom@^19.2.0/",
+    "@types/react": "npm:@types/react@^19.3.0",
+    "@types/react-dom": "npm:@types/react-dom@^19.3.0"
   },
   "tasks": {
     "dev": "deno run --allow-net --allow-read relay/main.ts",
@@ -24,13 +31,15 @@
     "exclude": [
       "shared/fixtures/*.json",
       "cockpit/dist/",
-      "sdk/dist/"
+      "sdk/dist/",
+      "blueprint_view/dist/"
     ]
   },
   "lint": {
     "exclude": [
       "cockpit/dist/",
-      "sdk/dist/"
+      "sdk/dist/",
+      "blueprint_view/dist/"
     ],
     "rules": {
       "tags": [

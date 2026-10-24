@@ -20,14 +20,17 @@ from typing import Literal
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
+    blueprint_modules,
     rpcs,
     run_child,
     spec_topic,
@@ -40,6 +43,41 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
         spec_topic(ZenohTransport.spec(ZenohTopic("dimos/head_left_color", Twist)))
         == "/head_left_color"
     )
+
+
+class LeftCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+class RightCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+def test_remapped_streams_show_their_wired_topic() -> None:
+    blueprint = (
+        autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .remappings(
+            [
+                (LeftCamera, "jpeg_out", "head_left_color"),
+                (RightCamera, "jpeg_out", "head_right_color"),
+            ]
+        )
+        .transports(
+            {
+                ("head_left_color", Twist): ZenohTransport.spec(
+                    ZenohTopic("dimos/head_left_color", Twist)
+                )
+            }
+        )
+    )
+    streams = {
+        (module["name"], stream["name"]): stream
+        for module in blueprint_modules(blueprint, {})
+        for stream in module["streams"]
+    }
+    left = streams["leftcamera", "jpeg_out"]
+    assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")
+    assert streams["rightcamera", "jpeg_out"]["topic"] == "/head_right_color"
 
 
 class Dog(Module):

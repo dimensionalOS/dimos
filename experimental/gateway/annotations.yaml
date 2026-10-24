@@ -135,11 +135,16 @@ robots:
         unitree-go2-nav-3d-relocalization:
           title: Go2 3D navigation in a saved map
           description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
+          recommended_config:
+          - global: robot_ip
+          - &saved_map {module: localmaprelocalization, field: map_file, label: Saved map, required: true}
         unitree-go2-nav-3d-relocalization-replay:
           title: Go2 3D navigation in a saved map (replay)
           description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
+          recommended_config: &recording_player_config
+          - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
+          # the map made from the player's default recording, so a launch with nothing filled in relocalizes
+          - {<<: *saved_map, default: go2_mid360_sf_office_outdoors_2026-05-29}
         unitree-go2-map:
           title: Go2 with a permanent map
           description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
@@ -804,7 +809,7 @@ robots:
         relocalize-mid360:
           title: Mid-360 relocalization (recording)
           description: Relocalization against a saved map, driven by a recording instead of a robot.
-          recommended_config: [*recording]
+          recommended_config: *recording_player_config
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

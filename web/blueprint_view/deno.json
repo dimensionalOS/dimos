@@ -1,0 +1,23 @@
+{
+  "imports": {
+    "dimos-react": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.3/src/index.ts",
+    "dimos-react/graph": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.3/src/graph.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "jsxImportSourceTypes": "@types/react",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable",
+      "deno.ns"
+    ]
+  },
+  "tasks": {
+    "dev": "deno run -A npm:vite",
+    "build": "deno run -A npm:vite build",
+    "test": "deno run -A npm:vitest run",
+    "check": "deno check src vite.config.ts"
+  }
+}

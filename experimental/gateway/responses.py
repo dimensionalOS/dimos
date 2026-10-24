@@ -596,3 +596,10 @@ class Uploads(Body):
     uploads: list[Upload]
     waitingForLogin: bool
     byPath: dict[str, Uploaded]
+
+
+class SourceFile(Body):
+    """A .py file of the dimos checkout."""
+
+    file: str
+    text: str
