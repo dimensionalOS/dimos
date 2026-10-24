@@ -78,7 +78,7 @@ def build_dual_openyam_webxr(
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
-        ArmTeleopModule.blueprint(),
+        ArmTeleopModule.blueprint(zero_button="B"),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
