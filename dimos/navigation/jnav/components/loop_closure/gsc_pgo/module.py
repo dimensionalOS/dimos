@@ -96,6 +96,8 @@ class PGOConfig(NativeModuleConfig):
     # False (live) folds a solve in as soon as it finishes, keyframes or not; True keeps the keyframe
     # schedule above so a replay repeats on any machine.
     closure_gnc_deterministic: bool = False
+    # Hold keyframes with two or more independent cycles nearby, so a solve covers only the part of the map that can still move
+    closure_cooling: bool = False
 
     # "stiffness" in different dimensions.
     # Making roll/pitch stiff is important for mid360. irrelevant for go2 odom

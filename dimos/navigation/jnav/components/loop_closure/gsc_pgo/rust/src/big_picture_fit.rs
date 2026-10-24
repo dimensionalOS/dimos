@@ -578,6 +578,8 @@ pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
     due_at: usize,
+    /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
+    judged: Vec<usize>,
 }
 
 impl GscPgo {
@@ -622,17 +624,80 @@ impl GscPgo {
             self.dispatch_solve();
         }
     }
-    /// Start a solve of every keyframe so far and every committed closure, from the odometry (GNC must start
-    /// from the dead-reckoned chain, not an estimate earlier closures already bent).
+    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned chain,
+    /// not an estimate earlier closures already bent). With `closure_cooling`, a keyframe held up by two or more
+    /// independent cycles nearby (it still holds if any one closure is wrong) stays where it is, unless a new
+    /// closure that disagrees with the graph runs through it; closures between two held keyframes keep their verdicts.
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_local).collect();
-        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
-        let odometry = odometry_edges(&self.key_poses, config);
-        let closures = closure_edges(self.committed_closures.iter());
+        let all_closures = closure_edges(self.committed_closures.iter());
         // keyframe 0 pins the map
-        let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+        let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+        if config.closure_cooling {
+            let kept: Vec<Edge> = all_closures[..self.closures_dispatched]
+                .iter()
+                .zip(&self.committed_closures)
+                .filter(|(_, c)| c.gnc_weight > 0.5)
+                .map(|(e, _)| *e)
+                .collect();
+            let backups = local_cycles(n, &kept, config.closure_submap_half_range.max(1) as usize);
+            for k in 1..n {
+                free[k] = backups[k] < 2;
+            }
+            let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_global).collect();
+            let positions: Vec<Vec3> = self
+                .key_poses
+                .iter()
+                .map(|k| k.translation_global)
+                .collect();
+            let threshold = chi2_inverse_6dof(config.closure_gnc_inlier_probability);
+            for e in &all_closures[self.closures_dispatched..] {
+                let scaled = Edge {
+                    variances: e.variances.map(|v| v * config.closure_gnc_var_scale),
+                    ..*e
+                };
+                if residuals(&rotations, &positions, &[scaled])[0] > threshold {
+                    for k in e.from.min(e.to).max(1)..=e.from.max(e.to) {
+                        free[k] = true;
+                    }
+                }
+            }
+        }
+        // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
+        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let mut offset = (mat3::identity(), [0.0; 3]);
+        for (k, key_pose) in self.key_poses.iter().enumerate() {
+            if free[k] {
+                rotations.push(mat3::mat_mul(&offset.0, &key_pose.rotation_local));
+                positions.push(mat3::add(
+                    &mat3::mat_vec(&offset.0, &key_pose.translation_local),
+                    &offset.1,
+                ));
+            } else {
+                let rotation = mat3::mat_mul(
+                    &key_pose.rotation_global,
+                    &mat3::transpose(&key_pose.rotation_local),
+                );
+                let translation = mat3::sub(
+                    &key_pose.translation_global,
+                    &mat3::mat_vec(&rotation, &key_pose.translation_local),
+                );
+                offset = (rotation, translation);
+                rotations.push(key_pose.rotation_global);
+                positions.push(key_pose.translation_global);
+            }
+        }
+        let touches_free = |e: &Edge| free[e.from] || free[e.to];
+        let odometry: Vec<Edge> = odometry_edges(&self.key_poses, config)
+            .into_iter()
+            .filter(touches_free)
+            .collect();
+        let judged: Vec<usize> = (0..all_closures.len())
+            .filter(|&i| touches_free(&all_closures[i]))
+            .collect();
+        let closures: Vec<Edge> = judged.iter().map(|&i| all_closures[i]).collect();
+        let free_count = free.iter().filter(|&&f| f).count();
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
@@ -653,12 +718,15 @@ impl GscPgo {
                 (solution, started.elapsed().as_secs_f64())
             })
             .expect("spawn pose graph thread");
-        let delay = (n as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
+        // a solve's cost grows with its free keyframes, so its delay does
+        let delay =
+            (free_count as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
         self.closures_dispatched = self.committed_closures.len();
         self.solving = Some(Solving {
             handle,
             keyframes: n,
             due_at: n + delay.max(1),
+            judged,
         });
     }
     /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
@@ -695,7 +763,22 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        for (index, &weight) in solution.closure_weights.iter().enumerate() {
+        // a closure no solve judged (both ends held) agreed with a map that holds without it
+        let mut weights: Vec<f64> = self
+            .committed_closures
+            .iter()
+            .map(|c| {
+                if c.gnc_weight.is_nan() {
+                    1.0
+                } else {
+                    c.gnc_weight
+                }
+            })
+            .collect();
+        for (&index, &weight) in solving.judged.iter().zip(&solution.closure_weights) {
+            weights[index] = weight;
+        }
+        for (index, weight) in weights.into_iter().enumerate() {
             let previous = self.committed_closures[index].gnc_weight;
             self.committed_closures[index].gnc_weight = weight;
             if previous == weight {
@@ -765,6 +848,49 @@ pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClos
             rotation: l.rotation_offset,
             translation: l.translation_offset,
             variances: [l.score.max(1e-6); 6],
+        })
+        .collect()
+}
+
+/// Independent cycles (backups) holding each keyframe: in the graph of its `hops`-step neighbourhood (odometry
+/// and `closures`), edges - nodes + 1.
+fn local_cycles(n: usize, closures: &[Edge], hops: usize) -> Vec<usize> {
+    let mut neighbours: Vec<Vec<usize>> = (0..n)
+        .map(|k| {
+            [k.checked_sub(1), (k + 1 < n).then_some(k + 1)]
+                .into_iter()
+                .flatten()
+                .collect()
+        })
+        .collect();
+    for c in closures {
+        neighbours[c.from].push(c.to);
+        neighbours[c.to].push(c.from);
+    }
+    let mut seen = vec![usize::MAX; n];
+    (0..n)
+        .map(|start| {
+            let (mut frontier, mut nodes) = (vec![start], vec![start]);
+            seen[start] = start;
+            for _ in 0..hops {
+                let mut next = Vec::new();
+                for &k in &frontier {
+                    for &m in &neighbours[k] {
+                        if seen[m] != start {
+                            seen[m] = start;
+                            next.push(m);
+                        }
+                    }
+                }
+                nodes.extend(&next);
+                frontier = next;
+            }
+            let edges = nodes
+                .iter()
+                .map(|&k| neighbours[k].iter().filter(|&&m| seen[m] == start).count())
+                .sum::<usize>()
+                / 2;
+            (edges + 1).saturating_sub(nodes.len())
         })
         .collect()
 }
