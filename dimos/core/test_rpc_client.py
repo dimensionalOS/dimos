@@ -19,8 +19,10 @@ from IPython.core.interactiveshell import InteractiveShell
 import pytest
 from traitlets.config import Config
 
+from dimos.core.coordination.blueprints import DisabledModuleProxy
 from dimos.core.demos.stress_test_module import StressTestModule
-from dimos.core.rpc_client import RPCClient
+from dimos.core.rpc_client import AsyncSpecProxy, RPCClient
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.spec import RPCSpec
 
 
@@ -64,3 +66,11 @@ def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):
 
     assert "echo" in {completion.text for completion in completions}
     assert transport.mock_calls == []
+
+
+def test_async_spec_proxy_roundtrip_keeps_its_async_methods() -> None:
+    proxy = AsyncSpecProxy(DisabledModuleProxy("SomeSpec"), frozenset({"foo"}))
+    restored = decode(encode(proxy))
+    assert type(restored) is AsyncSpecProxy
+    assert object.__getattribute__(restored, "_async_methods") == frozenset({"foo"})
+    assert isinstance(object.__getattribute__(restored, "_inner"), DisabledModuleProxy)

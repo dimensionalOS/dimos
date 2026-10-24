@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
 
 import pytest
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.hosted.fragment import HostFragment, PythonFragmentPayload
+from dimos.protocol.encode.cbor import encode
 
 
 class PayloadConfig(ModuleConfig):
@@ -46,6 +46,6 @@ def test_fragment_round_trips_the_blueprint_and_the_roots_values() -> None:
 
 
 def test_fragment_rejects_a_foreign_payload() -> None:
-    fragment = HostFragment("run-1", "host-1", "revision-1", pickle.dumps({"not": "a payload"}))
+    fragment = HostFragment("run-1", "host-1", "revision-1", encode({"not": "a payload"}))
     with pytest.raises(TypeError, match="PythonFragmentPayload"):
         fragment.load_payload()

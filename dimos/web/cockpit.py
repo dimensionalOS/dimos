@@ -88,6 +88,13 @@ class _FrozenDict(dict[str, Any]):
     def __reduce__(self) -> tuple[Any, ...]:
         return (_FrozenDict, (dict(self),))
 
+    def cbor_encode(self) -> dict[str, Any]:
+        return dict(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> _FrozenDict:
+        return cls(data)
+
     def __setitem__(self, key: str, value: Any) -> None:
         raise TypeError("Channel params are immutable")
 

@@ -22,7 +22,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
-    from dimos.core.stream import StreamDirection
+    from dimos.core.stream import StreamDirection, Transport
 
 # Internal RPCs to hide from io() output
 # Every module has these; io() shows what a module adds.
@@ -42,14 +42,15 @@ INTERNAL_RPCS = {
 
 
 class StreamDescriptor(NamedTuple):
-    """Wire metadata with the message type and transport in an opaque pickle."""
+    """Wire metadata plus the message type and transport of one stream."""
 
     module: str
     name: str
     direction: StreamDirection
     type_name: str
     channel: str
-    transport: bytes
+    type: type
+    transport: Transport[Any]
 
 
 @dataclass

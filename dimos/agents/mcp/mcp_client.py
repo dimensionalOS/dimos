@@ -137,9 +137,6 @@ class McpClient(Module):
         self._mcp_url: str | None = None
         Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
 
-    def __reduce__(self) -> Any:
-        return (self.__class__, (), {})
-
     def _server_url(self) -> str:
         """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
         if self._mcp_url is None:
