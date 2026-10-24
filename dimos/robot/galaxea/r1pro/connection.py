@@ -30,11 +30,13 @@ gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from the environment.
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import queue
 import subprocess
+import sys
 import threading
 from threading import Thread
 import time
@@ -60,6 +62,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
@@ -89,6 +92,9 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
     "wrist_right_depth": "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
 }
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
+
+# The vendor's message package: HDAS reports faults (e-stop included) as hdas_msg/FeedbackStatus.
+_HDAS_MSG_DIR = Path.home() / "galaxea-dimos/install/hdas_msg"
 
 
 @dataclass
@@ -180,6 +186,9 @@ class R1ProConnection(Module):
     wrist_right_color: Out[CompressedImage]
     wrist_right_depth: Out[Image]
 
+    # Once a second while the hardware e-stop is on.
+    estop_message: Out[String]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
@@ -219,6 +228,7 @@ class R1ProConnection(Module):
         self._odom_y = 0.0
         self._odom_yaw = 0.0
         self._odom_last_ts: float | None = None
+        self._last_estop_message_t = 0.0
 
         # Sensor decode pipeline.
         self._sensor_stop = threading.Event()
@@ -368,6 +378,17 @@ class R1ProConnection(Module):
                 self._on_chassis_speed,
             )
         )
+
+        feedback_status = _load_hdas_feedback_status()
+        if feedback_status is None:
+            logger.warning(f"no hdas_msg under {_HDAS_MSG_DIR}: estop_message is off")
+        else:
+            self._control_unsubs.append(
+                self._ros.subscribe(
+                    RawROSTopic("/hdas/feedback_status_chassis", feedback_status, qos=qos),
+                    self._on_feedback_status_chassis,
+                )
+            )
 
     # Sensor streams (isolated RawROS + per-stream decode workers)
 
@@ -600,6 +621,16 @@ class R1ProConnection(Module):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = msg.effort[:ne]
 
+    def _on_feedback_status_chassis(self, msg: Any, _topic: Any) -> None:
+        # HDAS repeats each fault group (name_id) at ~5 Hz while it is active
+        if msg.name_id != "EMERGENCY_STOP" or not any(error.error_code for error in msg.errors):
+            return
+        now = time.monotonic()
+        if now - self._last_estop_message_t < 1.0:
+            return
+        self._last_estop_message_t = now
+        self.estop_message.publish(String("hardware e-stop is on"))
+
     # Wheel odometry (integrated from executed chassis speed)
 
     def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
@@ -797,3 +828,17 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
+
+
+def _load_hdas_feedback_status() -> Any:
+    """hdas_msg/FeedbackStatus from the vendor's prebuilt install, which isn't on dimos's paths."""
+    python_dirs = [str(path) for path in _HDAS_MSG_DIR.glob("local/lib/python3*/dist-packages")]
+    if not python_dirs:
+        return None
+    sys.path.extend(python_dirs)
+    # Its python extension links these, and they aren't on LD_LIBRARY_PATH.
+    for library in sorted(_HDAS_MSG_DIR.glob("lib/libhdas_msg__*.so")):
+        ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+    from hdas_msg.msg import FeedbackStatus  # type: ignore[import-not-found]
+
+    return FeedbackStatus

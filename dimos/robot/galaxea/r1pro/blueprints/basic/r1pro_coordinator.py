@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
@@ -249,6 +250,7 @@ def r1pro_control(
                 ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
                 # Wheel odometry (pose + twist) for navigation consumers.
                 ("odometry", Odometry): _zenoh_transport("/odometry", Odometry),
+                ("estop_message", String): _zenoh_transport("/estop_message", String),
                 # Public Twist bus: any module's cmd_vel Out drives the
                 # coordinator's twist_command In.
                 ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
