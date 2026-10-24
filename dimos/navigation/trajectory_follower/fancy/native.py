@@ -47,6 +47,10 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/navigation/trajectory_follower/fancy/rust"
     executable: str = "result/bin/trajectory_follower"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin trajectory_follower --target-dir ../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../target/native/release/trajectory_follower"
     stdin_config: bool = True
     # argv is ignored by the rust side, which reads stdin; keeping a thirty-field
     # object out of it leaves `ps` readable.

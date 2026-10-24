@@ -37,6 +37,10 @@ class V4L2CameraConfig(NativeModuleConfig):
     executable: str = "result/bin/v4l2_camera"
     # A Jetson builds path:.#jetson, the hardware JPEG path (see below).
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin v4l2_camera --target-dir ../../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../../target/native/release/v4l2_camera"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
 

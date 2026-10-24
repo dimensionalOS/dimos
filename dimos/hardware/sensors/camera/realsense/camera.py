@@ -38,6 +38,10 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     executable: str = "result/bin/realsense_native"
     # Own flake: librealsense2 isn't in the root shell.
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin realsense_native --target-dir ../../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../../target/native/release/realsense_native"
     stdin_config: bool = True
     # The frame stem and its namespace cross to rust like any other field.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})

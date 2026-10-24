@@ -38,6 +38,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 _BUILD = "nix build -L path:.#dimos-native-module-examples"
+_DEV_BUILD = "cargo build --release --target-dir ../../../target/native"
+_DEV_OUT = "../../../target/native/release"
 
 
 class TfProducer(Module):
@@ -83,6 +85,8 @@ class TfProducer(Module):
 class TfListenerConfig(NativeModuleConfig):
     executable: str = "result/bin/tf_listener"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/tf_listener"
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
@@ -100,6 +104,8 @@ class TfListenerModule(NativeModule):
 class TfBroadcasterConfig(NativeModuleConfig):
     executable: str = "result/bin/tf_broadcaster"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/tf_broadcaster"
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
