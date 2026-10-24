@@ -85,6 +85,8 @@ dimos mcp list-tools
 dimos mcp call move_to --arg x=0.5 --arg relative=true
 ```
 
+To connect a coding agent such as Claude Code, Codex, or Cursor to those skills, see the [MCP server README](/dimos/agents/mcp/README.md).
+
 Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/docs/usage/cli.md).
 
 ### Cockpit in the browser

@@ -72,6 +72,8 @@ dimos agent-send "walk forward 2 meters then wave"
 
 The MCP server runs at `http://localhost:9990/mcp` (`McpServerConfig.port`).
 
+To connect a coding agent (Claude Code, Codex, Cursor, …) to it, see `dimos/agents/mcp/README.md`.
+
 ### Adding McpServer to a blueprint
 
 Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.

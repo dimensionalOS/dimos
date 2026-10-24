@@ -101,6 +101,8 @@ dimos mcp call move_to --arg x=0.5 --arg relative=true  # Call a skill
 dimos mcp status                                    # Server status
 ```
 
+To connect external coding agents (Claude Code, Codex, Cursor, …), see [`dimos/agents/mcp/README.md`](/dimos/agents/mcp/README.md).
+
 ## Input Methods
 
 | Method | How it works |
