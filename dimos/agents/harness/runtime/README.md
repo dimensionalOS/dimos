@@ -15,8 +15,7 @@ dimos mcp call inventory --arg compact=true
 ```
 
 `dimos agent load` starts any missing relay bridge, `HarnessRuntime`, and `McpServer`. Its JSON output lists the
-modules in `loaded` and `already`. Repeating the command preserves running modules. Use the same `MCPSERVER__*`
-settings for the loader and clients.
+modules in `loaded` and `already`. Repeating the command preserves running modules.
 
 ### Start a runtime without robot hardware
 
@@ -36,48 +35,18 @@ if __name__ == "__main__":
     ).loop()
 ```
 
-### Read the inventory from Python
+### Inspect modules and RPCs
 
-Run the following in a second Python process with the same `MCPSERVER__*` settings. It prints a system summary, then
-lists one module's RPCs. Reuse `call_tool` for the later client examples.
+Inspect one module, then read the documentation for a specific RPC:
 
-```python skip
-from typing import Any
-
-import requests
-
-from dimos.agents.harness.runtime.load import mcp_server_url
-
-
-def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    response = requests.post(
-        mcp_server_url(),
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {
-                "name": name,
-                "arguments": arguments,
-                "_meta": {"dimos/conversation": 42},
-            },
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
-    result = response.json()["result"]
-    if result.get("isError"):
-        raise RuntimeError(result["content"])
-    return result
-
-
-print(call_tool("inventory", {"compact": True})["structuredContent"]["text"])
-print(call_tool("inventory", {"module": "HarnessRuntime"})["structuredContent"]["rpcs"])
+```sh skip
+dimos mcp call inventory --arg module=HarnessRuntime
+dimos mcp call inventory --arg module=HarnessRuntime --arg rpc=agent_module
 ```
 
 ### Create a module and send a notice
 
-Save this module as `reporter.py`. Calling its `report()` RPC publishes a notice for the conversation that creates it.
+Save this module as `reporter.py`. Its `report()` RPC sends a notice through the runtime.
 
 ```python
 from dimos.agents.harness.runtime.agent_module import AgentModule
@@ -91,39 +60,44 @@ class Reporter(AgentModule):
         return self.notify("Example is running")
 ```
 
-In the client process, create the module and call its RPC. The result includes `state: "running"` and the path of the
-managed source file. `report()` returns `True` when it publishes the notice. `Dimos.stop()` closes the attached client
-while the coordinator stays up.
+From the directory containing `reporter.py`, create the module:
 
-To change the module, edit the managed source path returned by `create`, then call `restart`. The final calls below
-list, restart, unload, and delete the example module.
+```sh skip
+dimos mcp call agent_module --arg op=create --arg name=reporter --arg path="$PWD/reporter.py"
+```
+
+The result reports the running revision and the managed source path. Call the module's RPC through the Python API:
 
 ```python skip
-from pathlib import Path
-
 from dimos.porcelain.dimos import Dimos
-
-created = call_tool(
-    "agent_module",
-    {"op": "create", "name": "reporter", "path": str(Path("reporter.py").resolve())},
-)
-print(created["structuredContent"])
 
 app = Dimos.connect()
 try:
     print(app.get_module("Reporter").report())
 finally:
     app.stop()
-
-print(call_tool("agent_module", {"op": "list"})["structuredContent"])
-call_tool("agent_module", {"op": "restart", "name": "reporter"})
-call_tool("agent_module", {"op": "unload", "name": "reporter"})
-call_tool("agent_module", {"op": "delete", "name": "reporter"})
 ```
 
-An MCP client listening on the GET event stream receives `dimos/harness_event` with `conversation: 42`. The
-[integration tests](/dimos/agents/harness/runtime/test_runtime.py) show a Python listener and exercise notices, image exports, lifecycle failures,
-module discovery, and ordinary recording against a local system.
+`report()` returns `True` when it publishes the notice. `Dimos.stop()` closes the attached client while the coordinator
+stays up. An MCP listener receives `dimos/harness_event`. Modules created through the CLI have no conversation owner,
+so their notices carry `conversation: null`.
+
+### Edit, restart, and remove a module
+
+Edit the managed source path returned by `create`, then restart the module to run the updated code. List the saved
+modules and restart this example:
+
+```sh skip
+dimos mcp call agent_module --arg op=list
+dimos mcp call agent_module --arg op=restart --arg name=reporter
+```
+
+Unload the module to stop it, then delete it to remove its saved files:
+
+```sh skip
+dimos mcp call agent_module --arg op=unload --arg name=reporter
+dimos mcp call agent_module --arg op=delete --arg name=reporter
+```
 
 ## API reference
 
