@@ -6,9 +6,10 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "misc/mkdocs/**"
+      - "README.md"
+      - "assets/readme/**"
       - "pyproject.toml"
       - "uv.lock"
-      - "**/*.py"
       - ".github/workflows/docs-check.yml"
   workflow_dispatch:
 
