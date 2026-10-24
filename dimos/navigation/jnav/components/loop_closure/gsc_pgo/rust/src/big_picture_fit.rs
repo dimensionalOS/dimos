@@ -578,8 +578,6 @@ pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
     due_at: usize,
-    /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
-    judged: Vec<usize>,
 }
 
 impl GscPgo {
@@ -624,86 +622,17 @@ impl GscPgo {
             self.dispatch_solve();
         }
     }
-    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned
-    /// chain, not an estimate earlier closures already bent). With `closure_cooling`, only the keyframes a new
-    /// closure can move by more than one odometry step's noise are free (plus those since the last solve);
-    /// the rest are held where they are, and the closures between two held keyframes keep their verdicts.
+    /// Start a solve of every keyframe so far and every committed closure, from the odometry (GNC must start
+    /// from the dead-reckoned chain, not an estimate earlier closures already bent).
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let all_closures = closure_edges(self.committed_closures.iter());
-        let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        if config.closure_cooling {
-            let step = config.odom_trans_xy_var;
-            let variance = position_variance(
-                n,
-                &self.committed_closures[..self.closures_dispatched],
-                step,
-            );
-            let solved = self.solving_keyframes;
-            for k in 1..solved.min(n) {
-                free[k] = false;
-            }
-            let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_global).collect();
-            let positions: Vec<Vec3> = self
-                .key_poses
-                .iter()
-                .map(|k| k.translation_global)
-                .collect();
-            for e in &all_closures[self.closures_dispatched..] {
-                let pull = residuals(
-                    &rotations,
-                    &positions,
-                    &[Edge {
-                        variances: [1.0; 6],
-                        ..*e
-                    }],
-                )[0]
-                .sqrt();
-                for k in e.from.min(e.to)..=e.from.max(e.to) {
-                    // a keyframe takes the share of the pull its own looseness leaves it
-                    if pull * variance[k] / (variance[k] + e.variances[3]) > step.sqrt() {
-                        free[k] = k > 0;
-                    }
-                }
-            }
-        }
-        // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
-        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        let mut offset = (mat3::identity(), [0.0; 3]);
-        for (k, key_pose) in self.key_poses.iter().enumerate() {
-            if free[k] {
-                rotations.push(mat3::mat_mul(&offset.0, &key_pose.rotation_local));
-                positions.push(mat3::add(
-                    &mat3::mat_vec(&offset.0, &key_pose.translation_local),
-                    &offset.1,
-                ));
-            } else {
-                let rotation = mat3::mat_mul(
-                    &key_pose.rotation_global,
-                    &mat3::transpose(&key_pose.rotation_local),
-                );
-                offset = (
-                    rotation,
-                    mat3::sub(
-                        &key_pose.translation_global,
-                        &mat3::mat_vec(&rotation, &key_pose.translation_local),
-                    ),
-                );
-                rotations.push(key_pose.rotation_global);
-                positions.push(key_pose.translation_global);
-            }
-        }
-        let touches_free = |e: &Edge| free[e.from] || free[e.to];
-        let odometry: Vec<Edge> = odometry_edges(&self.key_poses, config)
-            .into_iter()
-            .filter(touches_free)
-            .collect();
-        let judged: Vec<usize> = (0..all_closures.len())
-            .filter(|&i| touches_free(&all_closures[i]))
-            .collect();
-        let closures: Vec<Edge> = judged.iter().map(|&i| all_closures[i]).collect();
-        let free_count = free.iter().filter(|&&f| f).count();
+        let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_local).collect();
+        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
+        let odometry = odometry_edges(&self.key_poses, config);
+        let closures = closure_edges(self.committed_closures.iter());
+        // keyframe 0 pins the map
+        let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
@@ -724,16 +653,12 @@ impl GscPgo {
                 (solution, started.elapsed().as_secs_f64())
             })
             .expect("spawn pose graph thread");
-        // a solve's cost grows with its free keyframes, so its delay does
-        let delay =
-            (free_count as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
+        let delay = (n as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
         self.closures_dispatched = self.committed_closures.len();
-        self.solving_keyframes = n;
         self.solving = Some(Solving {
             handle,
             keyframes: n,
             due_at: n + delay.max(1),
-            judged,
         });
     }
     /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
@@ -770,22 +695,7 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        // a closure no solve judged (both ends held) agreed with the map within odometry noise
-        let mut weights: Vec<f64> = self
-            .committed_closures
-            .iter()
-            .map(|l| {
-                if l.gnc_weight.is_nan() {
-                    1.0
-                } else {
-                    l.gnc_weight
-                }
-            })
-            .collect();
-        for (&index, &weight) in solving.judged.iter().zip(&solution.closure_weights) {
-            weights[index] = weight;
-        }
-        for (index, weight) in weights.into_iter().enumerate() {
+        for (index, &weight) in solution.closure_weights.iter().enumerate() {
             let previous = self.committed_closures[index].gnc_weight;
             self.committed_closures[index].gnc_weight = weight;
             if previous == weight {
@@ -857,36 +767,4 @@ pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClos
             variances: [l.score.max(1e-6); 6],
         })
         .collect()
-}
-
-/// Each keyframe's position variance (m²) along the odometry chain from keyframe 0, lowered by every
-/// kept closure: the closure ties its two ends together (at its own variance), and each keyframe between them
-/// is then as loose as the tighter of the two ways back along its cycle, from either end, combined in
-/// parallel. Closures in order, so a cycle anchored to an earlier one is only as tight as that anchor;
-/// O(cycle length) per closure.
-pub fn position_variance(n: usize, closures: &[CommittedClosure], step: f64) -> Vec<f64> {
-    let mut variance: Vec<f64> = (0..n).map(|k| k as f64 * step).collect();
-    let mut order: Vec<&CommittedClosure> =
-        closures.iter().filter(|l| l.gnc_weight > 0.5).collect();
-    order.sort_by_key(|l| l.source_id.max(l.target_id));
-    for l in order {
-        let (t, s) = (l.target_id.min(l.source_id), l.target_id.max(l.source_id));
-        let tie = l.score.max(1e-6);
-        let (vt, vs) = (variance[t], variance[s]);
-        (variance[t], variance[s]) = (vt.min(vs + tie), vs.min(vt + tie));
-        let (vt, vs) = (variance[t], variance[s]);
-        for k in t + 1..s {
-            let (back, forward) = (vt + (k - t) as f64 * step, vs + (s - k) as f64 * step);
-            variance[k] = variance[k].min(back * forward / (back + forward));
-        }
-        // the keyframes after the cycle hang off its end
-        for k in s + 1..n {
-            let chained = variance[k - 1] + step;
-            if chained >= variance[k] {
-                break;
-            }
-            variance[k] = chained;
-        }
-    }
-    variance
 }

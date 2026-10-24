@@ -341,9 +341,6 @@ pub struct Config {
     /// graph on any machine. false: fold it as soon as it finishes (see `poll_gnc`), keyframes or
     /// not, so a robot standing still at a closure still gets the closure; results then depend on timing.
     pub closure_gnc_deterministic: bool,
-    /// Hold the keyframes no new closure can move by more than one odometry step's noise (see
-    /// `big_picture_fit::position_variance`), so a solve covers only the loose part of the map.
-    pub closure_cooling: bool,
     /// Replay only (`search_for_closure_pairs`): keyframes a closure search occupies the search thread for; 0 = instant.
     pub closure_search_keyframes: usize,
     // Odometry between-factor noise (anisotropic).
@@ -385,7 +382,6 @@ impl Default for Config {
             closure_gnc_inlier_probability: 0.95,
             closure_gnc_apply_after_fraction: 0.01,
             closure_gnc_deterministic: true,
-            closure_cooling: false,
             closure_search_keyframes: 0,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -429,8 +425,6 @@ pub struct GscPgo {
     /// shrink with each rejection and reject the rest.
     pub(crate) scored_yanks: Vec<(f64, f64)>,
     pub(crate) waiting_proposal: Option<ClosureProposal>,
-    /// Keyframes the newest dispatched solve covered.
-    pub(crate) solving_keyframes: usize,
     /// A finished search waiting for its keyframe (`closure_search_keyframes`).
     pub(crate) pending_search: Option<(ClosureSearchResult, usize)>,
 }

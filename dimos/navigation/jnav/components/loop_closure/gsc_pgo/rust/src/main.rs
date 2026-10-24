@@ -102,7 +102,6 @@ config! {
     closure_gnc_inlier_probability: f64,
     closure_gnc_apply_after_fraction: f64,
     closure_gnc_deterministic: bool,
-    closure_cooling: bool,
     odom_rot_roll_pitch_var: f64,
     odom_rot_yaw_var: f64,
     odom_trans_xy_var: f64,
