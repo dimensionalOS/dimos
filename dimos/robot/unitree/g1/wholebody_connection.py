@@ -26,7 +26,7 @@ import math
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -148,6 +148,8 @@ class G1WholeBodyConnection(Module):
     """G1 humanoid Module - owns the DDS connection in its own worker."""
 
     config: G1WholeBodyConnectionConfig
+    # Visualization and other modules must not stall the DDS threads via the GIL.
+    dedicated_worker: ClassVar[bool] = True
 
     motor_command: In[MotorCommandArray]
     controller_fault: In[String]
@@ -181,6 +183,8 @@ class G1WholeBodyConnection(Module):
         self._handoff_lock = threading.Lock()
         self._sport_mode_released = False
         self._fault_reason: str | None = None
+        self._fault_context: dict[str, float | int | str | None] = {}
+        self._feedback_phase: tuple[str, float | None] = ("not_started", None)
         self._last_feedback_at: float | None = None
         self._last_feedback_tick: int | None = None
         self._feedback_wall_time = 0.0
@@ -414,6 +418,7 @@ class G1WholeBodyConnection(Module):
     def _publish_motor_state_and_imu(
         self, now: float, frame_id: str, sample: G1LowStateSnapshot
     ) -> None:
+        self._feedback_phase = ("motor_state_publish", time.perf_counter())
         self.motor_states.publish(
             JointState(
                 ts=now,
@@ -425,6 +430,7 @@ class G1WholeBodyConnection(Module):
             )
         )
         # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
+        self._feedback_phase = ("imu_publish", time.perf_counter())
         self.imu.publish(
             _imu_from_unitree_wxyz(
                 sample.quaternion,
@@ -442,6 +448,7 @@ class G1WholeBodyConnection(Module):
 
         while not self._stop_event.is_set():
             try:
+                self._feedback_phase = ("dds_read", time.perf_counter())
                 self._drain_low_state()
             except Exception:
                 # This is the hardware IO boundary: a failed feedback pump
@@ -450,11 +457,13 @@ class G1WholeBodyConnection(Module):
                 with self._lock:
                     self._latch_fault_locked("feedback pump failed")
                 return
+            self._feedback_phase = ("state_snapshot", time.perf_counter())
             sample = self._snapshot_motor_imu()
             if sample is not None:
                 with self._lock:
                     captured_at = self._feedback_wall_time
                 self._publish_motor_state_and_imu(now=captured_at, frame_id=frame_id, sample=sample)
+            self._feedback_phase = ("idle", time.perf_counter())
             next_tick += period
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
@@ -611,9 +620,32 @@ class G1WholeBodyConnection(Module):
 
     def _latch_fault_locked(self, reason: str) -> None:
         if self._fault_reason is None:
+            now = time.perf_counter()
+            phase, phase_started_at = self._feedback_phase
+            self._fault_context = {
+                "fault_feedback_age_ms": (
+                    None
+                    if self._last_feedback_at is None
+                    else (now - self._last_feedback_at) * 1000.0
+                ),
+                "fault_feedback_tick": self._last_feedback_tick,
+                "fault_command_age_ms": (
+                    None
+                    if self._latest_command is None
+                    else (now - self._latest_command.received_at) * 1000.0
+                ),
+                "fault_feedback_phase": phase,
+                "fault_feedback_phase_age_ms": (
+                    None if phase_started_at is None else (now - phase_started_at) * 1000.0
+                ),
+            }
             self._fault_reason = reason[:256]
             self._latest_command = None
-            logger.error("G1 damping stop latched; restart required", reason=self._fault_reason)
+            logger.error(
+                "G1 damping stop latched; restart required",
+                reason=self._fault_reason,
+                **self._fault_context,
+            )
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
@@ -649,6 +681,7 @@ class G1WholeBodyConnection(Module):
                     if self._last_feedback_at is None
                     else (time.perf_counter() - self._last_feedback_at) * 1000.0
                 ),
+                **self._fault_context,
             }
 
     def _ensure_low_level_control(self) -> bool:

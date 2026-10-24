@@ -1,0 +1,14 @@
+[Unit]
+Description=Lock Jetson clocks for DimOS policy inference
+# nvpmodel is enabled separately: a manual restart must not rerun power-mode setup.
+After=nvpmodel.service
+ConditionPathExists=/etc/nv_tegra_release
+ConditionPathExists=/usr/bin/jetson_clocks
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/jetson_clocks
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -20,6 +20,9 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.control_safety import (
@@ -32,6 +35,27 @@ from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
+
+
+@pytest.mark.skipif_macos_bug
+def test_motor_driver_isolated_when_worker_pool_is_full():
+    config = GlobalConfig(n_workers=1, viewer="none")
+    manager = WorkerManagerPython(g=config)
+    try:
+        # Deploying constructs modules but does not start DDS or motor control.
+        driver, other = manager.deploy_parallel(
+            [(G1WholeBodyConnection, config, {}), (Module, config, {})]
+        )
+
+        assert driver.actor_instance._worker_id != other.actor_instance._worker_id
+        driver_worker = next(
+            worker
+            for worker in manager._workers
+            if worker.worker_id == driver.actor_instance._worker_id
+        )
+        assert driver_worker.module_names == ["G1WholeBodyConnection"]
+    finally:
+        manager.stop()
 
 
 @pytest.fixture
@@ -264,6 +288,37 @@ def test_stale_feedback_or_commands_force_damping(connection, clock, fresh_feedb
 
     assert publisher.frames[-1] == [(0.0, 0.0, 0.0, DAMPING_KD, 0.0)] * 29
     assert connection.command_stream_status()["fault_reason"] == reason
+
+
+def test_timeout_diagnostics_survive_feedback_recovery(connection, clock, mocker):
+    _wire(connection, soft_start_seconds=0.0)
+    connection._on_motor_command(_command())
+    connection._feedback_phase = ("motor_state_publish", clock.now)
+    log_error = mocker.patch("dimos.robot.unitree.g1.wholebody_connection.logger.error")
+
+    clock.now += 0.125
+    connection._publish_latest_command(clock.now)
+    _feedback(connection, tick=2)
+    clock.now += 0.005
+    connection._publish_latest_command(clock.now)
+    status = connection.command_stream_status()
+
+    assert status["fault_reason"] == "robot feedback timeout"
+    assert status["feedback_age_ms"] == pytest.approx(5.0)
+    assert status["fault_feedback_age_ms"] == pytest.approx(125.0)
+    assert status["fault_command_age_ms"] == pytest.approx(125.0)
+    assert status["fault_feedback_tick"] == 1
+    assert status["fault_feedback_phase"] == "motor_state_publish"
+    assert status["fault_feedback_phase_age_ms"] == pytest.approx(125.0)
+    log_error.assert_called_once_with(
+        "G1 damping stop latched; restart required",
+        reason="robot feedback timeout",
+        fault_feedback_age_ms=pytest.approx(125.0),
+        fault_feedback_tick=1,
+        fault_command_age_ms=pytest.approx(125.0),
+        fault_feedback_phase="motor_state_publish",
+        fault_feedback_phase_age_ms=pytest.approx(125.0),
+    )
 
 
 @pytest.mark.parametrize("handed_off, modes", [(False, []), (True, [[0] * 29])])

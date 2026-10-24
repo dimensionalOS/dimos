@@ -67,6 +67,7 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     camera_id: int = 0
     serial_number: int | str | None = None
     resolution: str | None = None
+    image_flip: bool = False
     depth_mode: str | sl.DEPTH_MODE = "NEURAL"
     enable_fill_mode: bool = False
     enable_tracking: bool = True
@@ -146,6 +147,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         else:
             self._init_params.camera_resolution = sl.RESOLUTION.HD720
         self._init_params.camera_fps = self.config.fps
+        if self.config.image_flip:
+            self._init_params.camera_image_flip = sl.FLIP_MODE.ON
         if isinstance(self.config.depth_mode, sl.DEPTH_MODE):
             self._init_params.depth_mode = self.config.depth_mode
         else:
@@ -451,6 +454,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def stop(self) -> None:
         self._running = False
 
+        # The current frame still owns the camera and SDK buffers until it exits.
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if self._thread.is_alive():
+                raise TimeoutError("ZED capture thread did not stop; camera remains open")
+        self._thread = None
+
         if self._zed:
             if self._tracking_enabled:
                 try:
@@ -462,11 +472,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             except Exception:
                 pass
             self._zed = None
-
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            if self._thread.is_alive():
-                self._thread = None
 
         self._color_camera_info = None
         self._depth_camera_info = None
