@@ -48,7 +48,7 @@ _EXPECTED_DIMENSIONS = {
 }
 
 # An octree obstacle carries one point per occupied cell across worker RPC, where
-# every point is a pickled tuple. A wrist workspace at 5 cm sits in the low
+# every point is an encoded tuple. A wrist workspace at 5 cm sits in the low
 # thousands; this is the ceiling that keeps a misaimed room-scale map from
 # quietly stalling the pipe.
 MAX_OCTREE_POINTS = 200_000
@@ -269,7 +269,7 @@ def _validate_octree(obstacle: Obstacle) -> None:
     if len(obstacle.points) > MAX_OCTREE_POINTS:
         raise ValueError(
             f"OCTREE obstacle has {len(obstacle.points)} points, over the "
-            f"{MAX_OCTREE_POINTS} limit. Each one crosses worker RPC as a pickled "
+            f"{MAX_OCTREE_POINTS} limit. Each one crosses worker RPC as an encoded "
             f"tuple, so an unbounded map stalls the pipe."
         )
     points = np.asarray(obstacle.points, dtype=np.float64)

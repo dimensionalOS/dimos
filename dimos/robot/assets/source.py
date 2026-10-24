@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import SupportsIndex
+from typing import Any, SupportsIndex
 
 from dimos.robot.assets.git_cache import GitAssetCache
 
@@ -69,6 +69,13 @@ class RobotDescriptionSource:
     def __hash__(self) -> int:
         return hash((self.url, self.ref))
 
+    def cbor_encode(self) -> dict[str, str]:
+        return {"url": self.url, "ref": self.ref}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, str]) -> RobotDescriptionSource:
+        return cls(data["url"], data["ref"])
+
     def __reduce__(self) -> tuple[type[RobotDescriptionSource], tuple[str, str]]:
         """Recreate the source without serializing checkout state."""
         return (RobotDescriptionSource, (self.url, self.ref))
@@ -116,6 +123,7 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
             "_resolve",
             "__reduce__",
             "__reduce_ex__",
+            "cbor_encode",
         }:
             return object.__getattribute__(self, name)
 
@@ -163,6 +171,16 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
                 object.__getattribute__(self, "_robot_description_relative_path"),
             )
         )
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "source": object.__getattribute__(self, "_robot_description_source"),
+            "relative_path": str(object.__getattribute__(self, "_robot_description_relative_path")),
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RobotDescriptionPath:
+        return cls(data["source"], Path(data["relative_path"]))
 
     def __reduce__(self) -> tuple[type[RobotDescriptionPath], tuple[RobotDescriptionSource, Path]]:
         """Preserve the lazy source handle across worker serialization."""

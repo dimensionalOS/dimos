@@ -21,9 +21,13 @@ import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
 from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.encode import cbor
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+logger = setup_logger()
 
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
@@ -92,6 +96,24 @@ class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
 
     def decode(self, msg: bytes, _: TopicT) -> MsgT:
         return cast("MsgT", pickle.loads(msg))
+
+
+class CborEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
+    """Encoder mixin using the CBOR codec (dimos.protocol.encode.cbor).
+
+    Encoding an unsupported value raises TypeError out of publish(); a message
+    that does not decode is logged and dropped.
+    """
+
+    def encode(self, msg: MsgT, _: TopicT) -> bytes:
+        return cbor.encode(msg)
+
+    def decode(self, msg: bytes, topic: TopicT) -> MsgT:
+        try:
+            return cast("MsgT", cbor.decode(msg))
+        except cbor.CborDecodeError as e:
+            logger.error("Dropping undecodable CBOR message", topic=str(topic), error=str(e))
+            raise DecodingError(str(e)) from e
 
 
 class LCMTopicProto(Protocol):

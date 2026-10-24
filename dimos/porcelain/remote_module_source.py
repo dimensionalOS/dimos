@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import functools
 import importlib
-import pickle
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -144,7 +143,7 @@ class RemoteModuleSource(ModuleSource):
                 )
                 if descriptor is None:
                     raise AttributeError(f"{remote_name!r} has no stream named {name!r}")
-                stream_type, transport = pickle.loads(descriptor.transport)
+                stream_type, transport = descriptor.type, descriptor.transport
                 if isinstance(
                     transport, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
                 ):

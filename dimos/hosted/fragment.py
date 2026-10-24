@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-import pickle
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.protocol.encode.cbor import decode, encode
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +53,7 @@ class PythonFragmentPayload:
 
 @dataclass(frozen=True, slots=True)
 class HostFragment:
-    """Deployment unit sent to one Host; the payload stays pickled until the fragment process."""
+    """Deployment unit sent to one Host; the payload stays encoded until the fragment process."""
 
     run_id: str
     host_id: str
@@ -64,11 +64,11 @@ class HostFragment:
     def create(
         cls, *, run_id: str, host_id: str, revision: str, payload: PythonFragmentPayload
     ) -> HostFragment:
-        payload_bytes = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+        payload_bytes = encode(payload)
         return cls(run_id=run_id, host_id=host_id, revision=revision, payload=payload_bytes)
 
     def load_payload(self) -> PythonFragmentPayload:
-        payload = pickle.loads(self.payload)
+        payload = decode(self.payload)
         if not isinstance(payload, PythonFragmentPayload):
             raise TypeError("Fragment payload is not a PythonFragmentPayload")
         return payload

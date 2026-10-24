@@ -28,7 +28,7 @@ from typing import (
 )
 
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import CborLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
@@ -85,31 +85,6 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         # Message ID counter for unique IDs even with concurrent calls
         self._msg_id_counter = 0
-        self._msg_id_lock = threading.Lock()
-
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any]
-        if hasattr(super(), "__getstate__"):
-            state = super().__getstate__()  # type: ignore[misc, assignment]
-        else:
-            state = self.__dict__.copy()
-
-        # Exclude unpicklable attributes when serializing.
-        state.pop("_response_subs", None)
-        state.pop("_response_subs_lock", None)
-        state.pop("_msg_id_lock", None)
-
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        if hasattr(super(), "__setstate__"):
-            super().__setstate__(state)  # type: ignore[misc]
-        else:
-            self.__dict__.update(state)
-
-        # Restore unserializable attributes.
-        self._response_subs = {}
-        self._response_subs_lock = threading.RLock()
         self._msg_id_lock = threading.Lock()
 
     @abstractmethod
@@ -215,15 +190,20 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             _, callbacks_dict = self._response_subs[topic_res_key]
             callbacks_dict[msg_id] = cb
 
-        # Publish request
-        self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
-
-        # Return unsubscribe function that removes this callback from the dict
+        # Unsubscribe function that removes this callback from the dict
         def unsubscribe_callback() -> None:
             with self._response_subs_lock:
                 if topic_res_key in self._response_subs:
                     _, callbacks_dict = self._response_subs[topic_res_key]
                     callbacks_dict.pop(msg_id, None)
+
+        # Publish request; an unencodable argument raises to the caller and leaves
+        # nothing pending.
+        try:
+            self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
+        except Exception:
+            unsubscribe_callback()
+            raise
 
         return unsubscribe_callback
 
@@ -276,7 +256,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         return self.subscribe(topic_req, receive_call)
 
 
-class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
+class LCMRPC(PubSubRPCMixin[Topic, Any], CborLCM):
     def __init__(
         self,
         rpc_timeouts: dict[str, float] | None = None,
@@ -285,7 +265,7 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
     ) -> None:
         if rpc_timeouts is None:
             rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
-        PickleLCM.__init__(self, **kwargs)
+        CborLCM.__init__(self, **kwargs)
         PubSubRPCMixin.__init__(
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
         )

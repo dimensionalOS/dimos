@@ -24,7 +24,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 import math
 from pathlib import Path
-import pickle
 from typing import Any
 
 import pytest
@@ -40,6 +39,7 @@ from dimos.control.contract.limits import (
 )
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import JointDescription, RobotModel
 
 JOINTS = ("j1", "j2", "j3")
@@ -264,7 +264,7 @@ def test_a_config_that_commands_nothing_is_refused(model: RobotModel) -> None:
 
 def test_the_table_crosses_processes(model: RobotModel) -> None:
     table = limits(config(model=model, pd=True, base_range=RANGE))
-    assert pickle.loads(pickle.dumps(table)) == table
+    assert decode(encode(table)) == table
 
 
 def test_limits_refuse_unless_told_to_clamp() -> None:

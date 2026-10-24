@@ -441,8 +441,11 @@ def test_connected_stream_uses_configured_lcm_bus(
 def test_get_stream_subscribes_when_module_class_is_unavailable(
     client, stream_module, collected, mocker
 ):
+    # Patch this module's importlib binding only: the shared importlib.import_module
+    # also serves the CBOR codec, which must keep resolving classes by reference.
     import_module = mocker.patch(
-        "dimos.porcelain.remote_module_source.importlib.import_module", side_effect=ImportError
+        "dimos.porcelain.remote_module_source.importlib",
+        **{"import_module.side_effect": ImportError},
     )
     module = client.get_module("remote/streams")
     mocker.stop(import_module)

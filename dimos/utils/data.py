@@ -385,6 +385,7 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             "_lfs_filename",
             "_lfs_resolved_cache",
             "_ensure_downloaded",
+            "cbor_encode",
             "__class__",
             "__copy__",
             "__deepcopy__",
@@ -396,6 +397,13 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         # For all other attributes, ensure download first then delegate to resolved path
         resolved = object.__getattribute__(self, "_ensure_downloaded")()
         return getattr(resolved, name)
+
+    def cbor_encode(self) -> str:
+        return str(object.__getattribute__(self, "_lfs_filename"))
+
+    @classmethod
+    def cbor_decode(cls, filename: str) -> "LfsPath":
+        return cls(filename)
 
     def __copy__(self) -> "LfsPath":
         copied = LfsPath(self._lfs_filename)
