@@ -1,0 +1,123 @@
+$ dimos --rerun-open=none --rerun-web run go2-sim
+05:28:52.874 [inf][imos/cli/commands/lifecycle.py] Starting DimOS
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.13)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+05:28:53.350 [inf][dination/module_coordinator.py] Building the blueprint
+05:28:53.350 [inf][dination/module_coordinator.py] Starting the modules
+05:28:53.390 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=6
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.13)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+2026-10-22T05:28:53.624185Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+2026-10-22T05:28:53.624750Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+2026-10-22T05:28:53.627024Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:53.627783Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+05:28:53.628 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+05:28:53.629 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+05:28:53.629 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+2026-10-22T05:28:53.630277Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:53.631860Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:53.633 [inf][/coordination/python_worker.py] Deployed module. module=MovementManager module_id=4 worker_id=5
+05:28:53.633 [inf][/coordination/python_worker.py] Deployed module. module=RerunWebSocketServer module_id=1 worker_id=2
+05:28:53.633 [inf][/coordination/python_worker.py] Deployed module. module=Go2Mid360StaticTf module_id=3 worker_id=4
+2026-10-22T05:28:53.634302Z  WARN ThreadId(04) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+05:28:53.636 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+2026-10-22T05:28:53.638810Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:53.691593Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+05:28:53.693 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+2026-10-22T05:28:53.696449Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:53.697 [inf][/coordination/python_worker.py] Deployed module. module=KeyboardTeleop module_id=5 worker_id=1
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.13)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+2026-10-22T05:28:53.806102Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+05:28:53.808 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+2026-10-22T05:28:53.810619Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:53.811 [inf][/coordination/python_worker.py] Deployed module. module=SimGo2World module_id=2 worker_id=3
+2026-10-22T05:28:53.950189Z  WARN ThreadId(01) zenoh::net::routing::hat::peer: Gossip is disabled: cannot de-duplicate data traversing region gateways
+05:28:53.952 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=False listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
+2026-10-22T05:28:53.955259Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:54.214 [inf][/coordination/python_worker.py] Deployed module. module=RerunBridgeModule module_id=0 worker_id=0
+05:28:54.225 [inf][/visualization/rerun/bridge.py] Rerun bridge starting
+05:28:54.226 [inf][ocol/tf/static_tf_publisher.py] Go2Mid360StaticTf publishing 3 static transform(s) at 5.0 Hz
+05:28:54.235 [inf][os/visualization/rerun/init.py] Rerun gRPC server ready at rerun+http://127.0.0.1:9877/proxy
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'API misuse: setting the main menu on a non-main thread. Main menu contents should only be modified from the main thread.'
+*** First throw call stack:
+(
+	0   CoreFoundation                      0x000000018ea747b0 __exceptionPreprocess + 176
+	1   libobjc.A.dylib                     0x000000018a6c865c objc_exception_throw + 88
+	2   Foundation                          0x000000018af7c4e8 -[NSCalendarDate initWithCoder:] + 0
+	3   AppKit                              0x000000019468478c -[NSMenu _setMenuName:] + 400
+	4   AppKit                              0x0000000194699500 -[NSApplication setMainMenu:] + 388
+	5   libSDL2-2.0.0.dylib                 0x000000010bf4e404 Cocoa_RegisterApp + 424
+	6   libSDL2-2.0.0.dylib                 0x000000010bf545bc Cocoa_CreateDevice + 28
+	7   libSDL2-2.0.0.dylib                 0x000000010bf36d9c SDL_VideoInit_REAL + 520
+	8   libSDL2-2.0.0.dylib                 0x000000010be83d6c SDL_InitSubSystem_REAL + 304
+	9   display.cpython-312-darwin.so       0x00000001062ce200 pg_display_init + 340
+	10  python3.12                          0x00000001050b8f04 cfunction_vectorcall_NOARGS.llvm.8361394994803635454 + 104
+	11  python3.12                          0x0000000104e43b74 _PyObject_VectorcallTstate.llvm.12723535298008962647 + 84
+	12  base.cpython-312-darwin.so          0x00000001061589a4 pg_mod_autoinit + 88
+	13  base.cpython-312-darwin.so          0x000000010615a6ec pg_init + 208
+	14  python3.12                          0x00000001050b8f04 cfunction_vectorcall_NOARGS.llvm.8361394994803635454 + 104
+	15  python3.12                          0x0000000104e84594 _PyEval_EvalFrameDefault + 175632
+	16  python3.12                          0x00000001050a1024 method_vectorcall.llvm.2086919206476172943 + 356
+	17  python3.12                          0x0000000104e88010 _PyEval_EvalFrameDefault + 190604
+	18  python3.12                          0x00000001050a1024 method_vectorcall.llvm.2086919206476172943 + 356
+	19  python3.12                          0x0000000104fb7564 thread_run + 148
+	20  python3.12                          0x00000001055f18a0 pythread_wrapper.llvm.8396818880982915802 + 48
+	21  libsystem_pthread.dylib             0x000000018a838ce4 _pthread_start + 136
+	22  libsystem_pthread.dylib             0x000000018a833cd0 thread_start + 8
+)
+libc++abi: terminating due to uncaught exception of type NSException
+Downloading LFS objects:   0% (0/1), 0 B | 0 B/s                                2026-10-22T05:28:54.628853Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:54.628855Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:54.631183Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:54.638044Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:54.669 [inf][/visualization/rerun/bridge.py] 
+============================================================
+Rerun gRPC server running (no viewer opened)
+
+Connect a viewer:
+  dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy --ws-url ws://127.0.0.1:3030/ws
+  dimos-viewer --connect rerun+http://192.0.2.10:9877/proxy --ws-url ws://192.0.2.10:3030/ws  # en0
+  dimos-viewer --connect rerun+http://192.0.2.20:9877/proxy --ws-url ws://192.0.2.20:3030/ws  # utun4
+
+  hostname: Mac.localdomain
+============================================================
+
+05:28:54.670 [inf][/visualization/rerun/bridge.py] bridge listening on Zenoh
+05:28:54.671 [inf][/visualization/rerun/bridge.py] Rerun static entity archetypes=['Boxes3D', 'Transform3D'] entity_path=world/robot_body
+Downloading LFS objects:   0% (0/1), 0 B | 0 B/s                                2026-10-22T05:28:54.810401Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:54.954165Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+Downloading LFS objects:   0% (0/1), 16 KB | 0 B/s                              Downloading LFS objects:   0% (0/1), 410 KB | 0 B/s                             Downloading LFS objects:   0% (0/1), 5.4 MB | 0 B/s                             Downloading LFS objects: 100% (1/1), 5.4 MB | 0 B/s                             05:28:55.861 [inf][os/simulation/go2_sim/world.py] Sim world ready scene=office_1
+objc[27424]: Class GLFWHelper is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dbb8) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584ba28). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[27424]: Class GLFWApplicationDelegate is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dc08) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584ba78). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[27424]: Class GLFWWindowDelegate is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dc30) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584baa0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[27424]: Class GLFWContentView is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dc80) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584baf0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+objc[27424]: Class GLFWWindow is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dcf8) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584bb68). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+05:28:56.025 [inf][dination/module_coordinator.py] Stopping module... module=KeyboardTeleop
+05:28:56.026 [inf][dination/module_coordinator.py] Module stopped. module=KeyboardTeleop
+05:28:56.026 [inf][dination/module_coordinator.py] Stopping module... module=MovementManager
+05:28:56.026 [inf][dination/module_coordinator.py] Module stopped. module=MovementManager
+05:28:56.027 [inf][dination/module_coordinator.py] Stopping module... module=Go2Mid360StaticTf
+05:28:56.027 [inf][dination/module_coordinator.py] Module stopped. module=Go2Mid360StaticTf
+05:28:56.027 [inf][dination/module_coordinator.py] Stopping module... module=SimGo2World
+05:28:56.027 [inf][dination/module_coordinator.py] Module stopped. module=SimGo2World
+05:28:56.027 [inf][dination/module_coordinator.py] Stopping module... module=RerunWebSocketServer
+05:28:56.028 [inf][dination/module_coordinator.py] Module stopped. module=RerunWebSocketServer
+05:28:56.028 [inf][dination/module_coordinator.py] Stopping module... module=RerunBridgeModule
+05:28:56.028 [inf][dination/module_coordinator.py] Module stopped. module=RerunBridgeModule
+05:28:56.028 [inf][ation/worker_manager_python.py] Shutting down all workers...
+05:28:56.029 [inf][/coordination/python_worker.py] Worker stopping module... module=MovementManager module_id=4 worker_id=5
+05:28:56.029 [inf][/coordination/python_worker.py] Worker module stopped. module=MovementManager module_id=4 worker_id=5
+05:28:56.033 [inf][/coordination/python_worker.py] Worker stopping module... module=Go2Mid360StaticTf module_id=3 worker_id=4
+05:28:56.034 [inf][/coordination/python_worker.py] Worker module stopped. module=Go2Mid360StaticTf module_id=3 worker_id=4
+05:28:56.037 [inf][/coordination/python_worker.py] Worker stopping module... module=SimGo2World module_id=2 worker_id=3
+2026-10-22T05:28:56.630327Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:56.640467Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:56.811684Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+2026-10-22T05:28:56.955882Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+05:28:57.300 [inf][/coordination/python_worker.py] Worker module stopped. module=SimGo2World module_id=2 worker_id=3
+05:28:57.314 [inf][/coordination/python_worker.py] Worker stopping module... module=RerunWebSocketServer module_id=1 worker_id=2
+05:28:57.314 [inf][/coordination/python_worker.py] Worker module stopped. module=RerunWebSocketServer module_id=1 worker_id=2
+05:28:57.317 [inf][/coordination/python_worker.py] Worker stopping module... module=RerunBridgeModule module_id=0 worker_id=0
+05:28:57.317 [inf][/coordination/python_worker.py] Worker module stopped. module=RerunBridgeModule module_id=0 worker_id=0
+05:28:57.323 [inf][ation/worker_manager_python.py] All workers shut down

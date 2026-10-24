@@ -21,6 +21,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import signal
 import subprocess
@@ -377,9 +378,29 @@ def _save(record: dict[str, Any]) -> None:
     store.write_atomic(launch_file(), json.dumps(record))
 
 
+FATAL = ("*** Terminating app", "[err]", "[cri]")
+LOG_LINE = re.compile(
+    r"^\d\d:\d\d:\d\d\.\d+ \["
+)  # dimos' console format: `HH:MM:SS.mmm [lvl][file]`
+
+
 def last_error(output: str) -> str:
-    lines = [line.strip() for line in output.splitlines()[1:] if line.strip()]
-    return lines[-1] if lines else "dimos exited during startup"
+    """The cause of a failed launch: the last fatal line, or the exception ending the last traceback.
+
+    Shutdown chatter (`Stopping module...`, `All workers shut down`) follows a crash, so the
+    last line alone names the wrong thing. Without a fatal line it still stands, as before."""
+    lines = [line.rstrip() for line in output.splitlines()[1:] if line.strip()]
+    cause = None
+    for index, line in enumerate(lines):
+        if any(marker in line for marker in FATAL):
+            cause = line.strip()
+        elif line.startswith("Traceback (most recent call last):"):
+            # other workers' log lines can land between the frames and the exception
+            rest = (f for f in lines[index + 1 :] if not LOG_LINE.match(f))
+            cause = next((f.strip() for f in rest if not f.startswith((" ", "\t"))), cause)
+    if cause is None:
+        return lines[-1].strip() if lines else "dimos exited during startup"
+    return cause
 
 
 def current_launch() -> dict[str, Any] | None:
