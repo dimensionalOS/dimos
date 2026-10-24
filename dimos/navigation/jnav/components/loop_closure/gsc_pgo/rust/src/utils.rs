@@ -24,19 +24,21 @@ use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use lcm_msgs::tf2_msgs::TFMessage;
 
-fn make_time(ts: f64) -> Time {
-    Time {
+pub fn make_header(frame_id: &str, ts: f64) -> Header {
+    let stamp = Time {
         sec: ts as i32,
         nsec: ((ts - (ts as i32) as f64) * 1e9) as i32,
+    };
+    Header {
+        seq: 0,
+        stamp,
+        frame_id: frame_id.to_string(),
     }
 }
 
-pub fn make_header(frame_id: &str, ts: f64) -> Header {
-    Header {
-        seq: 0,
-        stamp: make_time(ts),
-        frame_id: frame_id.to_string(),
-    }
+fn quaternion(rotation: &Mat3) -> Quaternion {
+    let [w, x, y, z] = mat3::quat_from_mat(rotation);
+    Quaternion { x, y, z, w }
 }
 
 pub fn build_odometry(
@@ -46,7 +48,6 @@ pub fn build_odometry(
     frame_id: &str,
     child_frame_id: &str,
 ) -> Odometry {
-    let q = mat3::quat_from_mat(rotation);
     let mut odom = Odometry {
         header: make_header(frame_id, ts),
         child_frame_id: child_frame_id.to_string(),
@@ -57,12 +58,7 @@ pub fn build_odometry(
         y: translation[1],
         z: translation[2],
     };
-    odom.pose.pose.orientation = Quaternion {
-        x: q[1],
-        y: q[2],
-        z: q[3],
-        w: q[0],
-    };
+    odom.pose.pose.orientation = quaternion(rotation);
     odom
 }
 
@@ -73,7 +69,6 @@ pub fn build_tf_message(
     frame_id: &str,
     child_frame_id: &str,
 ) -> TFMessage {
-    let q = mat3::quat_from_mat(correction_rotation);
     TFMessage {
         transforms: vec![TransformStamped {
             header: make_header(frame_id, ts),
@@ -84,12 +79,7 @@ pub fn build_tf_message(
                     y: correction_translation[1],
                     z: correction_translation[2],
                 },
-                rotation: Quaternion {
-                    x: q[1],
-                    y: q[2],
-                    z: q[3],
-                    w: q[0],
-                },
+                rotation: quaternion(correction_rotation),
             },
         }],
     }
