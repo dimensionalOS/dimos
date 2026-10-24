@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Shell syntax and lint
         run: |
           /bin/bash -n scripts/install.sh
@@ -55,7 +55,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y ca-certificates curl git
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Install and verify
@@ -65,7 +65,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
           bash scripts/test-install.sh '${{ matrix.mode }}'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@v7.0.1
         # act has no GitHub artifact service; installation output stays in its log.
         if: always() && !env.ACT
         with:
