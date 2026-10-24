@@ -38,6 +38,7 @@ def test_vqa_cli_exposes_generate_and_run() -> None:
     assert result.exit_code == 0
     assert "generate" in output
     assert "run" in output
+    assert "generate-cross-view" not in output
 
 
 def test_vqa_generate_cli_declares_single_image_input() -> None:
@@ -52,6 +53,16 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--stride" in output
     assert "--quality-window" in output
     assert "--min-brightness" in output
+    assert "--with-localize" in output
+    assert "--localize-query" in output
+    assert "--localize-pad" in output
+    # Rich may truncate the long flag name in the help table.
+    assert "localize-cover" in output
+    assert "--min-views" in output
+    assert "localize-evidence" in output
+    assert "--query" not in output
+    assert "--from" not in output
+    assert "--params" not in output
     assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
@@ -110,6 +121,122 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
         )
     ]
     assert "Generated 1 VQA case" in result.stdout
+
+
+def test_vqa_generate_cli_accepts_optional_localize_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        del config
+        seen.append(request)
+        return GenerationResult(
+            output=request.output_directory(),
+            cases=(
+                PublicCase(
+                    id="q",
+                    image="assets/frame.jpg",
+                    question="Is the chair ahead?",
+                    choices=("ahead", "behind"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path),
+            "--with-localize",
+            "--localize-pad",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            image_index=3,
+            output=tmp_path,
+            with_localize=True,
+            localize_pad_s=5.0,
+        )
+    ]
+
+    seen.clear()
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path / "b"),
+            "--with-localize",
+            "--localize-query",
+            "chair",
+            "--localize-query",
+            "table",
+        ],
+    )
+    assert result.exit_code == 0
+    assert seen[0].localize_queries == ("chair", "table")
+
+    seen.clear()
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path / "c"),
+            "--with-localize",
+            "--localize-coverage-k",
+            "5",
+        ],
+    )
+    assert result.exit_code == 0
+    assert seen[0].localize_coverage_k == 5
+
+
+def test_vqa_generate_cli_rejects_non_positive_localize_pad(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path),
+            "--with-localize",
+            "--localize-pad",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "localize-pad" in result.output.lower() or "0.0" in result.output
 
 
 def test_vqa_generate_cli_accepts_frame_range(
@@ -220,6 +347,62 @@ def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatc
     assert result.exit_code != 0
     assert "dataset has no 'tf' stream" in result.output
     assert "Traceback" not in result.output
+
+
+def test_vqa_generate_cli_accepts_with_localize_min_views(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+    evidence = tmp_path / "prior" / "localize_evidence.json"
+    evidence.parent.mkdir()
+    evidence.write_text("{}")
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--start",
+            "0",
+            "--stop",
+            "10",
+            "--with-localize",
+            "--localize-query",
+            "storage box",
+            "--localize-query",
+            "chair",
+            "--min-views",
+            "4",
+            "--localize-evidence",
+            str(evidence),
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=10,
+            with_localize=True,
+            localize_queries=("storage box", "chair"),
+            min_views=4,
+            localize_evidence=evidence,
+            output=tmp_path / "out",
+        )
+    ]
 
 
 def test_vqa_run_cli_formats_dataset_errors(
