@@ -19,12 +19,8 @@ import argparse
 
 import numpy as np
 
-from dimos.imitation.policy.dreamlabs.conversion import (
-    CAMERAS,
-    HORIZON,
-    encode_image,
-    policy_config,
-)
+from dimos.imitation.policy.dreamlabs.constants import CAMERAS, HORIZON
+from dimos.imitation.policy.dreamlabs.conversion import encode_image, policy_config
 from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
 from dimos.imitation.policy.dreamlabs.module import create_client
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat

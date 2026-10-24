@@ -37,6 +37,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.imitation.policy.dreamlabs.config import DreamlabsConfig
+from dimos.imitation.policy.dreamlabs.constants import OBSERVATION_PERIOD, OBSERVATION_WINDOW
 from dimos.imitation.policy.dreamlabs.module import DreamlabsModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -48,8 +49,6 @@ from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-OBSERVATION_PERIOD = 0.2
-OBSERVATION_WINDOW = 9
 
 
 class DreamlabsControl(Spec, Protocol):

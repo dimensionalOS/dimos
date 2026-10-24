@@ -21,6 +21,12 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.imitation.policy.dreamlabs.constants import (
+    ACTION_HZ,
+    CAMERAS,
+    HORIZON,
+    MAX_JOINT_OVERSHOOT_RAD,
+)
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -29,11 +35,6 @@ from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-ACTION_HZ = 20.0
-HORIZON = 48
-CAMERAS = ("overhead", "wrist_l", "wrist_r")
-MAX_JOINT_OVERSHOOT_RAD = np.deg2rad(2.0)
 
 
 def state_vector(state: JointState) -> NDArray[np.float64]:

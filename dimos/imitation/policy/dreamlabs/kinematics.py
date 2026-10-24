@@ -21,12 +21,11 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio
 
+from dimos.imitation.policy.dreamlabs.constants import TCP_OFFSET_M
 from dimos.imitation.policy.dreamlabs.conversion import observation
 from dimos.manipulation.planning.kinematics.pinocchio_ik import PinocchioIK
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
-
-TCP_OFFSET_M = 0.1347
 
 
 class DreamlabsKinematics:
