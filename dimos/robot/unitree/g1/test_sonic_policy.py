@@ -152,7 +152,7 @@ def test_simulation_passes_explicit_cpu_selection_to_inference(connection, monke
     assert connection.status()["active"] is True
 
 
-@pytest.mark.parametrize("operation", ["arm", "live", "reactivate"])
+@pytest.mark.parametrize("operation", ["arm", "activate", "live", "reactivate"])
 def test_unlocked_clocks_reject_activation_without_changing_control_state(
     connection, clock_check, monkeypatch, operation
 ):
@@ -165,6 +165,8 @@ def test_unlocked_clocks_reject_activation_without_changing_control_state(
     with pytest.raises(RuntimeError, match="requires locked Jetson"):
         if operation == "arm":
             connection.arm()
+        elif operation == "activate":
+            connection.activate()
         elif operation == "live":
             connection.set_dry_run(False)
         else:
@@ -201,6 +203,71 @@ def test_clock_changes_do_not_block_deactivation_or_stop(connection, clock_check
     assert connection.halt_robot()
     assert connection.status()["fault_reason"] == "operator stop"
     clock_check.assert_not_called()
+
+
+def test_activate_enables_live_control_and_preserves_the_pose_ramp(connection):
+    connection.start()
+    connection.set_dry_run(True)
+
+    assert connection.activate()
+    assert connection.status()["arm_pending"]
+    assert connection.status()["dry_run"] is False
+    assert _step(connection, 10.0, positions=0.4) == pytest.approx([0.4] * 29)
+    assert _step(connection, 13.0) == pytest.approx(DEFAULT_ANGLES_DDS.tolist())
+    assert _step(connection, 13.02) == [1.0] * 29
+
+
+@pytest.mark.parametrize("ramp", [-1.0, float("nan")])
+def test_rejected_activation_does_not_disable_dry_run(connection, ramp):
+    connection.start()
+    connection.set_dry_run(True)
+
+    with pytest.raises(ValueError):
+        connection.activate(ramp)
+
+    state = connection.status()
+    assert state["dry_run"] is True
+    assert state["arm_pending"] is False
+
+
+def test_activation_requires_feedback_and_cannot_clear_a_fault(connection, mocker):
+    connection.start()
+    connection.set_dry_run(True)
+    mocker.patch.object(connection._controller._adapter, "has_motor_states", return_value=False)
+
+    with pytest.raises(RuntimeError, match="Waiting for joint"):
+        connection.activate()
+    assert connection.status()["dry_run"] is True
+    assert connection.status()["arm_pending"] is False
+
+    connection.halt_robot()
+    with pytest.raises(RuntimeError, match="latched"):
+        connection.activate()
+    assert connection.status()["control_state"] == "fault"
+
+
+def test_activate_does_not_change_an_already_armed_dry_run(connection):
+    _arm(connection)
+    connection.set_dry_run(True)
+
+    with pytest.raises(RuntimeError, match="Deactivate"):
+        connection.activate()
+
+    assert connection.status()["dry_run"] is True
+
+
+def test_stop_motion_clears_references_without_stopping_balance(connection):
+    _arm(connection)
+    connection.set_velocity_command(0.5, 0.2, 0.1, t_now=3.0)
+    pipeline = connection._controller._policy
+
+    connection.stop_motion()
+    _step(connection, 3.02)
+
+    pipeline.stop_clip.assert_called_once()
+    pipeline.clear_vr_3point.assert_called_once()
+    pipeline.set_velocity.assert_called_with(0.0, 0.0, 0.0)
+    assert connection.status()["control_state"] == "control"
 
 
 def test_runtime_reset_clears_velocity_and_repeats_the_measured_pose_ramp(connection):

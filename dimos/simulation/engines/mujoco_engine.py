@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 import math
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -170,6 +171,7 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        observer_camera: CameraConfig | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -221,10 +223,18 @@ class MujocoEngine(SimulationEngine):
 
         self._connected = False
         self._lock = threading.Lock()
+        self._physics_lock = threading.Lock()
+        self._timing_lock = threading.Lock()
+        self._tick_samples: deque[tuple[float, float, float]] = deque(
+            maxlen=max(2, int(self._control_frequency * 5))
+        )
+        self._sensing_sample: tuple[float, float] | None = None
+        self._sensing_error: str | None = None
         self._reset_requested = False
         self._reset_done_events: list[threading.Event] = []
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
+        self._sensing_thread: threading.Thread | None = None
 
         self._joint_positions = [0.0] * self._num_joints
         self._joint_velocities = [0.0] * self._num_joints
@@ -245,6 +255,8 @@ class MujocoEngine(SimulationEngine):
         self._camera_configs = cameras or []
         self._camera_frames: dict[str, CameraFrame] = {}
         self._camera_lock = threading.Lock()
+        self._observer_config = observer_camera
+        self._observer_frame: tuple[NDArray[np.uint8], float] | None = None
         self._raycast_lidar_configs = raycast_lidars or []
         self._raycast_lidar_frames: dict[str, RaycastLidarFrame] = {}
         self._raycast_lidar_lock = threading.Lock()
@@ -347,6 +359,15 @@ class MujocoEngine(SimulationEngine):
                     daemon=True,
                 )
                 self._sim_thread.start()
+            if self._camera_configs or self._raycast_lidar_configs or self._observer_config:
+                if self._sensing_thread is None or not self._sensing_thread.is_alive():
+                    self._sensing_error = None
+                    self._sensing_thread = threading.Thread(
+                        target=self._sensing_loop,
+                        name=f"{self.__class__.__name__}Sensors",
+                        daemon=True,
+                    )
+                    self._sensing_thread.start()
             return True
         except Exception as e:
             logger.error("connect() failed", cls=self.__class__.__name__, error=str(e))
@@ -360,7 +381,16 @@ class MujocoEngine(SimulationEngine):
             self._stop_event.set()
             if self._sim_thread and self._sim_thread.is_alive():
                 self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if self._sensing_thread and self._sensing_thread.is_alive():
+                self._sensing_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if any(
+                thread is not None and thread.is_alive()
+                for thread in (self._sim_thread, self._sensing_thread)
+            ):
+                logger.error("simulation workers did not stop", cls=self.__class__.__name__)
+                return False
             self._sim_thread = None
+            self._sensing_thread = None
             return True
         except Exception as e:
             logger.error("disconnect() failed", cls=self.__class__.__name__, error=str(e))
@@ -449,37 +479,37 @@ class MujocoEngine(SimulationEngine):
             )
         return lidar_states
 
-    def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
-        """Render all due cameras and store frames. Must be called from sim thread."""
+    def _render_cameras(
+        self, now: float, cam_renderers: dict[str, _CameraRendererState], data: mujoco.MjData
+    ) -> None:
+        """Render due cameras from the sensing thread's private snapshot."""
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
             state.last_render_time = now
 
             state.rgb_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
+                data, camera=state.cam_id, scene_option=state.scene_option
             )
             rgb = state.rgb_renderer.render().copy()
 
             state.depth_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
+                data, camera=state.cam_id, scene_option=state.scene_option
             )
             depth = state.depth_renderer.render().copy()
 
             frame = CameraFrame(
                 rgb=rgb,
                 depth=depth.astype(np.float32),
-                cam_pos=self._data.cam_xpos[state.cam_id].copy(),
-                cam_mat=self._data.cam_xmat[state.cam_id].copy(),
+                cam_pos=data.cam_xpos[state.cam_id].copy(),
+                cam_mat=data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
                 timestamp=now,
                 base_pos=(
-                    self._data.xpos[state.base_body_id].copy()
-                    if state.base_body_id is not None
-                    else None
+                    data.xpos[state.base_body_id].copy() if state.base_body_id is not None else None
                 ),
                 base_mat=(
-                    self._data.xmat[state.base_body_id].copy().reshape(3, 3)
+                    data.xmat[state.base_body_id].copy().reshape(3, 3)
                     if state.base_body_id is not None
                     else None
                 ),
@@ -491,8 +521,9 @@ class MujocoEngine(SimulationEngine):
         self,
         now: float,
         lidar_states: dict[str, _RaycastLidarState],
+        data: mujoco.MjData,
     ) -> None:
-        """Raycast lidar frames from MuJoCo cameras. Must be called from sim thread."""
+        """Raycast against the same snapshot as the cameras, outside the physics lock."""
         root_body = self._robot_binding.root_body_id if self._robot_binding is not None else None
         bodyexclude = -1 if root_body is None else root_body
         for state in lidar_states.values():
@@ -500,15 +531,15 @@ class MujocoEngine(SimulationEngine):
                 continue
             state.last_cast_time = now
 
-            origin = self._data.cam_xpos[state.cam_id].copy()
-            camera_mat = self._data.cam_xmat[state.cam_id].reshape(3, 3).copy()
+            origin = data.cam_xpos[state.cam_id].copy()
+            camera_mat = data.cam_xmat[state.cam_id].reshape(3, 3).copy()
             directions_world = state.ray_directions_camera @ camera_mat.T
             n_rays = directions_world.shape[0]
             geom_ids = np.full(n_rays, -1, dtype=np.int32)
             distances = np.full(n_rays, -1.0, dtype=np.float64)
             mujoco.mj_multiRay(
                 self._model,
-                self._data,
+                data,
                 origin,
                 directions_world.ravel(),
                 state.geomgroup,
@@ -525,7 +556,7 @@ class MujocoEngine(SimulationEngine):
             if np.any(valid):
                 points_world = origin + directions_world[valid] * distances[valid, None]
                 if state.cfg.robot_exclusion_radius > 0.0 and self._root_qpos_adr is not None:
-                    root_xy = self._data.qpos[self._root_qpos_adr : self._root_qpos_adr + 2]
+                    root_xy = data.qpos[self._root_qpos_adr : self._root_qpos_adr + 2]
                     keep = (
                         np.linalg.norm(points_world[:, :2] - root_xy, axis=1)
                         >= state.cfg.robot_exclusion_radius
@@ -606,46 +637,46 @@ class MujocoEngine(SimulationEngine):
     def _sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
-
-        # Camera renderers: created once in the sim thread
-        cam_renderers = self._init_cameras()
-        lidar_states = self._init_raycast_lidars()
+        next_step = time.perf_counter()
 
         def _step_once(sync_viewer: bool) -> None:
-            loop_start = time.time()
+            nonlocal next_step
+            loop_start = time.perf_counter()
             reset_done_events: list[threading.Event] = []
-            with self._lock:
-                if self._reset_requested:
-                    self._reset_requested = False
-                    self._reset_unlocked()
-                    reset_done_events = self._reset_done_events
-                    self._reset_done_events = []
+            with self._physics_lock:
+                with self._lock:
+                    if self._reset_requested:
+                        self._reset_requested = False
+                        self._reset_unlocked()
+                        with self._timing_lock:
+                            self._tick_samples.clear()
+                        reset_done_events = self._reset_done_events
+                        self._reset_done_events = []
+                if self._on_before_step is not None:
+                    try:
+                        self._on_before_step(self)
+                    except Exception as exc:
+                        logger.error("on_before_step failed", error=str(exc))
+                if self._should_step is None or self._should_step():
+                    self._apply_control()
+                    mujoco.mj_step(self._model, self._data)
+                if sync_viewer:
+                    m_viewer.sync(state_only=True)
+                self._update_joint_state()
+                if self._on_after_step is not None:
+                    try:
+                        self._on_after_step(self)
+                    except Exception as exc:
+                        logger.error("on_after_step failed", error=str(exc))
+                sim_time = float(self._data.time)
             for reset_done_event in reset_done_events:
                 reset_done_event.set()
-            if self._on_before_step is not None:
-                try:
-                    self._on_before_step(self)
-                except Exception as exc:
-                    logger.error("on_before_step failed", error=str(exc))
-            if self._should_step is None or self._should_step():
-                self._apply_control()
-                mujoco.mj_step(self._model, self._data)
-            if sync_viewer:
-                # Copying the full scene every tick can stall physics behind the controller.
-                m_viewer.sync(state_only=True)
-            self._update_joint_state()
-            if self._on_after_step is not None:
-                try:
-                    self._on_after_step(self)
-                except Exception as exc:
-                    logger.error("on_after_step failed", error=str(exc))
-            self._render_cameras(loop_start, cam_renderers)
-            self._raycast_lidars(loop_start, lidar_states)
-
-            elapsed = time.time() - loop_start
-            sleep_time = dt - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            finished = time.perf_counter()
+            with self._timing_lock:
+                self._tick_samples.append((finished, sim_time, finished - loop_start))
+            # Absolute deadlines absorb normal wake-up jitter without unbounded catch-up.
+            next_step = max(next_step + dt, loop_start)
+            self._stop_event.wait(max(0.0, next_step - time.perf_counter()))
 
         if self._headless:
             while not self._stop_event.is_set():
@@ -657,8 +688,100 @@ class MujocoEngine(SimulationEngine):
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 
-        self._close_cam_renderers(cam_renderers)
         logger.info("sim loop stopped", cls=self.__class__.__name__)
+
+    def _sensing_loop(self) -> None:
+        cam_renderers: dict[str, _CameraRendererState] = {}
+        observer_renderer = None
+        try:
+            data = mujoco.MjData(self._model)
+            cam_renderers = self._init_cameras()
+            lidar_states = self._init_raycast_lidars()
+            observer_camera = mujoco.MjvCamera()  # type: ignore[attr-defined]
+            if self._observer_config is not None:
+                observer_renderer = mujoco.Renderer(
+                    self._model,
+                    width=self._observer_config.width,
+                    height=self._observer_config.height,
+                )
+                mujoco.mjv_defaultFreeCamera(self._model, observer_camera)  # type: ignore[attr-defined]
+                observer_camera.distance = 3.0
+                observer_camera.azimuth = 45.0
+                observer_camera.elevation = -15.0
+            rates = [cfg.fps for cfg in self._camera_configs]
+            rates.extend(cfg.fps for cfg in self._raycast_lidar_configs)
+            if self._observer_config is not None:
+                rates.append(self._observer_config.fps)
+            interval = 1.0 / max(1.0, *rates)
+            while not self._stop_event.is_set():
+                started = time.perf_counter()
+                with self._physics_lock:
+                    mujoco.mj_copyData(data, self._model, self._data)  # type: ignore[attr-defined]
+                    captured_at = time.time()
+                self._render_cameras(captured_at, cam_renderers, data)
+                if observer_renderer is not None:
+                    self._render_observer(captured_at, observer_renderer, observer_camera, data)
+                self._raycast_lidars(captured_at, lidar_states, data)
+                finished = time.perf_counter()
+                with self._timing_lock:
+                    self._sensing_sample = (finished, finished - started)
+                self._stop_event.wait(max(0.0, interval - (finished - started)))
+        except Exception as exc:
+            with self._timing_lock:
+                self._sensing_error = str(exc)
+            logger.exception("simulation sensing failed")
+        finally:
+            self._close_cam_renderers(cam_renderers)
+            if observer_renderer is not None:
+                observer_renderer.close()
+
+    def timing(self) -> dict[str, Any]:
+        """Recent measured wall-clock timing, not a claim of physical stability."""
+        now = time.perf_counter()
+        with self._timing_lock:
+            samples = list(self._tick_samples)
+            sensing, error = self._sensing_sample, self._sensing_error
+        elapsed = samples[-1][0] - samples[0][0] if len(samples) > 1 else 0.0
+        intervals = np.diff([sample[0] for sample in samples]) * 1000
+        return {
+            "target_hz": self._control_frequency,
+            "actual_hz": (len(samples) - 1) / elapsed if elapsed > 0 else None,
+            "real_time_factor": (samples[-1][1] - samples[0][1]) / elapsed if elapsed > 0 else None,
+            "physics_age_ms": (now - samples[-1][0]) * 1000 if samples else None,
+            "interval_p99_ms": float(np.percentile(intervals, 99)) if len(intervals) else None,
+            "interval_max_ms": float(np.max(intervals)) if len(intervals) else None,
+            "work_overruns": sum(sample[2] > 1.0 / self._control_frequency for sample in samples),
+            "samples": len(samples),
+            "sensor_age_ms": (now - sensing[0]) * 1000 if sensing else None,
+            "sensor_work_ms": sensing[1] * 1000 if sensing else None,
+            "sensor_error": error,
+        }
+
+    def _render_observer(
+        self,
+        now: float,
+        renderer: mujoco.Renderer,
+        camera: mujoco.MjvCamera,  # type: ignore[name-defined]
+        data: mujoco.MjData,
+    ) -> None:
+        config = self._observer_config
+        if config is None or (
+            self._observer_frame is not None and now - self._observer_frame[1] < 1.0 / config.fps
+        ):
+            return
+        if self._root_qpos_adr is not None:
+            # Follow position, not orientation: head turns and falls remain visible.
+            start = self._root_qpos_adr
+            camera.lookat[:] = data.qpos[start : start + 3]
+        renderer.update_scene(data, camera=camera)
+        rgb = renderer.render().copy()
+        with self._camera_lock:
+            self._observer_frame = (rgb, now)
+
+    def read_observer(self) -> tuple[NDArray[np.uint8], float] | None:
+        """Latest operator-only third-person image and capture time; no sensor calibration."""
+        with self._camera_lock:
+            return self._observer_frame
 
     @property
     def connected(self) -> bool:
@@ -695,10 +818,7 @@ class MujocoEngine(SimulationEngine):
 
     @property
     def data(self) -> mujoco.MjData:
-        """Live MjData. In-process consumers (sensors, PD hooks) read it
-        directly; physics integration in the sim thread mutates it under
-        ``self._lock`` so reads inside the same MujocoEngine instance are
-        coherent without extra locking."""
+        """Live state for physics-step hooks. Sensor workers use their own snapshot."""
         return self._data
 
     @property
@@ -785,8 +905,10 @@ class MujocoEngine(SimulationEngine):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
     def reset(self) -> None:
-        with self._lock:
+        with self._physics_lock, self._lock:
             self._reset_unlocked()
+            with self._timing_lock:
+                self._tick_samples.clear()
 
     def request_reset(
         self,

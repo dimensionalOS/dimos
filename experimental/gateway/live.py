@@ -192,7 +192,10 @@ class Live:
         name: str,
         args: list[Any],
         kwargs: dict[str, Any],
+        expected_run_id: str | None = None,
     ) -> dict[str, Any]:
+        if expected_run_id is not None and self._run_id() != expected_run_id:
+            raise ApiError(409, "the active run changed; refresh before calling this RPC")
         module = self.module(scanned, module_id)
         if name not in {rpc["name"] for rpc in module["rpcs"]}:
             listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
@@ -201,6 +204,8 @@ class Live:
         handle = self.app().get_module(
             module_id.replace(":", "/") if ":" in module_id else module["class"]
         )
+        if expected_run_id is not None and self._run_id() != expected_run_id:
+            raise ApiError(409, "the active run changed; refresh before calling this RPC")
         try:
             result = getattr(handle, name)(*args, **kwargs)
         except TimeoutError:

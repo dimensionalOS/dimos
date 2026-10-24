@@ -67,6 +67,7 @@ class MovementManager(Module):
         self._lock = threading.Lock()
         self._teleop_active = False
         self._last_teleop_time = 0.0
+        self._source = "idle"
 
     @rpc
     def start(self) -> None:
@@ -80,6 +81,24 @@ class MovementManager(Module):
         with self._lock:
             self._teleop_active = False
         super().stop()
+
+    @rpc
+    def stop_motion(self) -> None:
+        """Cancel navigation and send zero velocity, keeping the balancing policy active."""
+        self._on_teleop(Twist())
+
+    @rpc
+    def movement_status(self) -> dict[str, str | float]:
+        """Report the last selected command source and remaining teleop priority time."""
+        with self._lock:
+            remaining = (
+                max(
+                    0.0, self.config.tele_cooldown_sec - (time.monotonic() - self._last_teleop_time)
+                )
+                if self._teleop_active
+                else 0.0
+            )
+            return {"source": self._source, "teleop_override_remaining_seconds": remaining}
 
     def _on_click(self, msg: PointStamped) -> None:
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -117,12 +136,14 @@ class MovementManager(Module):
                 if elapsed < self.config.tele_cooldown_sec:
                     return
                 self._teleop_active = False
+            self._source = "navigation"
             self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
+            self._source = "teleoperation"
 
         self._cancel_goal()
 

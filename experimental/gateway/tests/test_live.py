@@ -217,6 +217,26 @@ def test_restart_and_stop_go_by_the_instances_class(
     ]
 
 
+def test_rpc_run_guard_rejects_stale_controls(client, dimos):
+    client.get("/active/modules")
+    old_app = dimos["apps"][-1]
+    dimos["run"] = "run-2"
+
+    response = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        json={"run_id": "run-1", "kwargs": {"text": "old command"}},
+    )
+
+    assert response.status_code == 409
+    assert old_app.calls == []
+    assert len(dimos["apps"]) == 1
+    accepted = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        json={"run_id": "run-2", "kwargs": {"text": "new command"}},
+    )
+    assert accepted.json() == {"ok": True, "result": {"said": "new command"}, "error": None}
+
+
 def test_peek_returns_one_message(client: TestClient, dimos: dict[str, Any]) -> None:
     assert client.get("/active/streams/image/peek").json() == {
         "name": "image",

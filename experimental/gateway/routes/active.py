@@ -44,6 +44,7 @@ class ExecRequest(BaseModel):
 class CallRequest(BaseModel):
     args: list[JsonValue] = []
     kwargs: dict[str, JsonValue] = {}
+    run_id: str | None = None
 
 
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
@@ -162,7 +163,13 @@ async def call(
 ) -> dict[str, Any]:
     request = request or CallRequest()
     return await asyncio.to_thread(
-        state.live.call, state.scanner.cache(), id, name, request.args, request.kwargs
+        state.live.call,
+        state.scanner.cache(),
+        id,
+        name,
+        request.args,
+        request.kwargs,
+        request.run_id,
     )
 
 

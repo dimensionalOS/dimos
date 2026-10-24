@@ -112,6 +112,20 @@ def test_valid_click_publishes_goal(manager_and_captured):
     assert captured.way_point == [click]
 
 
+def test_operator_stop_cancels_navigation_and_suppresses_queued_velocity(manager_and_captured):
+    manager, captured = manager_and_captured
+    manager.config.tele_cooldown_sec = 10.0
+    manager._on_nav(_twist(lx=0.8))
+
+    manager.stop_motion()
+    manager._on_nav(_twist(lx=0.8))
+
+    assert [msg.linear.x for msg in captured.cmd_vel] == [0.8, 0.0]
+    assert captured.stop_movement[-1].data is True
+    assert math.isnan(captured.goal[-1].x)
+    assert manager.movement_status()["source"] == "teleoperation"
+
+
 def test_invalid_clicks_rejected(manager_and_captured):
     """NaN, Inf, and out-of-range clicks should not publish."""
     manager, captured = manager_and_captured

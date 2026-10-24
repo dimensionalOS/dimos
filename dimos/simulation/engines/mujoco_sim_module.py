@@ -270,6 +270,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     width: int = 640
     height: int = 480
     fps: int = 15
+    enable_observer: bool = False
+    observer_fps: float = Field(default=10.0, gt=0)
     base_frame_id: str = "link7"
     base_transform: Transform | None = Field(default_factory=_default_identity_transform)
     align_depth_to_color: bool = True
@@ -334,6 +336,7 @@ class MujocoSimModule(
 
     config: MujocoSimModuleConfig
     color_image: Out[Image]
+    observer_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
@@ -348,6 +351,7 @@ class MujocoSimModule(
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._engine: MujocoEngine | None = None
+        self._last_observer_ts = 0.0
         self._shm: ManipShmWriter | None = None
         self._sim_hooks: _WholeBodySimHooks | None = None
         self._gripper_idx: int | None = None
@@ -424,6 +428,11 @@ class MujocoSimModule(
         return str(self.config.robot_mjcf or self.config.address)
 
     @rpc
+    def timing(self) -> dict[str, Any]:
+        """Physics rate, real-time factor and sensing health over the recent five seconds."""
+        return self._engine.timing() if self._engine is not None else {}
+
+    @rpc
     def start(self) -> None:
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
@@ -445,9 +454,7 @@ class MujocoSimModule(
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
-        # Compose rendered cameras separately from raycast lidar. Each
-        # rendered camera blocks the sim thread, so MuJoCo lidar does not
-        # register depth cameras here.
+        # Raycast lidar does not need depth-camera rendering.
         cameras_by_name: dict[str, CameraConfig] = {}
         raycast_lidars: list[RaycastLidarConfig] = []
 
@@ -507,6 +514,11 @@ class MujocoSimModule(
         engine_kwargs: dict[str, Any] = dict(
             headless=self.config.headless,
             cameras=cameras,
+            observer_camera=(
+                CameraConfig(name="observer", fps=self.config.observer_fps)
+                if self.config.enable_observer
+                else None
+            ),
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
@@ -918,7 +930,9 @@ class MujocoSimModule(
         if engine is None:
             return
 
-        interval = 1.0 / self.config.fps
+        interval = 1.0 / max(
+            self.config.fps, self.config.observer_fps if self.config.enable_observer else 0
+        )
         last_timestamp = 0.0
         published_count = 0
 
@@ -935,6 +949,8 @@ class MujocoSimModule(
 
         while not self._stop_event.is_set():
             loop_start = time.monotonic()
+            if self.config.enable_observer:
+                self._publish_observer()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -986,6 +1002,17 @@ class MujocoSimModule(
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _publish_observer(self) -> None:
+        if self._engine is None:
+            return
+        frame = self._engine.read_observer()
+        if frame is None or frame[1] <= self._last_observer_ts:
+            return
+        rgb, ts = frame
+        self._last_observer_ts = ts
+        # This is an operator view, deliberately not a calibrated robot camera.
+        self.observer_image.publish(Image(data=rgb, format=ImageFormat.RGB, frame_id="", ts=ts))
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:

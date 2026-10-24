@@ -99,6 +99,16 @@ class G1SonicPolicyModule(Module):
         self._controller.latch_fault(msg.data)
 
     @rpc
+    def activate(self, ramp_seconds: float | None = None) -> bool:
+        """Activate live balancing through the pose ramp, with fresh feedback required."""
+        return self._controller.activate(ramp_seconds)
+
+    @rpc
+    def stop_motion(self) -> None:
+        """Stop clips and operator references, keeping balance. Cancel navigation separately."""
+        self._controller.stop_motion()
+
+    @rpc
     def arm(self, ramp_seconds: float | None = None) -> bool:
         """Ramp from the measured pose to the default pose, then start balancing."""
         return self._controller.arm(ramp_seconds)
