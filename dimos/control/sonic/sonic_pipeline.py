@@ -622,6 +622,10 @@ class SonicPipeline:
         self._streamed: StreamedMotion | None = None
         self._streamed_frame = 0
         self._use_stream = False
+        self._last_reference_token: NDArray[Any] | None = None
+        self._transition_from: NDArray[Any] | None = None
+        self._transition_tick = self._transition_ticks = 0
+        self._planner_return_seconds: float | None = None
         # Direct planner command (set_planner_command); None -> twist-derived
         self._planner_cmd: dict[str, Any] | None = None
         self._upper_vel_dds: NDArray[Any] | None = None
@@ -759,6 +763,8 @@ class SonicPipeline:
 
     def set_source_stream(self, use_stream: bool) -> None:
         """Command-topic planner-flag inverse: True -> pose-topic motion."""
+        self._transition_from = None
+        self._planner_return_seconds = None
         if use_stream != self._use_stream:
             self._needs_replan = not use_stream
             # Motion-source switch = heading re-anchor (C++ sets
@@ -768,6 +774,56 @@ class SonicPipeline:
             # mocap heading and the policy turns instead of tracking.
             self._reset_heading_alignment()
         self._use_stream = bool(use_stream)
+
+    @property
+    def reference_transition_active(self) -> bool:
+        return self._transition_from is not None or self._planner_return_seconds is not None
+
+    def begin_pose_transition(self, seconds: float) -> None:
+        """Blend the encoder reference, leaving feedback and decoder history intact."""
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("transition duration must be finite and positive")
+        if self._last_reference_token is None or self._streamed is None:
+            raise RuntimeError("a running policy and complete pose window are required")
+        self.set_source_stream(True)
+        self._start_reference_transition(seconds)
+
+    def return_to_planner(self, seconds: float) -> None:
+        """Keep balancing on the last pose while a fresh zero-velocity plan is computed."""
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("transition duration must be finite and positive")
+        if not self._use_stream or self._planner_return_seconds is not None:
+            return
+        self.set_velocity(0.0, 0.0, 0.0)
+        self._planner_cmd = None
+        self._mode_override = LOCOMOTION_MODES["SLOW_WALK"]
+        self._mode_queue.clear()
+        self._trajectory = None
+        self._planner_generation_frame = None
+        # A running ONNX call cannot be cancelled. Retain its timeout and discard
+        # its result before submitting a plan based on the current measured pose.
+        if self._planner_future is not None:
+            self._discard_planner_result = True
+        self._planner_return_seconds = seconds
+        self._transition_from = None
+        self._needs_replan = True
+
+    def _start_reference_transition(self, seconds: float) -> None:
+        assert self._last_reference_token is not None
+        self._transition_from = self._last_reference_token.copy()
+        self._transition_tick = 0
+        self._transition_ticks = max(1, math.ceil(seconds / POLICY_DT))
+
+    def _blend_reference(self, token: NDArray[Any]) -> NDArray[Any]:
+        if self._transition_from is not None:
+            self._transition_tick += 1
+            phase = min(1.0, self._transition_tick / self._transition_ticks)
+            weight = phase * phase * (3.0 - 2.0 * phase)
+            token = (1.0 - weight) * self._transition_from + weight * token
+            if phase >= 1.0:
+                self._transition_from = None
+        self._last_reference_token = token.copy()
+        return token
 
     def _reset_heading_alignment(self) -> None:
         self._heading_delta_quat = np.array([1, 0, 0, 0], dtype=np.float64)
@@ -854,6 +910,9 @@ class SonicPipeline:
         self._planner_closed = True
 
     def reset(self) -> None:
+        self._last_reference_token = None
+        self._transition_from = None
+        self._planner_return_seconds = None
         if self._planner_closed:
             self._planner_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="sonic-planner"
@@ -1046,10 +1105,14 @@ class SonicPipeline:
                 c["mode"], c["movement"], c["facing"], c["speed"], c["height"]
             )
         speed = math.hypot(self._vx, self._vy)
-        yaw = self._desired_heading
+        yaw = (
+            _yaw_from_quat(self._cur_quat)
+            if self._planner_return_seconds is not None
+            else self._desired_heading
+        )
         if yaw is None:
             yaw = _yaw_from_quat(self._cur_quat)
-        if self._heading_initialized:
+        if self._heading_initialized and self._planner_return_seconds is None:
             # The trajectory is in the planner's reference frame; the encoder
             # applies this alignment when tracking it in the robot's world frame.
             yaw -= _yaw_from_quat(self._heading_delta_quat)
@@ -1225,6 +1288,13 @@ class SonicPipeline:
 
         self._trajectory = new_traj
         self._traj_frame = 0
+        if self._planner_return_seconds is not None:
+            seconds = self._planner_return_seconds
+            self.set_source_stream(False)
+            self._streamed = None
+            self._merger.reset()
+            self._needs_replan = False
+            self._start_reference_transition(seconds)
         self._anchor_planner_heading()
 
     def _anchor_planner_heading(self) -> None:
@@ -1343,7 +1413,7 @@ class SonicPipeline:
             and self._traj_frame > self._trajectory.num_frames - 20
             and moving
         )
-        if not self._use_stream and (
+        if (not self._use_stream or self._planner_return_seconds is not None) and (
             self._needs_replan or (self._replan_timer >= interval and moving) or traj_low
         ):
             # Preserve command changes, including a stop, while the worker is busy.
@@ -1376,6 +1446,8 @@ class SonicPipeline:
             token = self._run_encoder(enc_obs)
         else:
             token = self._standing_token
+
+        token = self._blend_reference(token)
 
         # Proprio history (ONNX order)
         q_onnx = self._cur_q_dds[ONNX_TO_DDS]

@@ -21,6 +21,7 @@ import pytest
 import pytest_asyncio
 
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
+from dimos.control.sonic.webxr.test_retargeting import _snapshot
 from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.spec import IMUState, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -31,6 +32,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.control_safety import damping_commands
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 @pytest.fixture
@@ -39,7 +41,7 @@ def clock_check(mocker):
 
 
 @pytest_asyncio.fixture
-async def connection(mocker, tmp_path, clock_check):
+async def connection(mocker, tmp_path, clock_check, request):
     model = tmp_path / "model.onnx"
     model.touch()
     pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline").return_value
@@ -56,6 +58,7 @@ async def connection(mocker, tmp_path, clock_check):
         planner_onnx=model,
         simulation_address=tmp_path / "sim.xml",
         auto_dry_run=False,
+        webxr_enabled=getattr(request, "param", False),
     )
     # Clock ticks are explicit in these tests; ONNX and simulator IO are the boundaries.
     mocker.patch.object(c._controller, "_run")
@@ -76,6 +79,52 @@ def _arm(connection):
     connection.arm()
     _step(connection, 0.0)
     return _step(connection, 3.0)
+
+
+@pytest.mark.parametrize("connection", [True], indirect=True)
+def test_webxr_buttons_cannot_arm_and_stop_motion_returns_to_planner(connection, mocker):
+    c = connection._controller
+    clock = mocker.patch(
+        "dimos.robot.unitree.g1.sonic_controller.time.perf_counter", return_value=10.0
+    )
+    held = Buttons()
+    held.left_primary = held.right_primary = True
+    connection.start()
+    c.update_teleop_buttons(Buttons())
+    c.update_teleop_buttons(held)
+    assert not connection.status()["arm_pending"]
+    assert connection.status()["control_state"] == "unarmed"
+    connection.arm(0)
+    _step(connection, 10)
+    for i in range(10):
+        clock.return_value = 11 + i * 0.02
+        c.update_body_tracking(_snapshot(capture_time_s=clock.return_value))
+    c.update_teleop_buttons(Buttons())
+    c.update_teleop_buttons(held)
+    _step(connection, 11.18)
+    c._policy.begin_pose_transition.assert_called_once_with(1.0)
+    assert connection.status()["reference_source"] == "webxr"
+    with pytest.raises(RuntimeError, match="WebXR pose mode"):
+        connection.set_upper_body([0.0] * 14)
+    connection.stop_motion()
+    _step(connection, 11.20)
+    c._policy.return_to_planner.assert_called_once_with(1.0)
+    assert connection.status()["control_state"] == "control"
+    assert connection.status()["webxr"]["mode"] == "returning"
+    connection.disarm()
+    assert connection.status()["webxr"]["buffered_frames"] == 0
+    assert connection.status()["webxr"]["mode"] == "planner"
+
+
+@pytest.mark.parametrize("connection", [True], indirect=True)
+def test_webxr_four_button_stop_latches_damping(connection):
+    _arm(connection)
+    buttons = Buttons()
+    buttons.left_primary = buttons.right_primary = True
+    buttons.left_secondary = buttons.right_secondary = True
+    connection._controller.update_teleop_buttons(buttons)
+    assert connection.status()["fault_reason"] == "operator stop"
+    connection._controller._adapter.write_motor_commands.assert_called_with(damping_commands(29))
 
 
 def test_hold_and_measured_pose_ramp_precede_policy_output(connection):
@@ -538,3 +587,34 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
         "dimos/g1/position_command/sensor_msgs.JointState"
     )
     assert ("joint_command", JointState) not in blueprint.transport_map
+
+
+@pytest.mark.self_hosted
+def test_webxr_blueprint_serializes_body_and_button_streams(monkeypatch, mocker):
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    monkeypatch.setattr(global_config, "viewer", "rerun")
+    monkeypatch.setattr(global_config, "scene_package", None)
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
+    blueprint = runpy.run_path(
+        str(Path(__file__).parent / "blueprints/basic/unitree_g1_sonic_webxr_teleop.py")
+    )["unitree_g1_sonic_webxr_teleop"]
+
+    modules = {atom.module.__name__ for atom in blueprint.active_blueprints}
+    assert not {"RerunBridgeModule", "RerunWebSocketServer"} & modules
+
+    body = _snapshot()
+    body_transport = blueprint.transport_map[("body_tracking", type(body))]
+    assert body_transport.channel == "dimos/g1/body_tracking"
+    encoded = body_transport.zenoh.encode(body, None)
+    assert body_transport.zenoh.decode(encoded, None) == body
+
+    buttons = Buttons(
+        data=(1 << Buttons.BITS["left_primary"]) | (1 << Buttons.BITS["right_primary"])
+    )
+    button_transport = blueprint.transport_map[("teleop_buttons", Buttons)]
+    assert button_transport.channel == "dimos/g1/teleop_buttons/std_msgs.UInt32"
+    encoded = button_transport.zenoh.encode(buttons, button_transport.topic)
+    decoded = button_transport.zenoh.decode(encoded, button_transport.topic)
+    assert isinstance(decoded, Buttons)
+    assert decoded.data == buttons.data

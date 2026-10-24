@@ -13,6 +13,7 @@ let xrSession = null;
 let xrRefSpace = null;
 let xrBodyRefSpace = null;
 let xrBodyRefSpaceType = null;
+let xrBodySpaceGeneration = 0;
 let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
@@ -570,7 +571,7 @@ function processTracking(time, frame) {
             ws.send(JSON.stringify({
                 type: 'body_tracking_snapshot',
                 capture_time_s: (performance.timeOrigin + time) / 1000,
-                frame_id: xrBodyRefSpaceType,
+                frame_id: `${xrBodyRefSpaceType}:${xrBodySpaceGeneration}`,
                 joints,
             }));
         }
@@ -644,6 +645,7 @@ async function startWebXRSession(clientConfig) {
         xrRefSpace = await session.requestReferenceSpace('local-floor');
 
         if (clientConfig.body_tracking_mode !== 'off') {
+            xrBodySpaceGeneration++;
             try {
                 xrBodyRefSpace = await session.requestReferenceSpace('bounded-floor');
                 xrBodyRefSpaceType = 'bounded-floor';
@@ -652,6 +654,7 @@ async function startWebXRSession(clientConfig) {
                 xrBodyRefSpace = xrRefSpace;
                 xrBodyRefSpaceType = 'local-floor';
             }
+            xrBodyRefSpace.addEventListener('reset', () => { xrBodySpaceGeneration++; });
         }
 
         setStatus(`WebXR active (${session.mode})`);

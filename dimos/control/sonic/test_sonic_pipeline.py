@@ -32,7 +32,10 @@ from dimos.control.sonic.sonic_pipeline import (
     WRISTS_OFFSET,
     SonicPipeline,
 )
+from dimos.control.sonic.webxr.reference import WebXRReference
+from dimos.control.sonic.webxr.test_retargeting import _snapshot
 from dimos.robot.unitree.g1.control_safety import G1ControlError
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 @pytest.fixture
@@ -89,6 +92,111 @@ def _step(pipeline: SonicPipeline, *, measured_yaw: float = 0.0) -> None:
         gyro_body=np.zeros(3, dtype=np.float32),
         gravity_body=np.array([0.0, 0.0, -1.0], dtype=np.float32),
     )
+
+
+def _pose_ready(reference, now=10.0):
+    for index in range(10):
+        reference.body(_snapshot(capture_time_s=now + index * 0.02), now + index * 0.02)
+    reference.buttons(Buttons(), now + 0.18, enabled=True)
+    buttons = Buttons()
+    buttons.left_primary = buttons.right_primary = True
+    reference.buttons(buttons, now + 0.18, enabled=True)
+
+
+def test_webxr_blends_reference_not_motors_then_returns_on_tracking_loss(
+    velocity_pipeline, planner_requests
+):
+    policy = velocity_pipeline
+    _step(policy)
+    _step(policy)
+    reference = WebXRReference()
+    _pose_ready(reference)
+    policy._encoder.run.return_value = [np.ones((1, 64), dtype=np.float32)]
+
+    command = reference.tick(policy, np.array([0.5, 0.2, 0.0], dtype=np.float32), 10.18)
+    np.testing.assert_array_equal(command, [0, 0, 0])
+    assert reference.mode == "entering"
+    _step(policy)
+    # First step of a one-second smoothstep, not a jump to the new reference.
+    np.testing.assert_allclose(policy._obs_buffer[:64], 0.02**2 * (3 - 2 * 0.02))
+    assert np.count_nonzero(policy._his_action) == 0
+    for i in range(1, 51):
+        now = 10.18 + i * 0.02
+        reference.body(_snapshot(capture_time_s=now), now)
+        reference.buttons(Buttons(), now, enabled=True)
+        reference.tick(policy, np.zeros(3, dtype=np.float32), now)
+        _step(policy)
+    assert reference.mode == "pose"
+
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 11.5)
+    assert reference.mode == "returning"
+    assert policy.snapshot()["stream_active"]
+    _step(policy)  # submit a plan from the current measured pose
+    inputs = planner_requests.call_args.args[2]
+    assert inputs["mode"].item() == 0  # standing uses the model's default speed sentinel
+    np.testing.assert_array_equal(inputs["movement_direction"], [[0.0, 0.0, 0.0]])
+    _step(policy)  # consume the plan and begin the return blend
+    assert not policy.snapshot()["stream_active"]
+    for _ in range(50):
+        _step(policy)
+    reference.tick(policy, np.ones(3, dtype=np.float32), 12.5)
+    assert reference.mode == "planner"
+    assert reference.stream.buffered_frames == 0
+
+
+def test_pose_return_discards_busy_planner_but_keeps_its_deadline(
+    velocity_pipeline, planner_requests, mocker
+):
+    policy = velocity_pipeline
+    _step(policy)
+    _step(policy)
+    reference = WebXRReference()
+    _pose_ready(reference)
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 10.18)
+    _step(policy)
+    pending = Future()
+    policy._planner_future = pending
+    policy._planner_started_at = 20.0
+    policy.return_to_planner(1.0)
+    mocker.patch("dimos.control.sonic.sonic_pipeline.time.perf_counter", return_value=21.1)
+    with pytest.raises(G1ControlError, match="planner inference timeout"):
+        _step(policy)
+    assert policy._planner_future is pending
+
+
+@pytest.mark.parametrize("failure", ["incomplete", "recenter", "backwards", "capture-gap"])
+def test_webxr_discontinuity_exits_and_never_reenters_from_held_buttons(
+    velocity_pipeline, planner_requests, failure
+):
+    policy = velocity_pipeline
+    _step(policy)
+    _step(policy)
+    reference = WebXRReference()
+    _pose_ready(reference)
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 10.18)
+    snapshot = _snapshot(capture_time_s=10.20)
+    changes = {
+        "incomplete": {"joints": None},
+        "recenter": {"frame_id": "local-floor:2"},
+        "backwards": {"capture_time_s": 10.0},
+        "capture-gap": {"capture_time_s": 10.5},
+    }
+    reference.body(snapshot.model_copy(update=changes[failure]), 10.20)
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 10.20)
+    assert reference.mode == "returning"
+    for _ in range(53):
+        _step(policy)
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 11.4)
+    assert reference.mode == "planner"
+    held = Buttons()
+    held.left_primary = held.right_primary = True
+    for i in range(10):
+        now = 12 + i * 0.02
+        reference.body(_snapshot(capture_time_s=now), now)
+        reference.buttons(held, now, enabled=True)
+    reference.tick(policy, np.zeros(3, dtype=np.float32), 12.18)
+    assert reference.mode == "planner"
+    assert not policy.snapshot()["stream_active"]
 
 
 @pytest.mark.parametrize("mode", ["IDEL_SQUAT", "IDEL_KNEEL_TWO_LEGS", "IDEL_KNEEL"])

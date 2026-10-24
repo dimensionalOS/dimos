@@ -41,6 +41,7 @@ from dimos.control.sonic.sonic_pipeline import (
     SonicPipeline,
 )
 from dimos.control.sonic.streamed_motion import StreamedMotion
+from dimos.control.sonic.webxr.reference import WebXRReference
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -58,6 +59,8 @@ from dimos.robot.unitree.g1.control_safety import (
 )
 from dimos.robot.unitree.g1.jetson_clocks import require_jetson_clocks
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,6 +70,7 @@ _ARM_REFERENCE_VELOCITY_LIMIT = 1.0
 
 
 class SonicControllerConfig(BaseConfig):
+    webxr_enabled: bool = False
     encoder_onnx: Path = Field(
         default_factory=lambda: sonic_model_directory() / "sonic_v1_1/model_encoder.onnx"
     )
@@ -112,11 +116,14 @@ class SonicController:
         publish_fault: Callable[[String], None],
     ) -> None:
         self.config = config
+        if config.webxr_enabled and not math.isclose(config.tick_rate / config.decimation, 50.0):
+            raise ValueError("SONIC WebXR references require a 50 Hz policy loop")
         self._publish_joint_state = publish_joint_state
         self._publish_imu = publish_imu
         self._publish_motor_command = publish_motor_command
         self._publish_fault = publish_fault
         self._pipeline: SonicPipeline | None = None
+        self._webxr = WebXRReference() if config.webxr_enabled else None
         self._adapter: SimMujocoG1WholeBodyAdapter | None = None
         self._control_lock = threading.RLock()
         self._fault_lock = threading.RLock()
@@ -480,6 +487,11 @@ class SonicController:
                 cmd = np.zeros(3, dtype=np.float32)
             else:
                 cmd = self._cmd.copy()
+        if self._webxr is not None:
+            previous_mode = self._webxr.mode
+            cmd = self._webxr.tick(self._policy, cmd, t_now)
+            if self._webxr.mode != previous_mode:
+                self.set_velocity_command(0.0, 0.0, 0.0)
         self._policy.set_velocity(float(cmd[0]), float(cmd[1]), float(cmd[2]))
 
         policy_started_at = time.perf_counter()
@@ -539,6 +551,7 @@ class SonicController:
 
     def play_motion_clip(self, name: str) -> dict[str, Any]:
         with self._control_lock:
+            self._require_no_webxr_reference()
             motions = Path(self.config.planner_onnx).parent / "motions"
             if name not in self.list_motion_clips():
                 raise ValueError(f"unknown or uninstalled motion clip: {name}")
@@ -575,6 +588,7 @@ class SonicController:
         t_now: float | None = None,
     ) -> dict[str, Any]:
         with self._control_lock:
+            self._require_no_webxr_reference()
             self._policy.set_vr_3point(
                 np.asarray(positions, dtype=np.float32),
                 np.asarray(orientations, dtype=np.float32),
@@ -589,6 +603,9 @@ class SonicController:
 
     def stop_motion_clip(self) -> bool:
         with self._control_lock:
+            if self._webxr is not None and self._webxr.owns_reference:
+                self._webxr.stop()
+                return True
             self._stream_source_requested = False
             self._policy.stop_clip()
             return True
@@ -602,6 +619,7 @@ class SonicController:
 
     def set_locomotion_mode(self, mode: int | str | None) -> dict[str, Any]:
         with self._control_lock:
+            self._require_no_webxr_reference()
             applied = self._policy.set_mode(mode)
             logger.info(
                 "G1SonicPolicyModule locomotion mode",
@@ -617,12 +635,14 @@ class SonicController:
 
     def set_base_height(self, height: float) -> None:
         with self._control_lock:
+            self._require_no_webxr_reference()
             if not math.isfinite(height):
                 raise ValueError("Height must be finite")
             self._policy.set_base_height(float(height))
 
     def set_upper_body(self, positions: list[float]) -> bool:
         with self._control_lock:
+            self._require_no_webxr_reference()
             if len(positions) != 14:
                 raise ValueError(f"set_upper_body expects 14 values, got {len(positions)}")
             if not np.isfinite(positions).all():
@@ -634,7 +654,9 @@ class SonicController:
 
     def clear_upper_body(self) -> None:
         with self._control_lock:
-            self.set_upper_body(DEFAULT_ANGLES_DDS[15:].tolist())
+            self._arm_reference = self._default_29[15:].copy()
+            if self._arm_reference_output is None:
+                self._arm_reference_output = self._cached_q_29[15:].copy()
 
     def activate(self, ramp_seconds: float | None = None) -> bool:
         """Request live control atomically, after checking feedback and lifecycle state."""
@@ -757,6 +779,8 @@ class SonicController:
                 return
             if not new_val:
                 self._require_hardware_clocks()
+            if self._webxr is not None and self._webxr.owns_reference:
+                raise RuntimeError("Stop WebXR pose mode before changing dry-run")
             self._dry_run = new_val
             self._last_dry_run_log_t = 0.0
             logger.info("G1SonicPolicyModule dry_run changed", connection="g1", dry_run=new_val)
@@ -793,6 +817,10 @@ class SonicController:
             if self._pipeline is not None:
                 snap.update(self._pipeline.snapshot())
             snap["reference_source"] = "stream" if snap.get("stream_active") else "planner"
+            if self._webxr is not None:
+                snap["webxr"] = self._webxr.status(now)
+                if self._webxr.owns_reference:
+                    snap["reference_source"] = "webxr"
             snap["debug_q_leg"] = [round(float(v), 4) for v in self._cached_q_29[:6]]
             snap["debug_dq_leg"] = [round(float(v), 4) for v in self._cached_dq_29[:6]]
             snap["policy_timing"] = self._policy_timing_snapshot()
@@ -804,12 +832,47 @@ class SonicController:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
         self._policy.reset()
+        if self._webxr is not None:
+            self._webxr.reset()
         self._arm_reference = self._default_29[15:].copy()
         self._arm_reference_output = None
         self._tick_count = 0
         self._policy_durations_ms.clear()
         self._policy_intervals_ms.clear()
         self._last_policy_started_at = None
+
+    def _require_no_webxr_reference(self) -> None:
+        if self._webxr is not None and self._webxr.owns_reference:
+            raise RuntimeError("Stop WebXR pose mode before selecting another reference")
+
+    def update_body_tracking(self, snapshot: BodyTrackingSnapshot) -> None:
+        with self._control_lock:
+            if self._webxr is not None:
+                self._webxr.body(snapshot, time.perf_counter())
+
+    def update_teleop_buttons(self, buttons: Buttons) -> None:
+        if self._webxr is None:
+            return
+        # Damping must not wait for inference or retargeting to release the lock.
+        if all(
+            (
+                buttons.left_primary,
+                buttons.right_primary,
+                buttons.left_secondary,
+                buttons.right_secondary,
+            )
+        ):
+            self.set_estop(True)
+            return
+        with self._control_lock:
+            self._webxr.buttons(
+                buttons,
+                time.perf_counter(),
+                enabled=self._control_state is SonicControlState.CONTROL
+                and not self._dry_run
+                and self.fault_reason is None
+                and not self._stream_source_requested,
+            )
 
     def _record_policy_timing(self, duration_seconds: float, started_at: float) -> None:
         duration_ms = duration_seconds * 1000.0

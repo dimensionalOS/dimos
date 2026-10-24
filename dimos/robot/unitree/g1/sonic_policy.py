@@ -28,6 +28,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.sonic_controller import SonicController, SonicControllerConfig
+from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 class G1SonicPolicyConfig(ModuleConfig, SonicControllerConfig):
@@ -55,6 +57,8 @@ class G1SonicPolicyModule(Module):
     motor_command: Out[MotorCommandArray]
     controller_fault: Out[String]
     g1_fault: In[String]
+    body_tracking: In[BodyTrackingSnapshot]
+    teleop_buttons: In[Buttons]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -97,6 +101,12 @@ class G1SonicPolicyModule(Module):
 
     async def handle_g1_fault(self, msg: String) -> None:
         self._controller.latch_fault(msg.data)
+
+    async def handle_body_tracking(self, msg: BodyTrackingSnapshot) -> None:
+        await asyncio.to_thread(self._controller.update_body_tracking, msg)
+
+    async def handle_teleop_buttons(self, msg: Buttons) -> None:
+        await asyncio.to_thread(self._controller.update_teleop_buttons, msg)
 
     @rpc
     def activate(self, ramp_seconds: float | None = None) -> bool:

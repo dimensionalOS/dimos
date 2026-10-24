@@ -37,6 +37,37 @@ from dimos.teleop.webxr.controller_types import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
+from dimos.teleop.webxr.sonic import SonicWebXRTeleopModule
+
+
+def test_sonic_sticks_publish_movement_and_one_stop_then_leave_desktop_uncontested(mocker):
+    module = SonicWebXRTeleopModule()
+    publish = mocker.patch.object(module.tele_cmd_vel, "publish")
+    buttons = mocker.patch.object(module, "_publish_buttons")
+    try:
+        module._publish_button_state(None, None)
+        publish.assert_not_called()
+        buttons.assert_not_called()
+        module._publish_button_state(
+            WebXRControllerState(thumbstick=ThumbstickState(x=0.5, y=-1.0)),
+            WebXRControllerState(thumbstick=ThumbstickState(x=-0.5, y=0.0)),
+        )
+        movement = publish.call_args.args[0]
+        assert movement.linear.x == 0.5
+        assert movement.linear.y == -0.125
+        assert movement.angular.z == 0.3
+        module._publish_button_state(None, None)
+        assert publish.call_count == 2
+        assert buttons.call_count == 1
+        module._publish_button_state(
+            WebXRControllerState(primary=True), WebXRControllerState(primary=True)
+        )
+        assert publish.call_count == 3
+        assert publish.call_args.args[0].linear.x == 0.0
+        module._publish_button_state(None, None)
+        assert publish.call_count == 3
+    finally:
+        module.stop()
 
 
 @pytest.mark.parametrize("state", ["unavailable", "empty", "tracking"])
