@@ -446,6 +446,7 @@ Transports often need to serialize messages before sending and deserialize after
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
 | `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 

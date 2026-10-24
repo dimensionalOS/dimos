@@ -22,6 +22,7 @@ from typing import Any
 
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
+    CborEncoderMixin,
     LCMEncoderMixin,
     PickleEncoderMixin,
 )
@@ -156,5 +157,11 @@ class LCM(  # type: ignore[misc]
 
 class PickleLCM(
     PickleEncoderMixin,  # type: ignore[type-arg]
+    LCMPubSubBase,
+): ...
+
+
+class CborLCM(
+    CborEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...

@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 import importlib
-import pickle
 import sys
 import threading
 from types import MappingProxyType
@@ -54,6 +53,7 @@ from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -1184,11 +1184,12 @@ def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
     assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
 
 
-def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
-    """Proxies pickled into workers (set_module_ref) must keep the instance RPC name."""
+def test_rpc_client_roundtrip_preserves_remote_name(dynamic_coordinator) -> None:
+    """Proxies sent into workers (set_module_ref) must keep the instance RPC name."""
     proxy = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
-    restored = pickle.loads(pickle.dumps(proxy))
+    restored = decode(encode(proxy))
     try:
+        assert restored.actor_instance is None
         assert restored.remote_name == "robot0/namedmodule"
         assert restored.whoami() == "robot0/namedmodule"
     finally:

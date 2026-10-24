@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pickle
 import threading
 from types import SimpleNamespace
 from typing import cast
@@ -40,6 +39,7 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -224,16 +224,16 @@ def test_stop_and_restart(session_pool) -> None:
     t.stop()
 
 
-def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
+def test_zenoh_transport_roundtrip_preserves_topic_qos() -> None:
     t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
-    t2 = pickle.loads(pickle.dumps(t))
+    t2 = decode(encode(t))
     assert type(t2) is ZenohTransport
     assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
 
 
-def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:
+def test_pzenoh_transport_roundtrip_preserves_topic_qos() -> None:
     t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
-    t2 = pickle.loads(pickle.dumps(t))
+    t2 = decode(encode(t))
     assert type(t2) is pZenohTransport
     assert t2.topic == "dimos/human_input"
     assert t2._zenoh_topic == t._zenoh_topic

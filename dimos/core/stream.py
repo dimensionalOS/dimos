@@ -175,18 +175,12 @@ class Out(Stream[T], ObservableMixin[T]):
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise Out without an owner ref")
-        return (
-            RemoteOut,
-            (
-                self.type,
-                self.name,
-                self.owner.ref,
-                self._transport,
-            ),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteOut[Any]:
+        return RemoteOut(**data)
 
     def publish(self, msg: T) -> None:
         if hasattr(self, "_transport") and self._transport is not None:
@@ -205,10 +199,34 @@ class Out(Stream[T], ObservableMixin[T]):
         return unsubscribe
 
 
+def _remote_payload(stream: Stream[Any]) -> dict[str, Any]:
+    """A module-side stream as seen from another process: a handle on the owner's Actor."""
+    if stream.owner is None or not hasattr(stream.owner, "ref"):
+        raise ValueError(f"Cannot serialise {type(stream).__name__} without an owner ref")
+    return {
+        "type": stream.type,
+        "name": stream.name,
+        "owner": stream.owner.ref,
+        "transport": stream._transport,
+    }
+
+
 class RemoteStream(Stream[T]):
     @property
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "name": self.name,
+            "owner": self.owner,
+            "transport": self._transport,
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteStream[Any]:
+        return cls(**data)
 
     # this won't work but nvm
     @property
@@ -250,10 +268,12 @@ class IO(Stream[T], ObservableMixin[T]):
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise IO without an owner ref")
-        return (RemoteIO, (self.type, self.name, self.owner.ref, self._transport))
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteIO[Any]:
+        return RemoteIO(**data)
 
     def publish(self, msg: T) -> None:
         self._transport.broadcast(self, msg)
@@ -286,10 +306,12 @@ class In(Stream[T], ObservableMixin[T]):
 
         return (mystr + " ◀─").ljust(60, "─") + f" {self.connection}"
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise Out without an owner ref")
-        return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteIn[Any]:
+        return RemoteIn(**data)
 
     @property
     def transport(self) -> Transport[T]:

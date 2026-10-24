@@ -36,7 +36,6 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
-from dimos.core.o3dpickle import register_picklers
 from dimos.core.resource import Resource
 from dimos.core.stream import Transport
 from dimos.core.transport import (
@@ -100,7 +99,6 @@ class ModuleCoordinator(Resource):
         self._shutdown_event = threading.Event()
 
     def start(self) -> None:
-        register_picklers()
         # A worker gets the coordinator's sys.path when it starts, so add this first.
         RUNTIME_MODULES_DIR.mkdir(parents=True, exist_ok=True)
         if str(RUNTIME_MODULES_DIR) not in sys.path:
@@ -378,8 +376,10 @@ class ModuleCoordinator(Resource):
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
-            if hasattr(module, "on_system_modules"):
-                module.on_system_modules(modules)
+            # Only an @rpc counts: a plain method would be fetched over the worker
+            # pipe as a bound method, which cannot cross it.
+            if "on_system_modules" in getattr(module, "rpcs", ()):
+                cast("Any", module).on_system_modules(modules)
 
     def _connect_streams(
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
@@ -857,7 +857,7 @@ def _materialize_transports(
     WebRTC transports get a freshly constructed provider config from the
     resolved ``transports.<name>.*`` overrides; everything else builds from the
     spec as-is, then gets coerced to the active pubsub backend. Returns
-    ready-to-use instances pickled into module workers.
+    ready-to-use instances sent into module workers.
     """
     materialized: dict[tuple[str, type], Transport[Any]] = {}
     for key, spec in blueprint.transport_map.items():

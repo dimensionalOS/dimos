@@ -131,6 +131,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
+    "cbor2>=6.1.5,<7", # RPC and worker-pipe serialization (protocol/encode/cbor.py)
     "python-dotenv",
     "packaging>=24.0",
     "requests>=2.32",

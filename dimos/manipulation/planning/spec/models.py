@@ -123,7 +123,7 @@ class Obstacle:
     color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
     # Plain tuples rather than an array: obstacles are deepcopied, compared and
-    # pickled across worker RPC, and an ndarray field breaks all three.
+    # sent across worker RPC, and an ndarray field breaks comparison.
     points: tuple[tuple[float, float, float], ...] = ()
     octree_resolution: float | None = None
     touch_links: tuple[str, ...] = ()

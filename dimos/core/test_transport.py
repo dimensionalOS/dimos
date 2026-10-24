@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
 
 import pytest
 
@@ -22,19 +21,35 @@ from dimos.core.transport import (
     pLCMTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
 
 
 @pytest.mark.parametrize("transport_class", [pLCMTransport, LCMTransport, JpegLcmTransport])
-def test_lcm_transport_pickle_preserves_connection_settings(transport_class):
+def test_lcm_transport_roundtrip_preserves_connection_settings(transport_class):
     args = () if transport_class is pLCMTransport else (Image,)
     transport = transport_class("/roundtrip", *args, url="udpm://239.255.76.68:7798?ttl=2", ttl=2)
     try:
-        restored = pickle.loads(pickle.dumps(transport))
+        restored = decode(encode(transport))
         try:
             assert type(restored) is transport_class
             assert restored.topic == transport.topic
             assert restored.lcm.config == transport.lcm.config
         finally:
             restored.stop()
+    finally:
+        transport.stop()
+
+
+def test_with_topic_keeps_every_other_setting() -> None:
+    transport = LCMTransport("/a", Image, url="udpm://239.255.76.68:7798?ttl=2", ttl=2)
+    try:
+        moved = transport.with_topic("/b")
+        try:
+            assert type(moved) is LCMTransport
+            assert moved.topic.topic == "/b"
+            assert moved.topic.lcm_type is Image
+            assert moved.lcm.config == transport.lcm.config
+        finally:
+            moved.stop()
     finally:
         transport.stop()
