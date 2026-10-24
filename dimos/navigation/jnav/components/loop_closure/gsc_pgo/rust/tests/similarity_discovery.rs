@@ -21,7 +21,7 @@ use std::f64::consts::PI;
 
 use dimos_gsc_pgo::similarity_discovery::{
     self, auto_max_range, best_distance, column_cosine_distance, descriptor_occupancy,
-    descriptor_structure, make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
+    make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
 };
 
 /// A synthetic structured scene: one point per chosen (ring, sector) cell,
@@ -149,10 +149,6 @@ fn structure_occupancy_and_edge_cases() {
     // One point per chosen cell -> occupancy equals the number of cells hit.
     let expected_cells = config.n_rings.div_ceil(2) * config.n_sectors.div_ceil(3);
     assert_eq!(descriptor_occupancy(&descriptor), expected_cells);
-    assert!(
-        descriptor_structure(&descriptor) > 0.0,
-        "varied heights -> positive std"
-    );
 
     // Out-of-range and at-origin points are ignored.
     let ignored = make_descriptor(
@@ -161,9 +157,8 @@ fn structure_occupancy_and_edge_cases() {
     );
     assert_eq!(descriptor_occupancy(&ignored), 0);
 
-    // Empty descriptor: no valid columns -> distance 2, structure 0.
+    // Empty descriptor: no valid columns -> distance 2.
     let empty = make_descriptor(&[], &config);
-    assert_eq!(descriptor_structure(&empty), 0.0);
     let (distance, shift) = best_distance(&empty, &empty);
     assert_eq!(distance, 2.0);
     assert_eq!(shift, 0);

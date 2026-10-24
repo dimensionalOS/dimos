@@ -92,9 +92,8 @@ pub struct CommittedClosure {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
 pub struct ClosureCandidateDiag {
-    /// Outcome: "accepted", "outranked" (a better proposal took the search thread), or the rejecting gate — one of "no_structure",
-    /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
-    /// "degeneracy_reject", "icp_reject", "uninformative", "yank_reject".
+    /// "accepted", "outranked" (a better proposal took the search thread), or the gate that rejected it:
+    /// "low_occupancy", "no_candidate", "degeneracy_reject", "icp_reject", "uninformative", "yank_confidence_reject".
     pub outcome: &'static str,
     pub source_id: usize,
     pub source_time: f64,
@@ -104,9 +103,7 @@ pub struct ClosureCandidateDiag {
     pub target_time: f64,
     pub target_xyz: Vec3,
     pub from_scan_context: bool,
-    /// Scan-context descriptor structure std and occupied-cell count of the
-    /// source keyframe (the feature-poverty + occupancy gate inputs).
-    pub descriptor_structure: f32,
+    /// Occupied scan-context cells of the source keyframe (the occupancy gate input).
     pub descriptor_occupancy: i32,
     /// Best / second-best scan-context distances and their Lowe ratio
     /// (best/second). NaN when the candidate came from the position fallback.
@@ -173,7 +170,6 @@ impl ClosureCandidateDiag {
             target_time: f64::NAN,
             target_xyz: [f64::NAN; 3],
             from_scan_context: false,
-            descriptor_structure: f32::NAN,
             descriptor_occupancy: -1,
             scan_context_best: f32::NAN,
             scan_context_second: f32::NAN,
@@ -823,7 +819,6 @@ impl GscPgo {
         // stage 1, universal uniqueness: a scan whose structure barely fills the descriptor can't place itself
         let descriptor = &self.scan_context_descriptors[cur_idx];
         if !descriptor.is_empty() {
-            diag.descriptor_structure = similarity_discovery::descriptor_structure(descriptor);
             diag.descriptor_occupancy =
                 similarity_discovery::descriptor_occupancy(descriptor) as i32;
             if diag.descriptor_occupancy < self.config.closure_min_occupancy {

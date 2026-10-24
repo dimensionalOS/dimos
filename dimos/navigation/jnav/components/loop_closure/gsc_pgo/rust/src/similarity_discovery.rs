@@ -261,43 +261,7 @@ pub fn best_distance(query: &Descriptor, candidate: &Descriptor) -> (f32, i32) {
     (min_distance, best_shift)
 }
 
-/// "Vertical-structure" score: the standard deviation of the occupied
-/// (non-zero) cells. Cells hold max-z + lidar_height, so a flat, feature-poor
-/// scene (open grass: every bin a near-ground return) has nearly uniform cell
-/// values -> low std, while walls/buildings/poles spread the values -> high
-/// std. A degeneracy proxy for "this scan can't reliably place itself".
-/// Returns 0 for an empty/degenerate descriptor.
-pub fn descriptor_structure(descriptor: &Descriptor) -> f32 {
-    // Std of occupied (non-zero) cells. Empty cells are excluded so the
-    // metric reflects the spread of actual returns' heights, not how full
-    // the FOV is.
-    let mut sum = 0.0f64;
-    let mut sum_sq = 0.0f64;
-    let mut count = 0i64;
-    for &value in &descriptor.data {
-        if value <= 0.0 {
-            continue;
-        }
-        sum += value as f64;
-        sum_sq += value as f64 * value as f64;
-        count += 1;
-    }
-    if count < 2 {
-        return 0.0;
-    }
-    let mean = sum / count as f64;
-    let variance = sum_sq / count as f64 - mean * mean;
-    if variance > 0.0 {
-        variance.sqrt() as f32
-    } else {
-        0.0
-    }
-}
-
-/// Count of occupied (non-zero) cells — how much of the polar FOV returned
-/// structure out to range. A cheap "how much of the scene has structure"
-/// term, complementary to `descriptor_structure` (which only looks at the
-/// spread of occupied cells).
+/// Count of occupied (non-zero) cells: how much of the polar FOV returned structure out to range.
 pub fn descriptor_occupancy(descriptor: &Descriptor) -> usize {
     descriptor.data.iter().filter(|&&value| value > 0.0).count()
 }
