@@ -64,14 +64,18 @@ def test_peek_observes_external_publications(module, each_transport, stream_name
     assert (pose.x, pose.y, pose.z) == (1.0, 2.0, 3.0)
 
 
+def send_only_transport(mocker) -> LCMTransport:
+    # A send-only transport (e.g. WebRTC video) never echoes local publishes.
+    transport = LCMTransport("/peek/send_only", PoseStamped)
+    mocker.patch.object(transport, "broadcast")
+    mocker.patch.object(transport, "subscribe", return_value=mocker.Mock())
+    return transport
+
+
 @pytest.mark.parametrize("has_transport", [False, True])
 def test_peek_preserves_local_output_without_transport_loopback(module, mocker, has_transport):
     if has_transport:
-        # A send-only transport (e.g. WebRTC video) never echoes local publishes.
-        transport = LCMTransport("/peek/send_only", PoseStamped)
-        mocker.patch.object(transport, "broadcast")
-        mocker.patch.object(transport, "subscribe", return_value=mocker.Mock())
-        module.set_transport("odom", transport)
+        module.set_transport("odom", send_only_transport(mocker))
     expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
 
     with ThreadPoolExecutor() as executor:
@@ -84,6 +88,26 @@ def test_peek_preserves_local_output_without_transport_loopback(module, mocker, 
         wait_until(publish_until_done, timeout=5.0, interval=0.02)
 
     assert result.result() is expected
+
+
+def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocker):
+    # A peek completes inside Out.publish(); dropping its callback there must not
+    # make publish() skip the subscribers registered after it.
+    transport = send_only_transport(mocker)
+    module.set_transport("odom", transport)
+    received = []
+    expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
+
+    with ThreadPoolExecutor() as executor:
+        peeks = [executor.submit(module.peek_stream, "odom", 3.0) for _ in range(2)]
+        # Each peek subscribes locally before it subscribes to the transport.
+        wait_until(lambda: transport.subscribe.call_count == 2, timeout=5.0, interval=0.02)
+        module.odom.subscribe(received.append)
+        module.odom.publish(expected)
+        results = [peek.result(timeout=5.0) for peek in peeks]
+
+    assert all(result is expected for result in results)
+    assert received == [expected]
 
 
 @pytest.mark.parametrize("stream_name", ["odom", "incoming", "duplex"])

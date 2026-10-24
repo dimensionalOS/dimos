@@ -36,6 +36,7 @@ from pydantic import Field
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable, Disposable
+from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
@@ -906,7 +907,7 @@ class Module(ModuleBase):
                 # Keep local emissions too: send-only transports do not loop back.
                 return (
                     rx.merge(stream.pure_observable(), stream.transport.pure_observable())
-                    .pipe(ops.first(), ops.timeout(timeout))
+                    .pipe(ops.first(), ops.timeout(timeout, scheduler=TimeoutScheduler.singleton()))
                     .run()
                 )
             return stream.get_next(timeout)
