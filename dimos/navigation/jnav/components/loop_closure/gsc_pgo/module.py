@@ -50,8 +50,6 @@ class PGOConfig(NativeModuleConfig):
     closure_score_thresh: float = 0.15
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
-    # Voxel size (m) each incoming cloud is downsampled to before a keyframe stores it; 0 keeps clouds as they arrive
-    keyframe_voxel_size: float = 0.0
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
     closure_min_occupancy: int = 80
@@ -72,17 +70,12 @@ class PGOConfig(NativeModuleConfig):
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
 
-    # Reject a closure whose match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) is
-    # below 1 - exp(-z^2/2), z = how hard it yanks the accepted pose graph in robust std devs of the yanks of closures
-    # scored so far. The inputs are recorded per candidate either way (pgo-eval json, <dump_path>.closures.jsonl).
-    closure_yank_gate: bool = True
-    # k in the yank gate's required confidence 1 - exp(-yank_z^2 / 2k^2)
+    # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
+    # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
     closure_yank_gate_width: float = 1.0
-    # Divide yank by sqrt(keyframe gap) before scaling: odometry drift grows as a random walk between the closure's ends
-    closure_yank_per_sqrt_gap: bool = True
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
-    # With closure_yank_gate: re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
+    # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
     closure_extended_icp_max_keyframes: int = 16
     # Closure-verification ICP: iteration cap and correspondence gate (m).
     closure_icp_max_iterations: int = 50

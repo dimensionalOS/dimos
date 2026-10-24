@@ -33,14 +33,9 @@ impl ClosureSearch {
             (1.4826 * values[values.len() / 2]).max(f64::EPSILON)
         };
         // odometry drift is a random walk, so the yank a correct closure needs grows with sqrt(keyframes between its ends)
-        let drift = if self.config.closure_yank_per_sqrt_gap {
-            (diag.source_id as f64 - diag.target_id as f64)
-                .abs()
-                .max(1.0)
-                .sqrt()
-        } else {
-            1.0
-        };
+        let drift = (diag.source_id.abs_diff(diag.target_id as usize) as f64)
+            .max(1.0)
+            .sqrt();
         diag.yank_drift_scale = drift;
         if self.config.closure_yank_from_strain {
             diag.yank_z = if self.scored_yanks.is_empty() {

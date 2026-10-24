@@ -12,53 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for keyframe storage, the voxel grid, connection fit (ICP recovers a known transform) and
+//! Unit tests for the voxel grid, connection fit (ICP recovers a known transform) and
 //! uniqueness (normal-scatter degeneracy).
 
-// Index closures mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
+// Index loops mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
 #![allow(clippy::needless_range_loop)]
 
 use dimos_gsc_pgo::connection_fit::{icp, IcpParams};
-use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
-use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
+use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud::{voxel_downsample, KdTree};
 use dimos_gsc_pgo::uniqueness::degeneracy;
-
-fn make_pose(rotation: Mat3, translation: Vec3, time: f64) -> PoseWithTime {
-    let mut pose = PoseWithTime::new(rotation, translation);
-    let sec = time as i32;
-    pose.set_time(sec, ((time - sec as f64) * 1e9) as u32);
-    pose
-}
-
-#[test]
-fn keyframe_voxel_size_downsamples_the_stored_cloud_only_when_set() {
-    // 1000 points packed in a 10 cm cube: one 0.5 m voxel
-    let dense: Vec<[f32; 3]> = (0..1000)
-        .map(|i| {
-            [
-                (i % 10) as f32 * 0.01,
-                (i / 10 % 10) as f32 * 0.01,
-                (i / 100) as f32 * 0.01,
-            ]
-        })
-        .collect();
-    let stored = |keyframe_voxel_size: f64| {
-        let mut pgo = GscPgo::new(Config {
-            keyframe_voxel_size,
-            ..Config::default()
-        });
-        let cloud_with_pose = CloudWithPose {
-            cloud: Some(std::sync::Arc::new(dense.clone())),
-            pose: make_pose(mat3::identity(), [0.0, 0.0, 0.0], 0.0),
-            frame_id: "odom".to_string(),
-        };
-        assert!(pgo.add_key_pose(&cloud_with_pose));
-        pgo.key_poses()[0].body_cloud.as_ref().unwrap().len()
-    };
-    assert_eq!(stored(0.0), 1000);
-    assert_eq!(stored(0.5), 1);
-}
 
 #[test]
 fn voxel_downsample_emits_per_voxel_centroids() {

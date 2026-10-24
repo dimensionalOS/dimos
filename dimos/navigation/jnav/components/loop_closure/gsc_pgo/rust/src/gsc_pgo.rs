@@ -128,9 +128,9 @@ pub struct ClosureCandidateDiag {
     /// disagrees with odometry. NaN if ICP did not run.
     pub yank_translation: f64,
     pub yank_rotation_deg: f64,
-    /// The inputs and outputs of the yank / confidence gate (`closure_yank_gate`), recorded for every
+    /// The inputs and outputs of the yank / confidence gate , recorded for every
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
-    /// yank_drift_scale = sqrt(keyframe gap) with `closure_yank_per_sqrt_gap`, else 1;
+    /// yank_drift_scale = sqrt(keyframe gap);
     /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
     /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
     /// (0 before any); each factor is its metric normalized by its own gate and clamped to [0, 1];
@@ -278,23 +278,15 @@ pub struct Config {
     pub closure_score_thresh: f64,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
-    /// Voxel size each incoming cloud is downsampled to before a keyframe
-    /// stores it. 0 keeps clouds as they arrive.
-    pub keyframe_voxel_size: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
     pub closure_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
     pub closure_min_degeneracy: f64,
-    /// Reject a closure whose match confidence is too low for how hard it yanks the accepted pose
-    /// graph: confidence < 1 - exp(-yank_z^2 / 2) (see `ClosureCandidateDiag`). A small yank needs
-    /// little confidence, a large one needs a near-perfect match. The inputs are recorded either way.
-    pub closure_yank_gate: bool,
-    /// k in the yank gate's 1 - exp(-yank_z^2 / 2k^2): how many sigmas of yank before a near-perfect match is required.
+    /// A closure's match confidence must clear 1 - exp(-yank_z^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
+    /// needs little confidence, a large one a near-perfect match. This is k, the sigmas of yank before that.
+    /// Yank is measured per sqrt(keyframe gap), since odometry drift is a random walk (on huge_loop this ranks
+    /// closures that help above closures that hurt at AUC 0.82 vs 0.70).
     pub closure_yank_gate_width: f64,
-    /// Measure yank against the drift odometry could have built up between the closure's ends: divide
-    /// it by sqrt(keyframe gap) before scaling (on huge_closure this ranks closures that help above closures
-    /// that hurt at AUC 0.82 vs 0.70). Off = the plain yank.
-    pub closure_yank_per_sqrt_gap: bool,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -305,7 +297,7 @@ pub struct Config {
     /// The yank gate measures a candidate by its `strain` (how hard the graph resists it as a near-rigid
     /// edge), scaled by the median strain of the candidates scored so far, instead of its raw yank.
     pub closure_yank_from_strain: bool,
-    /// With `closure_yank_gate`, a candidate whose single-scan confidence is too low for its yank gets
+    /// A candidate whose single-scan confidence is too low for its yank gets
     /// a second look on more data instead of an outright reject: each round seeded with the previous
     /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
     /// keyframes near the matched one in time that those land within `closure_search_radius` of.
@@ -361,12 +353,9 @@ impl Default for Config {
             closure_score_thresh: 0.15,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
-            keyframe_voxel_size: 0.0,
             closure_min_occupancy: 80,
             closure_min_degeneracy: 0.05,
-            closure_yank_gate: true,
             closure_yank_gate_width: 1.0,
-            closure_yank_per_sqrt_gap: true,
             closure_icp_dump_dir: String::new(),
             closure_record_strain: false,
             closure_yank_from_strain: false,
@@ -416,7 +405,7 @@ pub struct GscPgo {
     pub(crate) closure_diagnostics: Vec<ClosureCandidateDiag>,
     pub(crate) closure_edge_events: Vec<ClosureEdgeEvent>,
     /// Rotation (deg) and translation (m) yank of every candidate ICP has scored (per sqrt keyframe
-    /// gap with `closure_yank_per_sqrt_gap`), the scale new yanks are measured against. Every scored
+    /// gap), the scale new yanks are measured against. Every scored
     /// candidate, not just committed ones: a scale taken only from closures the gate let through would
     /// shrink with each rejection and reject the rest.
     pub(crate) scored_yanks: Vec<(f64, f64)>,
@@ -636,7 +625,7 @@ impl ClosureSearch {
                 },
             );
         }
-        if self.config.closure_yank_gate && diag.confidence < diag.required_confidence {
+        if diag.confidence < diag.required_confidence {
             let t0 = std::time::Instant::now();
             let extended = self.extended_icp(
                 cur_idx,
@@ -777,13 +766,7 @@ impl GscPgo {
         if !self.is_key_pose(&cloud_with_pose.pose) {
             return false;
         }
-        let cloud = match &cloud_with_pose.cloud {
-            Some(cloud) if self.config.keyframe_voxel_size > 0.0 => {
-                Some(Arc::new(voxel_downsample(cloud, self.config.keyframe_voxel_size)))
-            }
-            cloud => cloud.clone(),
-        };
-        self.insert_keyframe(&cloud_with_pose.pose, cloud);
+        self.insert_keyframe(&cloud_with_pose.pose, cloud_with_pose.cloud.clone());
         true
     }
     pub fn key_poses(&self) -> &[KeyPoseWithCloud] {
