@@ -96,7 +96,7 @@ fn for_each_row(
     let mut rows = statement.query([]).map_err(|e| e.to_string())?;
     let mut index = 0usize;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if index % stride == 0 {
+        if index.is_multiple_of(stride) {
             let ts: f64 = row.get(0).map_err(|e| e.to_string())?;
             let data = row.get_ref(1).map_err(|e| e.to_string())?;
             let data = data.as_blob().map_err(|e| e.to_string())?;
