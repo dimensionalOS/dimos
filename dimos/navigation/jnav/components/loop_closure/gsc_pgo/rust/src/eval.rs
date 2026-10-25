@@ -39,7 +39,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 mod memory2;
-use memory2::{read_odometry, read_scans, OdomRow};
+use memory2::{for_each_scan, read_odometry, OdomRow};
 
 /// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
 /// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
@@ -286,17 +286,12 @@ fn run() -> Result<(), String> {
             row.quaternion_xyzw = [qx, qy, qz, qw];
         }
     }
-    let scans = read_scans(&connection, &args.lidar_stream, args.scan_stride)?;
 
     let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
     let odom_body_frame = unique_frame(
         odoms.iter().map(|row| row.child_frame_id.clone()),
         "odom child",
     )?;
-    let lidar_frame = unique_frame(scans.iter().map(|row| row.frame_id.clone()), "lidar stream")?;
-    if args.lidar_tf.is_none() {
-        check_same_frame(&lidar_frame, &odom_body_frame)?;
-    }
     let lidar_tf = args
         .lidar_tf
         .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
@@ -344,13 +339,35 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
     let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
-    for scan in &scans {
+    let mut lidar_frame: Option<String> = None;
+    let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
+    // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
+    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+        match &lidar_frame {
+            Some(frame) if *frame != scan.frame_id => {
+                return Err(format!(
+                    "lidar stream mixes frames {frame:?} and {:?}; expected one",
+                    scan.frame_id
+                ));
+            }
+            Some(_) => {}
+            None => {
+                if args.lidar_tf.is_none() {
+                    check_same_frame(&scan.frame_id, &odom_body_frame)?;
+                }
+                lidar_frame = Some(scan.frame_id.clone());
+            }
+        }
+        if first_ts.is_nan() {
+            first_ts = scan.ts;
+        }
+        last_ts = scan.ts;
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
-            continue;
+            return Ok(());
         };
         scans_processed += 1;
 
-        let mut cloud = scan.points.clone();
+        let mut cloud = scan.points;
         if let Some((rotation, translation)) = &lidar_tf {
             cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
         }
@@ -387,7 +404,7 @@ fn run() -> Result<(), String> {
 
         let step_started = Instant::now();
         if !pgo.add_key_pose(&cloud_with_pose) {
-            continue;
+            return Ok(());
         }
         published.extend(
             pgo.key_poses()[published.len()..]
@@ -420,7 +437,8 @@ fn run() -> Result<(), String> {
         if let Some(edges) = &mut edges {
             write_closure_edges(edges, &pgo, &mut edges_written)?;
         }
-    }
+        Ok(())
+    })?;
     pgo.finish();
     if let Some(events) = &mut events {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
@@ -452,10 +470,13 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let data_duration_s = match (scans.first(), scans.last()) {
-        (Some(first), Some(last)) => last.ts - first.ts,
-        _ => 0.0,
+    let Some(lidar_frame) = lidar_frame else {
+        return Err(format!(
+            "lidar stream {:?} decoded no PointCloud2 rows",
+            args.lidar_stream
+        ));
     };
+    let data_duration_s = last_ts - first_ts;
     let realtime_factor = if runtime_s > 0.0 {
         data_duration_s / runtime_s
     } else {
