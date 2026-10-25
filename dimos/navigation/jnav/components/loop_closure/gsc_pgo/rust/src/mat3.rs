@@ -73,12 +73,6 @@ pub fn rot_z(yaw: f64) -> Mat3 {
     [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
 }
 
-/// Rotation about +y by `pitch` radians (Eigen `AngleAxisd(pitch, UnitY())`).
-pub fn rot_y(pitch: f64) -> Mat3 {
-    let (s, c) = pitch.sin_cos();
-    [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
-}
-
 /// Rotation matrix -> quaternion `[w, x, y, z]` (Shepperd's method, same
 /// branch structure as Eigen's converting constructor).
 pub fn quat_from_mat(m: &Mat3) -> [f64; 4] {

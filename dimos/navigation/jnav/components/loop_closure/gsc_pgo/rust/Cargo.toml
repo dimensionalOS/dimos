@@ -2,7 +2,7 @@
 name = "dimos-gsc-pgo"
 version = "0.1.0"
 edition = "2021"
-description = "Rust port of the gsc_pgo pose-graph-optimization core (gtsam FFI shim + Scan Context)"
+description = "gsc_pgo: lidar loop closure (Scan Context + ICP) and pose graph optimization"
 license = "Apache-2.0"
 
 [lib]
@@ -30,6 +30,7 @@ native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:ser
 
 [dependencies]
 rayon = "1"
+faer = "0.24"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
@@ -38,6 +39,3 @@ serde_json = { version = "1", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 tracing = { version = "0.1", optional = true }
 validator = { version = "0.21", features = ["derive"], optional = true }
-
-[build-dependencies]
-cc = "1"

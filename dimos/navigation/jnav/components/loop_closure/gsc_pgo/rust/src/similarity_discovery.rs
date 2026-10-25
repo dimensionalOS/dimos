@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Scan Context — polar-binned lidar place-recognition descriptor
+//! Stage 2, similarity discovery: which earlier keyframes this one might be, by Scan Context or by
+//! position. Scan Context is a polar-binned lidar place-recognition descriptor
 //! (inspired by Kim & Kim 2018 and the irapkaist/scancontext reference, MIT).
 //!
 //! Each scan becomes an (n_rings x n_sectors) matrix where cell [i, j] holds
@@ -26,6 +27,8 @@
 //! and structure statistics accumulate in double.
 
 use std::f64::consts::PI;
+
+use crate::mat3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Config {
@@ -104,7 +107,6 @@ impl Descriptor {
 /// Mean per row — the coarse feature used for candidate retrieval.
 pub type RingKey = Vec<f32>;
 /// Mean per column — only used for the optional sector-key alignment.
-pub type SectorKey = Vec<f32>;
 
 /// Build the polar-max-z descriptor for a body-frame scan (points as
 /// `[x, y, z]`, f32 like PCL). Points outside `max_range_m` or at the sensor
@@ -201,22 +203,6 @@ pub fn make_ring_key(descriptor: &Descriptor) -> RingKey {
     key
 }
 
-/// Mean per column (over ALL rows, zeros included).
-pub fn make_sector_key(descriptor: &Descriptor) -> SectorKey {
-    let mut key = vec![0.0f32; descriptor.n_sectors];
-    if descriptor.n_rings == 0 {
-        return key;
-    }
-    for (j, slot) in key.iter_mut().enumerate() {
-        let mut sum = 0.0f32;
-        for i in 0..descriptor.n_rings {
-            sum += descriptor.at(i, j);
-        }
-        *slot = sum / descriptor.n_rings as f32;
-    }
-    key
-}
-
 /// Cosine distance between two descriptors after column-shifting `candidate`
 /// by `shift` columns. 0 = identical, 2 = opposite. Columns where either side
 /// is (near-)empty are skipped; if none are valid, returns 2.
@@ -275,43 +261,7 @@ pub fn best_distance(query: &Descriptor, candidate: &Descriptor) -> (f32, i32) {
     (min_distance, best_shift)
 }
 
-/// "Vertical-structure" score: the standard deviation of the occupied
-/// (non-zero) cells. Cells hold max-z + lidar_height, so a flat, feature-poor
-/// scene (open grass: every bin a near-ground return) has nearly uniform cell
-/// values -> low std, while walls/buildings/poles spread the values -> high
-/// std. A degeneracy proxy for "this scan can't reliably place itself".
-/// Returns 0 for an empty/degenerate descriptor.
-pub fn descriptor_structure(descriptor: &Descriptor) -> f32 {
-    // Std of occupied (non-zero) cells. Empty cells are excluded so the
-    // metric reflects the spread of actual returns' heights, not how full
-    // the FOV is.
-    let mut sum = 0.0f64;
-    let mut sum_sq = 0.0f64;
-    let mut count = 0i64;
-    for &value in &descriptor.data {
-        if value <= 0.0 {
-            continue;
-        }
-        sum += value as f64;
-        sum_sq += value as f64 * value as f64;
-        count += 1;
-    }
-    if count < 2 {
-        return 0.0;
-    }
-    let mean = sum / count as f64;
-    let variance = sum_sq / count as f64 - mean * mean;
-    if variance > 0.0 {
-        variance.sqrt() as f32
-    } else {
-        0.0
-    }
-}
-
-/// Count of occupied (non-zero) cells — how much of the polar FOV returned
-/// structure out to range. A cheap "how much of the scene has structure"
-/// term, complementary to `descriptor_structure` (which only looks at the
-/// spread of occupied cells).
+/// Count of occupied (non-zero) cells: how much of the polar FOV returned structure out to range.
 pub fn descriptor_occupancy(descriptor: &Descriptor) -> usize {
     descriptor.data.iter().filter(|&&value| value > 0.0).count()
 }
@@ -352,4 +302,72 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
     ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     ranked.truncate(k);
     ranked
+}
+
+impl crate::gsc_pgo::GscPgo {
+    /// The newest keyframe a closure may close onto: one whose submap leaves out the source's own scan (a match
+    /// against itself only checks odometry against itself). Extended ICP keeps its stack clear of the target on its own.
+    pub(crate) fn newest_closure_target(&self) -> usize {
+        (self.key_poses.len() - 1)
+            .saturating_sub(self.config.closure_submap_half_range.max(0) as usize + 1)
+    }
+    /// Radius search on past key-pose global positions (candidates ascending
+    /// by distance), returning the nearest that is far enough back.
+    pub(crate) fn search_by_position(&self) -> i64 {
+        let here = self.key_poses.last().unwrap().translation_global;
+        self.key_poses[..self.newest_closure_target()]
+            .iter()
+            .map(|k| mat3::norm(&mat3::sub(&k.translation_global, &here)))
+            .enumerate()
+            .filter(|&(_, d)| d <= self.config.closure_search_radius)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(-1, |(i, _)| i as i64)
+    }
+    /// Scan-context candidate search. Returns (target_idx or -1,
+    /// sector_shift, best, second): the accepted candidate under the match
+    /// threshold, plus the closest / 2nd-closest cosine distances across the
+    /// top-K (the Lowe ratio distinctiveness signal).
+    pub(crate) fn search_by_scan_context(&self) -> (i64, i32, f32, f32) {
+        let mut out_best = 2.0f32;
+        let mut out_second = 2.0f32;
+        if self.scan_context_descriptors.is_empty()
+            || self.scan_context_descriptors.last().unwrap().is_empty()
+        {
+            return (-1, 0, out_best, out_second);
+        }
+        let query = self.scan_context_descriptors.last().unwrap();
+        // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
+        let ranked = ring_key_top_k(
+            self.scan_context_ring_keys.last().unwrap(),
+            &self.scan_context_ring_keys[..self.newest_closure_target()],
+            self.scan_context_config.candidate_top_k,
+        );
+        let mut best_dist = f32::MAX;
+        let mut second_dist = f32::MAX;
+        let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
+        let mut best_idx: i64 = -1;
+        let mut best_shift = 0i32;
+        for &(_, idx) in &ranked {
+            let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
+            if distance < best_dist {
+                second_dist = best_dist; // demote previous best
+                best_dist = distance;
+            } else if distance < second_dist {
+                second_dist = distance;
+            }
+            if distance < best_dist_filtered {
+                best_dist_filtered = distance;
+                best_idx = idx as i64;
+                best_shift = shift;
+            }
+        }
+
+        if best_dist < 2.0 {
+            out_best = best_dist;
+        }
+        if second_dist < 2.0 {
+            out_second = second_dist;
+        }
+        (best_idx, best_shift, out_best, out_second)
+    }
 }
