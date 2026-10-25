@@ -39,12 +39,13 @@ impl ClosureSearch {
         diag.yank_drift_scale = drift;
         if self.config.closure_yank_from_strain {
             diag.yank_z = if self.scored_yanks.is_empty() {
-                0.0
+                f64::INFINITY
             } else {
                 (diag.strain / robust_scale(self.scored_yanks.iter().map(|y| y.0).collect())).sqrt()
             };
         } else if self.scored_yanks.is_empty() {
-            diag.yank_z = 0.0;
+            // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
+            diag.yank_z = f64::INFINITY;
         } else {
             diag.sigma_rotation_deg = robust_scale(self.scored_yanks.iter().map(|y| y.0).collect());
             diag.sigma_translation_m =

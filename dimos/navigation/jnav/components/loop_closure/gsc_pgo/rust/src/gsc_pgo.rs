@@ -133,7 +133,7 @@ pub struct ClosureCandidateDiag {
     /// yank_drift_scale = sqrt(keyframe gap);
     /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
     /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
-    /// (0 before any); each factor is its metric normalized by its own gate and clamped to [0, 1];
+    /// (infinite before any, so the first candidate only seeds the scale); each factor is its metric normalized by its own gate and clamped to [0, 1];
     /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `closure_yank_gate_width`.
     pub yank_drift_scale: f64,
     pub sigma_rotation_deg: f64,
