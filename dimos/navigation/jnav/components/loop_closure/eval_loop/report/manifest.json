@@ -1,12 +1,46 @@
 {
-  "title": "GSC vs Ivan PGO",
+  "title": "GSC Loop Closure Report",
   "recordings": [
     {
+      "name": "huge",
+      "label": "Huge loop (Go2 + Mid-360, Fast-LIO), 53 min",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/huge.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_huge_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/huge_live",
+      "gt": [
+        {
+          "db": "~/.cache/dimos/eval_loop/dbf5283feeb446d49f065a100985a78e.db",
+          "stream": "fastlio_odometry_corrected",
+          "odom_stream": "fastlio_odometry"
+        }
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/huge/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/huge/ivan_plan.json"
+      }
+    },
+    {
+      "name": "huge_l1",
+      "label": "Huge loop (Go2 L1 + leg odometry), 53 min",
+      "world_db": "~/.cache/dimos/eval_loop/dbf5283feeb446d49f065a100985a78e.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_huge_l1_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/huge_l1_live",
+      "gt": [],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/huge_l1/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/huge_l1/ivan_plan.json"
+      },
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      }
+    },
+    {
       "name": "small_mid",
-      "label": "Small loop (Mid-360, Fast-LIO)",
+      "label": "Small loop (Go2 + Mid-360, Fast-LIO)",
       "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/small_mid.db",
-      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_small_mid_sl_overlap",
-      "ivan": "~/.dimos/recordings/gsc_runs/ivan/small_mid_live",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_small_mid_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/small_mid_live",
       "gt": [
         {
           "db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
@@ -22,16 +56,48 @@
         }
       ],
       "plan": {
-        "gsc": "~/.dimos/recordings/report_build/plans/small_mid_gsc_plan.json",
-        "ivan": "~/.dimos/recordings/report_build/plans/small_mid_ivan_plan.json"
+        "gsc": "~/.dimos/recordings/report_build/plans/small_mid/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/small_mid/ivan_plan.json"
+      }
+    },
+    {
+      "name": "small_l1",
+      "label": "Small loop (Go2 L1 + leg odometry)",
+      "world_db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_small_l1_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/small_l1_live",
+      "gt": [],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/small_l1/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/small_l1/ivan_plan.json"
+      }
+    },
+    {
+      "name": "gir1",
+      "label": "gir stairs 1 (Mid-360, Point-LIO)",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/gir1.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_gir1_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/gir1_live",
+      "gt": [
+        {
+          "db": "~/datasets/mid360_recordings/2026-06-01_6-05pm-PST__gir_stairs1/mem2.db",
+          "tf": [
+            "map",
+            "odom"
+          ]
+        }
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/gir1/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/gir1/ivan_plan.json"
       }
     },
     {
       "name": "gir2",
       "label": "gir stairs 2 (Mid-360, Point-LIO)",
       "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/gir2.db",
-      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_gir2_sl_overlap",
-      "ivan": "~/.dimos/recordings/gsc_runs/ivan/gir2_live",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_gir2_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/gir2_live",
       "gt": [
         {
           "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
@@ -39,13 +105,69 @@
             "map",
             "odom"
           ]
-        },
-        {
-          "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
-          "stream": "odometry_corrected",
-          "odom_stream": "pointlio_odometry"
         }
-      ]
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/gir2/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/gir2/ivan_plan.json"
+      }
+    },
+    {
+      "name": "park1",
+      "label": "gir park 1 (Mid-360, Fast-LIO)",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/park1.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_park1_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/park1_live",
+      "gt": [],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/park1/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/park1/ivan_plan.json"
+      }
+    },
+    {
+      "name": "athens",
+      "label": "Athens stairs (handheld Mid-360, Point-LIO)",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/athens.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_athens_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/athens_live",
+      "gt": [
+        {
+          "db": "~/repos/dimos/data/mid360_athens_stairs.db",
+          "tf": [
+            "world",
+            "odom"
+          ]
+        }
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/athens/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/athens/ivan_plan.json"
+      }
+    },
+    {
+      "name": "office555",
+      "label": "Office 555 loop (handheld Mid-360 on a bike, outdoors, Point-LIO), ~1.9 km",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/office555.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_office555_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/office555_live",
+      "gt": [
+        {
+          "db": "~/.cache/dimos/eval_loop/office_555_loop1.db",
+          "tf": [
+            "world",
+            "odom"
+          ]
+        }
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/office555/gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/office555/ivan_plan.json"
+      },
+      "score_gt": false,
+      "tags": {
+        "odom_frame": "base_link",
+        "camera_frame": "camera_color_optical_frame"
+      }
     }
   ]
 }

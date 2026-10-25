@@ -23,8 +23,8 @@ import base64
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
-import subprocess
 import sys
 import time
 
@@ -33,7 +33,7 @@ from scipy.spatial.transform import Rotation as R
 
 WORKTREE = Path(
     os.environ.get("GSC_WORKTREE", Path.home() / "repos/_mls_reform_wt")
-)  # dimos checkout the scorers run from
+)  # dimos checkout the exports run from
 sys.path.insert(0, str(WORKTREE / "dimos/navigation/global_planner/mls_planner/utils"))
 sys.path.insert(0, str(Path(__file__).parent))
 from gt_poses import correction, gt_poses
@@ -41,9 +41,6 @@ import reform_metrics as rm
 
 from dimos.memory.store.sqlite import SqliteStore
 
-SCRIPTS = Path(
-    os.environ.get("GSC_SCRIPTS", Path(__file__).resolve().parent.parent / "gsc_vs_ivan")
-)  # score_run.py, tag_agreement.py
 EDGE = np.dtype(
     [
         ("xyz", "<f4", 3),
@@ -95,22 +92,25 @@ entry_arg, out_root = sys.argv[1], Path(sys.argv[2])
 entry = json.loads(Path(entry_arg).read_text() if Path(entry_arg).exists() else entry_arg)
 opts = dict(
     voxel_m=0.2,
-    max_points=150,
+    max_points=80,
     scans_per_keyframe=5,
     max_range_m=25.0,
     band_m=[0.3, 2.2],
-    state_budget_bytes=4_400_000,
+    state_budget_bytes=1_800_000,
     odom_hz=2.0,
-    icp_accepted=40,
-    icp_rejected=40,
+    icp_accepted=16,
+    icp_rejected=16,
     icp_single=[1500, 2500],
     icp_extended=[2500, 3500],
 )
 opts.update(entry.get("options", {}))
 out = out_root / entry["name"]
-(out / "icp").mkdir(parents=True, exist_ok=True)
-for old in (out / "icp").glob("*.b64"):
-    old.unlink()
+out.mkdir(parents=True, exist_ok=True)
+# every exported candidate's ICP clouds go into one file per recording (icp.b64), each at a byte range of it, so a
+# published report stays a handful of files per recording
+if (out / "icp").exists():
+    shutil.rmtree(out / "icp")
+icp_blob = bytearray()
 started = time.monotonic()
 
 
@@ -151,10 +151,12 @@ log("gt:", gt_found[1] if gt_found else "none")
 
 # ---- per-keyframe points from the world db ----
 with SqliteStore(path=str(Path(entry["world_db"]).expanduser())) as store:
-    lidar = store.streams.lidar
+    # stream names (manifest "streams"); the trimmed world dbs call them lidar / odom
+    streams = {"lidar": "lidar", "odom": "odom", **entry.get("streams", {})}
+    lidar = getattr(store.streams, streams["lidar"])
     scan_ts = np.array([o.ts for o in lidar.order_by("ts")])
     odom_rows = []
-    for o in store.streams.odom.order_by("ts"):
+    for o in getattr(store.streams, streams["odom"]).order_by("ts"):
         p = o.data.pose if hasattr(o.data, "pose") and hasattr(o.data.pose, "position") else o.data
         odom_rows.append(
             (
@@ -241,8 +243,9 @@ for key, m in methods.items():
             )
         )
     extent = max(
-        [float(np.abs(kf["raw"][:, :2]).max()), float(np.abs(kf["corrected"][:, :2]).max())]
-        + [float(np.abs(p[2]).max()) for p in poses]
+        float(np.abs(kf["raw"][:, :2]).max()),
+        float(np.abs(kf["corrected"][:, :2]).max()),
+        *(float(np.abs(p[2]).max()) for p in poses),
     )
     xy_scale = max(0.01, extent / 32000)
     total = sum(12 + 6 * len(p[1]) for p in poses)
@@ -290,8 +293,8 @@ for key, m in methods.items():
             None if np.isnan(g[0]) else [round(g[0], 3), round(g[1], 3), round(float(y), 3)]
             for g, y in zip(
                 gt.tolist(),
-                yaw_of(R.from_quat([*np.nan_to_num(gt[:, 3:], nan=0.0), 0, 0, 0, 1e-09])),
-                strict=False,
+                yaw_of(R.from_quat(np.nan_to_num(gt[:, 3:], nan=0.0) + np.array([0, 0, 0, 1e-9]))),
+                strict=True,
             )
         ],
     )
@@ -435,13 +438,10 @@ if "gsc" in methods:
                     + pack_cloud(source, limits[0], i)
                     + pack_cloud(target, limits[1], i + 1)
                 )
-        icp_index[str(i)] = dict(
-            file="icp/"
-            + write_b64(
-                out / "icp" / f"{stem}.b64", struct.pack("<I", len(blobs)) + b"".join(blobs)
-            ),
-            stages=info,
-        )
+        record = struct.pack("<I", len(blobs)) + b"".join(blobs)
+        icp_index[str(i)] = dict(offset=len(icp_blob), length=len(record), stages=info)
+        icp_blob.extend(record)
+    write_b64(out / "icp.b64", bytes(icp_blob))
     log(f"diag {len(diag)} candidates, icp clouds for {len(icp_index)}")
     gsc_meta = dict(
         edges=edges,
@@ -457,56 +457,31 @@ if "gsc" in methods:
     )
     meta_methods["gsc"].update(edges=edges)
 
-# ---- summary: existing score.json / tags.json, computed if missing and --score requested ----
+# ---- summary: the scores score_all.py wrote (build_report.py --scores), so the tables agree with the report's summary ----
+scored = ((read_json(Path(entry["scores"])) if entry.get("scores") else None) or {}).get(
+    entry["name"], {}
+)
 summary = {}
 for key, m in methods.items():
-    s = dict(keyframes=len(m["kf"]), states=len(m["states"]))
-    for name in ("score", "tags"):
-        path = m["run"] / f"{name}.json"
-        if not path.exists() and entry.get("score_args", {}).get(name):
-            script = SCRIPTS / {"score": "score_run.py", "tags": "tag_agreement.py"}[name]
-            cmd = [
-                "nice",
-                "-n",
-                "10",
-                str(WORKTREE / ".venv/bin/python"),
-                str(script),
-                str(m["run"]),
-                *entry["score_args"][name],
-            ]
-            try:
-                subprocess.run(
-                    cmd,
-                    cwd=WORKTREE,
-                    timeout=180,
-                    check=True,
-                    capture_output=True,
-                    env={
-                        **os.environ,
-                        "PYTHONPATH": os.environ.get(
-                            "GSC_SCORE_STUBS", str(Path.home() / ".cache/gsc_score_stubs")
-                        ),
-                    },
-                )
-            except Exception as e:
-                log(f"{key} {name} failed: {e}")
-        data = read_json(path)
-        if data and name == "score":
-            s["score"] = {k: v for k, v in data.items()}
-        elif data:
-            s["tag_spread_m"] = {k: v.get("mean_spread_m") for k, v in data.items()}
+    row = scored.get(key, {})
+    summary[key] = dict(
+        keyframes=len(m["kf"]),
+        states=len(m["states"]),
+        loops=row.get("loops"),
+        score=(row.get("gt") or {}).get("final") and row["gt"],
+        tag_spread_m=row.get("tags"),
+    )
     if key == "ivan":
-        s.update(
+        summary[key].update(
             {
                 k: v
                 for k, v in (read_json(m["run"] / "ivan.json") or {}).items()
-                if k in ("loops", "dropped", "frames", "busy_s", "wall_s")
+                if k in ("dropped", "frames", "busy_s", "wall_s")
             }
         )
-    summary[key] = s
 if gsc_meta:
     summary["gsc"].update(
-        loops=gsc_meta["committed"],
+        committed=gsc_meta["committed"],
         gate_counts=gsc_meta["gate_counts"],
         runtime_s=gsc_meta["runtime_s"],
     )
@@ -524,16 +499,56 @@ if gt_found:
         None if np.isnan(r[0]) else [round(r[0], 3), round(r[1], 3), round(float(y), 3)]
         for r, y in zip(
             g.tolist(),
-            yaw_of(R.from_quat([*np.nan_to_num(g[:, 3:], nan=0.0), 0, 0, 0, 1e-09])),
-            strict=False,
+            yaw_of(R.from_quat(np.nan_to_num(g[:, 3:], nan=0.0) + np.array([0, 0, 0, 1e-9]))),
+            strict=True,
         )
     ]
+
+
+def simplify(points, tolerance):
+    """Ramer-Douglas-Peucker: drop path points that lie within `tolerance` of the line through their neighbours."""
+    points = np.asarray(points, float)
+    if len(points) < 3:
+        return points
+    a, b = points[0], points[-1]
+    direction = b - a
+    length = np.linalg.norm(direction)
+    offsets = points - a
+    distance = (
+        np.abs(np.cross(direction, offsets)) / length
+        if length > 0
+        else np.linalg.norm(offsets, axis=1)
+    )
+    worst = int(np.argmax(distance))
+    if distance[worst] <= tolerance:
+        return points[[0, -1]]
+    return np.vstack(
+        [simplify(points[: worst + 1], tolerance)[:-1], simplify(points[worst:], tolerance)]
+    )
+
+
+def compact_plan(replay):
+    """The planner replay at the odometry rate (every non-scan event kept), paths simplified to a quarter voxel."""
+    states, last_ts = [], -np.inf
+    for state in replay["states"]:
+        if state["why"] == "scan" and state["ts"] - last_ts < 1 / opts["odom_hz"]:
+            continue
+        last_ts = state["ts"]
+        path = state.get("path")
+        if path:
+            state = dict(state, path=np.round(simplify(path, opts["voxel_m"] / 4), 2).tolist())
+        states.append(state)
+    return dict(replay, states=states)
+
 
 plan = {}
 for key, path in (entry.get("plan") or {}).items():
     path = Path(path).expanduser()
     if path.exists():
-        (out / f"{key}_plan.json").write_text(path.read_text())
+        replay = json.loads(path.read_text())
+        (out / f"{key}_plan.json").write_text(
+            json.dumps(compact_plan(replay), separators=(",", ":"))
+        )
         plan[key] = f"{key}_plan.json"
 
 meta = dict(
@@ -552,5 +567,5 @@ meta = dict(
 )
 (out / "meta.json").write_text(json.dumps(meta, separators=(",", ":")))
 sizes = {p.name: p.stat().st_size for p in out.glob("*") if p.is_file()}
-icp_bytes = sum(p.stat().st_size for p in (out / "icp").glob("*"))
+icp_bytes = (out / "icp.b64").stat().st_size if (out / "icp.b64").exists() else 0
 log("wrote", {k: f"{v / 1e6:.2f} MB" for k, v in sizes.items()}, f"icp {icp_bytes / 1e6:.2f} MB")

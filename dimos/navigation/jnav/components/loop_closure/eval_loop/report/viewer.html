@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GSC Loop Closure Report</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%226%22 fill=%22%23d9480f%22/%3E%3C/svg%3E">
+<style>
+:root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1f22; --muted: #6a6f76; --line: #d9dbde; --accent: #2f6fdf;
+    --gsc: #d9480f; --ivan: #1971c2; --gt: #2b2f36; --edge-ok: #2b8a3e; --edge-bad: #c92a2a; --edge-other: #e8a317;
+    --robot: #111111; --plan: #8f3fd1; --src: #e8590c; --tgt: #1c7ed6; --map-bg: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg: #131517; --panel: #1c1f22; --ink: #e6e8ea; --muted: #9aa1a9; --line: #33383d; --accent: #6ea8ff;
+        --gsc: #ff8a4c; --ivan: #4dabf7; --gt: #f1f3f5; --edge-ok: #51cf66; --edge-bad: #ff6b6b; --edge-other: #ffd43b;
+        --robot: #f1f3f5; --plan: #c084fc; --src: #ff922b; --tgt: #4dabf7; --map-bg: #101214;
+    }
+}
+:root[data-theme="dark"] {
+    --bg: #131517; --panel: #1c1f22; --ink: #e6e8ea; --muted: #9aa1a9; --line: #33383d; --accent: #6ea8ff;
+    --gsc: #ff8a4c; --ivan: #4dabf7; --gt: #f1f3f5; --edge-ok: #51cf66; --edge-bad: #ff6b6b; --edge-other: #ffd43b;
+    --robot: #f1f3f5; --plan: #c084fc; --src: #ff922b; --tgt: #4dabf7; --map-bg: #101214;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+header, section { max-width: 1400px; margin: 0 auto; padding: 12px 16px; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; flex: 1; }
+h2 { font-size: 17px; margin: 8px 0; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 16px; }
+button, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+label { white-space: nowrap; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 8px 0; }
+.scrub { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.scrub input { flex: 1; min-width: 0; }
+.time { font-variant-numeric: tabular-nums; min-width: 9ch; text-align: right; color: var(--muted); }
+.maps { display: flex; gap: 10px; flex-wrap: wrap; }
+.map { flex: 1 1 380px; min-width: 0; position: relative; }
+.map canvas { width: 100%; aspect-ratio: 1; max-height: 80vh; display: block; background: var(--map-bg); border: 1px solid var(--line); border-radius: 6px; touch-action: none; }
+.map .tag { position: absolute; left: 8px; top: 6px; font-weight: 600; pointer-events: none; }
+.legend { font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { padding: 3px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+.summary { overflow-x: auto; }
+details { margin-top: 10px; }
+summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.loops { display: flex; gap: 12px; flex-wrap: wrap; }
+.loop-list { flex: 1 1 520px; min-width: 0; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.loop-list tr { cursor: pointer; }
+.loop-list tr.sel td { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.loop-list thead th { position: sticky; top: 0; background: var(--panel); }
+.loop-detail { flex: 1 1 380px; min-width: 0; }
+.loop-detail canvas { width: 100%; aspect-ratio: 1.4; background: var(--map-bg); border: 1px solid var(--line); border-radius: 6px; display: block; }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 12px; font-size: 12px; margin: 6px 0; }
+.kv span { color: var(--muted); }
+.muted { color: var(--muted); }
+.ok { color: var(--edge-ok); } .bad { color: var(--edge-bad); }
+.appendix p, .appendix li { max-width: 75ch; line-height: 1.5; }
+.appendix h3 { font-size: 15px; margin: 14px 0 6px; }
+.table-wrap, .diagram { overflow-x: auto; margin: 8px 0; }
+.appendix th[colspan] { text-align: center; }
+td.win { font-weight: 700; }
+.note { color: var(--muted); font-size: 13px; }
+code { font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+    <h1 id="title">GSC vs Ivan PGO</h1>
+    <span class="muted" id="built"></span>
+    <button id="theme" title="Theme">Theme: auto</button>
+</header>
+<main id="main"></main>
+<script>
+"use strict"
+const $ = (tag, attrs = {}, ...kids) => {
+    const el = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs)) {
+        if (k === "class") { el.className = v } else if (k.startsWith("on")) { el.addEventListener(k.slice(2), v) } else { el.setAttribute(k, v) }
+    }
+    for (const kid of kids.flat()) { if (kid != null) { el.append(kid) } }
+    return el
+}
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+const fmt = (v, d = 3) => v == null ? "–" : typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(d)) : String(v)
+const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
+async function fetchText(path) { const r = await fetch(path); if (!r.ok) { throw new Error(`${path}: ${r.status}`) } return r.text() }
+async function fetchB64(path) {
+    const text = await fetchText(path), bin = atob(text.trim()), bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i) }
+    return bytes.buffer
+}
+// binary search: number of sorted values <= x
+function countLE(values, x) { let lo = 0, hi = values.length; while (lo < hi) { const m = (lo + hi) >> 1; if (values[m] <= x) { lo = m + 1 } else { hi = m } } return lo }
+// SE2 helpers: pose = [x, y, yaw]
+const compose = (a, b) => { const c = Math.cos(a[2]), s = Math.sin(a[2]); return [a[0] + c * b[0] - s * b[1], a[1] + s * b[0] + c * b[1], a[2] + b[2]] }
+const invert = a => { const c = Math.cos(a[2]), s = Math.sin(a[2]); return [-c * a[0] - s * a[1], s * a[0] - c * a[1], -a[2]] }
+
+// ---------- theme ----------
+const themes = ["auto", "light", "dark"]
+let theme = "auto"
+try { theme = localStorage.getItem("pgo-theme") || "auto" } catch (e) { }
+function applyTheme() {
+    if (theme === "auto") { delete document.documentElement.dataset.theme } else { document.documentElement.dataset.theme = theme }
+    document.getElementById("theme").textContent = `Theme: ${theme}`
+    for (const r of recordings) { r.redraw() }
+}
+document.getElementById("theme").onclick = () => {
+    theme = themes[(themes.indexOf(theme) + 1) % 3]
+    try { localStorage.setItem("pgo-theme", theme) } catch (e) { }
+    applyTheme()
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme())
+
+// ---------- data decoding ----------
+function decodePoints(buffer, n) {
+    const counts = new Uint32Array(buffer.slice(0, 4 * n)), xy = new Int16Array(buffer.slice(4 * n))
+    const start = new Uint32Array(n + 1)
+    for (let i = 0; i < n; i++) { start[i + 1] = start[i] + counts[i] }
+    return { start, xy }
+}
+function decodeStates(buffer, scale) {
+    const view = new DataView(buffer), states = []
+    let at = 0
+    while (at < buffer.byteLength) {
+        const ts = view.getFloat64(at, true), n = view.getUint32(at + 8, true)
+        const raw = new Int16Array(buffer.slice(at + 12, at + 12 + 6 * n)), pose = new Float32Array(3 * n)
+        for (let i = 0; i < n; i++) { pose[3 * i] = raw[3 * i] * scale; pose[3 * i + 1] = raw[3 * i + 1] * scale; pose[3 * i + 2] = raw[3 * i + 2] / 32767 * Math.PI }
+        states.push({ ts, n, pose })
+        at += 12 + 6 * n
+    }
+    return states
+}
+function decodeIcp(buffer) {
+    const view = new DataView(buffer), stages = []
+    let at = 4
+    const cloud = () => {
+        const offset = [view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true)], n = view.getUint32(at + 12, true)
+        const raw = new Int16Array(buffer.slice(at + 16, at + 16 + 6 * n)), xyz = new Float32Array(3 * n)
+        for (let i = 0; i < 3 * n; i++) { xyz[i] = raw[i] / 100 + offset[i % 3] }
+        at += 16 + 6 * n
+        return xyz
+    }
+    for (let k = view.getUint32(0, true); k > 0; k--) {
+        const keyframes = view.getUint32(at, true), tail = []
+        for (let i = 0; i < 13; i++) { tail.push(view.getFloat64(at + 4 + 8 * i, true)) }
+        at += 4 + 104
+        const source = cloud(), target = cloud()
+        stages.push({ keyframes, rotation: tail.slice(0, 9), translation: tail.slice(9, 12), fitness: tail[12], source, target })
+    }
+    return stages
+}
+
+// ---------- one method's belief at time t ----------
+class Method {
+    constructor(key, meta, states, points) {
+        Object.assign(this, { key, meta, states, points })
+        this.kfTs = meta.kf_ts
+        this.stateTs = states.map(s => s.ts)
+        this.plan = null
+    }
+    // keyframe poses as believed at t (Float32Array 3n) for the first n keyframes made by then
+    belief(t) {
+        const n = countLE(this.kfTs, t), si = countLE(this.stateTs, t) - 1, raw = this.meta.raw, out = new Float32Array(3 * n)
+        let correction = [0, 0, 0], m = 0
+        if (si >= 0) {
+            const s = this.states[si]
+            m = Math.min(n, s.n)
+            out.set(s.pose.subarray(0, 3 * m))
+            const j = s.n - 1
+            correction = compose([s.pose[3 * j], s.pose[3 * j + 1], s.pose[3 * j + 2]], invert(raw[j]))
+        }
+        for (let i = m; i < n; i++) { const p = compose(correction, raw[i]); out[3 * i] = p[0]; out[3 * i + 1] = p[1]; out[3 * i + 2] = p[2] }
+        return { n, poses: out, correction, state: si }
+    }
+    gtPoses(n) {
+        if (!this.meta.gt) { return null }
+        const out = new Float32Array(3 * n).fill(NaN)
+        for (let i = 0; i < n; i++) { const g = this.meta.gt[i]; if (g) { out[3 * i] = g[0]; out[3 * i + 1] = g[1]; out[3 * i + 2] = g[2] } }
+        return out
+    }
+}
+
+// ---------- recording section ----------
+const recordings = []
+class Recording {
+    constructor(info) {
+        this.info = info
+        this.t = 0; this.playing = false; this.speed = 30
+        this.show = { mode: innerWidth > 900 ? "both" : "gsc", gt: false, edges: true, path: true, plan: true }
+        this.view = null; this.selected = null
+        this.el = $("section", { id: `rec-${info.name}` }, $("h2", {}, info.label), $("p", { class: "muted" }, "loading…"))
+        document.getElementById("main").append(this.el)
+        recordings.push(this)
+    }
+    redraw() { if (this.methods) { this.draw() } }
+    async load() {
+        const base = `${this.info.name}/`
+        try {
+            const meta = this.meta = JSON.parse(await fetchText(base + "meta.json"))
+            this.methods = {}
+            for (const [key, m] of Object.entries(meta.methods)) {
+                const [sb, pb] = await Promise.all([fetchB64(base + m.states), fetchB64(base + m.points)])
+                this.methods[key] = new Method(key, m, decodeStates(sb, m.xy_scale), decodePoints(pb, m.keyframes))
+            }
+            for (const [key, file] of Object.entries(meta.plan || {})) {
+                try { if (this.methods[key]) { this.methods[key].plan = JSON.parse(await fetchText(base + file)) } } catch (e) { console.warn(e) }
+            }
+            this.t = meta.duration_s
+            this.build()
+        } catch (e) {
+            this.el.querySelector("p").textContent = `failed to load: ${e.message}`
+            console.error(e)
+        }
+    }
+    build() {
+        const meta = this.meta, el = this.el
+        el.querySelector("p").remove()
+        el.append(this.summaryTable())
+        const toggle = (label, key, disabled = false) => {
+            const box = $("input", { type: "checkbox" })
+            box.checked = this.show[key] && !disabled; box.disabled = disabled
+            box.onchange = () => { this.show[key] = box.checked; this.draw() }
+            return $("label", { title: disabled ? "no data for this recording" : "" }, box, ` ${label}`)
+        }
+        const modeButtons = ["gsc", "ivan", "both"].filter(k => k === "both" ? Object.keys(this.methods).length > 1 : this.methods[k]).map(k => {
+            const b = $("button", { onclick: () => { this.show.mode = k; this.layout() } }, k === "both" ? "Side by side" : k === "gsc" ? "GSC" : "Ivan")
+            b.dataset.mode = k
+            return b
+        })
+        this.modeButtons = modeButtons
+        const hasPlan = Object.values(this.methods).some(m => m.plan)
+        el.append($("div", { class: "controls" }, ...modeButtons,
+            toggle("GT map", "gt", !meta.gt), toggle("loop edges", "edges"), toggle("trajectory", "path"), toggle("planner path", "plan", !hasPlan),
+            $("span", { class: "muted" }, meta.gt ? `GT: ${meta.gt}` : "no GT")))
+        this.slider = $("input", { type: "range", min: 0, max: meta.duration_s, step: 0.1, value: this.t, "aria-label": "time" })
+        this.slider.oninput = () => { this.t = +this.slider.value; this.draw() }
+        this.timeLabel = $("span", { class: "time" })
+        this.playButton = $("button", { onclick: () => this.togglePlay() }, "▶ Play")
+        const speed = $("select", { "aria-label": "speed" }, ...[10, 30, 100, 300].map(s => $("option", { value: s }, `${s}×`)))
+        speed.value = this.speed; speed.onchange = () => { this.speed = +speed.value }
+        el.append($("div", { class: "scrub" }, this.playButton, this.slider, this.timeLabel, speed))
+        this.panels = {}
+        const maps = $("div", { class: "maps" })
+        for (const key of Object.keys(this.methods)) {
+            const canvas = $("canvas", { role: "img", "aria-label": `${key} map` })
+            const panel = $("div", { class: "map" }, canvas, $("div", { class: "tag", style: `color: var(--${key})` }, key === "gsc" ? "GSC" : "Ivan"))
+            this.panels[key] = { panel, canvas, info: $("div", { class: "legend" }) }
+            maps.append(panel)
+            this.attachPanZoom(canvas)
+        }
+        el.append(maps, $("div", { class: "legend" },
+            ...Object.keys(this.methods).map(k => $("span", {}, $("span", { class: "sw", style: `background: var(--${k})` }), k === "gsc" ? "GSC map" : "Ivan map")),
+            $("span", {}, $("span", { class: "sw", style: "background: var(--gt)" }), "GT map"),
+            $("span", {}, $("span", { class: "sw", style: "background: var(--edge-ok)" }), "loop applied"),
+            $("span", {}, $("span", { class: "sw", style: "background: var(--edge-bad)" }), "loop GNC-rejected"),
+            $("span", {}, $("span", { class: "sw", style: "background: var(--plan)" }), "planner"),
+            $("span", {}, "drag to pan, wheel/pinch to zoom, double-click to reset"),
+            this.methods.ivan ? $("span", {}, "Ivan's loop pairs are not logged, so it has no edges") : null))
+        this.statusLine = $("div", { class: "legend" })
+        el.append(this.statusLine)
+        if (meta.loops) { this.loopDetails = this.loopSection(); el.append(this.loopDetails) }
+        new ResizeObserver(() => this.draw()).observe(maps)
+        this.layout()
+        this.applyHash()
+    }
+    // deep link: #rec=NAME&t=SECONDS&gt=1&mode=gsc|ivan|both&loop=CANDIDATE_INDEX
+    applyHash() {
+        const q = new URLSearchParams(location.hash.slice(1))
+        if (q.get("rec") && q.get("rec") !== this.info.name) { return }
+        if (q.has("mode") && this.panels[q.get("mode")] || q.get("mode") === "both") { this.show.mode = q.get("mode"); this.layout() }
+        if (q.has("gt") && this.meta.gt) { this.show.gt = q.get("gt") === "1"; this.el.querySelectorAll(".controls input")[0].checked = this.show.gt }
+        if (q.has("t")) { this.t = Math.min(this.meta.duration_s, +q.get("t")); this.slider.value = this.t }
+        this.draw()
+        if (q.has("loop") && this.loopDetails) {
+            this.loopDetails.open = true
+            this.loopDetails.dispatchEvent(new Event("toggle"))
+            const row = [...this.loopDetails.querySelectorAll("tbody tr")].find(tr => tr.firstChild.textContent === q.get("loop"))
+            if (row) { row.click() } else { this.showLoop(+q.get("loop"), this.loopDetails.querySelector(".loop-detail")) }
+        }
+    }
+    summaryTable() {
+        const s = this.meta.summary, keys = Object.keys(s)
+        const rows = [
+            ["keyframes", k => s[k].keyframes], ["loops (GSC: kept by the solve / committed)", k => s[k].committed != null ? `${s[k].loops} / ${s[k].committed}` : s[k].loops], ["graph states", k => s[k].states],
+            ["final error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.final.median_m)} / ${fmt(s[k].score.final.p95_m)}`],
+            ["live error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.live.median_m)} / ${fmt(s[k].score.live.p95_m)}`],
+            ["raw error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.raw.median_m)} / ${fmt(s[k].score.raw.p95_m)}`],
+            ["tag spread final / live (m)", k => s[k].tag_spread_m && `${fmt(s[k].tag_spread_m.final)} / ${fmt(s[k].tag_spread_m.live)}`],
+            ["runtime / busy (s)", k => fmt(s[k].runtime_s ?? s[k].busy_s, 1)],
+        ]
+        const extra = s.gsc && s.gsc.gate_counts ? $("div", { class: "legend" }, "GSC gate: " + Object.entries(s.gsc.gate_counts).map(([k, v]) => `${k} ${v}`).join(", ")) : null
+        return $("div", { class: "summary" }, $("table", {},
+            $("thead", {}, $("tr", {}, $("th", {}, `${clock(this.meta.duration_s)} of recording`), ...keys.map(k => $("th", { style: `color: var(--${k})` }, k === "gsc" ? "GSC" : "Ivan")))),
+            $("tbody", {}, ...rows.map(([label, f]) => $("tr", {}, $("td", {}, label), ...keys.map(k => $("td", {}, fmt(f(k) ?? null))))))), extra)
+    }
+    layout() {
+        for (const b of this.modeButtons) { b.classList.toggle("on", b.dataset.mode === this.show.mode) }
+        for (const [key, p] of Object.entries(this.panels)) { p.panel.style.display = this.show.mode === "both" || this.show.mode === key ? "" : "none" }
+        this.draw()
+    }
+    fitView() {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+        for (const m of Object.values(this.methods)) {
+            for (const arr of [m.meta.final, m.meta.raw, m.meta.gt || []]) {
+                for (const p of arr) { if (p) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]) } }
+            }
+        }
+        const pad = 6, ratio = Math.min(1.5, Math.max(0.55, (y1 - y0) / Math.max(1, x1 - x0)))
+        for (const p of Object.values(this.panels)) { p.canvas.style.aspectRatio = String(1 / ratio) }
+        const canvas = Object.values(this.panels).find(p => p.canvas.clientWidth)?.canvas
+        const aspect = canvas ? canvas.clientHeight / canvas.clientWidth : ratio
+        this.view = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, span: Math.max(x1 - x0, (y1 - y0) / aspect) + 2 * pad }
+    }
+    attachPanZoom(canvas) {
+        const pointers = new Map()
+        let pinch = null
+        const scale = () => this.view.span / canvas.clientWidth
+        canvas.addEventListener("wheel", ev => {
+            ev.preventDefault()
+            const r = canvas.getBoundingClientRect(), f = Math.exp(ev.deltaY * 0.0015), s = scale()
+            const wx = this.view.cx + (ev.clientX - r.left - r.width / 2) * s, wy = this.view.cy - (ev.clientY - r.top - r.height / 2) * s
+            this.view.span *= f
+            this.view.cx = wx - (wx - this.view.cx) * f; this.view.cy = wy - (wy - this.view.cy) * f
+            this.draw()
+        }, { passive: false })
+        canvas.addEventListener("pointerdown", ev => { pointers.set(ev.pointerId, [ev.clientX, ev.clientY]); canvas.setPointerCapture(ev.pointerId) })
+        canvas.addEventListener("pointermove", ev => {
+            if (!pointers.has(ev.pointerId)) { return }
+            const last = pointers.get(ev.pointerId)
+            if (pointers.size === 1) {
+                const s = scale()
+                this.view.cx -= (ev.clientX - last[0]) * s; this.view.cy += (ev.clientY - last[1]) * s
+                pointers.set(ev.pointerId, [ev.clientX, ev.clientY])
+                this.draw()
+            } else if (pointers.size === 2) {
+                pointers.set(ev.pointerId, [ev.clientX, ev.clientY])
+                const [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1])
+                if (pinch) { this.view.span *= pinch / d; this.draw() }
+                pinch = d
+            }
+        })
+        const lift = ev => { pointers.delete(ev.pointerId); pinch = null }
+        canvas.addEventListener("pointerup", lift); canvas.addEventListener("pointercancel", lift)
+        canvas.addEventListener("dblclick", () => { this.fitView(); this.draw() })
+    }
+    togglePlay() {
+        this.playing = !this.playing
+        this.playButton.textContent = this.playing ? "❚❚ Pause" : "▶ Play"
+        if (!this.playing) { return }
+        if (this.t >= this.meta.duration_s - 0.1) { this.t = 0 }
+        let last = performance.now()
+        const step = now => {
+            if (!this.playing) { return }
+            this.t = Math.min(this.meta.duration_s, this.t + (now - last) / 1000 * this.speed); last = now
+            this.slider.value = this.t
+            this.draw()
+            if (this.t >= this.meta.duration_s) { this.togglePlay(); return }
+            requestAnimationFrame(step)
+        }
+        requestAnimationFrame(step)
+    }
+    robotPose(correction, t, gt) {
+        const odom = gt ? this.meta.gt_odom : this.meta.odom, ts = this.odomTs || (this.odomTs = this.meta.odom.map(o => o[0]))
+        const i = Math.max(0, Math.min(ts.length - 1, countLE(ts, t) - 1)), o = odom[i]
+        if (!o) { return null }
+        return gt ? o : compose(correction, gt ? o : this.meta.odom[i].slice(1))
+    }
+    draw() {
+        if (!this.methods) { return }
+        if (!this.view) { this.fitView() }
+        this.timeLabel.textContent = `${clock(this.t)} / ${clock(this.meta.duration_s)}`
+        const colors = Object.fromEntries(["gsc", "ivan", "gt", "edge-ok", "edge-bad", "edge-other", "robot", "plan", "map-bg", "muted"].map(k => [k, css(`--${k}`)]))
+        const status = []
+        for (const [key, m] of Object.entries(this.methods)) {
+            const { canvas } = this.panels[key]
+            if (canvas.parentElement.style.display === "none" || !canvas.clientWidth) { continue }
+            const b = m.belief(this.t)
+            this.drawMap(canvas, m, b, colors)
+            status.push(`${key === "gsc" ? "GSC" : "Ivan"}: ${b.n} keyframes, graph state ${b.state + 1}/${m.states.length}${m.meta.states_kept < m.meta.states_total ? ` (of ${m.meta.states_total} total, decimated)` : ""}`)
+        }
+        this.statusLine.textContent = status.join(" · ")
+    }
+    drawMap(canvas, m, b, colors) {
+        const dpr = devicePixelRatio || 1, W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr)
+        if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H }
+        const ctx = canvas.getContext("2d"), v = this.view, k = W / v.span
+        const px = x => W / 2 + (x - v.cx) * k, py = y => H / 2 - (y - v.cy) * k
+        // points go straight into an ImageData: hundreds of thousands per frame
+        const rgba = color => { ctx.fillStyle = color; const c = ctx.fillStyle; const n = parseInt(c.slice(1), 16); return (255 << 24) | ((n & 255) << 16) | (((n >> 8) & 255) << 8) | (n >> 16) }
+        const image = ctx.createImageData(W, H), pixels = new Uint32Array(image.data.buffer)
+        pixels.fill(rgba(colors["map-bg"]))
+        const dot = Math.max(1, Math.round(dpr * 1.2))
+        const splat = (poses, n, color, sparse = false) => {
+            const c = rgba(color), { start, xy } = m.points
+            for (let i = 0; i < n; i++) {
+                const x = poses[3 * i], y = poses[3 * i + 1], yaw = poses[3 * i + 2]
+                if (Number.isNaN(x)) { continue }
+                const cs = Math.cos(yaw), sn = Math.sin(yaw)
+                for (let j = start[i]; j < start[i + 1]; j++) {
+                    const lx = xy[2 * j] / 100, ly = xy[2 * j + 1] / 100
+                    const u = (W / 2 + (x + cs * lx - sn * ly - v.cx) * k) | 0, w = (H / 2 - (y + sn * lx + cs * ly - v.cy) * k) | 0
+                    if (u < 0 || w < 0 || u >= W - dot || w >= H - dot || (sparse && ((u ^ w) & 1))) { continue }
+                    for (let a = 0; a < dot; a++) { const row = (w + a) * W + u; for (let c2 = 0; c2 < dot; c2++) { pixels[row + c2] = c } }
+                }
+            }
+        }
+        const gt = this.show.gt ? m.gtPoses(b.n) : null
+        splat(b.poses, b.n, colors[m.key])
+        if (gt) { splat(gt, b.n, colors.gt, true) }  // on top, every other pixel, so both stay visible
+        ctx.putImageData(image, 0, 0)
+        ctx.lineWidth = dpr
+        const pathOf = (poses, n, color) => {
+            ctx.strokeStyle = color; ctx.beginPath()
+            let pen = false
+            for (let i = 0; i < n; i++) {
+                const x = poses[3 * i]
+                if (Number.isNaN(x)) { pen = false; continue }
+                if (pen) { ctx.lineTo(px(x), py(poses[3 * i + 1])) } else { ctx.moveTo(px(x), py(poses[3 * i + 1])); pen = true }
+            }
+            ctx.stroke()
+        }
+        if (this.show.path) {
+            if (gt) { pathOf(gt, b.n, colors.muted) }
+            ctx.globalAlpha = 0.8; pathOf(b.poses, b.n, colors.robot); ctx.globalAlpha = 1
+        }
+        if (this.show.edges && m.meta.edges) {
+            ctx.lineWidth = 1.5 * dpr
+            for (const [s, t, ts, state] of m.meta.edges) {
+                if (ts > this.t || s >= b.n || t >= b.n) { continue }
+                ctx.strokeStyle = state === 6 ? colors["edge-ok"] : state === 5 ? colors["edge-bad"] : colors["edge-other"]
+                ctx.beginPath(); ctx.moveTo(px(b.poses[3 * s]), py(b.poses[3 * s + 1])); ctx.lineTo(px(b.poses[3 * t]), py(b.poses[3 * t + 1])); ctx.stroke()
+            }
+        }
+        // planner hook: <rec>/<method>_plan.json = {"states": [{"ts": s since t0, "goal": [x, y], "path": [[x, y], ...]}]}
+        if (this.show.plan && m.plan && m.plan.states && m.plan.states.length) {
+            const i = countLE(m.plan.states.map(s => s.ts), this.t) - 1
+            const s = i >= 0 ? m.plan.states[i] : null
+            if (s) {
+                ctx.strokeStyle = colors.plan; ctx.lineWidth = 2 * dpr; ctx.beginPath()
+                ;(s.path || []).forEach((p, j) => j ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])))
+                ctx.stroke()
+                if (s.goal) { ctx.fillStyle = colors.plan; ctx.beginPath(); ctx.arc(px(s.goal[0]), py(s.goal[1]), 5 * dpr, 0, 7); ctx.fill() }
+            }
+        }
+        if (this.selected) {
+            const d = this.selected
+            for (const [id, color] of [[d.source, css("--src")], [d.target, css("--tgt")]]) {
+                if (id >= 0 && id < b.n) { ctx.strokeStyle = color; ctx.lineWidth = 2.5 * dpr; ctx.beginPath(); ctx.arc(px(b.poses[3 * id]), py(b.poses[3 * id + 1]), 9 * dpr, 0, 7); ctx.stroke() }
+            }
+        }
+        const robot = (pose, color) => {
+            if (!pose) { return }
+            const x = px(pose[0]), y = py(pose[1]), r = 9 * dpr, a = -pose[2]
+            ctx.fillStyle = color; ctx.beginPath()
+            ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
+            ctx.lineTo(x + r * 0.6 * Math.cos(a + 2.4), y + r * 0.6 * Math.sin(a + 2.4))
+            ctx.lineTo(x + r * 0.6 * Math.cos(a - 2.4), y + r * 0.6 * Math.sin(a - 2.4))
+            ctx.fill()
+        }
+        if (gt && this.meta.gt_odom) { robot(this.robotPose(null, this.t, true), colors.gt) }
+        robot(this.robotPose(b.correction, this.t, false), colors.robot)
+        // scale bar
+        const meters = [1, 2, 5, 10, 20, 50, 100, 200].find(s => s * k > W / 8) || 500
+        ctx.fillStyle = colors.muted; ctx.fillRect(12 * dpr, H - 14 * dpr, meters * k, 3 * dpr)
+        ctx.font = `${11 * dpr}px system-ui`; ctx.fillText(`${meters} m`, 12 * dpr, H - 20 * dpr)
+    }
+    // ---------- loop analysis ----------
+    loopSection() {
+        const L = this.meta.loops, col = Object.fromEntries(L.diag_columns.map((c, i) => [c, i]))
+        const outcomes = [...new Set(L.diag.map(r => r[0]))]
+        const filter = $("select", { "aria-label": "filter by outcome" }, $("option", { value: "*" }, "all outcomes"), $("option", { value: "clouds" }, "with ICP clouds"),
+            $("option", { value: "rejected" }, "all rejects"), ...outcomes.map(o => $("option", { value: o }, `${o} (${L.diag.filter(r => r[0] === o).length})`)))
+        filter.value = "clouds"
+        const shown = ["#", "outcome", "src→tgt", "t", "dist m", "fitness", "overlap", "degen.", "conf / req", "yank z", "ext fit", "ICP"]
+        const tbody = $("tbody")
+        const list = $("div", { class: "loop-list" }, $("table", {}, $("thead", {}, $("tr", {}, ...shown.map(h => $("th", {}, h)))), tbody))
+        const detail = $("div", { class: "loop-detail" }, $("p", { class: "muted" }, "Pick a candidate to see its gate numbers and ICP clouds."))
+        const render = () => {
+            tbody.replaceChildren()
+            const f = filter.value
+            const rows = L.diag.map((r, i) => [r, i]).filter(([r, i]) => f === "*" || (f === "clouds" ? L.icp[i] : f === "rejected" ? r[0].endsWith("_reject") : r[0] === f))
+            for (const [r, i] of rows.slice(0, 2000)) {
+                const cls = r[0] === "accepted" ? "ok" : r[0].endsWith("_reject") ? "bad" : "muted"
+                const tr = $("tr", { onclick: () => { for (const x of tbody.children) { x.classList.remove("sel") } tr.classList.add("sel"); this.showLoop(i, detail) } },
+                    $("td", {}, String(i)), $("td", { class: cls }, r[0]), $("td", {}, `${r[col.source_id]}→${r[col.target_id]}`), $("td", {}, r[col.source_time] == null ? "–" : clock(r[col.source_time])),
+                    $("td", {}, fmt(r[col.candidate_distance], 2)), $("td", {}, fmt(r[col.icp_fitness], 3)), $("td", {}, fmt(r[col.icp_overlap], 2)), $("td", {}, fmt(r[col.degeneracy_min], 3)),
+                    $("td", {}, r[col.confidence] == null ? "–" : `${fmt(r[col.confidence], 2)} / ${fmt(r[col.required_confidence], 2)}`), $("td", {}, fmt(r[col.yank_z], 2)),
+                    $("td", {}, fmt(r[col.extended_fitness], 3)), $("td", {}, L.icp[i] ? "●" : ""))
+                tbody.append(tr)
+            }
+            if (rows.length > 2000) { tbody.append($("tr", {}, $("td", { colspan: shown.length }, `… ${rows.length - 2000} more, narrow the filter`))) }
+        }
+        filter.onchange = render
+        const details = $("details", {}, $("summary", {}, `Loop analysis (${L.diag.length} candidates, ICP clouds for ${Object.keys(L.icp).length})`),
+            $("div", { class: "controls" }, filter, $("span", { class: "muted" }, `gate: ICP fitness ≤ ${fmt(L.thresholds.icp_fitness)}, degeneracy ≥ ${fmt(L.thresholds.degeneracy_min)}, confidence ≥ required`)),
+            $("div", { class: "loops" }, list, detail))
+        details.addEventListener("toggle", () => { if (details.open && !tbody.children.length) { render() } })
+        return details
+    }
+    async showLoop(i, detail) {
+        const L = this.meta.loops, row = L.diag[i], d = Object.fromEntries(L.diag_columns.map((c, j) => [c, row[j]]))
+        this.selected = { source: d.source_id, target: d.target_id }
+        this.draw()
+        const kv = $("div", { class: "kv" }, ...L.diag_columns.filter(c => d[c] != null).map(c => $("div", {}, $("span", {}, c.replaceAll("_", " ") + " "), c === "source_time" ? clock(d[c]) : fmt(d[c], 4))))
+        const jump = $("button", { onclick: () => { this.t = Math.min(this.meta.duration_s, d.source_time + 2); this.slider.value = this.t; this.draw() } }, "Show on map")
+        detail.replaceChildren($("div", { class: "controls" }, $("b", {}, `#${i} ${d.outcome}: ${d.source_id} → ${d.target_id}`), d.source_time != null ? jump : null), kv)
+        const icp = L.icp[String(i)]
+        if (!icp) { detail.append($("p", { class: "muted" }, "No ICP clouds exported for this candidate (only accepted + rejects nearest the gate are).")); return }
+        detail.append($("table", {}, $("thead", {}, $("tr", {}, ...["round", "src pts", "tgt pts", "fitness", "rot °", "trans m"].map(h => $("th", {}, h)))),
+            $("tbody", {}, ...icp.stages.map(s => $("tr", {}, $("td", {}, s.keyframes === 1 ? "single" : `extended ×${s.keyframes}`), $("td", {}, s.source_points), $("td", {}, s.target_points),
+                $("td", {}, fmt(s.fitness, 4)), $("td", {}, fmt(s.rotation_deg, 2)), $("td", {}, fmt(s.translation_m, 3)))))))
+        const canvas = $("canvas", { role: "img", "aria-label": "ICP clouds" })
+        const state = { stage: 0, side: false, aligned: true }
+        this.icpFile = this.icpFile || fetchB64(this.info.name + "/icp.b64")
+        const stages = decodeIcp((await this.icpFile).slice(icp.offset, icp.offset + icp.length))
+        const btn = (label, onclick) => $("button", { onclick: ev => { onclick(); paint(); for (const b of ev.target.parentElement.querySelectorAll("button")) { b.classList.toggle("on", b === ev.target) } } }, label)
+        const row1 = $("div", { class: "controls" }, ...stages.map((s, j) => btn(s.keyframes === 1 ? "single" : `extended ×${s.keyframes}`, () => { state.stage = j })))
+        const row2 = $("div", { class: "controls" }, btn("after ICP", () => { state.aligned = true }), btn("before", () => { state.aligned = false }))
+        const row3 = $("div", { class: "controls" }, btn("top", () => { state.side = false }), btn("side", () => { state.side = true }),
+            $("span", { class: "legend" }, $("span", {}, $("span", { class: "sw", style: "background: var(--src)" }), "source"), $("span", {}, $("span", { class: "sw", style: "background: var(--tgt)" }), "target")))
+        for (const r of [row1, row2, row3]) { r.querySelector("button").classList.add("on") }
+        detail.append(row1, row2, row3, canvas)
+        const paint = () => {
+            const s = stages[state.stage], dpr = devicePixelRatio || 1, W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr)
+            canvas.width = W; canvas.height = H
+            const ctx = canvas.getContext("2d"), R = s.rotation, T = s.translation
+            const src = new Float32Array(s.source.length)
+            for (let j = 0; j < s.source.length; j += 3) {
+                const x = s.source[j], y = s.source[j + 1], z = s.source[j + 2]
+                if (state.aligned) {
+                    src[j] = R[0] * x + R[1] * y + R[2] * z + T[0]; src[j + 1] = R[3] * x + R[4] * y + R[5] * z + T[1]; src[j + 2] = R[6] * x + R[7] * y + R[8] * z + T[2]
+                } else { src[j] = x; src[j + 1] = y; src[j + 2] = z }
+            }
+            const a = 0, b = state.side ? 2 : 1
+            // frame the 2nd..98th percentile so a few far points do not shrink the clouds
+            const along = axis => { const v = []; for (const c of [s.target, src]) { for (let j = axis; j < c.length; j += 3) { v.push(c[j]) } } v.sort((p, q) => p - q); return [v[Math.floor(v.length * 0.02)], v[Math.floor(v.length * 0.98)]] }
+            const [x0, x1] = along(a), [y0, y1] = along(b)
+            const k = Math.min(W / (x1 - x0 + 1), H / (y1 - y0 + 1)), ox = W / 2 - (x0 + x1) / 2 * k, oy = H / 2 + (y0 + y1) / 2 * k
+            ctx.fillStyle = css("--map-bg"); ctx.fillRect(0, 0, W, H)
+            const dot = Math.max(2, Math.round(dpr * 2))
+            for (const [c, color, alpha] of [[s.target, css("--tgt"), 0.55], [src, css("--src"), 0.8]]) {
+                ctx.fillStyle = color; ctx.globalAlpha = alpha
+                for (let j = 0; j < c.length; j += 3) { ctx.fillRect(ox + c[j + a] * k, oy - c[j + b] * k, dot, dot) }
+            }
+            ctx.globalAlpha = 1; ctx.fillStyle = css("--muted"); ctx.font = `${11 * dpr}px system-ui`
+            ctx.fillText(`${state.side ? "side (x, z)" : "top (x, y)"} · fitness ${fmt(s.fitness, 4)} · ${s.source.length / 3} src / ${s.target.length / 3} tgt pts shown`, 8 * dpr, 16 * dpr)
+        }
+        paint()
+    }
+}
+
+// ---------- boot ----------
+fetchText("report.json").then(text => {
+    const report = JSON.parse(text)
+    document.getElementById("title").textContent = report.title || "GSC vs Ivan PGO"
+    document.title = report.title || document.title
+    document.getElementById("built").textContent = report.built ? `built ${report.built}` : ""
+    for (const info of report.recordings) { new Recording(info) }
+    applyTheme()
+    // one at a time, top first, so the first map shows quickly
+    return recordings.reduce((chain, r) => chain.then(() => r.load()), Promise.resolve())
+}).catch(e => { document.getElementById("main").append($("section", {}, `Could not load report.json (${e.message}). Serve this folder over http.`)) })
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<section id="how-it-works" class="appendix">
+<h2>How GSC works</h2>
+
+<h3>1. Keyframing</h3>
+<p>Every lidar scan arrives with the odometry pose at its time. A scan becomes a keyframe when the robot has moved more than <code>keyframe_min_distance_meters</code> (0.5 m) or turned more than <code>keyframe_min_rotation_degrees</code> (10°) since the last keyframe. Keyframes keep their scan in the body frame, so a corrected pose re-places the whole scan.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  S[lidar scan + odometry pose] --> K{moved &gt; 0.5 m<br/>or turned &gt; 10°<br/>since last keyframe?}
+  K -- no --> P[publish corrected odometry + tf<br/>pose x current correction]
+  K -- yes --> KF[new keyframe<br/>body-frame cloud, odometry pose,<br/>placed by the current correction]
+  KF --> D[scan-context descriptor<br/>20 rings x 60 sectors + ring key]
+  KF --> P
+  D --> G[closure search: see 2]
+</pre></div>
+
+<h3>2. The gates a loop closure passes</h3>
+<p>Stages 1-2 run on the worker thread at every keyframe. Stages 3-4 run on the closure-search thread, one search at a time. The outcome names below are the ones in the loop analysis lists.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+  A[new keyframe] --> O{scan-context cells occupied<br/>&gt;= closure_min_occupancy 80?}
+  O -- no --> R1([low_occupancy])
+  O -- yes --> C{scan-context match<br/>cosine distance &lt; 0.4 among top 10<br/>else nearest keyframe within 3 m}
+  C -- none --> R2([no_candidate])
+  C -- candidate --> Q{best waiting proposal?<br/>one slot, ranked by similarity}
+  Q -- beaten --> R3([outranked])
+  Q -- search thread free --> I[ICP: source scan onto target submap<br/>target keyframe +-5, 50 iterations]
+  I --> DG{normal-scatter degeneracy<br/>&gt;= 0.05?}
+  DG -- no --> R4([degeneracy_reject])
+  DG -- yes --> IG{converged and fitness &lt;= 0.15?<br/>fitness = inlier MSE / overlap fraction}
+  IG -- no --> R5([icp_reject])
+  IG -- yes --> U{fitness &lt; what the graph already knows<br/>between the two keyframes?}
+  U -- no --> R6([uninformative])
+  U -- yes --> Y{confidence &gt;= 1 - exp(-z^2/2)?<br/>z = yank in robust std devs per sqrt gap}
+  Y -- no --> X{extended ICP on the last 2,4,8,16 keyframes<br/>enough independent agreement?}
+  X -- no --> R7([yank_confidence_reject])
+  X -- yes --> CM
+  Y -- yes --> CM[committed closure]
+  CM --> GNC[background pose-graph solve<br/>GNC truncated least squares, then Huber]
+  GNC -- voted out --> R8([rejected])
+  GNC -- kept --> AP([applied: keyframes move])
+</pre></div>
+
+<h3>3. Compute and backpressure</h3>
+<p>The live module never lets a slow stage stall the scan stream. Scans wait in a bounded queue, and the oldest are dropped past 5. Closure search and the pose-graph solve each run on their own thread. A finished solve wakes the worker, which adopts it at once.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  L[lidar callback] -->|push; drop oldest past max_scan_queue 5| Q[(scan FIFO)]
+  OD[odometry callback] --> LO[(latest odometry)]
+  Q --> W[worker thread<br/>keyframing, stages 1-2,<br/>publishes odometry/tf/graph]
+  LO --> W
+  W -->|waiting proposal, when no scans are queued<br/>and no search is running| CS[closure-search thread<br/>stages 3-4: ICP, gates, extended ICP]
+  CS -->|result lands at the next keyframe| W
+  W -->|new committed closures| SV[pose-graph thread<br/>GNC + Huber batch solve]
+  SV -->|signals when done| W
+  W -->|adopt solve: move keyframes,<br/>new correction| OUT[corrected odometry, tf,<br/>pose_graph, loop_closure_event,<br/>closure_edges]
+  CS -. rayon pool .- RP[(worker_threads = 2)]
+  SV -. rayon pool .- RP
+</pre></div>
+</section>

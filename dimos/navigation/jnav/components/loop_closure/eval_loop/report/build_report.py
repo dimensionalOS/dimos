@@ -21,17 +21,24 @@ import datetime
 import json
 import os
 from pathlib import Path
-import shutil
+import re
 import subprocess
 import sys
 
 HERE = Path(__file__).resolve().parent
 WORKTREE = Path(
     os.environ.get("GSC_WORKTREE", Path.home() / "repos/_mls_reform_wt")
-)  # dimos checkout the scorers run from
+)  # dimos checkout the exports run from
 parser = argparse.ArgumentParser()
 parser.add_argument("manifest", type=Path)
 parser.add_argument("out", type=Path)
+parser.add_argument("--scores", type=Path, required=True, help="score_all.py output")
+parser.add_argument(
+    "--jetson",
+    type=Path,
+    default=Path.home() / ".dimos/recordings/gsc_runs/jetson",
+    help="pgo-eval runs on a Jetson",
+)
 parser.add_argument(
     "--only",
     nargs="*",
@@ -56,14 +63,45 @@ for entry in manifest["recordings"]:
             "10",
             str(WORKTREE / ".venv/bin/python"),
             str(HERE / "export_recording.py"),
-            json.dumps(entry),
+            json.dumps({**entry, "scores": str(args.scores.resolve())}),
             str(args.out),
         ],
         cwd=WORKTREE,
         env=env,
         check=True,
     )
-shutil.copy(HERE / "viewer.html", args.out / "index.html")
+# the Artifact wraps the page in its own doctype/head/body, so the viewer's are dropped; the summary goes above the replays,
+# performance, diagrams and method below
+sections = subprocess.run(
+    [
+        sys.executable,
+        str(HERE / "report_sections.py"),
+        str(args.manifest),
+        str(args.scores),
+        str(args.jetson),
+        "/dev/stdout",
+    ],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout
+split = sections.index('<section id="performance"')
+summary, rest = sections[:split], sections[split:]
+page = re.sub(
+    r"<!doctype html>|</?html[^>]*>|</?head>|</?body>|<meta [^>]*>",
+    "",
+    (HERE / "viewer.html").read_text(),
+    flags=re.I,
+)
+page = page.replace(
+    '<main id="main"></main>',
+    summary
+    + '<main id="main"></main>\n'
+    + rest
+    + (HERE / "appendix_diagrams.html").read_text()
+    + (HERE / "appendix_method.html").read_text(),
+)
+(args.out / "index.html").write_text(page.strip() + "\n")
 report = dict(
     title=manifest.get("title", "GSC vs Ivan PGO"),
     built=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),

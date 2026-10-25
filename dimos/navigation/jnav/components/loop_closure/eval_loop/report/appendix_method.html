@@ -1,0 +1,45 @@
+<section id="method" class="appendix">
+<h2>Method and known limitations</h2>
+
+<h3>How the runs were made</h3>
+<ul>
+<li><b>GSC:</b> <code>pgo-eval</code> replays each recording through the same <code>GscPgo</code> core the live module runs, scan by scan (lockstep). A pose-graph solve is adopted once the map has grown by 1% of its free keyframes, about a Jetson's solve time, so a replay gives the same graph on any machine. Code: <code>jeff/feat/mls_reform</code> c7bf22f8f2; the same Rust is on <code>jeff/feat/jnav_pgo</code> and <code>jeff/test/eval_loop</code>.</li>
+<li><b>Ivan:</b> his <code>PGOMap</code> at its module defaults, fed at the recording's real rate (1x). Like his live subscription, it keeps only the newest scan while busy, so it drops scans when it falls behind.</li>
+<li><b>Live vs final:</b> <i>final</i> is where the finished graph puts each keyframe. <i>Live</i> is where the method had the robot when that keyframe was made: the correction in force at that moment, applied to its odometry pose. Live is what the planner navigates with.</li>
+<li><b>Ground truth:</b> Map Editor <code>icp_stitch</code> (quality high), using AprilTags only where loops could not be found without them (gir2, huge). Elsewhere the tags stay an independent check. office555 is a ~1.9 km outdoor loop ridden on a bike with a handheld Mid-360; its Point-LIO odometry ends 14 m off horizontally and 36 m vertically. icp_stitch finds almost no loops on it, so its ground truth adds one landmark: the office guest Wi-Fi QR code (5 cm), seen at the start and at the end. That closes the loop to 7 cm. All recordings are scored in x, y and z; the ground truth's own height is shaky mid-route on 555 and small_mid, which affects both methods equally.</li>
+<li><b>Tag spread:</b> how far repeat sightings of the same AprilTag land from each other (RMS, metres) when each sighting is placed with the method's pose. It needs no ground truth and no alignment.</li>
+</ul>
+
+<h3>The yank gate, and what is wrong with it</h3>
+<p>A candidate closure's <i>yank</i> is how far it would move its source keyframe away from where the graph has it, in translation (m) and rotation (deg). Odometry drift is a random walk, so a correct closure's yank grows with the square root of the keyframe gap; GSC divides both yanks by sqrt(gap). It then measures them against a robust scale taken from every candidate that has reached ICP so far (1.4826 x median), giving z = hypot(rotation / sigma_rotation, translation / sigma_translation). A candidate needs match confidence (scan context x ICP x degeneracy, each scaled to [0, 1]) of at least 1 - exp(-z^2 / 2). Large yanks need near-perfect matches; small ones need little.</p>
+<p>What is wrong with it:</p>
+<ul>
+<li>1.4826 x median is the scale of a signed one-dimensional variable. A yank is a norm of a 3D quantity, whose median is about 1.54 sigma, so sigma comes out about 2.3x too large and the gate is looser than it reads.</li>
+<li>The scale comes from every ICP-scored candidate, wrong ones included (on purpose: a scale from accepted closures only shrinks with each rejection, and the gate stops accepting anything). Where most candidates are wrong (park1), the scale inflates.</li>
+<li>One sqrt(gap) is applied to rotation and translation alike, but heading drift makes translation error grow faster than sqrt(gap).</li>
+<li>Closure variance is the ICP fitness (m^2), used for all 6 degrees of freedom, rotation included. The GNC solve loosens it 10x while it decides inliers (<code>closure_gnc_var_scale</code>).</li>
+</ul>
+<p>I built and tested the principled replacement: each closure as a full 6x6 information matrix with physical units; the yank as a Mahalanobis distance through the graph's own covariance between the two keyframes, gated by a chi-square(6) quantile; "uninformative" as "not surer than the graph in any direction"; and odometry noise taken from measured drift. It replaced every number above with an equation. It lost on the data, so the calibrated model stays. The patch is kept in <code>experiments/covariance_model_2026-10-25.patch</code>.</p>
+<div class="table-wrap"><table class="num">
+<thead><tr><th>small_mid (live median / p95, m)</th><th>live</th><th>final</th></tr></thead>
+<tbody>
+<tr><td>calibrated model (kept)</td><td>0.259 / 0.534</td><td>0.244 / 0.549</td></tr>
+<tr><td>Mahalanobis, closure sigma from ICP geometry</td><td>0.785 / 1.957</td><td>0.552 / 1.193</td></tr>
+<tr><td>+ measured odometry noise</td><td>0.450 / 0.767</td><td>0.325 / 0.493</td></tr>
+<tr><td>closure sigma fixed: 1.5 deg, 0.1 m</td><td>0.266 / 0.729</td><td>0.421 / 0.656</td></tr>
+<tr><td>closure sigma fixed: 5 deg, 0.1 m</td><td>0.273 / 0.572</td><td>0.336 / 0.520</td></tr>
+<tr><td>Ivan</td><td>0.259 / 0.475</td><td>0.307 / 0.440</td></tr>
+</tbody></table></div>
+<p class="note">On gir2 the best principled variant (5 deg) had tag spread 7.7 cm final and 23 cm live, against 3.4 / 8.7 cm for the calibrated model. All numbers here are in one frame fitted to raw odometry, shared by every run.</p>
+<p>Why it lost: against ground truth, ICP rotation on committed closures is off by 1.0-2.0 deg per axis (RMS), with tails to 10 deg. The geometry of the scan claims about 0.4 deg, so closures re-head the map by rotation. ICP fitness also predicts a closure's real error poorly (correlation 0.27-0.38 against ground truth). The calibrated model trusts closure rotation very weakly, as Ivan's does (his loop rotation variance is 0.05 rad^2, about 13 deg).</p>
+
+<h3>Other limitations</h3>
+<ul>
+<li>Hand-tuned estimator constants that remain: degeneracy uses 10-neighbour normals and needs 20 points; scan context's automatic range is the 95th percentile of the first scan; Levenberg-Marquardt, GNC and ICP use the usual convergence tolerances and iteration caps.</li>
+<li>Go2 L1 is slow: on huge L1 GSC runs at 0.8x real time on an M5 Max, because each L1 keyframe stores a dense ~30k-point local map and ICP runs on all of it.</li>
+<li>Speed limit: office555 is ridden at about 4 m/s, so keyframes arrive at 5.9 per second (1.5 on gir2) and replay runs at 0.9x real time on the Jetson. Most of that is ICP rejecting wrong scan-context matches. Robots don't move that fast; live, the module skips a search while scans are queued instead of falling behind.</li>
+<li>The live module keeps every closure diagnostic and edge event in memory for the whole run (a few hundred bytes per keyframe).</li>
+<li>Rerun no longer draws the pose-graph edges on <code>jnav_pgo</code>: dimos' Python <code>PointCloud2</code> decoder drops the record fields, so the replay capture reads the raw LCM message instead.</li>
+<li>MLS planner on huge: after the 266 m loop correction, the planner's warped goal lands about 110 m from where GSC's graph puts the goal keyframe, although the goal and the robot started 0.5 m apart. The planner's goal warp does not follow GSC's correction on very large jumps.</li>
+</ul>
+</section>
