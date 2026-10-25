@@ -89,13 +89,6 @@ class PGOConfig(NativeModuleConfig):
     closure_gnc_inlier_probability: float = 0.95
     # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
     closure_robust_huber_k: float = 1.345
-    # With closure_gnc_deterministic, a background solve is folded in once the map has grown by this fraction of
-    # its size at dispatch (waiting for it if needed), so a replay gives the same graph on any machine. A solve's
-    # cost grows with the map; 1% is about a Jetson's (huge_loop's 14 s Mac solve at 5k keyframes is ~0.5%).
-    closure_gnc_apply_after_fraction: float = 0.01
-    # False (live) folds a solve in as soon as it finishes, keyframes or not; True keeps the keyframe
-    # schedule above so a replay repeats on any machine.
-    closure_gnc_deterministic: bool = False
     # Hold keyframes with two or more independent cycles nearby, so a solve covers only the part of the map that can still move
     closure_cooling: bool = False
 

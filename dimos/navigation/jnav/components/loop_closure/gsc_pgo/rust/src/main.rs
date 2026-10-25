@@ -48,9 +48,6 @@ use utils::{
 // A keyframe pose change smaller than this waits to add up before it is sent.
 const POSE_CHANGE_M: f64 = 1e-3;
 const POSE_CHANGE_RAD: f64 = 1e-4;
-/// How long the pipeline sits without a scan before it adopts a finished background solve: longer than
-/// any gap between a replay's scans, so it only fires once the stream pauses or ends.
-const SOLVE_IDLE_FINISH: Duration = Duration::from_secs(3);
 
 /// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
 macro_rules! config {
@@ -63,7 +60,7 @@ macro_rules! config {
         }
         impl Config {
             fn pgo(&self) -> PgoConfig {
-                PgoConfig { $($pgo: self.$pgo.clone(),)* closure_record_strain: false, closure_yank_from_strain: false, closure_search_keyframes: 0 }
+                PgoConfig { $($pgo: self.$pgo.clone(),)* }
             }
         }
     };
@@ -97,8 +94,6 @@ config! {
     closure_icp_max_correspondence_m: f64,
     closure_gnc_var_scale: f64,
     closure_gnc_inlier_probability: f64,
-    closure_gnc_apply_after_fraction: f64,
-    closure_gnc_deterministic: bool,
     closure_cooling: bool,
     odom_rot_roll_pitch_var: f64,
     odom_rot_yaw_var: f64,
@@ -129,6 +124,8 @@ struct SharedState {
     last_message_time: f64,
     /// Bounded scan FIFO.
     cloud_buffer: VecDeque<CloudWithPose>,
+    /// A background pose-graph solve finished and waits to be adopted.
+    solve_finished: bool,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -301,6 +298,11 @@ impl Worker {
             warn!(error = %e, "could not cap the worker threads");
         }
         let mut pgo = GscPgo::new(self.config.pgo());
+        let (state, wake) = (Arc::clone(&self.state), Arc::clone(&self.wake));
+        pgo.notify_when_solved(move || {
+            state.lock().expect("state").solve_finished = true;
+            wake.notify_one();
+        });
         let frame_id = self.config.map_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
         let body_frame = self.config.body_frame.clone();
@@ -320,12 +322,6 @@ impl Worker {
         // Backstop for the Condvar wait so the stop flag is still observed even
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
-        // While a background GNC solve is in flight during idle, republish the
-        // graph at this cadence so downstream consumers (e.g. the eval harness
-        // settle heartbeat) know the final verdict is still pending.
-        let solve_wait_publish_interval = Duration::from_secs(2);
-        let mut last_solve_wait_publish = std::time::Instant::now();
-        let mut last_scan_at = std::time::Instant::now();
 
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
@@ -339,8 +335,10 @@ impl Worker {
         > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
-            // Not deterministic: adopt a finished solve now, scans or not.
-            if !self.config.closure_gnc_deterministic && pgo.solve_pending() && pgo.update(true) {
+            // adopt a finished solve now, scans or not
+            let solve_finished =
+                std::mem::take(&mut self.state.lock().expect("state").solve_finished);
+            if solve_finished && pgo.wait_for_solve() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
             }
@@ -354,38 +352,14 @@ impl Worker {
                 state.cloud_buffer.pop_front()
             };
             let Some(cloud_with_pose) = cloud_with_pose else {
-                // Idle long enough that the stream has paused or ended: adopt a finished solve
-                // and start the next (non-blocking, so the graph keeps republishing while it runs).
-                // Short gaps between scans never get here, which keeps a replay's graph deterministic.
-                if pgo.solve_pending() && last_scan_at.elapsed() >= SOLVE_IDLE_FINISH {
-                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
-                    let changed = pgo.update(true);
-                    if changed {
-                        self.publish_pose_changes(
-                            &pgo,
-                            &mut published,
-                            false,
-                            last_time,
-                            &frame_id,
-                        );
-                    }
-                    if changed || last_solve_wait_publish.elapsed() >= solve_wait_publish_interval {
-                        last_solve_wait_publish = std::time::Instant::now();
-                        self.publish_graph(&pgo, last_time, &frame_id);
-                    }
-                    if changed {
-                        continue;
-                    }
-                }
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.
                 let state = self.state.lock().expect("state");
-                if state.cloud_buffer.is_empty() {
+                if state.cloud_buffer.is_empty() && !state.solve_finished {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
                 continue;
             };
-            last_scan_at = std::time::Instant::now();
 
             let cur_time = cloud_with_pose.pose.second;
 
@@ -430,8 +404,8 @@ impl Worker {
                     );
                 }
             }
-            // a finished solve moves the keyframes (on the keyframe schedule when deterministic)
-            let moved = pgo.update(!self.config.closure_gnc_deterministic);
+            // a finished solve moves the keyframes
+            let moved = pgo.update();
             self.publish_pose_changes(&pgo, &mut published, moved, cur_time, &frame_id);
 
             self.publish_corrected(

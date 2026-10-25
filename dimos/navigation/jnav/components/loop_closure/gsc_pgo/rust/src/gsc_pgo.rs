@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use crate::big_picture_fit::{self, closure_edges, odometry_edges, Edge, Solving};
+use crate::big_picture_fit::{closure_edges, Edge, Solving};
 use crate::connection_fit::{dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
@@ -157,9 +157,6 @@ pub struct ClosureCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
-    /// Rise in the graph's error if this closure were forced in rigidly (`big_picture_fit::strain`), with
-    /// `closure_record_strain`; NaN otherwise.
-    pub strain: f64,
 }
 impl ClosureCandidateDiag {
     fn new(source_id: usize, source_time: f64, source_xyz: Vec3) -> ClosureCandidateDiag {
@@ -200,7 +197,6 @@ impl ClosureCandidateDiag {
             extended_inliers: 0,
             extended_fitness: f64::NAN,
             extended_confidence: f64::NAN,
-            strain: f64::NAN,
         }
     }
 }
@@ -295,11 +291,6 @@ pub struct Config {
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
     /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
     pub closure_icp_dump_dir: String,
-    /// Record each ICP-scored candidate's `strain` (one sparse factorization each, on the search thread).
-    pub closure_record_strain: bool,
-    /// The yank gate measures a candidate by its `strain` (how hard the graph resists it as a near-rigid
-    /// edge), scaled by the median strain of the candidates scored so far, instead of its raw yank.
-    pub closure_yank_from_strain: bool,
     /// A candidate whose single-scan confidence is too low for its yank gets
     /// a second look on more data instead of an outright reject: each round seeded with the previous
     /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
@@ -321,22 +312,11 @@ pub struct Config {
     /// it up loosens each closure so GNC keeps the true consensus set.
     pub closure_gnc_var_scale: f64,
     /// Probability that a true inlier's residual falls under GNC's chi-squared
-    /// cost threshold. Lowering it tightens the test so GNC rejects more closures;
-    /// outside (0, 1) it keeps GNC's own 0.99 default.
+    /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
     pub closure_gnc_inlier_probability: f64,
-    /// A background GNC solve is folded in once the map has grown by this fraction of its size
-    /// at dispatch (at least one keyframe), waiting for it if it is not done, so the result
-    /// depends on the data, not the machine. A solve's cost grows with the map, so the delay does.
-    pub closure_gnc_apply_after_fraction: f64,
-    /// true: fold a background GNC solve on the keyframe schedule above, so a replay gives the same
-    /// graph on any machine. false: fold it as soon as it finishes (see `poll_gnc`), keyframes or
-    /// not, so a robot standing still at a closure still gets the closure; results then depend on timing.
-    pub closure_gnc_deterministic: bool,
     /// Hold keyframes with two or more independent cycles nearby (see `big_picture_fit::dispatch_solve`), so a solve
     /// covers only the part of the map that can still move.
     pub closure_cooling: bool,
-    /// Replay only (`search_for_closure_pairs`): keyframes a closure search occupies the search thread for; 0 = instant.
-    pub closure_search_keyframes: usize,
     // Odometry between-factor noise (anisotropic).
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
@@ -363,18 +343,13 @@ impl Default for Config {
             closure_min_degeneracy: 0.05,
             closure_yank_gate_width: 1.0,
             closure_icp_dump_dir: String::new(),
-            closure_record_strain: false,
-            closure_yank_from_strain: false,
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
             closure_icp_max_iterations: 50,
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            closure_gnc_apply_after_fraction: 0.01,
-            closure_gnc_deterministic: true,
             closure_cooling: false,
-            closure_search_keyframes: 0,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
             odom_trans_xy_var: 1e-4,
@@ -417,8 +392,8 @@ pub struct GscPgo {
     /// shrink with each rejection and reject the rest.
     pub(crate) scored_yanks: Vec<(f64, f64)>,
     pub(crate) waiting_proposal: Option<ClosureProposal>,
-    /// A finished search waiting for its keyframe (`closure_search_keyframes`).
-    pub(crate) pending_search: Option<(ClosureSearchResult, usize)>,
+    /// Called when a background solve finishes (`notify_when_solved`).
+    pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -607,33 +582,6 @@ impl ClosureSearch {
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
 
         scored_yank = Some(self.score_candidate(&mut diag));
-        if self.config.closure_record_strain || self.config.closure_yank_from_strain {
-            let poses = &self.key_poses[..=cur_idx];
-            let closures: Vec<Edge> = self
-                .kept_closures
-                .iter()
-                .filter(|l| l.from.max(l.to) <= cur_idx)
-                .copied()
-                .collect();
-            diag.strain = big_picture_fit::strain(
-                &poses.iter().map(|k| k.rotation_global).collect::<Vec<_>>(),
-                &poses
-                    .iter()
-                    .map(|k| k.translation_global)
-                    .collect::<Vec<_>>(),
-                &odometry_edges(poses, &self.config),
-                &closures,
-                &vec![1.0; closures.len()],
-                &Edge {
-                    from: target_idx,
-                    to: cur_idx,
-                    rotation: rotation_offset,
-                    translation: translation_offset,
-                    // a near-rigid edge: how hard the graph resists being forced to the measurement
-                    variances: [1e-6; 6],
-                },
-            );
-        }
         if diag.confidence < diag.required_confidence {
             let t0 = std::time::Instant::now();
             let extended = self.extended_icp(cur_idx, target_idx, &source_cloud, &icp, &mut diag);
@@ -902,26 +850,11 @@ impl GscPgo {
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
-    /// With `closure_search_keyframes`, a search holds the search thread for that many keyframes before its
-    /// result lands (proposals queue meanwhile), the way a slower machine would, but the same on every machine.
     pub fn search_for_closure_pairs(&mut self) {
         self.propose_closure();
-        if self
-            .pending_search
-            .as_ref()
-            .is_some_and(|(_, due)| self.key_poses.len() < *due)
-        {
-            return;
-        }
-        if let Some((result, _)) = self.pending_search.take() {
-            self.finish_closure_search(result);
-        }
         if let Some(search) = self.begin_closure_search() {
             let result = search.run();
-            match self.config.closure_search_keyframes {
-                0 => self.finish_closure_search(result),
-                k => self.pending_search = Some((result, self.key_poses.len() + k)),
-            }
+            self.finish_closure_search(result);
         }
     }
     /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.

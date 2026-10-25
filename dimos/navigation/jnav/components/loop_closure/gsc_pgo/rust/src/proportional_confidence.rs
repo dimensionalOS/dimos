@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! Stage 4, proportional confidence: how much evidence a connection needs grows with how hard it pulls
-//! the graph. The yank (how far the closure would move its source keyframe from where the graph has it, or
-//! its strain with `closure_yank_from_strain`) is scaled against the yanks of the candidates scored so far
+//! the graph. The yank (how far the closure would move its source keyframe from where the graph has it) is scaled against the yanks of the candidates scored so far
 //! into z; the connection's confidence (scan context x ICP fitness x degeneracy) must reach
 //! 1 - exp(-z^2 / 2k^2), and one that falls short gets a second look with extended ICP on more keyframes.
 
@@ -37,13 +36,7 @@ impl ClosureSearch {
             .max(1.0)
             .sqrt();
         diag.yank_drift_scale = drift;
-        if self.config.closure_yank_from_strain {
-            diag.yank_z = if self.scored_yanks.is_empty() {
-                f64::INFINITY
-            } else {
-                (diag.strain / robust_scale(self.scored_yanks.iter().map(|y| y.0).collect())).sqrt()
-            };
-        } else if self.scored_yanks.is_empty() {
+        if self.scored_yanks.is_empty() {
             // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
             diag.yank_z = f64::INFINITY;
         } else {
@@ -81,9 +74,6 @@ impl ClosureSearch {
         diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
         let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
         diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / (2.0 * width * width)).exp();
-        if self.config.closure_yank_from_strain {
-            return (diag.strain, diag.strain);
-        }
         (
             diag.yank_rotation_deg / drift,
             diag.yank_translation / drift,

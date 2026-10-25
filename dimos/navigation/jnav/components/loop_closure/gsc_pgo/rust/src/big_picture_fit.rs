@@ -424,105 +424,6 @@ fn normal_equations(
     (values, gradient, diagonal)
 }
 
-/// How hard the graph resists a proposed closure: the rise in its error if the closure were forced in
-/// rigidly, to first order. That is the closure's residual at the current poses measured against the
-/// graph's uncertainty between its two keyframes (every path between them, earlier closures
-/// included) plus the closure's own: r^T (J Sigma J^T + closure variance)^-1 r. `rotations` /
-/// `positions` should be the graph's solution with `closures` (weighted by `closure_weights`).
-pub fn strain(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    candidate: &Edge,
-) -> f64 {
-    let n = rotations.len();
-    if n < 2 {
-        return 0.0;
-    }
-    let state = State {
-        rotation: rotations.to_vec(),
-        position: positions.to_vec(),
-    };
-    let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-    let pattern = Pattern::new(&free, odometry.iter().chain(closures));
-    let size = pattern.size;
-    let (mut values, _, diagonal) =
-        normal_equations(&state, &pattern, odometry, closures, closure_weights);
-    values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
-    let hessian = SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
-        .expect("pose graph hessian");
-    let Ok(llt) = Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower)
-    else {
-        return f64::INFINITY;
-    };
-    // the covariance columns of the closure's two keyframes (keyframe 0 is fixed, so it has none)
-    let ends = [candidate.from, candidate.to];
-    let mut columns = Mat::<f64>::zeros(size, 12);
-    for (end, &k) in ends.iter().enumerate() {
-        if let Some(slot) = pattern.slot[k] {
-            for i in 0..6 {
-                columns[(6 * slot + i, 6 * end + i)] = 1.0;
-            }
-        }
-    }
-    llt.solve_in_place_with_conj(Conj::No, columns.as_mut());
-    let mut joint = [[0.0; 12]; 12];
-    for (end_a, &a) in ends.iter().enumerate() {
-        let Some(slot) = pattern.slot[a] else {
-            continue;
-        };
-        for end_b in 0..2 {
-            for i in 0..6 {
-                for j in 0..6 {
-                    joint[6 * end_a + i][6 * end_b + j] = columns[(6 * slot + i, 6 * end_b + j)];
-                }
-            }
-        }
-    }
-    let (r, jf, jt) = linearize(candidate, &state);
-    let jacobian = |k: usize, c: usize| if c < 6 { jf[k][c] } else { jt[k][c - 6] };
-    let mut total = [[0.0; 6]; 6];
-    for i in 0..6 {
-        for j in 0..6 {
-            total[i][j] = (0..12)
-                .map(|a| {
-                    (0..12)
-                        .map(|b| jacobian(i, a) * joint[a][b] * jacobian(j, b))
-                        .sum::<f64>()
-                })
-                .sum::<f64>();
-        }
-        total[i][i] += candidate.variances[i];
-    }
-    let solved = solve6(total, r);
-    (0..6).map(|i| r[i] * solved[i]).sum()
-}
-
-/// x with a x = b for a 6x6 `a` (Gaussian elimination with partial pivoting).
-fn solve6(mut a: [[f64; 6]; 6], mut b: [f64; 6]) -> [f64; 6] {
-    for col in 0..6 {
-        let pivot = (col..6)
-            .max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))
-            .unwrap();
-        a.swap(col, pivot);
-        b.swap(col, pivot);
-        for row in col + 1..6 {
-            let factor = a[row][col] / a[col][col];
-            for k in col..6 {
-                a[row][k] -= factor * a[col][k];
-            }
-            b[row] -= factor * b[col];
-        }
-    }
-    let mut x = [0.0; 6];
-    for row in (0..6).rev() {
-        x[row] = (b[row] - (row + 1..6).map(|k| a[row][k] * x[k]).sum::<f64>()) / a[row][row];
-    }
-    x
-}
-
 /// The chi-square value a 6-DoF residual stays under with probability `p` (CDF 1 - e^{-x/2}(1 + x/2 + x²/8)).
 fn chi2_inverse_6dof(p: f64) -> f64 {
     let (mut lo, mut hi) = (0.0f64, 200.0f64);
@@ -572,12 +473,12 @@ fn log(r: &Mat3) -> Vec3 {
 
 // ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
 
-/// A pose-graph solve running on another thread over the first `keyframes` keyframes, adopted once
-/// the map reaches `due_at` keyframes or, on request, as soon as it finishes (see `GscPgo::update`).
+/// A pose-graph solve running on another thread over the first `keyframes` keyframes (`free` of them
+/// free), adopted once it finishes (`GscPgo::update`) or when waited for (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
-    due_at: usize,
+    free: usize,
     /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
     judged: Vec<usize>,
 }
@@ -595,15 +496,29 @@ impl GscPgo {
     pub fn solve_pending(&self) -> bool {
         self.solving.is_some() || self.committed_closures.len() > self.closures_dispatched
     }
-    /// Apply a finished solve, and start one when closures have arrived since the last. A solve is
-    /// adopted once the map reaches its `due_at` keyframes (waiting for it if needed), or, with
-    /// `now`, as soon as it has finished. Returns whether keyframes moved.
-    pub fn update(&mut self, now: bool) -> bool {
+    /// Apply the running solve if it has finished, and start one when closures have arrived since the
+    /// last. Never blocks. Returns whether keyframes moved.
+    pub fn update(&mut self) -> bool {
+        let finished = self
+            .solving
+            .as_ref()
+            .is_some_and(|solving| solving.handle.is_finished());
+        self.adopt(finished)
+    }
+    /// `update`, but waiting for the running solve to finish first.
+    pub fn wait_for_solve(&mut self) -> bool {
+        self.adopt(true)
+    }
+    /// The running solve's keyframe count and free keyframe count when it started, if one is running.
+    pub fn solve_started(&self) -> Option<(usize, usize)> {
+        self.solving.as_ref().map(|s| (s.keyframes, s.free))
+    }
+    /// Call `solved` (from the solve's thread) whenever a solve finishes, so a caller can sleep until then.
+    pub fn notify_when_solved(&mut self, solved: impl Fn() + Send + Sync + 'static) {
+        self.solved = Some(std::sync::Arc::new(solved));
+    }
+    fn adopt(&mut self, ready: bool) -> bool {
         self.new_closure = false;
-        let keyframes = self.key_poses.len();
-        let ready = self.solving.as_ref().is_some_and(|solving| {
-            keyframes >= solving.due_at || (now && solving.handle.is_finished())
-        });
         let moved = ready && self.apply_solve();
         if self.solving.is_none() && self.committed_closures.len() > self.closures_dispatched {
             self.dispatch_solve();
@@ -612,9 +527,6 @@ impl GscPgo {
     }
     /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
-        if let Some((result, _)) = self.pending_search.take() {
-            self.finish_closure_search(result);
-        }
         let mut moved = false;
         loop {
             moved |= self.apply_solve();
@@ -703,6 +615,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
         };
+        let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
@@ -715,17 +628,18 @@ impl GscPgo {
                     &closures,
                     &solve_config,
                 );
-                (solution, started.elapsed().as_secs_f64())
+                let seconds = started.elapsed().as_secs_f64();
+                if let Some(solved) = solved {
+                    solved();
+                }
+                (solution, seconds)
             })
             .expect("spawn pose graph thread");
-        // a solve's cost grows with its free keyframes, so its delay does
-        let delay =
-            (free_count as f64 * self.config.closure_gnc_apply_after_fraction).ceil() as usize;
         self.closures_dispatched = self.committed_closures.len();
         self.solving = Some(Solving {
             handle,
             keyframes: n,
-            due_at: n + delay.max(1),
+            free: free_count,
             judged,
         });
     }
