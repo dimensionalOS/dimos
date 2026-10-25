@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Quick GSC run for sweeps: pgo-eval + score only, into the same durable dir layout as gsc_run (events + ICP clouds kept),
+# so `gsc_run <rec> <name> --render-only` can make its video + loop inspection later.
+# usage: gsc_eval <small_mid|gir2|huge> <run name> [config overlay json]
+set -eo pipefail
+recording=$1; name=$2; overlay=${3:-"{}"}
+[ -n "$recording" ] && [ -n "$name" ] || { sed -n 2,4p "$0"; exit 1; }
+SCRIPTS=$(cd "$(dirname "$0")" && pwd)
+source "$SCRIPTS/recordings.sh"
+OUT=$HOME/.dimos/recordings/gsc_runs/${RUN_DATE:=$(date +%F)}_${recording}_$name
+mkdir -p "$OUT/icp"
+echo "$overlay" | python3 -c "import json,sys; c=json.load(sys.stdin); c['closure_icp_dump_dir']=c['loop_icp_dump_dir']='$OUT/icp'; print(json.dumps(c))" > "$OUT/config.json"
+git -C "$WORKTREE" rev-parse HEAD > "$OUT/commit.txt"
+( cd "$OUT" && /usr/bin/time -l "$PGO_EVAL" --db "$db" "${eval_args[@]}" --config config.json --output a.json --event-dump a.kf > a.log 2> time.log )
+cd "$WORKTREE"
+if [ ${#gt[@]} -gt 0 ]; then $PY "$SCRIPTS/score_run.py" "$OUT" "${gt[1]}" "${gt[3]}" | tail -1; else echo "$(basename "$OUT"): no ground truth, unscored"; fi

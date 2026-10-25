@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# gsc_run (video + loop inspection) and AprilTag agreement for every go2 Mid-360 recording, one at a time.
+# usage: run_all_mid360 <run name> [recording ...]   -> ~/.dimos/recordings/gsc_runs/<date>_<rec>_<run name>/
+name=${1:?run name}; shift
+recordings=("${@:-small_mid gir1 grassy park1 park1_2 gir2 china athens office555 huge}")
+recordings=(${recordings[@]})
+SCRIPTS=$(cd "$(dirname "$0")" && pwd)
+LOG_DIR=${GSC_LOG_DIR:-${TMPDIR:-/tmp}}  # per-recording gsc_run log while it runs, then copied into the run dir
+export RUN_DATE=${RUN_DATE:-$(date +%F)}
+for recording in "${recordings[@]}"; do
+    free_gb=$(df -g "$HOME" | awk 'NR==2 {print $4}')
+    if [ "$free_gb" -lt 25 ]; then
+        echo "== $recording: stopped, only ${free_gb} GB free"
+        exit 1
+    fi
+    echo "== $recording $(date +%T)"
+    "$SCRIPTS/gsc_run" "$recording" "$name" > "$LOG_DIR/gsc_run_${recording}_$name.log" 2>&1 || { echo "  gsc_run failed: tail $LOG_DIR/gsc_run_${recording}_$name.log"; tail -5 "$LOG_DIR/gsc_run_${recording}_$name.log"; continue; }
+    OUT=$HOME/.dimos/recordings/gsc_runs/${RUN_DATE}_${recording}_$name
+    cp "$LOG_DIR/gsc_run_${recording}_$name.log" "$OUT/gsc_run.log"
+    ( source "$SCRIPTS/recordings.sh"
+      cd "$WORKTREE"
+      if $PY -c "import sys; from dimos.memory.store.sqlite import SqliteStore; s=SqliteStore(path=sys.argv[1]).__enter__(); sys.exit(0 if 'raw_april_tags' in s.list_streams() else 1)" "$db"; then
+          $PY "$SCRIPTS/tag_agreement.py" "$OUT" "$db" "${eval_args[1]}" mid360_link 2>&1 | tail -1
+      else
+          echo "  no raw_april_tags"
+      fi )
+    echo "  video: $OUT/video.mp4"
+done

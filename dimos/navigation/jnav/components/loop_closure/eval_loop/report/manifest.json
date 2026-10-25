@@ -1,0 +1,51 @@
+{
+  "title": "GSC vs Ivan PGO",
+  "recordings": [
+    {
+      "name": "small_mid",
+      "label": "Small loop (Mid-360, Fast-LIO)",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/small_mid.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_small_mid_sl_overlap",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan/small_mid_live",
+      "gt": [
+        {
+          "db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
+          "tf": [
+            "map",
+            "odom"
+          ]
+        },
+        {
+          "db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
+          "stream": "fastlio_odometry_corrected",
+          "odom_stream": "fastlio_odometry"
+        }
+      ],
+      "plan": {
+        "gsc": "~/.dimos/recordings/report_build/plans/small_mid_gsc_plan.json",
+        "ivan": "~/.dimos/recordings/report_build/plans/small_mid_ivan_plan.json"
+      }
+    },
+    {
+      "name": "gir2",
+      "label": "gir stairs 2 (Mid-360, Point-LIO)",
+      "world_db": "~/.dimos/recordings/gsc_runs/world_dbs/gir2.db",
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_gir2_sl_overlap",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan/gir2_live",
+      "gt": [
+        {
+          "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
+          "tf": [
+            "map",
+            "odom"
+          ]
+        },
+        {
+          "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
+          "stream": "odometry_corrected",
+          "odom_stream": "pointlio_odometry"
+        }
+      ]
+    }
+  ]
+}

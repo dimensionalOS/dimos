@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Score GSC (last night's all_mid runs) and Ivan (ivan_run.py live/offline) with the same score_run.py + tag_agreement.py.
+# usage: compare_ivan [recording ...]   (default: small_mid gir1 gir2 park1)
+SCRIPTS=$(cd "$(dirname "$0")" && pwd)
+export GSC_WORKTREE=${GSC_WORKTREE:-$HOME/repos/_mls_reform_wt}
+export PYTHONPATH=${GSC_SCORE_STUBS:-$HOME/.cache/gsc_score_stubs}  # scorers import reform_metrics, which wants the native planner/tracer
+RUNS=$HOME/.dimos/recordings/gsc_runs
+for recording in ${@:-small_mid gir1 gir2 park1}; do
+    ( source "$SCRIPTS/recordings.sh"
+      cd "$GSC_WORKTREE"
+      for run in $(ls -d "$RUNS"/*_"${recording}"_all_mid | tail -1) "$RUNS/ivan/${recording}_offline" "$RUNS/ivan/${recording}_live"; do
+          [ -f "$run/a.kf" ] || continue
+          [ ${#gt[@]} -gt 0 ] && .venv/bin/python "$SCRIPTS/score_run.py" "$run" "${gt[1]}" "${gt[3]}" 2>&1 | tail -1
+          .venv/bin/python "$SCRIPTS/tag_agreement.py" "$run" "$db" "${eval_args[1]}" mid360_link 2>&1 | tail -1
+      done )
+done

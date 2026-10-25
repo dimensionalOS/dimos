@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# One GSC run that always leaves a video + loop inspection page behind, in a durable dir.
+# usage: gsc_run <small_go2|small_mid|gir2|huge> <run name> [config overlay json]
+#        gsc_run <recording> <run name> --render-only   (video + loop inspection for a gsc_eval run)
+#   -> ~/.dimos/recordings/gsc_runs/<date>_<recording>_<run name>/{a.json,a.kf*,icp/,score.json,replay.db,video.mp4,
+#      loop_inspection/{loop_gate_lab.html,clouds/,publish.json}}
+#   publish.json = the page + every cloud file, ready for the Artifact tool (root = loop_inspection/).
+set -eo pipefail
+recording=$1; name=$2; overlay=${3:-"{}"}
+[ -n "$recording" ] && [ -n "$name" ] || { sed -n 2,7p "$0"; exit 1; }
+SCRIPTS=$(cd "$(dirname "$0")" && pwd)
+source "$SCRIPTS/recordings.sh"
+if [ "$overlay" = "--render-only" ]; then
+    OUT=$(ls -d "$HOME"/.dimos/recordings/gsc_runs/*_"${recording}_$name" | tail -1)
+else
+    export RUN_DATE=${RUN_DATE:-$(date +%F)}  # one date for the whole run, even across midnight
+    "$SCRIPTS/gsc_eval" "$recording" "$name" "$overlay"
+    OUT=$HOME/.dimos/recordings/gsc_runs/${RUN_DATE}_${recording}_$name
+fi
+mkdir -p "$OUT/loop_inspection"
+cd "$WORKTREE"
+
+echo "replay db"
+if [ -z "$world_db" ]; then
+    # Mid-360 clouds are in the sensor frame; the tracer wants world-frame lidar + body odom (built once, cached)
+    world_db=$HOME/.dimos/recordings/gsc_runs/world_dbs/$recording.db
+    if [ ! -f "$world_db" ]; then
+        mkdir -p "$(dirname "$world_db")"
+        $PY "$SCRIPTS/make_world_db.py" "$db" "${eval_args[1]}" "${eval_args[3]}" "$world_db" --body-tf 0,0,0,${world_body:-$BODY}
+    fi
+fi
+rm -f "$OUT/replay.db"*
+$PY "$SCRIPTS/replay/export_replay.py" "$OUT/a.kf" "$OUT/replay.db" --db "$world_db" --map-every 5 --edges "$OUT/a.kf.edges" > "$OUT/export.log" 2>&1
+echo "video"
+$PY "$SCRIPTS/replay/render_replay.py" "$OUT/replay.db" "$OUT/video.mp4" $step "$recording $name" > "$OUT/render.log" 2>&1
+
+echo "loop inspection"
+if [ ${#gt[@]} -eq 0 ]; then
+    echo "  no ground truth in this frame for $recording; skipped (use small_mid for small_loop)" | tee "$OUT/loop_inspection/SKIPPED.txt"
+else
+    examples=$OUT/loop_inspection/loop_examples_$recording.json
+    $PY "$SCRIPTS/replay/loop_examples.py" "$examples" --per-kind 6 --timeline 50 --run "$OUT" --name a "${gt[@]}" --icp-dir "$OUT/icp" --body $BODY --label "$recording $name" > "$OUT/loop_inspection/examples.log" 2>&1
+    $PY "$SCRIPTS/loop_gate/augment.py" "$OUT" "$examples" >> "$OUT/loop_inspection/examples.log" 2>&1
+    $PY "$SCRIPTS/loop_gate/strong.py" "$OUT" "$examples" >> "$OUT/loop_inspection/examples.log" 2>&1
+    $PY "$SCRIPTS/loop_gate/build.py" "$OUT/loop_inspection" "$examples"
+    ( cd "$OUT/loop_inspection" && ls clouds | python3 -c "import json,sys; print(json.dumps([{'path': 'clouds/' + l.strip()} for l in sys.stdin]))" > publish.json )
+fi
+echo "done: $OUT"
