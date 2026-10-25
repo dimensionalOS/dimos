@@ -19,20 +19,30 @@ module's kwargs into its worker, so every config value a blueprint holds has to 
 encodable (see dimos/protocol/encode/cbor.py).
 """
 
-import importlib
-
 import pytest
 
+from dimos.core.global_config import global_config
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.all_blueprints import all_blueprints
+from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
+from dimos.robot.test_all_blueprints import SELF_HOSTED_BLUEPRINTS
 
 
-@pytest.mark.parametrize("name", sorted(all_blueprints))
-def test_blueprint_roundtrips_through_the_codec(name: str) -> None:
-    module_path, attr = all_blueprints[name].split(":")
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(name, marks=pytest.mark.self_hosted)
+        if name in SELF_HOSTED_BLUEPRINTS
+        else name
+        for name in sorted(all_blueprints)
+    ],
+)
+def test_blueprint_roundtrips_through_the_codec(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The multi-robot blueprints read ROBOT_IPS at import time.
+    monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     try:
-        blueprint = getattr(importlib.import_module(module_path), attr)
-    except Exception as error:  # an optional dependency or robot setting this machine lacks
+        blueprint = load_blueprint(name)
+    except OptionalDependencyError as error:
         pytest.skip(f"{name} is not importable here: {error}")
 
     restored = decode(encode(blueprint))

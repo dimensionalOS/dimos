@@ -17,10 +17,13 @@ import atexit
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
 import pytest
+from pytest_mock import MockerFixture
 from traitlets.config import Config
 
 from dimos.core.coordination.blueprints import DisabledModuleProxy
+from dimos.core.coordination.python_worker import Actor
 from dimos.core.demos.stress_test_module import StressTestModule
+from dimos.core.module import Module
 from dimos.core.rpc_client import AsyncSpecProxy, RPCClient
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.spec import RPCSpec
@@ -56,6 +59,19 @@ def test_dir_exposes_rpcs_and_proxy_attributes_without_transport_calls(proxy):
     assert set(StressTestModule.rpcs) <= set(names)
     assert {"remote_name", "stop_rpc_client"} <= set(names)
     assert transport.mock_calls == []
+
+
+class PlainStart(Module):
+    def start(self) -> None:  # no @rpc, so it is missing from PlainStart.rpcs
+        super().start()
+
+
+def test_plain_method_override_is_a_clear_error(mocker: MockerFixture) -> None:
+    actor = Actor(None, PlainStart, worker_id=0)
+    client = RPCClient(actor, PlainStart, rpc=mocker.Mock(spec=RPCSpec))
+
+    with pytest.raises(AttributeError, match="without @rpc"):
+        client.start  # noqa: B018
 
 
 def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):

@@ -223,6 +223,12 @@ class RPCClient:
                 f"(remote-mode), so non-@rpc attribute access is unavailable."
             )
 
+        if inspect.isfunction(getattr(self.actor_class, name, None)):
+            raise AttributeError(
+                f"{self.remote_name}.{name} is a method without @rpc, so the worker cannot "
+                "send it back; decorate it with @rpc to call it from the host"
+            )
+
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
         result = self.actor_instance.__getattr__(name)

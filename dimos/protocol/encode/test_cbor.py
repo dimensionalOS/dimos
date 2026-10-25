@@ -350,6 +350,8 @@ def test_global_config_roundtrip() -> None:
         Image(data=np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3), format=ImageFormat.RGB),
         Image(data=np.full((2, 3), 700, dtype=np.uint16), format=ImageFormat.DEPTH16),
         Image(data=np.full((2, 3), 0.25, dtype=np.float32), format=ImageFormat.DEPTH),
+        # The LCM form would label this rgb8 and decode it as uint8.
+        Image(data=np.full((2, 3, 3), 0.5, dtype=np.float32), format=ImageFormat.RGB),
     ],
 )
 def test_image_roundtrip(image: Image) -> None:
@@ -362,6 +364,7 @@ def test_image_roundtrip(image: Image) -> None:
     assert out.ts == 1.5
     assert out.data.dtype == image.data.dtype
     assert np.array_equal(out.data, image.data)
+    assert out.data.flags.writeable
 
 
 def test_class_and_function_references() -> None:
