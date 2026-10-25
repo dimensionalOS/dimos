@@ -32,6 +32,11 @@ def cm(x):
     return "&ndash;" if x is None else (f"{x * 100:.1f} cm" if x < 1 else f"{x:.2f} m")
 
 
+WORSE_FULL_RED_M = (
+    1.0  # display scale: a method this many metres worse than raw odometry shades fully red
+)
+
+
 def shade(score):
     """Cell background for a score in [-1, 1]: green = good, red = bad, none at 0 (same scale as viewer.html's shade)."""
     if score is None or not math.isfinite(score):
@@ -42,8 +47,10 @@ def shade(score):
 
 
 def vs_raw(value, raw):
-    """How much better than raw odometry, on a log scale: 8x smaller = 1, same = 0, 8x larger = -1."""
-    return None if value is None or not raw or value <= 0 else -math.log2(value / raw) / 3
+    """Against raw odometry: better = the share of raw's error removed (all of it = 1); worse = metres added (1 m = -1)."""
+    if value is None or not raw:
+        return None
+    return (raw - value) / raw if value <= raw else -(value - raw) / WORSE_FULL_RED_M
 
 
 def speed(realtime):
@@ -106,7 +113,8 @@ summary = f"""<section id="summary" class="appendix">
 <h2>Summary</h2>
 <p>Error of each keyframe's position against ground truth (median), and how far repeat sightings of one AprilTag land
 apart (tag spread, RMS). <i>Final</i> is the finished graph; <i>live</i> is what the method believed at the moment, which is what the
-planner navigates with. Bold = more than 10% better. Shading is against raw odometry on a log scale: deep green = 8x smaller\nerror than raw, no shade = no better than raw, deep red = 8x worse. "&ndash;" = no ground truth (park1 and the L1 runs; 555 is scored on its
+planner navigates with. Bold = more than 10% better. Shading is against raw odometry: green = the share of raw's error the method removed (deep green =
+all of it); red = how much worse than raw in absolute terms (deep red = 1 m worse), so a 2 cm loss barely shows. "&ndash;" = no ground truth (park1 and the L1 runs; 555 is scored on its
 QR start/end gap, shown as its tag spread) or no repeat tag sightings (Athens). x, y and z all count.</p>
 <div class="table-wrap"><table>
 <thead><tr><th rowspan=2>recording{tip("shade")}</th><th colspan=2>GT error, final{tip("gt", "final")}</th><th colspan=2>GT error, live{tip("gt", "live")}</th><th rowspan=2>raw odom{tip("raw")}</th>

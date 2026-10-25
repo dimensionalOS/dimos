@@ -99,7 +99,7 @@ const TIPS = {
     live: "Live: where the method had the robot at the moment that keyframe was made (the newest correction then, applied to its odometry). This is what the planner navigates with.",
     raw: "Raw odometry: the odometry alone, with no loop closure, scored the same way. The baseline both methods should beat.",
     tags: "How far repeat sightings of the same AprilTag land from each other (RMS, metres) when each sighting is placed with the method's pose. Needs no ground truth and no alignment; 0 = a perfectly consistent map.",
-    shade: "Shading compares with raw odometry on a log scale: deep green = 8x smaller than raw, no shade = no better than raw, deep red = 8x larger.",
+    shade: "Shading compares with raw odometry. Green: the share of raw odometry\u2019s error the method removed (deep green = all of it). Red: how much worse than raw in absolute terms (deep red = 1 m worse), so a 2 cm loss barely shows.",
     speed: "Recording length divided by replay wall time. Above 1x is faster than real time; GSC replays every scan in lockstep, as fast as the machine allows.",
     dropped: "Scans the method never processed because it was busy when they arrived (Ivan keeps only the newest scan while busy; GSC queues them).",
     busy: "Share of wall time Ivan's module spent processing.",
@@ -126,8 +126,8 @@ function shade(score) {
     score = Math.max(-1, Math.min(1, score))
     return `background: color-mix(in srgb, var(${score > 0 ? "--edge-ok" : "--edge-bad"}) ${Math.round(Math.abs(score) * 45)}%, transparent)`
 }
-// how much better than raw odometry, log scale: 8x smaller = 1, same = 0, 8x larger = -1
-function vsRaw(value, raw) { return value == null || !raw || value <= 0 ? null : -Math.log2(value / raw) / 3 }
+// against raw odometry (as report_sections.py): better = share of raw's error removed (all = 1); worse = metres added (1 m = -1)
+function vsRaw(value, raw) { return value == null || !raw ? null : value <= raw ? (raw - value) / raw : -(value - raw) / 1.0 }
 async function fetchText(path) { const r = await fetch(path); if (!r.ok) { throw new Error(`${path}: ${r.status}`) } return r.text() }
 async function fetchB64(path) {
     const text = await fetchText(path), bin = atob(text.trim()), bytes = new Uint8Array(bin.length)
