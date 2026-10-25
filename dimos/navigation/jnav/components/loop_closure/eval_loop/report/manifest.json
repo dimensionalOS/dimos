@@ -168,6 +168,78 @@
         "odom_frame": "base_link",
         "camera_frame": "camera_color_optical_frame"
       }
+    },
+    {
+      "name": "hk1",
+      "label": "HK village 1 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village1.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk1_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk1_live",
+      "gt": []
+    },
+    {
+      "name": "hk2",
+      "label": "HK village 2 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village2.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk2_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk2_live",
+      "gt": []
+    },
+    {
+      "name": "hk3",
+      "label": "HK village 3 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village3.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk3_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk3_live",
+      "gt": []
+    },
+    {
+      "name": "hk4",
+      "label": "HK village 4 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village4.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk4_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk4_live",
+      "gt": []
+    },
+    {
+      "name": "hk5",
+      "label": "HK village 5 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village5.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk5_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk5_live",
+      "gt": []
+    },
+    {
+      "name": "hk6",
+      "label": "HK village 6 (Go2 L1 + leg odometry)",
+      "world_db": "~/.dimos/recordings/hk_village_tf/hk_village6.db",
+      "streams": {
+        "lidar": "l1_cloud",
+        "odom": "go2_odometry"
+      },
+      "gsc": "~/.dimos/recordings/gsc_runs/2026-10-25_hk6_final",
+      "ivan": "~/.dimos/recordings/gsc_runs/ivan_final/hk6_live",
+      "gt": []
     }
   ]
 }

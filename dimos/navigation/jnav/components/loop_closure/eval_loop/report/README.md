@@ -34,7 +34,7 @@ Then serve and open (fetch is blocked on file://):
   drawn when present, at the odometry rate with paths simplified to a quarter voxel. Made by `../gsc_vs_ivan/replay/{gsc,ivan}_plan.py`.
 - `score_gt: false` skips GT error (office555 is scored on its QR start/end gap instead); `tags` {"odom_frame",
   "camera_frame"} overrides the tag chain's frames.
-- `options` (optional): `voxel_m` 0.2, `max_points` 80, `state_budget_bytes` 1.8e6, `icp_accepted` 16, `icp_rejected` 16,
+- `options` (optional): `voxel_m` 0.2, `max_points` 80, `state_budget_bytes` 1.4e6, `icp_accepted` 10, `icp_rejected` 10,
   `icp_single` [1500, 2500], `icp_extended` [2500, 3500] (source, target points kept per ICP round).
 
 One recording by hand: `PYTHONPATH=$GSC_SCORE_STUBS .venv/bin/python export_recording.py '<entry json>' out` from the worktree.

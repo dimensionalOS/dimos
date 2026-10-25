@@ -66,7 +66,7 @@ summary = f"""<section id="summary" class="appendix">
 <h2>Summary</h2>
 <p>Error of each keyframe's position against ground truth (median), and how far repeat sightings of one AprilTag land
 apart (tag spread, RMS). <i>Final</i> is the finished graph; <i>live</i> is what the method believed at the moment, which is what the
-planner navigates with. Bold = more than 10% better. "&ndash;" = no ground truth (park1 and both L1 runs; 555 is scored on its
+planner navigates with. Bold = more than 10% better. "&ndash;" = no ground truth (park1 and the L1 runs; 555 is scored on its
 QR start/end gap, shown as its tag spread) or no repeat tag sightings (Athens). x, y and z all count.</p>
 <div class="table-wrap"><table>
 <thead><tr><th rowspan=2>recording</th><th colspan=2>GT error, final</th><th colspan=2>GT error, live</th><th rowspan=2>raw odom</th>
@@ -74,7 +74,9 @@ QR start/end gap, shown as its tag spread) or no repeat tag sightings (Athens). 
 <tr><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <p class="note">Known problem: on Go2 L1 the huge loop gets no closures from GSC. The L1 cloud is a ~3 m local window, so the
-scan-context descriptors aren't distinctive; every match it tries is wrong and the solve rejects all of them. Next on the list.</p>
+scan-context descriptors aren't distinctive; every match it tries is wrong and the solve rejects all of them. Next on the list.
+The short HK village L1 runs (hk1-6, no ground truth) look like the same problem: GSC keeps few closures and stays near raw
+odometry, while Ivan keeps 10-20 and ends with a larger tag spread than raw odometry on all six.</p>
 </section>"""
 
 mac = []

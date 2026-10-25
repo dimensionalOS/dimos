@@ -96,10 +96,10 @@ opts = dict(
     scans_per_keyframe=5,
     max_range_m=25.0,
     band_m=[0.3, 2.2],
-    state_budget_bytes=1_800_000,
+    state_budget_bytes=1_400_000,
     odom_hz=2.0,
-    icp_accepted=16,
-    icp_rejected=16,
+    icp_accepted=10,
+    icp_rejected=10,
     icp_single=[1500, 2500],
     icp_extended=[2500, 3500],
 )
