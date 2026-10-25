@@ -92,16 +92,14 @@ class PGOConfig(NativeModuleConfig):
     # Hold keyframes with two or more independent cycles nearby, so a solve covers only the part of the map that can still move
     closure_cooling: bool = False
 
-    # "stiffness" in different dimensions.
-    # Making roll/pitch stiff is important for mid360. irrelevant for go2 odom
-    # These suit a robot on mostly level ground. A handheld rig or long stairs drifts vertically through a slow
-    # pitch bias, which stiff roll/pitch and z cannot absorb, so GNC rejects the true closure; there use
-    # odom_rot_roll_pitch_var = odom_rot_yaw_var and odom_trans_z_var = odom_trans_xy_var (office_555_loop1:
-    # 36 m vertical drift, end-to-start 38.9 m -> 0.2 m).
-    odom_rot_roll_pitch_var: float = 1e-8
-    odom_rot_yaw_var: float = 1e-5
+    # Odometry drift per keyframe (variance): Point-LIO's measured against ground truth on gir_stairs2 (roll/pitch
+    # 1.4e-6, yaw 3.5e-6, xy 2.9e-4 over 50-keyframe spans, z 2.8e-5..1.6e-4). Locking roll/pitch and z tighter (a
+    # level-robot assumption) makes a loop's vertical drift unabsorbable: office_555_loop1's start-to-end gap then
+    # stays at 18.5 m instead of closing to 7 cm.
+    odom_rot_roll_pitch_var: float = 1e-6
+    odom_rot_yaw_var: float = 3e-6
     odom_trans_xy_var: float = 1e-4
-    odom_trans_z_var: float = 1e-6
+    odom_trans_z_var: float = 1e-4
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

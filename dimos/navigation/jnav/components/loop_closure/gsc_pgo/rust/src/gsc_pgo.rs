@@ -317,7 +317,7 @@ pub struct Config {
     /// Hold keyframes with two or more independent cycles nearby (see `big_picture_fit::dispatch_solve`), so a solve
     /// covers only the part of the map that can still move.
     pub closure_cooling: bool,
-    // Odometry between-factor noise (anisotropic).
+    /// Odometry drift per keyframe (variance; rad², m²); see module.py for where the defaults come from.
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
     pub odom_trans_xy_var: f64,
@@ -350,10 +350,10 @@ impl Default for Config {
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
             closure_cooling: false,
-            odom_rot_roll_pitch_var: 1e-8,
-            odom_rot_yaw_var: 1e-5,
+            odom_rot_roll_pitch_var: 1e-6,
+            odom_rot_yaw_var: 3e-6,
             odom_trans_xy_var: 1e-4,
-            odom_trans_z_var: 1e-6,
+            odom_trans_z_var: 1e-4,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
             scan_context_max_range_m: 0.0,
