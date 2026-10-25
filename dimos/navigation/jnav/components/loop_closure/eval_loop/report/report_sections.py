@@ -121,8 +121,9 @@ QR start/end gap, shown as its tag spread) or no repeat tag sightings (Athens). 
 <th colspan=2>tag spread, final{tip("tags", "final")}</th><th colspan=2>tag spread, live{tip("tags", "live")}</th><th rowspan=2>raw odom{tip("raw")}</th></tr>
 <tr><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
-<p class="note">Known problem: on Go2 L1 the huge loop gets no closures from GSC. The L1 cloud is a ~3 m local window, so the
-scan-context descriptors aren't distinctive; every match it tries is wrong and the solve rejects all of them. Next on the list.
+<p class="note">Known problem (a regression; the July code closed this loop): on Go2 L1 the huge loop ends with no closure in the map. The gates
+accept 2,821 scan-context matches, all wrong, and the robust solve rejects every one, so the map stays at raw odometry. The L1 cloud is a ~3 m
+local window, so a corridor matches every corridor. Being bisected.
 The short HK village L1 runs (hk1-6, no ground truth) look like the same problem: GSC keeps few closures and stays near raw
 odometry, while Ivan keeps 10-20 and ends with a larger tag spread than raw odometry on all six.</p>
 </section>"""
