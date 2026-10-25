@@ -267,6 +267,7 @@ all_modules = {
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "graph-capture": "dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay.GraphCapture",
+    "graph3-d-capture": "dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.replay.Graph3DCapture",
     "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.module.GraspGenXModule",
     "grasping-module": "dimos.manipulation.grasping.grasping.GraspingModule",
     "gsc-pgo": "dimos.navigation.jnav.components.loop_closure.gsc_pgo.module.GscPGO",

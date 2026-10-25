@@ -17,7 +17,8 @@
 ``run_module_graph`` streams a recording through the module under test and hands
 back its optimized pose graph. The replay itself comes in two flavors:
 ``LockstepReplay`` (ack-paced, machine-speed independent).
-``GraphCapture`` collects the module's output graph.
+``GraphCapture`` collects the output graph of a module publishing GscPGO's packed records,
+``Graph3DCapture`` that of one publishing ``Graph3D`` (BaselinePGO).
 """
 
 from __future__ import annotations
@@ -25,12 +26,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import suppress
-from itertools import islice
+from itertools import islice, pairwise
 import json
 from pathlib import Path
 import tempfile
 import time
 from typing import Any
+
+import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -39,6 +42,15 @@ from dimos.core.stream import In, Out
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.jnav.components.loop_closure.gsc_pgo.records import (
+    CLOSURE_ACCEPTED,
+    CLOSURE_EDGE_RECORD,
+    CLOSURE_REJECTED,
+    POSE_RECORD,
+    RawPointCloud2,
+    decode_records,
+    record_transports,
+)
 from dimos.navigation.jnav.msgs.Graph3D import Graph3D
 from dimos.navigation.jnav.msgs.GraphDelta3D import GraphDelta3D
 from dimos.navigation.jnav.utils.trajectory_metrics import GraphPose
@@ -58,7 +70,8 @@ GRAPH_SETTLE_QUIET_S = 5.0
 GRAPH_SETTLE_MAX_S = 1800.0
 GRAPH_SETTLE_POLL_S = 0.5
 _PROGRESS_EVERY_N_SCANS = 200
-# mirrors EDGE_LOOP_CLOSURE in rust/src/utils.rs pose-graph metadata ids
+# graph_detail edge kinds: the odometry backbone and loop closures
+EDGE_ODOM = 0
 EDGE_LOOP_CLOSURE = 1
 
 
@@ -67,7 +80,62 @@ class GraphCaptureConfig(ModuleConfig):
 
 
 class GraphCapture(Module):
-    """Captures the module's optimized pose graph WITH orientations + closures.
+    """Captures GscPGO's optimized pose graph WITH orientations + the closures in it,
+    from its pose_graph and closure_edges records (see ``record_transports``).
+
+    Results are handed back via a JSON file written on teardown (modules run in
+    separate worker processes)."""
+
+    config: GraphCaptureConfig
+
+    pose_graph_records: In[RawPointCloud2]
+    closure_edge_records: In[RawPointCloud2]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._poses = np.zeros(0, POSE_RECORD)
+        # (source_id, target_id) -> whether GNC last voted that closure into the graph
+        self._closure_in_graph: dict[tuple[int, int], bool] = {}
+
+    async def handle_pose_graph_records(self, msg: RawPointCloud2) -> None:
+        # Heartbeat lets the host detect when the graph has settled post-replay.
+        Path(str(self.config.output_path) + ".heartbeat").touch()
+        self._poses = decode_records(msg, POSE_RECORD)
+
+    async def handle_closure_edge_records(self, msg: RawPointCloud2) -> None:
+        for edge in decode_records(msg, CLOSURE_EDGE_RECORD):
+            if edge["state"] in (CLOSURE_ACCEPTED, CLOSURE_REJECTED):
+                key = (int(edge["source_id"]), int(edge["target_id"]))
+                self._closure_in_graph[key] = edge["state"] == CLOSURE_ACCEPTED
+
+    async def main(self) -> AsyncGenerator[None, None]:
+        yield
+        nodes = [
+            [int(p["id"]), float(p["ts"]), *p["xyz"].tolist(), *p["q"].tolist()]
+            for p in self._poses
+        ]
+        ts_by_id = {node[0]: node[1] for node in nodes}
+        closures = [
+            pair
+            for pair, in_graph in self._closure_in_graph.items()
+            if in_graph and pair[0] in ts_by_id and pair[1] in ts_by_id
+        ]
+        self.config.output_path.write_text(
+            json.dumps(
+                {
+                    "graph": [node[1:] for node in nodes],
+                    "closures": len(closures),
+                    "loop_edges": [(ts_by_id[a], ts_by_id[b]) for a, b in closures],
+                    "nodes": nodes,
+                    "edges": [[a[0], b[0], EDGE_ODOM] for a, b in pairwise(nodes)]
+                    + [[a, b, EDGE_LOOP_CLOSURE] for a, b in closures],
+                }
+            )
+        )
+
+
+class Graph3DCapture(Module):
+    """Captures a Graph3D module's optimized pose graph WITH orientations + closures.
 
     Results are handed back via a JSON file written on teardown (modules run in
     separate worker processes)."""
@@ -298,6 +366,13 @@ def run_module_graph(
     odom_count = int(counts_store.stream(odom_stream).count())
     counts_store.stop()
 
+    module_blueprint = module_class.blueprint(**config_overrides)  # type: ignore[attr-defined]
+    records = not any(
+        stream.name == "pose_graph" and stream.type is Graph3D
+        for atom in module_blueprint.active_blueprints
+        for stream in atom.streams
+    )
+    capture = GraphCapture if records else Graph3DCapture
     blueprint = autoconnect(
         LockstepReplay.blueprint(
             db=db_path,
@@ -305,9 +380,15 @@ def run_module_graph(
             odometry_stream=odom_stream,
             done_path=done_path,
         ),
-        module_class.blueprint(**config_overrides),  # type: ignore[attr-defined]
-        GraphCapture.blueprint(output_path=output_path),
+        module_blueprint,
+        capture.blueprint(output_path=output_path),
     )
+    if records:
+        blueprint = blueprint.transports(
+            record_transports(
+                {"pose_graph_records": "pose_graph", "closure_edge_records": "closure_edges"}
+            )
+        )
     coordinator = ModuleCoordinator.build(blueprint)
     print(
         f"replaying {odom_count + lidar_count} messages"
