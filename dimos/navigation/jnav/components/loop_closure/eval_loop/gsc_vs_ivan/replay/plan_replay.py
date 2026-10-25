@@ -20,7 +20,8 @@ past the closure the planner replans as the module does: after every scan's map 
 through every warp (planner.apply_loop_closure warps them with the map).
 Streams: planned_path (each replan), held_path (the first path, warped), goal, robot, surface (planner surface
 snapshots), lidar_live (window scans).
-usage: plan_replay.py <a.kf> <out.db> --db <world db> [--before 60] [--after 60] [--goal-frac 0.4]"""
+usage: plan_replay.py <a.kf> <out.db> --db <world db> [--before 60] [--after 60] [--goal-frac 0.4] [--lean]
+       (--lean skips the surface and lidar_live clouds: plans, goal and robot only, for gsc_plan.py)"""
 
 import argparse
 import json
@@ -47,6 +48,7 @@ parser.add_argument("--before", type=float, default=60.0)
 parser.add_argument("--after", type=float, default=60.0)
 parser.add_argument("--goal-frac", type=float, default=0.4)
 parser.add_argument("--stride", type=int, default=1)
+parser.add_argument("--lean", action="store_true")
 args = parser.parse_args()
 
 keyframes = np.fromfile(args.keyframes, rm.KEYFRAME)
@@ -150,7 +152,7 @@ def replan(ts: float, origin: np.ndarray, why: str) -> None:
     if len(held) > 1:
         write("held_path", np.array(held[1:]), ts)
     write("planned_path", path if path is not None else np.zeros((0, 3)), ts)
-    if why == "warp" or ts - last_surface >= 2.0:
+    if not args.lean and (why == "warp" or ts - last_surface >= 2.0):
         write("surface", np.asarray(planner.surface_map(), np.float32).reshape(-1, 3), ts)
         last_surface = ts
     length = (
@@ -174,7 +176,8 @@ def on_scan(ts: float, points: np.ndarray, origin: np.ndarray, tracer) -> None:
     if not window[0] <= ts <= window[1]:
         return
     last_origin = origin
-    write("lidar_live", points[::4], ts)
+    if not args.lean:
+        write("lidar_live", points[::4], ts)
     robot.append(
         Odometry(
             ts=ts,
@@ -202,11 +205,24 @@ def on_closure(ts: float, records: np.ndarray, tracer) -> None:
     post_translation = delta.apply(n["xyz"].astype(float)) + n["dt"]
     k = int(n["id"])
     rotation = post_rotation * R.from_quat(keyframes["raw"][k, 3:]).inv()
+    global last_origin
+    # the robot's last position, taken from the old correction into the new one, so a warp replan starts where it is
+    raw_origin = offset_state["rotation"].inv().apply(last_origin - offset_state["translation"])
     offset_state["rotation"], offset_state["translation"] = (
         rotation,
         post_translation - rotation.apply(keyframes["raw"][k, :3]),
     )
+    last_origin = rotation.apply(raw_origin) + offset_state["translation"]
     if window[0] <= ts <= window[1] and held:
+        robot.append(
+            Odometry(
+                ts=ts,
+                frame_id="map",
+                child_frame_id="robot",
+                pose=Pose(*map(float, last_origin), 0, 0, 0, 1),
+            ),
+            ts=ts,
+        )
         replan(ts, last_origin, "warp")
 
 
