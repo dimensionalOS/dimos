@@ -162,5 +162,7 @@ keyboard_teleop_openyam_planner = autoconnect(
             _gripper_task(),
             _trajectory_task(priority=10),
         ],
+        cls=ArmTwistCoordinator,
+        instance_name="ControlCoordinator",
     ),
 )
