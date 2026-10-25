@@ -22,7 +22,7 @@ use std::io::Write;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dimos_module::nalgebra::{
@@ -33,7 +33,6 @@ use lcm_msgs::geometry_msgs::{Quaternion as QuaternionMsg, Vector3 as Vector3Msg
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest};
 use lcm_msgs::std_msgs::{Header, Time};
 use realsense_rust::base::{Rs2Extrinsics, Rs2Intrinsics};
-use realsense_rust::config::Config as RsConfig;
 use realsense_rust::context::Context;
 use realsense_rust::frame::{
     AccelFrame, ColorFrame, CompositeFrame, DepthFrame, FrameEx, GyroFrame, ImageFrame,
@@ -43,7 +42,7 @@ use realsense_rust::kind::{
     Rs2CameraInfo, Rs2DistortionModel, Rs2Extension, Rs2Format, Rs2Option, Rs2ProductLine,
     Rs2StreamKind,
 };
-use realsense_rust::pipeline::{ActivePipeline, InactivePipeline, PipelineProfile};
+use realsense_rust::pipeline::PipelineProfile;
 use realsense_rust::processing_blocks::align::Align;
 use realsense_rust::sensor::Sensor;
 use realsense_rust::stream_profile::StreamProfile;
@@ -300,20 +299,17 @@ impl RealSense {
             tf: self.tf.clone(),
         };
 
-        // The motion module refuses to open once the video pipeline holds the
-        // device, and two contexts opening it at once segfault librealsense, so
-        // the IMU pipeline is started here, before the capture thread exists.
-        if cfg.enable_imu {
-            let (pipeline, rx) = imu_open(&cfg);
+        // One context and one pipeline carry every stream; see camera_open.
+        let (camera, frames, imu_rx) = camera_open(&cfg);
+        if let Some(rx) = imu_rx {
             let (c, s, h, o) = (
                 cfg.clone(),
                 self.shared.clone(),
                 handle.clone(),
                 outs.clone(),
             );
-            self.threads.push(std::thread::spawn(move || {
-                imu_thread(pipeline, rx, &c, &s, &h, &o)
-            }));
+            self.threads
+                .push(std::thread::spawn(move || imu_thread(rx, &c, &s, &h, &o)));
         }
         let (c, s, h, o) = (
             cfg.clone(),
@@ -321,8 +317,9 @@ impl RealSense {
             handle.clone(),
             outs.clone(),
         );
-        self.threads
-            .push(std::thread::spawn(move || capture_thread(&c, &s, &h, &o)));
+        self.threads.push(std::thread::spawn(move || {
+            capture_thread(camera, frames, &c, &s, &h, &o)
+        }));
         if cfg.enable_pointcloud {
             let (c, s, h, o) = (
                 cfg.clone(),
@@ -459,17 +456,17 @@ fn sensor_name(sensor: &Sensor) -> String {
         .unwrap_or_default()
 }
 
-fn wait_frames(pipeline: &mut ActivePipeline, shared: &Shared) -> Option<CompositeFrame> {
-    match pipeline.wait(Some(FRAME_TIMEOUT)) {
-        Ok(frames) => Some(frames),
-        Err(_) => {
-            // Frame timeouts are transient, from warm-up or USB stalls.
-            if !shared.stopped() {
-                tracing::warn!("RealSense: no frames within 1s - retrying");
-            }
-            None
-        }
+fn wait_frames(
+    frames: &LatestFrames,
+    shared: &Shared,
+    expect_video: bool,
+) -> Option<CompositeFrame> {
+    let frames = frames.take(FRAME_TIMEOUT);
+    // Frame timeouts are transient, from warm-up or USB stalls.
+    if frames.is_none() && expect_video && !shared.stopped() {
+        tracing::warn!("RealSense: no frames within 1s - retrying");
     }
+    frames
 }
 
 fn fail(what: &str, err: impl std::fmt::Display) -> ! {
@@ -533,50 +530,17 @@ fn find_profile(
         .find(|p| p.kind() == kind && index.is_none_or(|i| p.index() == i))
 }
 
-fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
-    let context = Context::new().unwrap_or_else(|e| fail("context", e));
-    let mut config = RsConfig::new();
-    if let Some(serial) = cfg.serial() {
-        let serial = CString::new(serial).unwrap_or_else(|e| fail("serial_number", e));
-        config
-            .enable_device_from_serial(&serial)
-            .unwrap_or_else(|e| fail("enable_device", e));
-    }
-    let (w, h, fps) = (cfg.width as usize, cfg.height as usize, cfg.fps as usize);
-    // The camera hands out RGB directly; camera.py asks for BGR and converts.
-    if cfg.stream_color() {
-        config
-            .enable_stream(Rs2StreamKind::Color, None, w, h, Rs2Format::Rgb8, fps)
-            .unwrap_or_else(|e| fail("color stream", e));
-    }
-    if cfg.stream_depth() {
-        config
-            .enable_stream(Rs2StreamKind::Depth, None, w, h, Rs2Format::Z16, fps)
-            .unwrap_or_else(|e| fail("depth stream", e));
-    }
-    if cfg.enable_infrared {
-        // index 1 = left imager, index 2 = right
-        for index in 1..=2 {
-            config
-                .enable_stream(
-                    Rs2StreamKind::Infrared,
-                    Some(index),
-                    w,
-                    h,
-                    Rs2Format::Y8,
-                    fps,
-                )
-                .unwrap_or_else(|e| fail("infrared stream", e));
-        }
-    }
-    let pipeline = InactivePipeline::try_from(&context).unwrap_or_else(|e| fail("pipeline", e));
-    let mut pipeline = pipeline
-        .start(Some(config))
-        .unwrap_or_else(|e| fail("start", e));
-
+fn capture_thread(
+    camera: Camera,
+    frames: Arc<LatestFrames>,
+    cfg: &Config,
+    shared: &Shared,
+    handle: &Handle,
+    outs: &Outs,
+) {
     // Put every sensor on the host clock rather than its own boot clock.
-    // The IMU pipeline deliberately keeps the motion module on the hardware clock.
-    let sensors = pipeline.profile().device().sensors();
+    // camera_open deliberately keeps the motion module on the hardware clock.
+    let sensors = camera.profile().device().sensors();
     for mut sensor in sensors {
         let name = sensor_name(&sensor);
         if name == MOTION_MODULE_NAME {
@@ -595,7 +559,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
     // The IR imagers are the depth sensor, and it owns the emitter option.
     let mut depth_scale = 0.001f32;
     if cfg.stream_depth() || cfg.enable_infrared {
-        let sensors = pipeline.profile().device().sensors();
+        let sensors = camera.profile().device().sensors();
         if let Some(mut depth_sensor) = sensors
             .into_iter()
             .find(|s| s.extension() == Rs2Extension::DepthSensor)
@@ -612,7 +576,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         }
     }
     if cfg.stream_color() {
-        let sensors = pipeline.profile().device().sensors();
+        let sensors = camera.profile().device().sensors();
         if let Some(mut color_sensor) = sensors
             .into_iter()
             .find(|s| s.extension() == Rs2Extension::ColorSensor)
@@ -640,7 +604,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
     }
 
     // Camera infos from the running streams.
-    let streams = pipeline.profile().streams();
+    let streams = camera.profile().streams();
     let color_intrinsics = if cfg.stream_color() {
         find_profile(streams, Rs2StreamKind::Color, None).and_then(|p| p.intrinsics().ok())
     } else {
@@ -690,7 +654,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
     });
 
     // Place every imager below camera_link, which sits on the depth imager.
-    let device_profiles: Vec<StreamProfile> = pipeline
+    let device_profiles: Vec<StreamProfile> = camera
         .profile()
         .device()
         .sensors()
@@ -744,9 +708,11 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         cfg.depth_optical_frame()
     };
     let mut fresh = Freshness::default();
+    // With only the IMU enabled no frameset ever comes; that silence is expected.
+    let expect_video = cfg.stream_color() || cfg.stream_depth() || cfg.enable_infrared;
 
     while !shared.stopped() {
-        let Some(frames) = wait_frames(&mut pipeline, shared) else {
+        let Some(frames) = wait_frames(&frames, shared, expect_video) else {
             continue;
         };
 
@@ -848,7 +814,11 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         }
     }
 
-    pipeline.stop();
+    // Release every frame still held, align's and the waiting frameset, so the
+    // stop below does not wait on them, then stop the pipeline and the IMU with it.
+    drop(align);
+    frames.close();
+    drop(camera);
     if !fresh.dropped.is_empty() || !fresh.repeated.is_empty() {
         tracing::info!(
             "RealSense capture ended: dropped {:?}, repeats suppressed {:?}",
@@ -1045,7 +1015,7 @@ fn rgbd_to_cloud(
     }
 }
 
-// ---- IMU thread: own pipeline, hardware clock re-anchored to the host ----
+// ---- IMU thread: hardware clock re-anchored to the host ----
 
 /// Map a motion-module hardware stamp onto the host clock.
 ///
@@ -1185,37 +1155,97 @@ fn stream_rates(context: &Context, cfg: &Config, kind: Rs2StreamKind) -> BTreeSe
     rates
 }
 
-// ---- IMU: librealsense's frame callback, so every sample arrives exactly once ----
+// ---- the camera: one context, one pipeline, one callback ----
+//
+// Every stream rides one pipeline in one context. Under librealsense's RSUSB
+// backend (libusb, no uvcvideo/hid-sensor drivers; the only way to the IMU on
+// kernels without hid-sensor support, such as Jetson L4T) each context claims
+// the camera's USB interfaces itself, so a second context on the same camera
+// finds them busy: neither pipeline delivers, and the process can crash and
+// leave the camera unresponsive until it is replugged.
 //
 // realsense-rust only wraps wait_for_frames, whose syncer hands back the latest
 // sample of each stream and so repeats or drops IMU samples. The callback start
-// is raw realsense-sys; the frames it yields are wrapped back into the crate's
-// types, which own and release them.
+// is raw realsense-sys: video arrives as framesets for the capture thread, and
+// every motion sample exactly once for the IMU thread. Both are wrapped back
+// into the crate's types, which own and release them.
+
+/// The newest frameset the capture thread has not taken yet. A newer one
+/// replaces it, as wait_for_frames keeps only the latest; the freshness gate
+/// counts what was skipped.
+#[derive(Default)]
+struct LatestFrames {
+    slot: Mutex<Option<CompositeFrame>>,
+    ready: Condvar,
+    closed: AtomicBool,
+}
+
+impl LatestFrames {
+    fn put(&self, frames: CompositeFrame) {
+        if self.closed.load(Ordering::Relaxed) {
+            return; // dropping releases it
+        }
+        let older = self.slot.lock().unwrap().replace(frames);
+        self.ready.notify_one();
+        drop(older); // released outside the lock
+    }
+
+    fn take(&self, timeout: Duration) -> Option<CompositeFrame> {
+        let slot = self.slot.lock().unwrap();
+        let (mut slot, _) = self
+            .ready
+            .wait_timeout_while(slot, timeout, |s| s.is_none())
+            .unwrap();
+        slot.take()
+    }
+
+    /// Releases the waiting frameset and every later one.
+    fn close(&self) {
+        self.closed.store(true, Ordering::Relaxed);
+        let waiting = self.slot.lock().unwrap().take();
+        drop(waiting);
+    }
+}
 
 enum Motion {
     Accel(AccelFrame),
     Gyro(GyroFrame),
 }
 
-struct ImuPipeline {
+/// Where the callback sends frames.
+struct Sinks {
+    video: Arc<LatestFrames>,
+    motion: Option<mpsc::Sender<Motion>>,
+}
+
+struct Camera {
     pipe: *mut sys::rs2_pipeline,
     config: *mut sys::rs2_config,
     context: *mut sys::rs2_context,
-    sender: *mut mpsc::Sender<Motion>,
+    sinks: *mut Sinks,
+    // Released in drop, before the context it came from.
+    profile: Option<PipelineProfile>,
 }
 
 // Raw handles used from one thread at a time; librealsense itself is thread-safe.
-unsafe impl Send for ImuPipeline {}
+unsafe impl Send for Camera {}
 
-impl Drop for ImuPipeline {
+impl Camera {
+    fn profile(&self) -> &PipelineProfile {
+        self.profile.as_ref().expect("the profile lives until drop")
+    }
+}
+
+impl Drop for Camera {
     fn drop(&mut self) {
         unsafe {
-            // stop() joins the callback thread, so the sender is free afterwards.
+            // stop() joins the callback thread, so the sinks are free afterwards.
             sys::rs2_pipeline_stop(self.pipe, ptr::null_mut());
+            drop(self.profile.take());
             sys::rs2_delete_pipeline(self.pipe);
             sys::rs2_delete_config(self.config);
             sys::rs2_delete_context(self.context);
-            drop(Box::from_raw(self.sender));
+            drop(Box::from_raw(self.sinks));
         }
     }
 }
@@ -1243,96 +1273,175 @@ unsafe fn frame_kind(frame: NonNull<sys::rs2_frame>) -> Option<Rs2StreamKind> {
     Some(profile.kind())
 }
 
-/// `user` is the `Sender<Motion>` leaked by imu_open.
-unsafe extern "C" fn on_motion_frame(frame: *mut sys::rs2_frame, user: *mut c_void) {
+/// `user` is the `Sinks` leaked by camera_open.
+unsafe extern "C" fn on_frame(frame: *mut sys::rs2_frame, user: *mut c_void) {
     let Some(ptr) = NonNull::new(frame) else {
         return;
     };
+    let sinks = &*user.cast::<Sinks>();
+    let mut err = ptr::null_mut();
+    let composite = sys::rs2_is_frame_extendable_to(
+        frame,
+        sys::rs2_extension_RS2_EXTENSION_COMPOSITE_FRAME,
+        &mut err,
+    );
+    if !err.is_null() {
+        sys::rs2_free_error(err);
+        sys::rs2_release_frame(frame);
+        return;
+    }
+    if composite != 0 {
+        sinks.video.put(CompositeFrame::from(ptr));
+        return;
+    }
     let motion = match frame_kind(ptr) {
         Some(Rs2StreamKind::Accel) => AccelFrame::try_from(ptr).ok().map(Motion::Accel),
         Some(Rs2StreamKind::Gyro) => GyroFrame::try_from(ptr).ok().map(Motion::Gyro),
         _ => None,
     };
-    match motion {
-        Some(motion) => {
-            let _ = (*user.cast::<mpsc::Sender<Motion>>()).send(motion);
+    match (motion, sinks.motion.as_ref()) {
+        (Some(motion), Some(tx)) => {
+            let _ = tx.send(motion);
         }
-        None => sys::rs2_release_frame(frame),
+        // Dropping the wrapper releases the frame.
+        (Some(_), None) => {}
+        (None, _) => sys::rs2_release_frame(frame),
     }
 }
 
-fn imu_open(cfg: &Config) -> (ImuPipeline, mpsc::Receiver<Motion>) {
-    let context = Context::new().unwrap_or_else(|e| fail("context", e));
-    let offered = stream_rates(&context, cfg, Rs2StreamKind::Gyro);
-    if !offered.contains(&cfg.imu_hz) {
-        fail(
-            "imu_hz",
-            format!(
-                "{} is not offered by this camera; it has {:?}",
-                cfg.imu_hz, offered
-            ),
-        );
-    }
-    let accel_hz = stream_rates(&context, cfg, Rs2StreamKind::Accel)
-        .into_iter()
-        .max()
-        .unwrap_or(cfg.imu_hz);
-    drop(context);
+/// `index` -1 is any; a motion stream takes `size` (0, 0).
+unsafe fn enable_stream(
+    config: *mut sys::rs2_config,
+    (kind, index): (Rs2StreamKind, i32),
+    (width, height): (i32, i32),
+    format: Rs2Format,
+    rate: i32,
+    what: &str,
+) {
+    let mut err = ptr::null_mut();
+    let (kind, format) = (kind as sys::rs2_stream, format as sys::rs2_format);
+    sys::rs2_config_enable_stream(config, kind, index, width, height, format, rate, &mut err);
+    rs_check(err, what);
+}
 
-    let (tx, rx) = mpsc::channel();
-    let sender = Box::into_raw(Box::new(tx));
-    let pipeline = unsafe {
+/// Starts every enabled stream on one pipeline, returning the camera with the
+/// framesets for the capture thread and, with the IMU on, its samples.
+fn camera_open(cfg: &Config) -> (Camera, Arc<LatestFrames>, Option<mpsc::Receiver<Motion>>) {
+    let mut accel_hz = 0;
+    if cfg.enable_imu {
+        // A short-lived query context, gone before the pipeline's own opens the camera.
+        let context = Context::new().unwrap_or_else(|e| fail("context", e));
+        let offered = stream_rates(&context, cfg, Rs2StreamKind::Gyro);
+        if !offered.contains(&cfg.imu_hz) {
+            fail(
+                "imu_hz",
+                format!(
+                    "{} is not offered by this camera; it has {:?}",
+                    cfg.imu_hz, offered
+                ),
+            );
+        }
+        accel_hz = stream_rates(&context, cfg, Rs2StreamKind::Accel)
+            .into_iter()
+            .max()
+            .unwrap_or(cfg.imu_hz);
+    }
+
+    let latest = Arc::new(LatestFrames::default());
+    let (motion_tx, motion_rx) = if cfg.enable_imu {
+        let (tx, rx) = mpsc::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let sinks = Box::into_raw(Box::new(Sinks {
+        video: latest.clone(),
+        motion: motion_tx,
+    }));
+    let camera = unsafe {
         let mut err = ptr::null_mut();
         let context = sys::rs2_create_context(sys::RS2_API_VERSION as i32, &mut err);
-        rs_check(err, "imu context");
+        rs_check(err, "context");
         let config = sys::rs2_create_config(&mut err);
-        rs_check(err, "imu config");
+        rs_check(err, "config");
         if let Some(serial) = cfg.serial() {
             let serial = CString::new(serial).unwrap_or_else(|e| fail("serial_number", e));
             sys::rs2_config_enable_device(config, serial.as_ptr(), &mut err);
             rs_check(err, "enable_device");
         }
-        let motion = sys::rs2_format_RS2_FORMAT_MOTION_XYZ32F;
-        let accel = sys::rs2_stream_RS2_STREAM_ACCEL;
-        sys::rs2_config_enable_stream(config, accel, -1, 0, 0, motion, accel_hz, &mut err);
-        rs_check(err, "accel stream");
-        let gyro = sys::rs2_stream_RS2_STREAM_GYRO;
-        sys::rs2_config_enable_stream(config, gyro, -1, 0, 0, motion, cfg.imu_hz, &mut err);
-        rs_check(err, "gyro stream");
+        let size = (cfg.width, cfg.height);
+        // The camera hands out RGB directly; camera.py asks for BGR and converts.
+        if cfg.stream_color() {
+            let color = (Rs2StreamKind::Color, -1);
+            enable_stream(
+                config,
+                color,
+                size,
+                Rs2Format::Rgb8,
+                cfg.fps,
+                "color stream",
+            );
+        }
+        if cfg.stream_depth() {
+            let depth = (Rs2StreamKind::Depth, -1);
+            enable_stream(config, depth, size, Rs2Format::Z16, cfg.fps, "depth stream");
+        }
+        if cfg.enable_infrared {
+            // index 1 = left imager, index 2 = right
+            for index in 1..=2 {
+                let infrared = (Rs2StreamKind::Infrared, index);
+                enable_stream(
+                    config,
+                    infrared,
+                    size,
+                    Rs2Format::Y8,
+                    cfg.fps,
+                    "infrared stream",
+                );
+            }
+        }
+        if cfg.enable_imu {
+            let motion = Rs2Format::MotionXyz32F;
+            let accel = (Rs2StreamKind::Accel, -1);
+            enable_stream(config, accel, (0, 0), motion, accel_hz, "accel stream");
+            let gyro = (Rs2StreamKind::Gyro, -1);
+            enable_stream(config, gyro, (0, 0), motion, cfg.imu_hz, "gyro stream");
+        }
         let pipe = sys::rs2_create_pipeline(context, &mut err);
-        rs_check(err, "imu pipeline");
+        rs_check(err, "pipeline");
         let profile = sys::rs2_pipeline_start_with_config_and_callback(
             pipe,
             config,
-            Some(on_motion_frame),
-            sender.cast(),
+            Some(on_frame),
+            sinks.cast(),
             &mut err,
         );
-        rs_check(err, "imu start");
-        let pipeline = ImuPipeline {
+        rs_check(err, "start");
+        let profile = PipelineProfile::try_from(NonNull::new(profile).unwrap())
+            .unwrap_or_else(|e| fail("profile", e));
+        Camera {
             pipe,
             config,
             context,
-            sender,
-        };
+            sinks,
+            profile: Some(profile),
+        }
+    };
 
-        // librealsense's global-time fit for the IMU goes wrong once the camera bus is
-        // full (IntelRealSense/librealsense#9131, fix unreleased in #15360). The raw
-        // hardware clock is stable, so take it and re-anchor it in HostClock::host_time.
-        let profile = PipelineProfile::try_from(NonNull::new(profile).unwrap())
-            .unwrap_or_else(|e| fail("imu profile", e));
-        for mut sensor in profile.device().sensors() {
+    // librealsense's global-time fit for the IMU goes wrong once the camera bus is
+    // full (IntelRealSense/librealsense#9131, fix unreleased in #15360). The raw
+    // hardware clock is stable, so take it and re-anchor it in HostClock::host_time.
+    if cfg.enable_imu {
+        for mut sensor in camera.profile().device().sensors() {
             if sensor_name(&sensor) == MOTION_MODULE_NAME {
                 let _ = sensor.set_option(Rs2Option::GlobalTimeEnabled, 0.0);
             }
         }
-        pipeline
-    };
-    (pipeline, rx)
+    }
+    (camera, latest, motion_rx)
 }
 
 fn imu_thread(
-    pipeline: ImuPipeline,
     rx: mpsc::Receiver<Motion>,
     cfg: &Config,
     shared: &Shared,
@@ -1362,7 +1471,6 @@ fn imu_thread(
             let _ = handle.block_on(outs.imu.publish(&imu_message(&frame_id, sample)));
         }
     }
-    drop(pipeline);
 }
 
 #[tokio::main]
