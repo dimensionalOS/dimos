@@ -742,7 +742,8 @@ impl GscPgo {
     /// proposal if its scan-context match beats the one already waiting (the loser is recorded as
     /// "outranked"), so a busy search thread still gets the most promising keyframe it missed.
     pub fn propose_closure(&mut self) {
-        if self.key_poses.len() < 10 {
+        // nothing to close onto until a keyframe exists whose submap leaves out this one's scan
+        if self.key_poses.is_empty() || self.newest_closure_target() == 0 {
             return;
         }
         let cur_idx = self.key_poses.len() - 1;
