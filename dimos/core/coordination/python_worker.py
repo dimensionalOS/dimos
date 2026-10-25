@@ -134,16 +134,18 @@ class Actor:
     def _send_request_to_worker(self, request: WorkerRequest) -> Any:
         if self._conn is None:
             raise RuntimeError("Actor connection not available - cannot send requests")
-        # Encode before taking the lock: an unencodable argument raises to the
-        # caller without holding up the other modules on this worker.
+        # Encode and decode outside the lock: an unencodable argument raises to the
+        # caller, and a large result is decoded, without holding up the other modules
+        # on this worker.
         payload = encode(request)
         if self._lock is not None:
             with self._lock:
                 self._conn.send_bytes(payload)
-                response: WorkerResponse = _recv(self._conn)
+                reply = self._conn.recv_bytes()
         else:
             self._conn.send_bytes(payload)
-            response = _recv(self._conn)
+            reply = self._conn.recv_bytes()
+        response: WorkerResponse = decode(reply)
         if response.error:
             if "AttributeError" in response.error:  # TODO: better error handling
                 raise AttributeError(response.error)
@@ -263,7 +265,8 @@ class PythonWorker:
             payload = encode(request)
             with self._lock:
                 self._conn.send_bytes(payload)
-                response: WorkerResponse = _recv(self._conn)
+                reply = self._conn.recv_bytes()
+            response: WorkerResponse = decode(reply)
 
             if response.error:
                 raise RuntimeError(f"Failed to deploy module: {response.error}")

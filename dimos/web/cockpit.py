@@ -82,8 +82,9 @@ def _check_rate(name: str, value: float) -> None:
 class _FrozenDict(dict[str, Any]):
     """Read-only dict for Channel.params: a frozen dataclass must not leak a
     mutable mapping whose edits would change what a later cockpit() emits.
-    A dict subclass (not mappingproxy) so it stays picklable and
-    json.dumps-able."""
+    A dict subclass (not mappingproxy) so it stays json.dumps-able and
+    copyable: __reduce__ serves copy.deepcopy (blueprint config values are
+    deep-copied before deployment), cbor_encode the worker pipe."""
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (_FrozenDict, (dict(self),))

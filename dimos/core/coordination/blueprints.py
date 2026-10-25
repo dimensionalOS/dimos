@@ -31,13 +31,11 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel
-
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.module import ModuleBase, is_module_type
-from dimos.core.stream import IO, In, Out, Transport
+from dimos.core.stream import IO, In, Out, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
@@ -188,29 +186,6 @@ class BlueprintAtom:
             kwargs=kwargs,
             instance_name=instance_name,
         )
-
-
-@dataclass(frozen=True)
-class TransportSpec:
-    """Deferred transport construction: a transport class plus its ctor args.
-
-    Blueprint authors declare transports via ``Cls.spec(...)`` so nothing is
-    constructed at blueprint-definition time. The coordinator materializes
-    specs at build time, once CLI/env/config overrides have resolved.
-    """
-
-    cls: type[Transport[Any]]
-    args: tuple[Any, ...] = ()
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
-
-    @property
-    def config_cls(self) -> type[BaseModel] | None:
-        # Set by transports that expose a pydantic config override surface
-        return self.cls._config_cls
-
-    def build(self, config: BaseModel | None = None) -> Transport[Any]:
-        extra = {"config": config} if config is not None else {}
-        return self.cls(*self.args, **self.kwargs, **extra)
 
 
 # MappingProxyType fields: sent as plain dicts, rebuilt on decode.

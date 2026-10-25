@@ -14,6 +14,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import copy
 import errno
 import os
 import threading
@@ -23,6 +24,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 from lcm import LCM
 import pytest
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.service.lcmservice import (
     _DEFAULT_LCM_URL,
@@ -394,6 +396,23 @@ class TestLCMService:
             # Give the thread a moment to stop
             time.sleep(0.1)
             assert service._thread is None
+
+    def test_codec_round_trip_and_deepcopy_rebuild_an_unstarted_service(self) -> None:
+        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
+            mock_lcm_class.return_value = create_autospec(LCM, spec_set=True, instance=True)
+            service = LCMService(url="udpm://239.255.76.68:7799?ttl=1", ttl=1)
+            service.start()
+            try:
+                assert "lcm" not in service.cbor_encode()
+                for clone in (decode(encode(service)), copy.deepcopy(service)):
+                    assert type(clone) is LCMService
+                    assert clone.config == service.config
+                    assert clone._thread is None
+                    clone.stop()
+                # The service plus one native instance per clone.
+                assert mock_lcm_class.call_count == 3
+            finally:
+                service.stop()
 
     def test_stop_cleans_up_lcm_instance(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:

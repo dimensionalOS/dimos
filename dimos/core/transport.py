@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
 import copy
 import importlib.util
 import threading
@@ -37,6 +38,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     PickleZenoh,
     Topic as ZenohTopic,
     Zenoh,
+    ZenohQoS,
 )
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils import colors
@@ -47,7 +49,6 @@ logger = setup_logger()
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.core.coordination.blueprints import TransportSpec
     from dimos.protocol.pubsub.impl.rospubsub import DimosROS
 
 T = TypeVar("T")
@@ -91,22 +92,16 @@ class PubSubTransport(Transport[T]):
         """The channel string this transport publishes and subscribes on."""
         return str(self.topic)
 
-    @classmethod
-    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
-        """Defer construction: capture ctor args for the coordinator to build later."""
-        from dimos.core.coordination.blueprints import TransportSpec
-
-        return TransportSpec(cls, args, kwargs)
-
-    # Transports cross process boundaries as their constructor settings (never the
-    # live pubsub): a dict with the plain "topic" string plus whatever the subclass
-    # needs to rebuild itself.
-    def cbor_encode(self) -> dict[str, Any]:
-        raise NotImplementedError
+    # Transports cross process boundaries as their constructor kwargs, never as the
+    # live pubsub: cbor_encode() returns a dict with the plain "topic" string plus
+    # whatever else cls(**kwargs) needs, and StreamDescriptor carries the same dict as
+    # a TransportSpec so that listing streams builds nothing.
+    @abstractmethod
+    def cbor_encode(self) -> dict[str, Any]: ...
 
     @classmethod
     def cbor_decode(cls, data: dict[str, Any]) -> PubSubTransport[Any]:
-        raise NotImplementedError
+        return cls(**data)
 
     def __deepcopy__(self, memo: dict[int, Any]) -> PubSubTransport[T]:
         # A fresh instance from the same settings, never a copy of the live pubsub:
@@ -131,11 +126,6 @@ class pLCMTransport(PubSubTransport[T]):
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic, **self.lcm.config.model_dump(exclude={"lcm"})}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> pLCMTransport[Any]:
-        data = dict(data)
-        return cls(data.pop("topic"), **data)
 
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
@@ -182,11 +172,6 @@ class LCMTransport(PubSubTransport[T]):
             **self.lcm.config.model_dump(exclude={"lcm"}),
         }
 
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> LCMTransport[Any]:
-        data = dict(data)
-        return cls(data.pop("topic"), data.pop("type"), **data)
-
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
             self.start()
@@ -222,19 +207,14 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 class ROSTransport(PubSubTransport[DimosMsg]):
     _ros: DimosROS | None = None
 
-    def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
+    def __init__(self, topic: str, msg_type: type[DimosMsg]) -> None:
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
         super().__init__(ROSTopic(topic, msg_type))
-        self._kwargs = kwargs
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic.topic, "msg_type": self.topic.msg_type}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> ROSTransport:
-        return cls(data["topic"], data["msg_type"])
 
     def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
         if self._ros is None:
@@ -254,7 +234,7 @@ class ROSTransport(PubSubTransport[DimosMsg]):
         if self._ros is None:
             from dimos.protocol.pubsub.impl.rospubsub import DimosROS  # rclpy: see __init__
 
-            self._ros = DimosROS(**self._kwargs)
+            self._ros = DimosROS()
             self._ros.start()
 
     def stop(self) -> None:
@@ -269,12 +249,16 @@ DDS_AVAILABLE = importlib.util.find_spec("cyclonedds") is not None
 
 
 class DDSTransport(PubSubTransport[T]):
-    def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, topic: str, type: type, qos: Any = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         # cyclonedds: see DDS_AVAILABLE.
+        from cyclonedds.qos import Qos
+
         from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
 
         super().__init__(DDSTopic(topic, type))
-        self.dds = DDS(**kwargs)
+        if isinstance(qos, dict):  # the wire form cbor_encode() produces
+            qos = Qos.fromdict(qos)
+        self.dds = DDS(qos=qos, **kwargs)
         self._started: bool = False
         self._start_lock = threading.RLock()
 
@@ -286,19 +270,6 @@ class DDSTransport(PubSubTransport[T]):
             "qos": qos.asdict() if qos is not None else None,  # type: ignore[no-untyped-call]
             **self.dds.config.model_dump(),
         }
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> DDSTransport[Any]:
-        from cyclonedds.qos import Qos  # cyclonedds: see DDS_AVAILABLE.
-
-        data = dict(data)
-        qos = data.pop("qos")
-        return cls(
-            data.pop("topic"),
-            data.pop("type"),
-            qos=Qos.fromdict(qos) if qos is not None else None,
-            **data,
-        )
 
     def start(self) -> None:
         with self._start_lock:
@@ -373,10 +344,6 @@ class WebRTCTransport(PubSubTransport[M]):
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic, "msg_type": self._msg_type, "config": self._config}
 
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> WebRTCTransport[Any]:
-        return cls(data["topic"], data["msg_type"], config=data["config"])
-
     def broadcast(self, _: Stream[M] | None, msg: M) -> None:
         if not self._started:
             self.start()
@@ -449,19 +416,13 @@ class _ProviderTransport(Transport[T]):
     def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
         self._config = config or self._config_cls(**config_kwargs)
 
-    def cbor_encode(self) -> ProviderConfig:
-        return self._config
+    # Constructor kwargs, like PubSubTransport.cbor_encode.
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"config": self._config}
 
     @classmethod
-    def cbor_decode(cls, config: ProviderConfig) -> _ProviderTransport[Any]:
-        return cls(config=config)
-
-    @classmethod
-    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
-        """Defer construction: capture ctor args for the coordinator to build later."""
-        from dimos.core.coordination.blueprints import TransportSpec
-
-        return TransportSpec(cls, args, kwargs)
+    def cbor_decode(cls, data: dict[str, Any]) -> _ProviderTransport[Any]:
+        return cls(**data)
 
     def stop(self) -> None:
         pass  # shared provider is process-scoped (see WebRTCTransport.stop)
@@ -563,9 +524,15 @@ class ZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(self, topic: str | ZenohTopic, type: type | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        topic: str | ZenohTopic,
+        type: type | None = None,
+        qos: ZenohQoS | None = None,
+        **kwargs: Any,
+    ) -> None:
         if isinstance(topic, str):
-            topic = ZenohTopic(topic, type)
+            topic = ZenohTopic(topic, type, qos=qos)
         super().__init__(topic)
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
@@ -581,10 +548,6 @@ class ZenohTransport(PubSubTransport[T]):
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic.topic, "type": self.topic.lcm_type, "qos": self.topic.qos}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> ZenohTransport[Any]:
-        return cls(ZenohTopic(data["topic"], data["type"], qos=data["qos"]))
 
     def start(self) -> None:
         with self._start_lock:
@@ -620,8 +583,8 @@ class pZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(self, topic: str | ZenohTopic, **kwargs: Any) -> None:
-        self._zenoh_topic = ZenohTopic(topic) if isinstance(topic, str) else topic
+    def __init__(self, topic: str | ZenohTopic, qos: ZenohQoS | None = None, **kwargs: Any) -> None:
+        self._zenoh_topic = ZenohTopic(topic, qos=qos) if isinstance(topic, str) else topic
         super().__init__(self._zenoh_topic.pattern)
         self.zenoh = PickleZenoh(**kwargs)
         self._start_lock = threading.RLock()
@@ -637,10 +600,6 @@ class pZenohTransport(PubSubTransport[T]):
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self._zenoh_topic.topic, "qos": self._zenoh_topic.qos}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> pZenohTransport[Any]:
-        return cls(ZenohTopic(data["topic"], qos=data["qos"]))
 
     def start(self) -> None:
         with self._start_lock:

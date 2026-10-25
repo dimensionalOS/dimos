@@ -25,9 +25,11 @@ from typing import (
     Generic,
     TypedDict,
     TypeVar,
+    cast,
 )
 
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.lcmpubsub import CborLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
@@ -50,16 +52,38 @@ TopicGen = Callable[[str, bool], TopicT]
 MsgGen = Callable[[str, list], MsgT]  # type: ignore[type-arg]
 
 
+# Bump when the envelope below changes. A peer on another version is logged and
+# ignored instead of being misparsed.
+RPC_WIRE_VERSION = 1
+
+
 class RPCReq(TypedDict):
+    v: int
     id: float | None
     name: str
-    args: Args
+    # encode((args, kwargs)). The envelope holds only primitives, so it always decodes;
+    # the handler decodes the body and answers a bad one with the error instead of the
+    # pubsub dropping the whole request.
+    args: bytes
 
 
 class RPCRes(TypedDict, total=False):
+    v: int
     id: float
-    res: Any
-    exception: dict[str, Any] | None  # Contains exception info: type, message, traceback
+    res: bytes  # encode(result)
+    exception: bytes  # encode(serialize_exception(e))
+
+
+def _decode_reply(res: RPCRes) -> Any:
+    """The result or the remote exception, or the decode failure itself so the caller
+    raises instead of timing out."""
+    try:
+        exc_data = res.get("exception")
+        if exc_data is not None:
+            return deserialize_exception(decode(exc_data))
+        return decode(res["res"])
+    except Exception as e:
+        return e
 
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
@@ -90,17 +114,17 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
-    def _encodeRPCReq(self, req: RPCReq) -> dict[str, Any]:
-        return dict(req)
-
-    def _decodeRPCRes(self, msg: dict[Any, Any]) -> RPCRes:
-        return msg  # type: ignore[return-value]
-
-    def _encodeRPCRes(self, res: RPCRes) -> dict[str, Any]:
-        return dict(res)
-
-    def _decodeRPCReq(self, msg: dict[Any, Any]) -> RPCReq:
-        return msg  # type: ignore[return-value]
+    def _wire_version_ok(self, msg: Any, topic: TopicT) -> bool:
+        version = msg.get("v") if isinstance(msg, dict) else None
+        if version == RPC_WIRE_VERSION:
+            return True
+        logger.error(
+            "Ignoring RPC message from another wire version: is another dimos version on the bus?",
+            topic=str(topic),
+            version=version,
+            expected=RPC_WIRE_VERSION,
+        )
+        return False
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         return self._call_pool.get()
@@ -141,12 +165,16 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
 
+        # Encode before registering the callback: an unencodable argument raises to
+        # the caller and leaves nothing pending.
+        body = encode(arguments)
+
         # Generate unique msg_id: timestamp + counter for concurrent calls
         with self._msg_id_lock:
             self._msg_id_counter += 1
             msg_id = time.time() + (self._msg_id_counter / 1_000_000)
 
-        req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
+        req: RPCReq = {"v": RPC_WIRE_VERSION, "name": name, "args": body, "id": msg_id}
 
         # Get or create shared subscription for this RPC's response topic
         topic_res_key = str(topic_res)
@@ -155,8 +183,10 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                 # Create shared handler that routes to callbacks by msg_id
                 callbacks_dict: dict[float, Callable[..., Any]] = {}
 
-                def shared_response_handler(msg: MsgT, _: TopicT) -> None:
-                    res = self._decodeRPCRes(msg)  # type: ignore[arg-type]
+                def shared_response_handler(msg: MsgT, topic: TopicT) -> None:
+                    if not self._wire_version_ok(msg, topic):
+                        return
+                    res = cast("RPCRes", msg)
                     res_id = res.get("id")
                     if res_id is None:
                         return
@@ -168,19 +198,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     if callback is None:
                         return  # No callback registered (already handled or timed out)
 
-                    # Check if response contains an exception
-                    exc_data = res.get("exception")
-                    if exc_data:
-                        # Reconstruct the exception and pass it to the callback
-                        from typing import cast
-
-                        from dimos.protocol.rpc.rpc_utils import SerializedException
-
-                        exc = deserialize_exception(cast("SerializedException", exc_data))
-                        callback(exc)
-                    else:
-                        # Normal response - pass the result
-                        callback(res.get("res"))
+                    callback(_decode_reply(res))
 
                 # Create single shared subscription
                 unsub = self.subscribe(topic_res, shared_response_handler)
@@ -197,10 +215,8 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     _, callbacks_dict = self._response_subs[topic_res_key]
                     callbacks_dict.pop(msg_id, None)
 
-        # Publish request; an unencodable argument raises to the caller and leaves
-        # nothing pending.
         try:
-            self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
+            self.publish(topic_req, cast("MsgT", req))
         except Exception:
             unsubscribe_callback()
             raise
@@ -209,8 +225,8 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
     def call_nowait(self, name: str, arguments: Args) -> None:
         topic_req = self.topicgen(name, False)
-        req: RPCReq = {"name": name, "args": arguments, "id": None}
-        self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
+        req: RPCReq = {"v": RPC_WIRE_VERSION, "name": name, "args": encode(arguments), "id": None}
+        self.publish(topic_req, cast("MsgT", req))
 
     def serve_rpc(self, f: FunctionType, name: str | None = None):  # type: ignore[no-untyped-def, override]
         if not name:
@@ -219,36 +235,38 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
 
-        def receive_call(msg: MsgT, _: TopicT) -> None:
-            req = self._decodeRPCReq(msg)  # type: ignore[arg-type]
+        def receive_call(msg: MsgT, topic: TopicT) -> None:
+            if not self._wire_version_ok(msg, topic):
+                return
+            req = cast("RPCReq", msg)
 
             if req.get("name") != name:
                 return
 
-            args = req.get("args")
-            if args is None:
+            body = req.get("args")
+            if body is None:
                 return
+            req_id = req.get("id")
 
             # Execute RPC handler in a separate thread to avoid deadlock when
-            # the handler makes nested RPC calls.
+            # the handler makes nested RPC calls. The body is decoded here so that a
+            # payload this process cannot decode is answered with the error.
             def execute_and_respond() -> None:
                 try:
+                    args = decode(body)
                     response = f(*args[0], **args[1])
-                    req_id = req.get("id")
                     if req_id is not None:
-                        self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))  # type: ignore[arg-type]
-
+                        res: RPCRes = {"v": RPC_WIRE_VERSION, "id": req_id, "res": encode(response)}
+                        self.publish(topic_res, cast("MsgT", res))
                 except Exception as e:
                     logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
-                    # Send exception data to client if this was a request with an ID
-                    req_id = req.get("id")
                     if req_id is not None:
-                        exc_data = serialize_exception(e)
-                        # Type ignore: SerializedException is compatible with dict[str, Any]
-                        self.publish(
-                            topic_res,
-                            self._encodeRPCRes({"id": req_id, "exception": exc_data}),  # type: ignore[arg-type, typeddict-item]
-                        )
+                        failure: RPCRes = {
+                            "v": RPC_WIRE_VERSION,
+                            "id": req_id,
+                            "exception": encode(serialize_exception(e)),
+                        }
+                        self.publish(topic_res, cast("MsgT", failure))
 
             # Always use thread pool to execute RPC handlers (prevents deadlock)
             self._get_call_thread_pool().submit(execute_and_respond)

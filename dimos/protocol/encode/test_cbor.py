@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import collections.abc
 from dataclasses import dataclass, field
 import enum
 import functools
@@ -21,11 +22,12 @@ import math
 from pathlib import Path
 import threading
 from types import MappingProxyType
-from typing import Any, NamedTuple
+import typing
+from typing import Any, Generic, NamedTuple, TypeVar
 
 from cbor2 import CBORTag, dumps
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 import pytest
 
 from dimos.core.global_config import GlobalConfig
@@ -37,12 +39,17 @@ from dimos.protocol.encode.cbor import (
     TAG_DATACLASS,
     TAG_DIMOSMSG,
     TAG_ENUM,
+    TAG_GENERIC_ALIAS,
+    TAG_REGISTERED,
+    TAG_UNION,
     CborDecodeError,
     decode,
     encode,
     register_codec,
 )
 from dimos.types.robot_location import RobotLocation
+
+T = TypeVar("T")
 
 
 class Point(NamedTuple):
@@ -62,6 +69,51 @@ class Level(enum.IntEnum):
 
 class Mode(str, enum.Enum):
     FAST = "fast"
+
+
+class Permission(enum.Flag):
+    R = 1
+    W = 2
+
+
+class Bits(enum.IntFlag):
+    A = 1
+    B = 4
+
+
+class Box(Generic[T]):
+    pass
+
+
+class Greeter(typing.Protocol):
+    """Its metaclass lives in typing, but it is an ordinary class to the codec."""
+
+    def hi(self) -> str: ...
+
+
+@dataclass
+class WithDerived:
+    seed: int = 1
+
+    def __post_init__(self) -> None:
+        self._double = self.seed * 2
+
+
+class WithPrivate(BaseModel):
+    value: int = 1
+    _derived: int = PrivateAttr(default=0)
+
+    def model_post_init(self, _context: Any) -> None:
+        self._derived = self.value * 2
+
+
+class RaisingHook:
+    def cbor_encode(self) -> None:
+        raise ValueError("no owner")
+
+    @classmethod
+    def cbor_decode(cls, data: Any) -> RaisingHook:
+        return cls()
 
 
 @dataclass(frozen=True)
@@ -197,6 +249,8 @@ def roundtrip(value: Any) -> Any:
         Color.RED,
         Level.HIGH,
         Mode.FAST,
+        Permission.R | Permission.W,
+        Bits.A | Bits.B,
         Point(1, "y"),
         Frozen(1, (2, 3)),
         Slotted(1.5, ["t"]),
@@ -312,6 +366,7 @@ def test_image_roundtrip(image: Image) -> None:
 
 def test_class_and_function_references() -> None:
     assert roundtrip(Outer.Inner) is Outer.Inner
+    assert roundtrip(Greeter) is Greeter
     assert roundtrip(list[float]) == list[float]
     assert roundtrip(dict[str, tuple[int, ...]]) == dict[str, tuple[int, ...]]
     assert roundtrip(int | None) == int | None
@@ -430,3 +485,74 @@ def test_bad_payloads_raise_decode_error(payload: Any) -> None:
 def test_truncated_input_raises_decode_error() -> None:
     with pytest.raises(CborDecodeError):
         decode(encode([1, 2, 3])[:-1])
+
+
+@pytest.mark.parametrize(
+    "form, expected",
+    [
+        (typing.List[int], list[int]),  # noqa: UP006
+        (typing.Dict[str, typing.Any], dict[str, typing.Any]),  # noqa: UP006
+        (typing.Optional[int], int | None),  # noqa: UP045
+        (typing.Union[int, str, None], int | str | None),
+        (typing.Literal["a", 1], typing.Literal["a", 1]),
+        (typing.Literal["a"] | None, typing.Literal["a"] | None),
+        (typing.Any, typing.Any),
+        (collections.abc.Callable[[int], str], collections.abc.Callable[[int], str]),
+        (Box[int], Box[int]),
+        (tuple[()], tuple[()]),
+    ],
+)
+def test_typing_forms_roundtrip(form: Any, expected: Any) -> None:
+    assert roundtrip(form) == expected
+
+
+def test_registered_codec_payload_cannot_name_its_own_decoder() -> None:
+    # Before the fix this ran eval("6*7"); now only a type this process registered decodes.
+    for type_ref in ("builtins:eval", "builtins:exec"):
+        with pytest.raises(CborDecodeError, match="is not a class"):
+            decode(dumps(CBORTag(TAG_REGISTERED, [type_ref, "builtins", "6*7"])))
+    with pytest.raises(CborDecodeError, match="no codec registered"):
+        decode(dumps(CBORTag(TAG_REGISTERED, ["builtins:int", "builtins", "6*7"])))
+    with pytest.raises(CborDecodeError, match="cannot import"):
+        decode(dumps(CBORTag(TAG_REGISTERED, [f"{__name__}:Celsius", "no_such_module_x", 1.0])))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        CBORTag(TAG_UNION, [1, 2]),
+        CBORTag(TAG_UNION, []),
+        CBORTag(TAG_GENERIC_ALIAS, [1, [2]]),
+        CBORTag(TAG_GENERIC_ALIAS, ["not a class", []]),
+    ],
+)
+def test_type_form_payloads_must_hold_types(payload: Any) -> None:
+    with pytest.raises(CborDecodeError):
+        decode(dumps(payload))
+
+
+def test_missing_dataclass_field_names_class_and_field() -> None:
+    with pytest.raises(CborDecodeError, match=r"Frozen.*'b'"):
+        decode(dumps(CBORTag(TAG_DATACLASS, [f"{__name__}:Frozen", {"a": 1}])))
+
+
+def test_encode_only_raises_type_error() -> None:
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        encode("\ud800")  # a lone surrogate, which cbor2 itself rejects
+    with pytest.raises(TypeError, match=r"RaisingHook at value\[0\]: no owner"):
+        encode([RaisingHook()])
+
+
+def test_dataclass_derived_state_stays_behind() -> None:
+    # The documented rule: fields only, __post_init__ does not run again.
+    out = roundtrip(WithDerived(5))
+    assert out.seed == 5
+    assert not hasattr(out, "_double")
+
+
+def test_pydantic_private_state_is_process_local() -> None:
+    model = WithPrivate(value=3)
+    model._derived = 99
+    out = roundtrip(model)
+    assert out.value == 3
+    assert out._derived == 6  # model_post_init ran on the receiving side

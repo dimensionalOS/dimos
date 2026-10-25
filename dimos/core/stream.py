@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import enum
 from typing import (
     TYPE_CHECKING,
@@ -37,7 +38,7 @@ import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from reactivex.observable import Observable
 
@@ -107,6 +108,47 @@ class Transport(Resource, ObservableMixin[T]):
 
     def publish(self, msg: T) -> None:
         self.broadcast(None, msg)
+
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        return TransportSpec(cls, args, kwargs)
+
+
+@dataclass(frozen=True)
+class TransportSpec:
+    """Deferred transport construction: a transport class plus its ctor args.
+
+    Blueprint authors declare transports via ``Cls.spec(...)`` so nothing is
+    constructed at blueprint-definition time. The coordinator materializes
+    specs at build time, once CLI/env/config overrides have resolved. A live
+    transport is described the same way (``TransportSpec.of``) when stream
+    metadata crosses a process boundary, so listing streams opens no sockets.
+    """
+
+    cls: type[Transport[Any]]
+    args: tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, transport: Transport[Any]) -> TransportSpec:
+        """The spec that rebuilds ``transport``: its class plus the kwargs ``cbor_encode()`` reports."""
+        encode = getattr(type(transport), "cbor_encode", None)
+        if encode is None:
+            raise TypeError(
+                f"{type(transport).__name__} has no cbor_encode(), so it cannot be "
+                "described to another process"
+            )
+        return cls(type(transport), kwargs=encode(transport))
+
+    @property
+    def config_cls(self) -> type[BaseModel] | None:
+        # Set by transports that expose a pydantic config override surface
+        return self.cls._config_cls
+
+    def build(self, config: BaseModel | None = None) -> Transport[Any]:
+        extra = {"config": config} if config is not None else {}
+        return self.cls(*self.args, **self.kwargs, **extra)
 
 
 class Stream(Generic[T]):

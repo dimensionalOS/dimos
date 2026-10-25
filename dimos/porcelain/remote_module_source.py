@@ -143,16 +143,17 @@ class RemoteModuleSource(ModuleSource):
                 )
                 if descriptor is None:
                     raise AttributeError(f"{remote_name!r} has no stream named {name!r}")
-                stream_type, transport = descriptor.type, descriptor.transport
-                if isinstance(
-                    transport, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
+                spec = descriptor.transport
+                if issubclass(
+                    spec.cls, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
                 ):
                     raise NotImplementedError(
                         "WebRTC stream subscriptions require an operator client; "
                         "use the hosted teleop client."
                     )
-                # Expose a subscription view for inputs, outputs and IO ports.
-                self._streams[key] = RemoteOut(stream_type, name, remote_name, transport)
+                # Expose a subscription view for inputs, outputs and IO ports. Only the
+                # requested stream's transport is built; descriptors are data.
+                self._streams[key] = RemoteOut(descriptor.type, name, remote_name, spec.build())
             return self._streams[key]
 
     def invalidate(self, name: str) -> None:

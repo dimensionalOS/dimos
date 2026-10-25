@@ -17,14 +17,30 @@
 JSON-like values (None, bool, int, float, str, bytes, list, dict with primitive keys)
 map to native CBOR. Every other supported type travels inside a CBOR tag so it comes
 back as the same Python type in the other process: tuple, NamedTuple, set, frozenset,
-numpy arrays and scalars, Enum, DimosMsg (as its class plus LCM bytes), dataclasses, pydantic models,
-Path, classes (including ``list[float]``-style generics and ``X | Y`` unions), module-level
-functions, functools.partial, and any class that implements
-``cbor_encode``/``cbor_decode`` (see ``CborEncodable``). Anything else raises
-``TypeError`` at encode time. There is no pickle-style fallback.
+numpy arrays and scalars, Enum (by value, so Flag combinations survive), DimosMsg (as
+its class plus LCM bytes), dataclasses, pydantic models, Path, classes, type forms
+(``list[float]``, ``typing.List[float]``, ``X | Y``, ``Optional[X]``, ``Literal[...]``,
+``Any``), module-level functions, functools.partial, and any class that implements
+``cbor_encode``/``cbor_decode`` (see ``CborEncodable``) or is registered with
+``register_codec``. Anything else raises ``TypeError`` at encode time, naming the
+value's path in the payload. There is no pickle-style fallback.
 
 Classes and functions are sent by reference as ``"module:qualname"`` and must be
 importable under that name on the receiving side.
+
+Dataclasses travel as their ``fields()`` and are rebuilt without ``__init__`` or
+``__post_init__``: the sender already normalized the values, and anything
+``__post_init__`` or a cached property derives stays behind. A dataclass that needs
+such state on the receiving side recomputes it lazily or implements the hooks.
+
+Pydantic models travel as their fields and extras and are rebuilt with
+``model_construct``: validation does not run again, ``model_post_init`` does, and
+private attributes start from their defaults, so private state is process-local.
+
+Decoding never calls a callable the payload chose. It imports modules by name and
+calls only ``cbor_decode``, ``lcm_decode``, ``model_construct``, ``_make``,
+``__new__`` and ``__class_getitem__`` of the classes it resolves, plus the decoders
+this process registered with ``register_codec``.
 """
 
 from __future__ import annotations
@@ -38,6 +54,7 @@ import operator
 import pathlib
 import sys
 import types
+import typing
 from typing import Any, Protocol
 
 import cbor2
@@ -65,6 +82,7 @@ TAG_DICT = 4056
 TAG_GENERIC_ALIAS = 4057
 TAG_UNION = 4058
 TAG_ELLIPSIS = 4059
+TAG_LITERAL = 4060
 
 _PRIMITIVES = (type(None), bool, int, float, str, bytes)
 
@@ -79,6 +97,7 @@ class CborEncodable(Protocol):
     ``cbor_encode`` returns any encodable value; ``cbor_decode`` rebuilds an instance
     from it. The returned object may be a stand-in of another class (a stream handle
     decodes to its remote twin), which is why ``cbor_decode`` is typed as ``Any``.
+    The codec looks both hooks up on the class, never on the instance.
     """
 
     def cbor_encode(self) -> Any: ...
@@ -87,22 +106,30 @@ class CborEncodable(Protocol):
     def cbor_decode(cls, data: Any) -> Any: ...
 
 
-# type -> (encode, "module:qualname" of the decode function)
-_REGISTRY: dict[type, tuple[Callable[[Any], Any], str]] = {}
+# type -> (encode, decode, name of the module that registered them)
+_REGISTRY: dict[type, tuple[Callable[[Any], Any], Callable[[Any], Any], str]] = {}
 
 
 def register_codec(type_: type, encode: Callable[[Any], Any], decode: Callable[[Any], Any]) -> None:
     """Make instances of ``type_`` (and subclasses) encodable without touching the class.
 
-    ``decode`` must be a module-level function: the payload names it by reference so the
-    decoding process imports the registering module on demand.
+    ``decode`` must be a module-level function, and this call must run when its module
+    is imported: a payload names the type and that module, the receiving process imports
+    the module and then uses the decoder from its own registry. A decoder is never taken
+    from the payload.
     """
-    _REGISTRY[type_] = (encode, _ref(decode, repr(decode)))
+    _ref(decode, repr(decode))
+    _REGISTRY[type_] = (encode, decode, decode.__module__)
 
 
 def encode(obj: Any) -> bytes:
-    """Encode ``obj`` to CBOR bytes. Raises ``TypeError`` for unsupported values."""
-    return cbor2.dumps(_prepare(obj, "value", set()))
+    """Encode ``obj`` to CBOR bytes. Raises ``TypeError`` for any value that cannot cross."""
+    try:
+        return cbor2.dumps(_prepare(obj, "value", set()))
+    except TypeError:
+        raise
+    except Exception as e:  # cbor2 itself, e.g. a str holding a lone surrogate
+        raise TypeError(f"Cannot CBOR-encode value: {e}") from e
 
 
 def decode(data: bytes | bytearray | memoryview) -> Any:
@@ -117,7 +144,14 @@ def decode(data: bytes | bytearray | memoryview) -> Any:
 
 
 def _prepare(obj: Any, path: str, active: set[int]) -> Any:
-    """Map an object graph to values cbor2 encodes natively (CBORTag for our tags)."""
+    """Map an object graph to values cbor2 encodes natively (CBORTag for our tags).
+
+    This walk is the cost of the codec (about 10x pickle on many small objects). A
+    cbor2 ``encoders=`` hybrid was measured in 2026-10 and did not help: the C encoder
+    resolves types along the MRO, so ``str``/``int``/``float`` need exact-type Python
+    wrappers to keep ``Key(str)``, ``IntEnum`` and ``np.float64`` from being flattened,
+    and those wrappers cost as much as this walk. Send arrays, not tuples of scalars.
+    """
     t = type(obj)
     if t in _PRIMITIVES:
         return obj
@@ -144,25 +178,29 @@ def _prepare_object(obj: Any, t: type, path: str, active: set[int]) -> Any:
     # metaclass serialize classes that are not importable by name.
     custom_encode = getattr(t, "cbor_encode", None)
     if callable(custom_encode):
-        payload = _prepare(custom_encode(obj), f"{path}.cbor_encode()", active)
-        return CBORTag(TAG_CUSTOM, [_ref(t, path), payload])
-    # Generic aliases and unions come before the class check: on Python 3.10
-    # isinstance(list[int], type) is True.
-    if isinstance(obj, types.GenericAlias):
-        origin = _prepare(obj.__origin__, f"{path}.__origin__", active)
-        return CBORTag(TAG_GENERIC_ALIAS, [origin, _prepare_items(obj.__args__, path, active)])
-    if isinstance(obj, types.UnionType):
-        return CBORTag(TAG_UNION, _prepare_items(obj.__args__, path, active))
+        payload = _hook(functools.partial(custom_encode, obj), t, path)
+        return CBORTag(
+            TAG_CUSTOM, [_ref(t, path), _prepare(payload, f"{path}.cbor_encode()", active)]
+        )
+    # Type forms come before the class check: on Python 3.10 isinstance(list[int], type)
+    # is True. typing's aliases and special forms all live in the typing module, but so
+    # does the metaclass of Protocol subclasses, which are ordinary classes.
+    if isinstance(obj, (types.GenericAlias, types.UnionType)) or (
+        t.__module__ == "typing" and not isinstance(obj, type)
+    ):
+        return _prepare_type_form(obj, path, active)
     if isinstance(obj, type):
         return CBORTag(TAG_CLASS, _ref(obj, path))
     if obj is Ellipsis:  # the "..." in tuple[int, ...]
         return CBORTag(TAG_ELLIPSIS, None)
-    for registered_type, (registered_encode, decode_ref) in _REGISTRY.items():
+    for registered_type, (registered_encode, _, module) in _REGISTRY.items():
         if isinstance(obj, registered_type):
-            payload = _prepare(registered_encode(obj), f"{path}.encode()", active)
-            return CBORTag(TAG_REGISTERED, [decode_ref, payload])
+            payload = _hook(functools.partial(registered_encode, obj), t, path)
+            prepared = _prepare(payload, f"{path}.encode()", active)
+            return CBORTag(TAG_REGISTERED, [_ref(registered_type, path), module, prepared])
     if isinstance(obj, enum.Enum):
-        return CBORTag(TAG_ENUM, [_ref(t, path), obj.name])
+        # The value, not the name: a Flag combination has no member name.
+        return CBORTag(TAG_ENUM, [_ref(t, path), _prepare(obj.value, f"{path}.value", active)])
     if isinstance(obj, np.ndarray):
         if obj.dtype.hasobject or obj.dtype.fields is not None:
             raise TypeError(f"Cannot CBOR-encode ndarray of dtype {obj.dtype} at {path}")
@@ -174,7 +212,7 @@ def _prepare_object(obj: Any, t: type, path: str, active: set[int]) -> Any:
     if isinstance(getattr(t, "msg_name", None), str) and callable(getattr(t, "lcm_encode", None)):
         # The class, not msg_name: a subclass that inherits its parent's msg_name
         # must still come back as the subclass.
-        return CBORTag(TAG_DIMOSMSG, [_ref(t, path), obj.lcm_encode()])
+        return CBORTag(TAG_DIMOSMSG, [_ref(t, path), _hook(obj.lcm_encode, t, path)])
     if isinstance(obj, tuple) and hasattr(t, "_fields"):
         return CBORTag(TAG_NAMEDTUPLE, [_ref(t, path), _prepare_items(obj, path, active)])
     if dataclasses.is_dataclass(obj):
@@ -208,6 +246,35 @@ def _prepare_object(obj: Any, t: type, path: str, active: set[int]) -> Any:
         "implement cbor_encode()/cbor_decode() on the class or call "
         "dimos.protocol.encode.cbor.register_codec()"
     )
+
+
+def _hook(call: Callable[[], Any], t: type, path: str) -> Any:
+    """Run an encode hook; whatever it raises becomes a TypeError that names the path."""
+    try:
+        return call()
+    except Exception as e:
+        raise TypeError(
+            f"Cannot CBOR-encode object of type {t.__module__}.{t.__qualname__} at {path}: {e}"
+        ) from e
+
+
+def _prepare_type_form(obj: Any, path: str, active: set[int]) -> Any:
+    """Generic aliases, unions and typing special forms.
+
+    typing's spellings are normalized to the builtin ones: ``typing.List[int]`` arrives
+    as ``list[int]`` and ``Optional[X]`` as ``X | None`` (they compare equal).
+    """
+    if obj is typing.Any:  # not a class on Python 3.10
+        return CBORTag(TAG_CLASS, "typing:Any")
+    origin, args = typing.get_origin(obj), typing.get_args(obj)
+    if origin is typing.Union or origin is types.UnionType:
+        return CBORTag(TAG_UNION, _prepare_items(args, path, active))
+    if origin is typing.Literal:
+        return CBORTag(TAG_LITERAL, _prepare_items(args, path, active))
+    if isinstance(origin, type):
+        prepared_origin = _prepare(origin, f"{path}.__origin__", active)
+        return CBORTag(TAG_GENERIC_ALIAS, [prepared_origin, _prepare_items(args, path, active)])
+    raise TypeError(f"Cannot CBOR-encode {obj!r} at {path}: unsupported typing form")
 
 
 def _prepare_items(items: Any, path: str, active: set[int]) -> list[Any]:
@@ -255,13 +322,16 @@ def _lookup(target: Any, qualname: str) -> Any:
     return target
 
 
+def _import(module_name: str, what: str) -> types.ModuleType:
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as e:
+        raise CborDecodeError(f"cannot import {module_name!r} for {what}: {e}") from e
+
+
 def _resolve(ref: str) -> Any:
     module_name, _, qualname = ref.partition(":")
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as e:
-        raise CborDecodeError(f"cannot import {module_name!r} for {ref!r}: {e}") from e
-    target = _lookup(module, qualname)
+    target = _lookup(_import(module_name, repr(ref)), qualname)
     if target is None:
         raise CborDecodeError(f"{ref!r} does not resolve to an object")
     return target
@@ -272,6 +342,11 @@ def _resolve_class(ref: str, base: type) -> Any:
     if not (isinstance(cls, type) and issubclass(cls, base)):
         raise CborDecodeError(f"{ref!r} is not a {base.__name__} subclass")
     return cls
+
+
+def _is_type_form(value: Any) -> bool:
+    """A class, ``Any`` or a parameterized form: what ``|`` and ``[]`` accept."""
+    return isinstance(value, type) or value is typing.Any or typing.get_origin(value) is not None
 
 
 def _decode_tuple(value: Any, _: bool) -> Any:
@@ -306,8 +381,8 @@ def _decode_npscalar(value: Any, _: bool) -> Any:
 
 
 def _decode_enum(value: Any, _: bool) -> Any:
-    ref, name = value
-    return _resolve_class(ref, enum.Enum)[name]
+    ref, member_value = value
+    return _resolve_class(ref, enum.Enum)(member_value)
 
 
 def _decode_dimosmsg(value: Any, _: bool) -> Any:
@@ -324,9 +399,12 @@ def _decode_dataclass(value: Any, _: bool) -> Any:
     if not (isinstance(cls, type) and dataclasses.is_dataclass(cls)):
         raise CborDecodeError(f"{ref!r} is not a dataclass")
     # No __init__ or __post_init__: the sender already normalized the values, and this
-    # also handles frozen classes and init=False fields.
+    # also handles frozen classes and init=False fields. Only fields come back; see the
+    # module docstring for derived state.
     obj = cls.__new__(cls)
     for f in dataclasses.fields(cls):
+        if f.name not in fields:
+            raise CborDecodeError(f"{ref!r} payload has no field {f.name!r}")
         object.__setattr__(obj, f.name, fields[f.name])
     return obj
 
@@ -345,7 +423,7 @@ def _decode_path(value: Any, _: bool) -> Any:
 
 def _decode_class(value: Any, _: bool) -> Any:
     cls = _resolve(value)
-    if not isinstance(cls, type):
+    if not (isinstance(cls, type) or cls is typing.Any):  # Any is not a class on 3.10
         raise CborDecodeError(f"{value!r} is not a class")
     return cls
 
@@ -371,8 +449,14 @@ def _decode_custom(value: Any, _: bool) -> Any:
 
 
 def _decode_registered(value: Any, _: bool) -> Any:
-    ref, payload = value
-    return _resolve(ref)(payload)
+    type_ref, module_name, payload = value
+    # Importing the registering module runs its register_codec() call; the decoder
+    # itself comes from this process's registry, never from the payload.
+    _import(module_name, f"the codec of {type_ref!r}")
+    entry = _REGISTRY.get(_decode_class(type_ref, False))
+    if entry is None:
+        raise CborDecodeError(f"{type_ref!r} has no codec registered by {module_name!r}")
+    return entry[1](payload)
 
 
 def _decode_dict(value: Any, _: bool) -> Any:
@@ -381,11 +465,22 @@ def _decode_dict(value: Any, _: bool) -> Any:
 
 def _decode_generic_alias(value: Any, _: bool) -> Any:
     origin, args = value
-    return types.GenericAlias(origin, tuple(args))
+    if not isinstance(origin, type):
+        raise CborDecodeError(f"{origin!r} is not a class and cannot be parameterized")
+    # Subscripting rather than types.GenericAlias(): a Generic subclass then gives back
+    # its own typing alias, and list[(int,)] is list[int].
+    generic: Any = origin  # a plain `type` is not indexable for mypy
+    return generic[tuple(args)]
 
 
 def _decode_union(value: Any, _: bool) -> Any:
+    if not value or not all(_is_type_form(member) for member in value):
+        raise CborDecodeError(f"{value!r} is not a union of types")
     return functools.reduce(operator.or_, value)
+
+
+def _decode_literal(value: Any, _: bool) -> Any:
+    return typing.Literal[tuple(value)]
 
 
 def _decode_ellipsis(_value: Any, _: bool) -> Any:
@@ -416,5 +511,6 @@ _DECODERS: dict[int, Callable[[Any, bool], Any]] = {
     TAG_DICT: _decode_dict,
     TAG_GENERIC_ALIAS: _decode_generic_alias,
     TAG_UNION: _decode_union,
+    TAG_LITERAL: _decode_literal,
     TAG_ELLIPSIS: _decode_ellipsis,
 }

@@ -101,7 +101,8 @@ def shutdown_all_providers() -> None:
 
 
 class ProviderConfig(BaseModel):
-    """Picklable provider factory. Equal configs share one provider per process."""
+    """Provider factory that crosses process boundaries as data. Equal configs share one
+    provider per process."""
 
     model_config = {"frozen": True, "extra": "forbid"}
 

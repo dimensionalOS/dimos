@@ -380,12 +380,12 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             return object.__getattribute__(self, name)
 
         # Copying and serializer/type introspection must inspect the lazy wrapper,
-        # not materialize the asset (including probes for absent attributes).
+        # not materialize the asset (including probes for absent attributes). The CBOR
+        # codec is not listed: it looks cbor_encode up on the class, never the instance.
         if name in (
             "_lfs_filename",
             "_lfs_resolved_cache",
             "_ensure_downloaded",
-            "cbor_encode",
             "__class__",
             "__copy__",
             "__deepcopy__",

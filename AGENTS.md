@@ -321,7 +321,7 @@ class MySkillContainer(Module):
 
 If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/coordination/blueprints.py`.
 
-RPC arguments, results and worker-pipe messages are CBOR (`dimos/protocol/encode/cbor.py`), not pickle. JSON-like values, tuples, sets, numpy arrays, enums, dataclasses, pydantic models, `Path`, message types with `lcm_encode`, classes and module-level functions cross as themselves. Anything else raises `TypeError` at the call site; give such a class `cbor_encode()` and a `cbor_decode()` classmethod.
+RPC arguments, results and worker-pipe messages are CBOR (`dimos/protocol/encode/cbor.py`), not pickle. JSON-like values, tuples, sets, numpy arrays, enums, dataclasses (their fields only: state that `__post_init__` derives stays behind), pydantic models (private attributes stay behind), `Path`, message types with `lcm_encode`, classes and module-level functions cross as themselves. Anything else raises `TypeError` at the call site; give such a class `cbor_encode()` and a `cbor_decode()` classmethod.
 
 ### Adding a New Skill
 

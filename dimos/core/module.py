@@ -42,7 +42,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor, extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
-from dimos.core.stream import IO, In, Out, RemoteOut, Transport
+from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
@@ -362,7 +362,7 @@ class ModuleBase(Configurable, CompositeResource):
                     if isinstance(transport, PubSubTransport)
                     else type(transport).__name__,
                     type=stream.type,
-                    transport=transport,
+                    transport=TransportSpec.of(transport),
                 )
             )
         return descriptors

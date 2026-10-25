@@ -405,7 +405,8 @@ class ZenohService(Service):
 
     # Services ride into workers as blueprint config (``pubsubs=[Zenoh(...)]``): only
     # their settings cross, the far side uses the default session pool, and a copy
-    # is a fresh, unstarted service.
+    # is a fresh, unstarted service. RPC services are never sent, so their
+    # rpc_timeouts have no place here.
     def cbor_encode(self) -> dict[str, Any]:
         return self.config.model_dump()
 

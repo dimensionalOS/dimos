@@ -306,5 +306,6 @@ def test_module_stream_crosses_processes_as_a_remote_handle() -> None:
     assert (remote.owner._worker_id, remote.owner._module_id) == (1, 2)
     assert remote.transport is None
 
-    with pytest.raises(ValueError, match="owner ref"):
+    # encode() turns whatever a hook raises into a TypeError that names the path.
+    with pytest.raises(TypeError, match=r"In at value: .*owner ref"):
         encode(In(Odometry, "odom"))

@@ -102,7 +102,9 @@ class CborEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
     """Encoder mixin using the CBOR codec (dimos.protocol.encode.cbor).
 
     Encoding an unsupported value raises TypeError out of publish(); a message
-    that does not decode is logged and dropped.
+    that does not decode is logged and dropped. RPC keeps its bodies as bytes
+    inside a primitives-only envelope (see pubsubrpc) so that a body this
+    process cannot decode is answered with the error instead of dropped here.
     """
 
     def encode(self, msg: MsgT, _: TopicT) -> bytes:
@@ -112,7 +114,11 @@ class CborEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
         try:
             return cast("MsgT", cbor.decode(msg))
         except cbor.CborDecodeError as e:
-            logger.error("Dropping undecodable CBOR message", topic=str(topic), error=str(e))
+            logger.error(
+                "Dropping undecodable CBOR message: is another dimos version on the bus?",
+                topic=str(topic),
+                error=str(e),
+            )
             raise DecodingError(str(e)) from e
 
 

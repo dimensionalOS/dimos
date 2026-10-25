@@ -29,8 +29,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.rpc_utils import RemoteError
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.rpc.pubsubrpc import LCMRPC, RPC_WIRE_VERSION
+from dimos.protocol.rpc.rpc_utils import RemoteError, deserialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -477,17 +478,78 @@ def test_unencodable_exception_argument_arrives_as_text(rpc_context, impl_name: 
             unsub()
 
 
-def test_zenoh_reply_decode_failure_raises_instead_of_timing_out(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "rpc_context, codec_module",
+    [
+        (lcm_rpc_context, "dimos.protocol.rpc.pubsubrpc"),
+        (zenoh_rpc_context, "dimos.protocol.rpc.zenohrpc"),
+    ],
+    ids=["lcm", "zenoh"],
+)
+def test_reply_decode_failure_raises_instead_of_timing_out(
+    rpc_context, codec_module: str, monkeypatch
+) -> None:
     def corrupt(_payload: bytes) -> Any:
         raise ValueError("corrupt reply")
 
-    with zenoh_rpc_context() as (server, client):
+    with rpc_context() as (server, client):
         unsub = server.serve_rpc(add_function, "add")
         try:
-            monkeypatch.setattr("dimos.protocol.rpc.zenohrpc.decode", corrupt)
+            monkeypatch.setattr(f"{codec_module}.decode", corrupt)
             started = time.monotonic()
             with pytest.raises(ValueError, match="corrupt reply"):
                 client.call_sync("add", ([1, 2], {}), rpc_timeout=10.0)
             assert time.monotonic() - started < 5.0
+        finally:
+            unsub()
+
+
+def test_lcm_undecodable_request_is_answered_with_the_error() -> None:
+    """The request id lives in the envelope, so a bad body gets an error reply, not silence."""
+    with lcm_rpc_context() as (server, client):
+        unsub = server.serve_rpc(add_function, "add")
+        replies: list[Any] = []
+        event = threading.Event()
+
+        def on_reply(res: Any, _topic: Any) -> None:
+            replies.append(res)
+            event.set()
+
+        unsub_reply = client.subscribe(client.topicgen("add", True), on_reply)
+        try:
+            request = {"v": RPC_WIRE_VERSION, "id": 1.5, "name": "add", "args": b"\xff\xff"}
+            client.publish(client.topicgen("add", False), request)
+            assert event.wait(5.0)
+        finally:
+            unsub_reply()
+            unsub()
+    (reply,) = replies
+    assert reply["id"] == 1.5
+    error = deserialize_exception(decode(reply["exception"]))
+    assert isinstance(error, RemoteError)
+    assert "CborDecodeError" in error.remote_type
+
+
+def test_lcm_request_from_another_wire_version_is_ignored() -> None:
+    calls: list[int] = []
+
+    def record() -> str:
+        calls.append(1)
+        return "ok"
+
+    with lcm_rpc_context() as (server, client):
+        unsub = server.serve_rpc(record, "versioned")
+        try:
+            foreign = {
+                "v": RPC_WIRE_VERSION + 1,
+                "id": 1.0,
+                "name": "versioned",
+                "args": encode(([], {})),
+            }
+            client.publish(client.topicgen("versioned", False), foreign)
+            # Same topic, so this request is handled after the foreign one was dropped.
+            result, _ = client.call_sync("versioned", ([], {}), rpc_timeout=5.0)
+            assert result == "ok"
+            assert calls == [1]
         finally:
             unsub()

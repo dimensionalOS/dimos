@@ -90,7 +90,8 @@ class LCMService(Service):
         self._call_pool = CallPool(max_workers=4)
 
     # Services ride into workers as blueprint config (``pubsubs=[LCM(...)]``): only
-    # their settings cross, and a copy is a fresh, unstarted service.
+    # their settings cross, and a copy is a fresh, unstarted service. RPC services are
+    # never sent, so their rpc_timeouts have no place here.
     def cbor_encode(self) -> dict[str, Any]:
         return self.config.model_dump(exclude={"lcm"})
 

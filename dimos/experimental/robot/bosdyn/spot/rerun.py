@@ -112,8 +112,8 @@ def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) 
     ]
 
 
-# Module-level (not closures) so the RerunBridgeModule config stays picklable
-# when it is shipped to its worker process.
+# Module-level (not closures) so the RerunBridgeModule config stays encodable
+# when it is shipped to its worker process: functions cross by import path.
 def _grayscale_info_to_pinhole(camera_info: CameraInfo) -> RerunData | None:
     return _camera_info_pinhole(camera_info, _grayscale_origin)
 
