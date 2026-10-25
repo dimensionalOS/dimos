@@ -122,8 +122,13 @@ robot. Closure counts differ slightly from the Mac's because floating-point resu
 every publish: 17,201 ms p90 for 8.4M points, with a new map every 500 ms, so it can never keep up on a large map. With GSC the planner
 patches only the keyframes a closure moved: 355 ms p90 (676 ms max), 197 patches per hour, on a 4.5M-voxel map after an hour of
 driving. Measured on huge (Mac, 2026-10-19, the code before this round); the planner side is unchanged since, but closure counts have changed, so treat these as indicative.</p>
-<p>The replays above draw the planner's goal and path through each closure. On huge, after the 266 m correction, the planner's
-warped goal lands ~110 m from where GSC puts the goal keyframe (see limitations).</p>
+<p>The replays above draw the planner's goal and path through each method's biggest loop closure (one minute either side).
+On huge, the planner cannot reach the goal (a keyframe from 19 minutes earlier) on GSC's map before the 208 m correction;
+within 30 s of it, it plans a ~650 m route there. On Ivan's map it finds no route in that window. On the stairs recordings
+(gir1, gir2, Athens) it also finds almost no route on Ivan's map: his map is a column-carving voxel grid, and a scan of an
+upper floor erases the floor below it in the same column (at the Athens goal, the floor 9 m down is gone). With carving
+turned off the floor is back but the planner still finds no route there, which I have not run down, so treat Ivan's
+planner layer on those three as unexplained rather than as a verdict. On park1 (outdoors, flat) both maps plan every time. On office555 the planner finds no route on GSC's map either, to a goal 255 m away along the bike route; not investigated.</p>
 </section>"""
 
 Path(sys.argv[4]).expanduser().write_text(summary + "\n" + perf + "\n")

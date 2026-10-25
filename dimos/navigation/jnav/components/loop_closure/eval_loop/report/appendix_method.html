@@ -3,7 +3,7 @@
 
 <h3>How the runs were made</h3>
 <ul>
-<li><b>GSC:</b> <code>pgo-eval</code> replays each recording through the same <code>GscPgo</code> core the live module runs, scan by scan (lockstep). A pose-graph solve is adopted once the map has grown by 1% of its free keyframes, about a Jetson's solve time, so a replay gives the same graph on any machine. Code: <code>jeff/feat/mls_reform</code> c7bf22f8f2; the same Rust is on <code>jeff/feat/jnav_pgo</code> and <code>jeff/test/eval_loop</code>.</li>
+<li><b>GSC:</b> <code>pgo-eval</code> replays each recording through the same <code>GscPgo</code> core the live module runs, scan by scan (lockstep). A pose-graph solve is adopted once the map has grown by 1% of its free keyframes, about a Jetson's solve time, so a replay gives the same graph on any machine. Code: <code>jeff/feat/mls_reform</code> f1ab6c0989; the same Rust is on <code>jeff/feat/jnav_pgo</code> and <code>jeff/test/eval_loop</code>.</li>
 <li><b>Ivan:</b> his <code>PGOMap</code> at its module defaults, fed at the recording's real rate (1x). Like his live subscription, it keeps only the newest scan while busy, so it drops scans when it falls behind.</li>
 <li><b>Live vs final:</b> <i>final</i> is where the finished graph puts each keyframe. <i>Live</i> is where the method had the robot when that keyframe was made: the correction in force at that moment, applied to its odometry pose. Live is what the planner navigates with.</li>
 <li><b>Ground truth:</b> Map Editor <code>icp_stitch</code> (quality high), using AprilTags only where loops could not be found without them (gir2, huge). Elsewhere the tags stay an independent check. office555 is a ~1.9 km outdoor loop ridden on a bike with a handheld Mid-360; its Point-LIO odometry ends 14 m off horizontally and 36 m vertically. icp_stitch finds almost no loops on it, so its ground truth adds one landmark: the office guest Wi-Fi QR code (5 cm), seen at the start and at the end. That closes the loop to 7 cm. All recordings are scored in x, y and z; the ground truth's own height is shaky mid-route on 555 and small_mid, which affects both methods equally.</li>
@@ -36,10 +36,10 @@
 <h3>Other limitations</h3>
 <ul>
 <li>Hand-tuned estimator constants that remain: degeneracy uses 10-neighbour normals and needs 20 points; scan context's automatic range is the 95th percentile of the first scan; Levenberg-Marquardt, GNC and ICP use the usual convergence tolerances and iteration caps.</li>
-<li>Go2 L1 is slow: on huge L1 GSC runs at 0.8x real time on an M5 Max, because each L1 keyframe stores a dense ~30k-point local map and ICP runs on all of it.</li>
+<li>Go2 L1 does not work yet on the huge loop: the L1 cloud is a ~3 m local window, so scan context's automatic range comes out at 2.8 m and its descriptors match almost anywhere. All 2,821 committed closures are wrong and the solve rejects every one, so the map stays at raw odometry, and solving them runs at 0.47x real time with 5.3 GB peak RAM on an M5 Max. On the small L1 loop it works (tag spread 8 cm vs Ivan's 24 cm).</li>
 <li>Speed limit: office555 is ridden at about 4 m/s, so keyframes arrive at 5.9 per second (1.5 on gir2) and replay runs at 0.9x real time on the Jetson. Most of that is ICP rejecting wrong scan-context matches. Robots don't move that fast; live, the module skips a search while scans are queued instead of falling behind.</li>
 <li>The live module keeps every closure diagnostic and edge event in memory for the whole run (a few hundred bytes per keyframe).</li>
 <li>Rerun no longer draws the pose-graph edges on <code>jnav_pgo</code>: dimos' Python <code>PointCloud2</code> decoder drops the record fields, so the replay capture reads the raw LCM message instead.</li>
-<li>MLS planner on huge: after the 266 m loop correction, the planner's warped goal lands about 110 m from where GSC's graph puts the goal keyframe, although the goal and the robot started 0.5 m apart. The planner's goal warp does not follow GSC's correction on very large jumps.</li>
+<li>MLS planner on huge: after GSC's 208 m loop correction the planner's warped goal sits about 21 m from where the finished graph puts the goal keyframe (62 m for the 25 s while the correction is being applied). The goal warp follows the correction only approximately on very large jumps.</li>
 </ul>
 </section>
