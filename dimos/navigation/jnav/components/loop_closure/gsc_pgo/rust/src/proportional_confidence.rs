@@ -114,7 +114,6 @@ impl ClosureSearch {
         cur_idx: usize,
         target_idx: usize,
         source_cloud: &PointCloud,
-        target_tree: &KdTree,
         first: &IcpResult,
         diag: &mut ClosureCandidateDiag,
     ) -> Option<IcpResult> {
@@ -123,15 +122,7 @@ impl ClosureSearch {
             return None;
         }
         let max_distance = self.config.closure_icp_max_correspondence_m;
-        // a point overlaps when it is within the RMS distance the ICP score gate allows (fitness is a mean squared distance)
-        let inliers = |source: &PointCloud, tree: &KdTree, icp: &IcpResult| {
-            let limit = self.config.closure_score_thresh as f32;
-            transform_cloud(source, &icp.rotation, &icp.translation)
-                .iter()
-                .filter(|p| matches!(tree.nearest(p), Some((_, d)) if d <= limit))
-                .count()
-        };
-        let single = inliers(source_cloud, target_tree, first);
+        let single = (first.overlap * source_cloud.len() as f64).round() as usize;
         diag.single_inliers = single;
         if single == 0 {
             return None;
@@ -139,6 +130,7 @@ impl ClosureSearch {
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
             max_correspondence_distance: max_distance,
+            inlier_squared_distance: self.config.closure_score_thresh,
         };
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let radius = self.config.closure_search_radius;
@@ -203,9 +195,7 @@ impl ClosureSearch {
             }
             // inliers of the full stack, estimated from the thinned one's inlier fraction
             let extended = if icp.converged {
-                (inliers(&source, &tree, &icp) as f64 * stacked.len() as f64
-                    / source.len().max(1) as f64)
-                    .round() as usize
+                (icp.overlap * stacked.len() as f64).round() as usize
             } else {
                 0
             };

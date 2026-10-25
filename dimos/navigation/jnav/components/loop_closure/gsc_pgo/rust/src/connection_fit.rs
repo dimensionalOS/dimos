@@ -14,7 +14,7 @@
 
 //! Stage 3, connection fit quality: how well a discovered connection's two places line up, without the
 //! graph. Point-to-point ICP of the source keyframe's cloud onto the target's submap, and its fitness
-//! (mean squared nearest-neighbour distance).
+//! (mean squared distance of the points that overlap the target, over the fraction that do).
 
 use rayon::prelude::*;
 
@@ -25,6 +25,8 @@ pub struct IcpParams {
     pub max_iterations: usize,
     /// Pairs farther apart than this (m) are not correspondences.
     pub max_correspondence_distance: f64,
+    /// A source point overlaps the target when its nearest neighbour is within this squared distance (m²).
+    pub inlier_squared_distance: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -33,9 +35,11 @@ pub struct IcpResult {
     /// The transform that moves the source onto the target.
     pub rotation: Mat3,
     pub translation: Vec3,
-    /// Mean squared nearest-neighbour distance of every source point after the transform (f64::MAX
-    /// when the target is empty).
+    /// Mean squared nearest-neighbour distance of the overlapping source points after the transform, over
+    /// `overlap`: a thin overlap scores as a weak fit (f64::MAX when nothing overlaps).
     pub fitness: f64,
+    /// Fraction of the source points that overlap the target after the transform.
+    pub overlap: f64,
 }
 
 /// Align `source` onto `target` (whose k-d tree is `tree`), starting from the guess. Converged when an
@@ -86,27 +90,37 @@ pub fn icp(
             previous_mse = mse;
         }
     }
-    let fitness = mean_squared_distance(&transform_cloud(source, &rotation, &translation), tree);
+    let (fitness, overlap) = fit_quality(
+        &transform_cloud(source, &rotation, &translation),
+        tree,
+        params.inlier_squared_distance,
+    );
     IcpResult {
         converged,
         rotation,
         translation,
         fitness,
+        overlap,
     }
 }
 
-/// Mean squared nearest-neighbour distance of `points` in the tree's cloud.
-pub fn mean_squared_distance(points: &[[f32; 3]], tree: &KdTree) -> f64 {
-    let distances: Vec<f64> = points
+/// (fitness, overlap) of `points` against the tree's cloud; see `IcpResult`. Points with nothing nearby
+/// are places the target never saw, not misalignment, so only the overlapping ones are scored.
+pub fn fit_quality(points: &[[f32; 3]], tree: &KdTree, inlier_squared_distance: f64) -> (f64, f64) {
+    let inliers: Vec<f64> = points
         .par_iter()
         .filter_map(|p| tree.nearest(p))
         .map(|(_, d)| d as f64)
+        .filter(|&d| d <= inlier_squared_distance)
         .collect();
-    if distances.is_empty() {
-        f64::MAX
-    } else {
-        distances.iter().sum::<f64>() / distances.len() as f64
+    if inliers.is_empty() {
+        return (f64::MAX, 0.0);
     }
+    let overlap = inliers.len() as f64 / points.len() as f64;
+    (
+        inliers.iter().sum::<f64>() / inliers.len() as f64 / overlap,
+        overlap,
+    )
 }
 
 /// The rotation and translation that best map each pair's first point onto its second (Horn's

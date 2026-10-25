@@ -119,6 +119,8 @@ pub struct ClosureCandidateDiag {
     pub icp_converged: bool,
     /// ICP fitness (the score-threshold gate input); NaN if ICP did not run.
     pub icp_fitness: f64,
+    /// Fraction of the source scan that overlaps the target after ICP (see `IcpResult`); NaN if ICP did not run.
+    pub icp_overlap: f64,
     /// Magnitude of the ICP translation correction, NaN if ICP did not run.
     pub icp_translation_norm: f64,
     /// How far the accepted constraint pulls the graph away from the current
@@ -178,6 +180,7 @@ impl ClosureCandidateDiag {
             degeneracy_min: -1.0,
             icp_converged: false,
             icp_fitness: f64::NAN,
+            icp_overlap: f64::NAN,
             icp_translation_norm: f64::NAN,
             yank_translation: f64::NAN,
             yank_rotation_deg: f64::NAN,
@@ -512,6 +515,7 @@ impl ClosureSearch {
             &IcpParams {
                 max_iterations: self.config.closure_icp_max_iterations as usize,
                 max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+                inlier_squared_distance: self.config.closure_score_thresh,
             },
         );
         timing.icp_s += t0.elapsed().as_secs_f64();
@@ -528,6 +532,7 @@ impl ClosureSearch {
         }
         diag.icp_converged = icp.converged;
         diag.icp_fitness = icp.fitness;
+        diag.icp_overlap = icp.overlap;
         diag.icp_translation_norm = mat3::norm(&icp.translation);
 
         // Observability gate: a planar/degenerate source scan leaves the
@@ -631,14 +636,7 @@ impl ClosureSearch {
         }
         if diag.confidence < diag.required_confidence {
             let t0 = std::time::Instant::now();
-            let extended = self.extended_icp(
-                cur_idx,
-                target_idx,
-                &source_cloud,
-                &target_tree,
-                &icp,
-                &mut diag,
-            );
+            let extended = self.extended_icp(cur_idx, target_idx, &source_cloud, &icp, &mut diag);
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
                 return rejected(diag, "yank_confidence_reject", scored_yank, timing);
