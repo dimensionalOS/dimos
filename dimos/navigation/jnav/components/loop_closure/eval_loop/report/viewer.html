@@ -67,6 +67,9 @@ summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 td.win { font-weight: 700; }
 .note { color: var(--muted); font-size: 13px; }
 code { font-size: 12.5px; }
+.help { font: 600 10px/1 system-ui, sans-serif; width: 15px; height: 15px; padding: 0; margin-left: 4px; border-radius: 50%; color: var(--muted); background: transparent; border: 1px solid var(--line); vertical-align: 1px; cursor: help; }
+.help:hover, .help:focus-visible { color: var(--accent); border-color: var(--accent); }
+#tip { position: fixed; z-index: 10; max-width: min(360px, calc(100vw - 16px)); padding: 8px 10px; font-size: 12.5px; line-height: 1.45; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.18); white-space: normal; }
 </style>
 </head>
 <body>
@@ -89,6 +92,42 @@ const $ = (tag, attrs = {}, ...kids) => {
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 const fmt = (v, d = 3) => v == null ? "–" : typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(d)) : String(v)
 const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
+// metric explanations, shown by every (?) button (data-tip = space-separated keys here); report_sections.py's tables use the same keys
+const TIPS = {
+    gt: "Per keyframe: the distance (x, y and z) between where the method's map puts the robot and where ground truth puts it, after one best-fit rotation and shift of the whole finished path onto ground truth. The same fit is applied to final, live and raw, so all three are judged in one frame. Shown: the median over keyframes. Drift grows along a loop, so early keyframes are close and late ones far; p95 shows that tail.",
+    final: "Final: where the finished pose graph puts each keyframe at the end of the run.",
+    live: "Live: where the method had the robot at the moment that keyframe was made (the newest correction then, applied to its odometry). This is what the planner navigates with.",
+    raw: "Raw odometry: the odometry alone, with no loop closure, scored the same way. The baseline both methods should beat.",
+    tags: "How far repeat sightings of the same AprilTag land from each other (RMS, metres) when each sighting is placed with the method's pose. Needs no ground truth and no alignment; 0 = a perfectly consistent map.",
+    shade: "Shading compares with raw odometry on a log scale: deep green = 8x smaller than raw, no shade = no better than raw, deep red = 8x larger.",
+    speed: "Recording length divided by replay wall time. Above 1x is faster than real time; GSC replays every scan in lockstep, as fast as the machine allows.",
+    dropped: "Scans the method never processed because it was busy when they arrived (Ivan keeps only the newest scan while busy; GSC queues them).",
+    busy: "Share of wall time Ivan's module spent processing.",
+}
+const help = (...keys) => $("button", { class: "help", type: "button", "data-tip": keys.join(" "), "aria-label": "explain" }, "?")
+document.addEventListener("click", event => {
+    const button = event.target.closest(".help")
+    let tip = document.getElementById("tip")
+    if (!button) { if (tip && !event.target.closest("#tip")) { tip.hidden = true } return }
+    if (!tip) { tip = $("div", { id: "tip", role: "tooltip" }); document.body.append(tip) }
+    const same = !tip.hidden && tip.dataset.for === button.dataset.tip && tip.anchor === button
+    tip.hidden = same
+    if (same) { return }
+    tip.textContent = button.dataset.tip.split(" ").map(key => TIPS[key] || "").join(" ")
+    tip.dataset.for = button.dataset.tip; tip.anchor = button
+    const box = button.getBoundingClientRect()
+    tip.style.left = `${Math.max(8, Math.min(innerWidth - Math.min(360, innerWidth - 16) - 8, box.left - 20))}px`
+    tip.style.top = `${box.bottom + 6}px`
+})
+addEventListener("scroll", () => { const tip = document.getElementById("tip"); if (tip) { tip.hidden = true } }, { passive: true })
+// cell shading, same scale as report_sections.py: score in [-1, 1], green = good, red = bad
+function shade(score) {
+    if (score == null || !isFinite(score)) { return "" }
+    score = Math.max(-1, Math.min(1, score))
+    return `background: color-mix(in srgb, var(${score > 0 ? "--edge-ok" : "--edge-bad"}) ${Math.round(Math.abs(score) * 45)}%, transparent)`
+}
+// how much better than raw odometry, log scale: 8x smaller = 1, same = 0, 8x larger = -1
+function vsRaw(value, raw) { return value == null || !raw || value <= 0 ? null : -Math.log2(value / raw) / 3 }
 async function fetchText(path) { const r = await fetch(path); if (!r.ok) { throw new Error(`${path}: ${r.status}`) } return r.text() }
 async function fetchB64(path) {
     const text = await fetchText(path), bin = atob(text.trim()), bytes = new Uint8Array(bin.length)
@@ -287,17 +326,17 @@ class Recording {
     summaryTable() {
         const s = this.meta.summary, keys = Object.keys(s)
         const rows = [
-            ["keyframes", k => s[k].keyframes], ["loops (GSC: kept by the solve / committed)", k => s[k].committed != null ? `${s[k].loops} / ${s[k].committed}` : s[k].loops], ["graph states", k => s[k].states],
-            ["final error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.final.median_m)} / ${fmt(s[k].score.final.p95_m)}`],
-            ["live error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.live.median_m)} / ${fmt(s[k].score.live.p95_m)}`],
-            ["raw error median / p95 (m)", k => s[k].score && `${fmt(s[k].score.raw.median_m)} / ${fmt(s[k].score.raw.p95_m)}`],
-            ["tag spread final / live (m)", k => s[k].tag_spread_m && `${fmt(s[k].tag_spread_m.final)} / ${fmt(s[k].tag_spread_m.live)}`],
+            ["keyframes", k => s[k].keyframes], ["graph states", k => s[k].states],
+            [["final error median / p95 (m)", help("gt","final")], k => s[k].score && `${fmt(s[k].score.final.median_m)} / ${fmt(s[k].score.final.p95_m)}`, k => s[k].score && vsRaw(s[k].score.final.median_m, s[k].score.raw.median_m)],
+            [["live error median / p95 (m)", help("gt","live")], k => s[k].score && `${fmt(s[k].score.live.median_m)} / ${fmt(s[k].score.live.p95_m)}`, k => s[k].score && vsRaw(s[k].score.live.median_m, s[k].score.raw.median_m)],
+            [["raw error median / p95 (m)", help("raw")], k => s[k].score && `${fmt(s[k].score.raw.median_m)} / ${fmt(s[k].score.raw.p95_m)}`],
+            [["tag spread final / live (m)", help("tags")], k => s[k].tag_spread_m && `${fmt(s[k].tag_spread_m.final)} / ${fmt(s[k].tag_spread_m.live)}`, k => s[k].tag_spread_m && vsRaw(s[k].tag_spread_m.final, s[k].tag_spread_m.raw)],
             ["runtime / busy (s)", k => fmt(s[k].runtime_s ?? s[k].busy_s, 1)],
         ]
         const extra = s.gsc && s.gsc.gate_counts ? $("div", { class: "legend" }, "GSC gate: " + Object.entries(s.gsc.gate_counts).map(([k, v]) => `${k} ${v}`).join(", ")) : null
         return $("div", { class: "summary" }, $("table", {},
             $("thead", {}, $("tr", {}, $("th", {}, `${clock(this.meta.duration_s)} of recording`), ...keys.map(k => $("th", { style: `color: var(--${k})` }, k === "gsc" ? "GSC" : "Ivan")))),
-            $("tbody", {}, ...rows.map(([label, f]) => $("tr", {}, $("td", {}, label), ...keys.map(k => $("td", {}, fmt(f(k) ?? null))))))), extra)
+            $("tbody", {}, ...rows.map(([label, f, score]) => $("tr", {}, $("td", {}, ...[label].flat()), ...keys.map(k => $("td", { style: score ? shade(score(k)) : "" }, fmt(f(k) ?? null))))))), extra)
     }
     layout() {
         for (const b of this.modeButtons) { b.classList.toggle("on", b.dataset.mode === this.show.mode) }

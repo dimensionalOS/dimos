@@ -17,6 +17,7 @@ usage: report_sections.py <manifest.json> <scores.json> <jetson runs dir> <out.h
 
 import html
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -31,13 +32,44 @@ def cm(x):
     return "&ndash;" if x is None else (f"{x * 100:.1f} cm" if x < 1 else f"{x:.2f} m")
 
 
-def pair(a, b, lower_is_better=True):
-    """Two cells, the clearly better one (by >10%) in bold."""
+def shade(score):
+    """Cell background for a score in [-1, 1]: green = good, red = bad, none at 0 (same scale as viewer.html's shade)."""
+    if score is None or not math.isfinite(score):
+        return ""
+    score = max(-1.0, min(1.0, score))
+    color = "--edge-ok" if score > 0 else "--edge-bad"
+    return f' style="background: color-mix(in srgb, var({color}) {round(abs(score) * 45)}%, transparent)"'
+
+
+def vs_raw(value, raw):
+    """How much better than raw odometry, on a log scale: 8x smaller = 1, same = 0, 8x larger = -1."""
+    return None if value is None or not raw or value <= 0 else -math.log2(value / raw) / 3
+
+
+def speed(realtime):
+    """Replay speed vs real time on a log scale: 8x faster = 1, real time = 0, 8x slower = -1."""
+    return None if not realtime else math.log2(realtime) / 3
+
+
+def drops(percent):
+    """Share of scans dropped: none = 1, 5% = 0, 10% or more = -1."""
+    return None if percent is None else 1 - percent / 5
+
+
+def pair(a, b, raw):
+    """Two cells shaded by their improvement over raw odometry, the clearly better one (by >10%) in bold."""
     if a is None or b is None:
-        return f"<td>{cm(a)}</td><td>{cm(b)}</td>"
-    better_a = a < b * 0.9 if lower_is_better else a > b * 1.1
-    better_b = b < a * 0.9 if lower_is_better else b > a * 1.1
-    return f"<td{' class=win' if better_a else ''}>{cm(a)}</td><td{' class=win' if better_b else ''}>{cm(b)}</td>"
+        return f"<td{shade(vs_raw(a, raw))}>{cm(a)}</td><td{shade(vs_raw(b, raw))}>{cm(b)}</td>"
+    better_a, better_b = a < b * 0.9, b < a * 0.9
+    return (
+        f"<td{' class=win' if better_a else ''}{shade(vs_raw(a, raw))}>{cm(a)}</td>"
+        f"<td{' class=win' if better_b else ''}{shade(vs_raw(b, raw))}>{cm(b)}</td>"
+    )
+
+
+def tip(*keys):
+    """A (?) button; viewer.html's TIPS holds the explanation for each key."""
+    return f'<button class="help" type="button" data-tip="{" ".join(keys)}" aria-label="explain">?</button>'
 
 
 def get(d, *keys):
@@ -53,25 +85,33 @@ for name, row in scores.items():
     g, i = row.get("gsc", {}), row.get("ivan", {})
     rows.append(
         f"<tr><td>{html.escape(labels.get(name, name))}</td>"
-        + pair(get(g, "gt", "final", "median_m"), get(i, "gt", "final", "median_m"))
-        + pair(get(g, "gt", "live", "median_m"), get(i, "gt", "live", "median_m"))
+        + pair(
+            get(g, "gt", "final", "median_m"),
+            get(i, "gt", "final", "median_m"),
+            get(g, "gt", "raw", "median_m"),
+        )
+        + pair(
+            get(g, "gt", "live", "median_m"),
+            get(i, "gt", "live", "median_m"),
+            get(g, "gt", "raw", "median_m"),
+        )
         + f"<td class=muted>{cm(get(g, 'gt', 'raw', 'median_m'))}</td>"
-        + pair(get(g, "tags", "final"), get(i, "tags", "final"))
-        + pair(get(g, "tags", "live"), get(i, "tags", "live"))
+        + pair(get(g, "tags", "final"), get(i, "tags", "final"), get(g, "tags", "raw"))
+        + pair(get(g, "tags", "live"), get(i, "tags", "live"), get(g, "tags", "raw"))
         + f"<td class=muted>{cm(get(g, 'tags', 'raw'))}</td>"
-        + f"<td>{g.get('loops', '&ndash;')}</td><td>{i.get('loops', '&ndash;')}</td></tr>"
+        + "</tr>"
     )
 
 summary = f"""<section id="summary" class="appendix">
 <h2>Summary</h2>
 <p>Error of each keyframe's position against ground truth (median), and how far repeat sightings of one AprilTag land
 apart (tag spread, RMS). <i>Final</i> is the finished graph; <i>live</i> is what the method believed at the moment, which is what the
-planner navigates with. Bold = more than 10% better. "&ndash;" = no ground truth (park1 and the L1 runs; 555 is scored on its
+planner navigates with. Bold = more than 10% better. Shading is against raw odometry on a log scale: deep green = 8x smaller\nerror than raw, no shade = no better than raw, deep red = 8x worse. "&ndash;" = no ground truth (park1 and the L1 runs; 555 is scored on its
 QR start/end gap, shown as its tag spread) or no repeat tag sightings (Athens). x, y and z all count.</p>
 <div class="table-wrap"><table>
-<thead><tr><th rowspan=2>recording</th><th colspan=2>GT error, final</th><th colspan=2>GT error, live</th><th rowspan=2>raw odom</th>
-<th colspan=2>tag spread, final</th><th colspan=2>tag spread, live</th><th rowspan=2>raw odom</th><th colspan=2>loops</th></tr>
-<tr><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th></tr></thead>
+<thead><tr><th rowspan=2>recording{tip("shade")}</th><th colspan=2>GT error, final{tip("gt", "final")}</th><th colspan=2>GT error, live{tip("gt", "live")}</th><th rowspan=2>raw odom{tip("raw")}</th>
+<th colspan=2>tag spread, final{tip("tags", "final")}</th><th colspan=2>tag spread, live{tip("tags", "live")}</th><th rowspan=2>raw odom{tip("raw")}</th></tr>
+<tr><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th><th>GSC</th><th>Ivan</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <p class="note">Known problem: on Go2 L1 the huge loop gets no closures from GSC. The L1 cloud is a ~3 m local window, so the
 scan-context descriptors aren't distinctive; every match it tries is wrong and the solve rejects all of them. Next on the list.
@@ -83,9 +123,9 @@ mac = []
 for name, row in scores.items():
     g, i = row.get("gsc", {}), row.get("ivan", {})
     mac.append(
-        f"<tr><td>{html.escape(name)}</td><td>{g.get('realtime', '&ndash;')}x</td><td>{g.get('cpu_cores', '&ndash;')}</td>"
-        f"<td>{g.get('peak_mb', '&ndash;')} MB</td><td>{g.get('dropped', '&ndash;')}</td>"
-        f"<td>{i.get('dropped', '&ndash;')} ({i.get('dropped_pct', '&ndash;')}%)</td><td>{round(100 * i['busy_fraction']) if 'busy_fraction' in i else '&ndash;'}%</td></tr>"
+        f"<tr><td>{html.escape(name)}</td><td{shade(speed(g.get('realtime')))}>{g.get('realtime', '&ndash;')}x</td><td>{g.get('cpu_cores', '&ndash;')}</td>"
+        f"<td>{g.get('peak_mb', '&ndash;')} MB</td><td{shade(drops(0 if g.get('dropped') == 0 else None))}>{g.get('dropped', '&ndash;')}</td>"
+        f"<td{shade(drops(i.get('dropped_pct')))}>{i.get('dropped', '&ndash;')} ({i.get('dropped_pct', '&ndash;')}%)</td><td>{round(100 * i['busy_fraction']) if 'busy_fraction' in i else '&ndash;'}%</td></tr>"
     )
 
 jet = []
@@ -96,7 +136,7 @@ for run in sorted(p for p in jetson.iterdir() if (p / "a.log").exists() and p.na
     mac_speed = scores[run.name]["gsc"].get("realtime")
     if m:
         jet.append(
-            f"<tr><td>{run.name}</td><td>{m[3]}x</td><td>{round(int(rss[1]) / 1e3) if rss else '&ndash;'} MB</td>"
+            f"<tr><td>{run.name}</td><td{shade(speed(float(m[3])))}>{m[3]}x</td><td>{round(int(rss[1]) / 1e3) if rss else '&ndash;'} MB</td>"
             f"<td>{round(mac_speed / float(m[3]), 1) if mac_speed else '&ndash;'}x</td></tr>"
         )
 
@@ -105,9 +145,10 @@ perf = f"""<section id="performance" class="appendix">
 <h3>Ivan live vs GSC live</h3>
 <p>GSC: <code>pgo-eval</code> on a MacBook M5 Max, as fast as it runs (deterministic lockstep, nothing dropped). Ivan: his
 <code>PGOMap</code> fed at the recording's real rate; it keeps only the newest scan while busy, so a scan that arrives during work
-is lost. Busy = share of wall time Ivan spent processing.</p>
+is lost. Busy = share of wall time Ivan spent processing. Shading: speed against real time on a log scale (deep green = 8x faster,
+red = slower than real time); scans dropped from none (green) through 5% (no shade) to 10% or more (deep red).</p>
 <div class="table-wrap"><table>
-<thead><tr><th>recording</th><th>GSC speed (vs real time)</th><th>GSC CPU cores</th><th>GSC peak RAM</th><th>GSC scans dropped</th><th>Ivan scans dropped</th><th>Ivan busy</th></tr></thead>
+<thead><tr><th>recording</th><th>GSC speed (vs real time){tip("speed")}</th><th>GSC CPU cores</th><th>GSC peak RAM</th><th>GSC scans dropped{tip("dropped")}</th><th>Ivan scans dropped{tip("dropped")}</th><th>Ivan busy{tip("busy")}</th></tr></thead>
 <tbody>{"".join(mac)}</tbody></table></div>
 <p>Live, GSC never stalls the robot: scans wait in a 5-deep queue (oldest dropped if it fills), only one closure search and one
 solve run at a time, and a search is skipped while scans are waiting. huge_l1 is the exception above: solving its wrong matches made the replay
@@ -117,7 +158,7 @@ solve run at a time, and a search is skipped while scans are waiting. huge_l1 is
 still faster than real time everywhere except office555, which is ridden at ~4 m/s and makes keyframes 4x as fast as a walking
 robot. Closure counts differ slightly from the Mac's because floating-point results differ across CPUs.</p>
 <div class="table-wrap"><table>
-<thead><tr><th>recording</th><th>speed (vs real time)</th><th>peak RAM</th><th>Mac is faster by</th></tr></thead>
+<thead><tr><th>recording</th><th>speed (vs real time){tip("speed")}</th><th>peak RAM</th><th>Mac is faster by</th></tr></thead>
 <tbody>{"".join(jet)}</tbody></table></div>
 <h3>Against the MLS planner</h3>
 <p>The MLS planner needs a map in the corrected frame. With Ivan's PGO it rebuilds its whole map from the optimized cloud on
