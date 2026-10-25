@@ -131,3 +131,54 @@ def test_completed_trajectory_does_not_bypass_start_validation(positions, expect
         ],
     )
     assert task.execute(trajectory, positions).status is expected
+
+
+def _stream(task: JointTrajectoryTask, target: float, t_now: float) -> None:
+    trajectory = JointTrajectory(
+        joint_names=["joint"], points=[TrajectoryPoint(positions=[target])]
+    )
+    assert task.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+
+
+def test_streamed_target_continues_from_last_command_despite_tracking_error():
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    # The joint never catches up with its command: measured stays at zero.
+    measured = JointStateSnapshot(joint_positions={"joint": 0.0})
+    _stream(task, 0.01, 0.0)
+    output = task.compute(CoordinatorState(joints=measured, t_now=0.01, dt=0.01))
+    assert output is not None
+    assert output.positions == pytest.approx([0.01])
+    assert not task.is_active()
+
+    _stream(task, 0.02, 0.02)
+    output = task.compute(CoordinatorState(joints=measured, t_now=0.02, dt=0.01))
+    assert output is not None
+    assert output.positions == pytest.approx([0.02])
+
+
+def test_streamed_target_reanchors_on_measured_after_the_anchor_window():
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    measured = JointStateSnapshot(joint_positions={"joint": 0.0})
+    _stream(task, 0.01, 0.0)
+    assert task.compute(CoordinatorState(joints=measured, t_now=0.01, dt=0.01)) is not None
+    assert not task.is_active()
+
+    _stream(task, 0.5, 1.0)
+    output = task.compute(CoordinatorState(joints=measured, t_now=1.0, dt=0.01))
+    assert output is not None
+    assert output.positions == pytest.approx([0.01])
+
+
+def test_streamed_target_reanchors_on_measured_when_joint_was_moved_elsewhere():
+    task = JointTrajectoryTask(
+        JointTrajectoryTaskConfig(joint_names=["joint"], stream_anchor_tolerance=0.05)
+    )
+    measured = JointStateSnapshot(joint_positions={"joint": 0.0})
+    _stream(task, 0.01, 0.0)
+    assert task.compute(CoordinatorState(joints=measured, t_now=0.01, dt=0.01)) is not None
+    measured.joint_positions["joint"] = 0.5
+
+    _stream(task, 0.6, 0.02)
+    output = task.compute(CoordinatorState(joints=measured, t_now=0.02, dt=0.01))
+    assert output is not None
+    assert output.positions == pytest.approx([0.51])
