@@ -883,11 +883,20 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
+        // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
+        // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
+        let stored = match &cloud {
+            Some(cloud) if self.config.submap_resolution > 0.0 => Some(Arc::new(voxel_downsample(
+                cloud,
+                self.config.submap_resolution,
+            ))),
+            _ => cloud.clone(),
+        };
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,
             translation_local: pose.translation,
-            body_cloud: cloud.clone(),
+            body_cloud: stored,
             rotation_global: mat3::mat_mul(&self.rotation_offset, &pose.rotation),
             translation_global: mat3::add(
                 &mat3::mat_vec(&self.rotation_offset, &pose.translation),
