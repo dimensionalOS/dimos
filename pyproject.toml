@@ -809,6 +809,8 @@ module = [
     "xarm.*",
     "ament_index_python.*",
     "coacd",
+    "dream",
+    "dream.*",
     "open3d",
     "open3d.*",
     "pxr",
