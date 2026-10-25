@@ -139,6 +139,11 @@ struct Args {
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
+    /// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free
+    /// keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine; a solve's
+    /// cost grows with the map, so the delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac
+    /// solve at 5k keyframes is ~0.5%).
+    solve_delay_fraction: f64,
 }
 
 fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
@@ -162,6 +167,7 @@ fn parse_args() -> Result<Args, String> {
     let mut lidar_tf = None;
     let mut body_tf = None;
     let mut event_dump = None;
+    let mut solve_delay_fraction = 0.01;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -177,6 +183,9 @@ fn parse_args() -> Result<Args, String> {
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
             "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
+            "--solve-delay-fraction" => {
+                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
+            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -192,6 +201,7 @@ fn parse_args() -> Result<Args, String> {
         lidar_tf,
         body_tf,
         event_dump,
+        solve_delay_fraction,
     })
 }
 
@@ -391,7 +401,18 @@ fn run() -> Result<(), String> {
         }
         keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
         let gnc_started = Instant::now();
-        pgo.update(false);
+        match pgo.solve_started() {
+            Some((keyframes, free))
+                if pgo.key_poses().len()
+                    < keyframes
+                        + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {}
+            Some(_) => {
+                pgo.wait_for_solve();
+            }
+            None => {
+                pgo.update();
+            }
+        }
         keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
