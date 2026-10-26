@@ -106,6 +106,7 @@ config! {
     scan_context_top_k: i32,
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
+    pressure_check_frequency: usize,
 }
 
 // ---- shared state ---------------------------------------------------------------
@@ -162,7 +163,7 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     closure_edges: Output<PointCloud2>,
 
-    // Debugging numbers as JSON lines, one per keyframe: {"ts", "unresolved_loop_probability", "expected_overlaps",
+    // Debugging numbers as JSON lines, one per pressure recompute (every pressure_check_frequency-th scan): {"ts", "unresolved_loop_probability", "expected_overlaps",
     // "most_likely_keyframe", "most_likely_probability"} (see gsc_pgo::loop_overlap).
     #[output(encode = std_msgs::String::encode)]
     debug_log: Output<std_msgs::String>,
@@ -333,6 +334,8 @@ impl Worker {
 
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
+        // The scan count of the last loop-overlap pressure sent on debug_log.
+        let mut pressure_sent = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
         // Search diagnostics already written to <dump_path>.closures.jsonl.
@@ -371,7 +374,20 @@ impl Worker {
 
             let cur_time = cloud_with_pose.pose.second;
 
-            if !pgo.add_key_pose(&cloud_with_pose) {
+            let keyframe = pgo.add_key_pose(&cloud_with_pose);
+            // the loop-overlap pressure, each time it is recomputed (every pressure_check_frequency-th scan)
+            if let Some((scan, overlap)) = pgo.pressure() {
+                if scan != pressure_sent {
+                    pressure_sent = scan;
+                    let mut line = serde_json::to_value(overlap).unwrap_or_default();
+                    line["ts"] = cur_time.into();
+                    let msg = std_msgs::String {
+                        data: line.to_string(),
+                    };
+                    self.publish(&self.debug_log, &msg, "debug_log");
+                }
+            }
+            if !keyframe {
                 // Not a keyframe — still broadcast the corrected odom + TF.
                 self.publish_corrected(
                     &pgo,
@@ -427,14 +443,6 @@ impl Worker {
 
             // every keyframe's current pose, each keyframe
             self.publish_graph(&pgo, cur_time, &frame_id);
-            if let Some(overlap) = pgo.loop_overlap() {
-                let mut line = serde_json::to_value(overlap).unwrap_or_default();
-                line["ts"] = cur_time.into();
-                let msg = std_msgs::String {
-                    data: line.to_string(),
-                };
-                self.publish(&self.debug_log, &msg, "debug_log");
-            }
         }
     }
 

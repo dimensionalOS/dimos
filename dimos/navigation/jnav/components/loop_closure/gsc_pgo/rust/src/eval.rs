@@ -109,8 +109,9 @@ struct EvalOutput {
     keyframe_gnc_ms: Vec<f32>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
-    /// Per keyframe, its time and `GscPgo::loop_overlap` after it (the module's debug_log numbers).
-    loop_overlap: Vec<(f64, LoopOverlap)>,
+    /// Each loop-overlap pressure recompute (every pressure_check_frequency-th scan): the scan's time, the pressure and the
+    /// scan count (the module's debug_log numbers).
+    loop_overlap: Vec<(f64, LoopOverlap, usize)>,
     /// Count of closure-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
     /// One record per closure-search evaluation (accepted + rejected), with the
@@ -342,7 +343,7 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
     let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
-    let mut loop_overlap: Vec<(f64, LoopOverlap)> = Vec::new();
+    let mut loop_overlap: Vec<(f64, LoopOverlap, usize)> = Vec::new();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
     // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
@@ -407,7 +408,13 @@ fn run() -> Result<(), String> {
         };
 
         let step_started = Instant::now();
-        if !pgo.add_key_pose(&cloud_with_pose) {
+        let keyframe = pgo.add_key_pose(&cloud_with_pose);
+        if let Some((scan, overlap)) = pgo.pressure() {
+            if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
+                loop_overlap.push((latest.ts, overlap, scan));
+            }
+        }
+        if !keyframe {
             return Ok(());
         }
         published.extend(
@@ -435,9 +442,7 @@ fn run() -> Result<(), String> {
             }
         }
         keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
-        if let Some(overlap) = pgo.loop_overlap() {
-            loop_overlap.push((latest.ts, overlap));
-        }
+
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
         }
