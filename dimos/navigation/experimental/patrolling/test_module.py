@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+from unittest.mock import call
 
 import pytest
 
@@ -44,17 +45,34 @@ async def test_stopping_idle_patrol_does_not_call_the_planner(patrol) -> None:
     patrol.stop_tool.assert_called_once_with("start_patrol")
 
 
-async def test_stopping_active_patrol_cancels_once(patrol) -> None:
-    task = asyncio.create_task(asyncio.Event().wait())
-    patrol._patrol_task = task
+async def test_stopping_active_patrol_cancels_once(patrol, mocker) -> None:
+    mocker.patch.object(patrol, "_patrol_loop", asyncio.Event().wait)
+    await patrol.start_patrol()
+    task = patrol._patrol_task
     try:
+        assert patrol.is_patrolling()
         await patrol.stop_patrol()
         await patrol.stop_patrol()
 
         assert task.cancelled()
         assert not patrol.is_patrolling()
-        patrol._planner_spec.set_replanning_enabled.assert_called_once_with(True)
+        assert patrol._planner_spec.set_replanning_enabled.call_args_list == [
+            call(False),
+            call(True),
+        ]
         patrol._planner_spec.reset_safe_goal_clearance.assert_called_once_with()
         patrol.goal_request.publish.assert_called_once_with(patrol._latest_pose)
     finally:
         await patrol.stop_patrol()
+
+
+async def test_stopping_after_failed_start_restores_the_planner(patrol) -> None:
+    patrol._planner_spec.set_safe_goal_clearance.side_effect = RuntimeError("planner down")
+    with pytest.raises(RuntimeError):
+        await patrol.start_patrol()
+
+    await patrol.stop_patrol()
+
+    assert not patrol.is_patrolling()
+    assert patrol._planner_spec.set_replanning_enabled.call_args_list == [call(False), call(True)]
+    patrol._planner_spec.reset_safe_goal_clearance.assert_called_once_with()
