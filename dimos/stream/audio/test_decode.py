@@ -23,18 +23,24 @@ import pytest
 from dimos.stream.audio.decode import decode_audio_bytes
 
 
-def _recording(container_format: str, codec: str, seconds: float) -> bytes:
-    """A 48-kHz tone in the container and codec a browser's MediaRecorder picks."""
+def _encode(container_format: str, codec: str, planes: np.ndarray) -> bytes:
+    """48-kHz float PCM, one row per channel, in the given container and codec."""
+    layout = "mono" if planes.shape[0] == 1 else "stereo"
     buffer = io.BytesIO()
     with av.open(buffer, "w", format=container_format) as container:
-        stream = container.add_stream(codec, rate=48_000, layout="mono")
-        t = np.arange(int(48_000 * seconds)) / 48_000
-        tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-        frame = av.AudioFrame.from_ndarray(tone[None, :], format="flt", layout="mono")
+        stream = container.add_stream(codec, rate=48_000, layout=layout)
+        frame = av.AudioFrame.from_ndarray(planes, format="fltp", layout=layout)
         frame.sample_rate = 48_000
         container.mux(stream.encode(frame))
         container.mux(stream.encode(None))
     return buffer.getvalue()
+
+
+def _recording(container_format: str, codec: str, seconds: float) -> bytes:
+    """A 48-kHz tone in the container and codec a browser's MediaRecorder picks."""
+    t = np.arange(int(48_000 * seconds)) / 48_000
+    tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    return _encode(container_format, codec, tone[None, :])
 
 
 @pytest.mark.parametrize(
@@ -49,6 +55,16 @@ def test_browser_recording_decodes_to_16k_mono(container_format: str, codec: str
     assert event.data.dtype == np.float32 and event.data.ndim == 1
     assert 7_500 < event.data.shape[0] < 9_000  # ~0.5 s at 16 kHz plus codec padding
     assert 0.2 < np.abs(event.data).max() < 0.5  # the tone's amplitude survived
+
+
+def test_stereo_downmixes_to_the_channel_mean() -> None:
+    # The ffmpeg CLI averaged the channels. PyAV's float output scales them by
+    # 0.707 instead, so the decoder resamples to s16 on purpose.
+    planes = np.stack([np.full(48_000, 0.2, np.float32), np.full(48_000, 0.6, np.float32)])
+    event = decode_audio_bytes(_encode("wav", "pcm_s16le", planes))
+    assert event is not None
+    assert event.data.shape == (16_000,)
+    assert np.allclose(event.data, 0.4, atol=1e-3)
 
 
 def test_garbage_returns_none() -> None:
