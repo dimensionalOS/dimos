@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     python-is-python3 \
     curl \
     libsndfile1 \
+    libusb-1.0-0 \
     gnupg2 \
     lsb-release \
     python3-pip \
