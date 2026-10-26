@@ -20,7 +20,7 @@ from typing import Any, Generic, TypeVar
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -29,15 +29,17 @@ from dimos.utils.threadpool import get_scheduler
 T = TypeVar("T")
 
 
-class _LatestBackpressureObserver(ObserverBase[Any]):
+class _LatestBackpressureObserver(ObserverBase[Any], DisposableBase):
     """Observer wrapper applying "latest wins" backpressure.
 
     While a message is processed, only the most recent incoming message is
     retained; intermediate ones are dropped. When processing finishes, the
     retained message (if any) is delivered next.
 
-    Delivery happens on a single resident worker thread per observer, started
-    on the first message and released after ``idle_s`` seconds without work.
+    Delivery happens on a single resident worker thread per subscription,
+    started on the first message and kept waiting across input gaps until
+    disposal or termination. Disposal discards pending work and lets any
+    running callback finish before the worker exits.
     The previous implementation (inlined from the abandoned `rxpy_backpressure`
     package, MIT, Mark Haynes, 2019) started a new ``threading.Thread`` for
     every delivered message. Each short-lived thread that touches CUDA leaves
@@ -46,21 +48,19 @@ class _LatestBackpressureObserver(ObserverBase[Any]):
     graph within 15 minutes. One worker thread keeps the memory flat.
     """
 
-    idle_s: float = 5.0
-
-    def __init__(self, wrapped: Any, idle_s: float | None = None) -> None:
-        self._wrapped = wrapped
-        if idle_s is not None:
-            self.idle_s = idle_s
+    def __init__(self, wrapped: ObserverBase[Any]) -> None:
+        self._wrapped: ObserverBase[Any] | None = wrapped
         self._cond = threading.Condition()
         self._pending: tuple[str, Any] | None = None  # ("next" | "error", payload)
         self._worker: threading.Thread | None = None
-        self._completed = False
+        self._disposed = False
 
     def _submit(self, kind: str, payload: Any) -> None:
         with self._cond:
+            if self._disposed:
+                return
             self._pending = (kind, payload)
-            if self._worker is None or not self._worker.is_alive():
+            if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._run, name="backpressure-latest", daemon=True
                 )
@@ -68,21 +68,44 @@ class _LatestBackpressureObserver(ObserverBase[Any]):
             self._cond.notify()
 
     def _run(self) -> None:
-        while True:
+        try:
+            while True:
+                with self._cond:
+                    while self._pending is None and not self._disposed:
+                        self._cond.wait()
+                    if self._disposed or self._pending is None:
+                        return
+                    kind, payload = self._pending
+                    self._pending = None
+                    wrapped = self._wrapped
+                try:
+                    assert wrapped is not None
+                    if kind == "next":
+                        wrapped.on_next(payload)
+                    else:
+                        try:
+                            wrapped.on_error(payload)
+                        finally:
+                            self.dispose()
+                finally:
+                    # Do not retain the delivered value or callback owner while waiting,
+                    # or in this frame's traceback if a callback raises.
+                    payload = None
+                    wrapped = None
+        finally:
             with self._cond:
-                while self._pending is None:
-                    if self._completed:
-                        return
-                    if not self._cond.wait(timeout=self.idle_s) and self._pending is None:
-                        # Idle: release the thread; the next message starts a fresh one.
-                        self._worker = None
-                        return
-                kind, payload = self._pending
+                # A callback exception still permits a later submission to start a
+                # fresh worker while the subscription remains active.
                 self._pending = None
-            if kind == "next":
-                self._wrapped.on_next(payload)
-            else:
-                self._wrapped.on_error(payload)
+                self._worker = None
+
+    def dispose(self) -> None:
+        """Wake an idle worker without waiting for an in-flight callback (possibly us)."""
+        with self._cond:
+            self._disposed = True
+            self._pending = None
+            self._wrapped = None
+            self._cond.notify()
 
     def on_next(self, message: Any) -> None:
         self._submit("next", message)
@@ -91,10 +114,11 @@ class _LatestBackpressureObserver(ObserverBase[Any]):
         self._submit("error", error)
 
     def on_completed(self) -> None:
-        with self._cond:
-            self._completed = True
-            self._cond.notify()
-        self._wrapped.on_completed()
+        with self._cond:  # Condition() wraps an RLock, so dispose() may re-enter it.
+            wrapped = self._wrapped
+            self.dispose()
+        if wrapped is not None:
+            wrapped.on_completed()
 
 
 # Observable ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
@@ -124,7 +148,8 @@ def backpressure(
             return base
 
         def _subscribe(observer, sch=None):  # type: ignore[no-untyped-def]
-            return base.subscribe(_LatestBackpressureObserver(observer), scheduler=sch)
+            latest = _LatestBackpressureObserver(observer)
+            return CompositeDisposable(latest, base.subscribe(latest, scheduler=sch))
 
         return rx.create(_subscribe)
 
