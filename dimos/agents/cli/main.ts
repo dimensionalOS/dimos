@@ -9,10 +9,12 @@ import { runGatewayCommand } from "./commands/gateway.ts";
 import { printRun } from "./commands/run.ts";
 import { runStatus } from "./commands/status.ts";
 import { runStop } from "./commands/stop.ts";
+import { runTui } from "./commands/tui.ts";
 import { runVersion } from "./commands/version.ts";
 import { ensureGateway } from "./process.ts";
 
-const USAGE = `dimos agent run [--conversation ID] [--cwd DIR] PROMPT   submit one input and print the answer
+const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]   open a terminal (a new conversation without --conversation)
+dimos agent run [--conversation ID] [--cwd DIR] PROMPT   submit one input and print the answer
 dimos agent conversations                                list conversations, newest first
 dimos agent gateway [--daemon]                           run the gateway, in the background with --daemon
 dimos agent status [--json]                              the gateway, DimOS, conversations, modules, jobs, streams
@@ -25,6 +27,7 @@ const commands: ReadonlyMap<string, Command> = new Map([
   ["version", runVersion],
   ["conversations", runConversations],
   ["run", printRun],
+  ["tui", runTui],
 ]);
 
 function conversationId(value: string | undefined): ConversationId | null {
@@ -52,7 +55,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
       help: { type: "boolean", default: false },
     },
   });
-  const [command = "help", ...args] = positionals;
+  const [command = "tui", ...args] = positionals;
   if (values.help || command === "help") {
     process.stdout.write(`${USAGE}\n`);
     return 0;

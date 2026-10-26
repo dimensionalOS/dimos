@@ -74,7 +74,7 @@ agent_app.add_typer(service_app, name="service")
 def agent_main(ctx: typer.Context) -> None:
     """The on-robot agent.
 
-    With no command, prints the commands.
+    With no command, opens a terminal on a new conversation, starting the gateway if needed.
 
     Every command but load and service runs in the Node CLI with the same arguments.
     """

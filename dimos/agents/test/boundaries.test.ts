@@ -96,7 +96,9 @@ const FAMILIES: {
     consumer: "shared/render/render.ts",
     notMembers: [
       "shared/render/types.ts",
+      "shared/render/raster.ts",
       "shared/render/frames.ts",
+      "shared/render/files.ts",
     ],
   },
   "harness/dimos/wire": { consumer: null, notMembers: ["harness/dimos/wire/decoder.ts"] },
@@ -106,6 +108,18 @@ const FAMILIES: {
   },
   "gateway/server/objects": {
     consumer: "gateway/server/host.ts",
+    notMembers: [],
+  },
+  "frontends/tui/cards": {
+    consumer: "frontends/tui/cards/choose.ts",
+    notMembers: [],
+  },
+  "frontends/tui/views": {
+    consumer: "frontends/tui/views/gallery.ts",
+    notMembers: [],
+  },
+  "frontends/tui/runtime": {
+    consumer: "frontends/tui/runtime/view.ts",
     notMembers: [],
   },
   "sdk/streams": { consumer: null, notMembers: [] },
