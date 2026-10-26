@@ -43,9 +43,9 @@ from dimos.agents.harness.runtime.constants import (
     AGENT_MODULE_PACKAGE,
     AGENT_MODULE_PATH,
     EXCEPTION_GROUP_MARGIN,
+    JSON,
     TRACEBACK_HEADER,
 )
-from dimos.agents.mcp.tool_result import JSON
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.utils.safe_thread_map import ExceptionGroup
 
@@ -121,8 +121,7 @@ class AgentModuleOutcome:
         if self.ok:
             done = {"create": "created", "restart": "restarted", "unload": "unloaded"}[self.op]
             return f"{self.name} {done}: {now}"
-        head = f"{self.name} {self.op} failed: {self.error}\nNow {now}."
-        return head if self.traceback is None else f"{head}\n{self.traceback}"
+        return f"{self.name} {self.op} failed: {self.error}\nNow {now}."
 
     def to_json(self) -> dict[str, JSON]:
         return {

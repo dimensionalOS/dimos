@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 import json
 from pathlib import Path
 import threading
@@ -40,10 +39,10 @@ from dimos.agents.harness.runtime.constants import (
     CONVERSATION_META,
     HARNESS_EVENT_METHOD,
     HARNESS_STATUS_METHOD,
+    JSON,
 )
 from dimos.agents.harness.runtime.inventory import (
     Inventory,
-    compact_text,
     describe_module,
     describe_rpc,
     describe_runtime,
@@ -53,8 +52,8 @@ from dimos.agents.harness.runtime.inventory import (
     relay_endpoint,
     rpc_text,
 )
-from dimos.agents.mcp.tool_result import JSON, ToolResult
 from dimos.agents.mcp.tool_stream import TOOL_STREAM_TOPIC
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import HARNESS_STATE_DIR, MODULES_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -71,10 +70,6 @@ R = TypeVar("R")
 
 StatusCause: TypeAlias = Literal["agent_module", "system_modules"]
 """An agent module operation or a change to the coordinator's module set."""
-
-
-def _result(structured: dict[str, JSON]) -> ToolResult:
-    return ToolResult(json.dumps(structured, indent=1), structured)
 
 
 def _caller() -> int | None:
@@ -140,7 +135,7 @@ class HarnessRuntime(Module):
         super().stop()
 
     @skill
-    def publish_steps(self, steps: list[dict[str, Any]]) -> ToolResult:
+    def publish_steps(self, steps: list[dict[str, Any]]) -> SkillResult:
         """Publish committed conversation entries on the ordinary agent_step stream.
 
         Args:
@@ -155,10 +150,12 @@ class HarnessRuntime(Module):
             self.agent_step.publish(
                 AgentStep(step.conversation, step.entry, step.kind, step.text, step.ts)
             )
-        return _result({"published": len(parsed)})
+        return SkillResult(f"Published {len(parsed)} steps", metadata={"published": len(parsed)})
 
     @skill
-    def inventory(self, module: str = "", rpc: str = "", compact: bool = False) -> ToolResult:
+    def inventory(
+        self, module: str = "", rpc: str = "", compact: bool = False
+    ) -> SkillResult | str:
         """Describe the running DimOS system, its modules, RPCs, streams, and saved agent
         modules. The whole-system result includes the environment and relay endpoint.
         Discovery is live on every call.
@@ -174,26 +171,24 @@ class HarnessRuntime(Module):
                 documentation, its RPC signatures with the first paragraph of each doc,
                 and its streams with message-type imports when available.
             rpc: Requires module. Returns one RPC with its full documentation.
-            compact: Adds keyed one-line facts and a short text form to the whole-system
-                result. Ignored when module is set.
+            compact: Returns only the whole system's keyed one-line facts, which clients
+                compare to report what changed. Ignored when module is set.
         """
         if rpc and not module:
             raise ValueError("rpc needs module")
         if module and rpc:
             rpc_detail = self._discover(lambda app: describe_rpc(app, module, rpc))
-            return ToolResult(rpc_text(rpc_detail), rpc_detail.to_json())
+            return rpc_text(rpc_detail)
         if module:
             module_detail = self._discover(lambda app: describe_module(app, module))
-            return ToolResult(module_text(module_detail), module_detail.to_json())
+            return module_text(module_detail)
         runtime = self._discover(describe_runtime)
         deployed = deployed_revisions([(entry.instance, entry.path) for entry in runtime.modules])
         agent_modules = self._modules.list(deployed)
         inventory = Inventory(environment(self._discover(relay_endpoint)), runtime, agent_modules)
-        if not compact:
-            return _result(inventory.to_json())
-        keyed = facts(inventory)
-        inventory = replace(inventory, facts=keyed, text=compact_text(keyed))
-        return ToolResult(compact_text(keyed), inventory.to_json())
+        if compact:
+            return SkillResult(metadata={"facts": [fact.to_json() for fact in facts(inventory)]})
+        return SkillResult(metadata=inventory.to_json())
 
     @skill
     def agent_module(
@@ -201,7 +196,7 @@ class HarnessRuntime(Module):
         op: Literal["create", "restart", "unload", "delete", "list"],
         name: str = "",
         path: str = "",
-    ) -> ToolResult:
+    ) -> SkillResult:
         """Run agent-written DimOS modules for ongoing work such as watching streams,
         reacting to events, or commanding motion. Each uses its own worker by default.
         They stop when the system stops. Their source files remain, but the modules need
@@ -244,7 +239,9 @@ class HarnessRuntime(Module):
                 Without it, create uses the module's source file as it is.
         """
         if op == "list":
-            return _result({"agent_modules": [item.to_json() for item in self._modules.list()]})
+            return SkillResult(
+                metadata={"agent_modules": [item.to_json() for item in self._modules.list()]}
+            )
         if not name:
             raise ValueError(f"{op} needs name")
         if path and op != "create":
@@ -253,7 +250,7 @@ class HarnessRuntime(Module):
             outcome = self._change_module(op, name, path)
         finally:
             self._status("agent_module")
-        return ToolResult(outcome.text(), outcome.to_json(), is_error=not outcome.ok)
+        return SkillResult(outcome.text(), metadata=outcome.to_json())
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:

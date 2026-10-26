@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live descriptions of the running system, and their keyed facts and compact text."""
+"""Live descriptions of the running system, and their keyed facts."""
 
 from __future__ import annotations
 
@@ -30,13 +30,11 @@ from typing import TYPE_CHECKING, cast
 import dimos
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleStatus
 from dimos.agents.harness.runtime.constants import (
-    INVENTORY_ALWAYS_SHOWN,
     INVENTORY_DOC_CHARS,
     INVENTORY_SECTION_LIMIT,
-    INVENTORY_SECTIONS,
+    JSON,
     LIFECYCLE_RPCS,
 )
-from dimos.agents.mcp.tool_result import JSON
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
@@ -188,22 +186,13 @@ class Inventory:
     environment: Environment
     runtime: Runtime
     agent_modules: list[AgentModuleStatus]
-    facts: list[Fact] | None = None
-    """Only in the compact form."""
-    text: str | None = None
-    """Only in the compact form."""
 
     def to_json(self) -> dict[str, JSON]:
-        result: dict[str, JSON] = {
+        return {
             "environment": self.environment.to_json(),
             "runtime": self.runtime.to_json(),
             "agent_modules": [module.to_json() for module in self.agent_modules],
         }
-        if self.facts is not None:
-            result["facts"] = [fact.to_json() for fact in self.facts]
-        if self.text is not None:
-            result["text"] = self.text
-        return result
 
 
 @functools.cache
@@ -465,25 +454,6 @@ def facts(inventory: Inventory) -> list[Fact]:
         ],
     )
     return result
-
-
-def compact_text(items: list[Fact]) -> str:
-    """The facts as sectioned text."""
-    grouped: dict[str, list[Fact]] = {}
-    for item in items:
-        grouped.setdefault(item.section, []).append(item)
-    lines = [item.line for item in grouped.pop("Environment", [])]
-    for section in INVENTORY_SECTIONS:
-        entries = grouped.get(section, [])
-        if not entries:
-            if section in INVENTORY_ALWAYS_SHOWN:
-                lines.append(f"{section}: none")
-            continue
-        count = sum(not entry.key.startswith("more:") for entry in entries)
-        note = "; lifecycle RPCs such as start/stop omitted" if section == "RPCs" else ""
-        lines.append(f"{section} ({count}{note}):")
-        lines += [f"  {entry.line}" for entry in entries]
-    return "\n".join(lines)
 
 
 def module_text(detail: ModuleDetail) -> str:

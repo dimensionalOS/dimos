@@ -101,8 +101,10 @@ dimos mcp call agent_module --arg op=delete --arg name=reporter
 
 ## API reference
 
-MCP calls return both human-readable `content` and JSON `structuredContent`, supplied by
-[ToolResult](/dimos/agents/mcp/tool_result.py). Failed operations set `isError`. A caller can put an integer conversation ID in
+Results are [SkillResult](/dimos/agents/skill_result.py) objects, which McpServer sends as one JSON object in both `content`
+and `structuredContent`. The runtime's data is the object's `metadata`. The module and RPC forms of `inventory` return
+plain text. A call that raises, such as one naming an unknown module, sets `isError`. An `agent_module` operation that
+ran reports a failure in its outcome instead. A caller can put an integer conversation ID in
 `params._meta["dimos/conversation"]` when creating a module. The runtime saves that owner and includes it in the module's
 notices; without the metadata, the owner is `null`.
 
@@ -117,10 +119,10 @@ preserves an existing authored bridge. A running MCP server must match the confi
 
 Every call reads the running system. With no module argument, the result contains the environment, modules, RPCs,
 native streams, and saved agent modules. The environment includes the connected relay's endpoint when one is present.
-`compact=True` adds keyed facts and a shorter text summary without removing the full structured result.
+`compact=True` returns only keyed one-line facts, which clients compare to report what changed.
 
-Passing `module` returns its documentation, RPC signatures, and stream types with import paths where available. Passing
-both `module` and `rpc` returns that RPC's full documentation. A module can be named by its instance name or unique
+Passing `module` returns, as text, its documentation, RPC signatures, and stream types with import paths where
+available. Passing both `module` and `rpc` returns that RPC's full documentation. A module can be named by its instance name or unique
 class name. An RPC name without a module is an error. The result types and formatting live in
 [inventory.py](/dimos/agents/harness/runtime/inventory.py).
 

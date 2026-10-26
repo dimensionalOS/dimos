@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
-from dimos.agents.mcp.tool_result import ToolResult
+from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
 
@@ -179,13 +179,13 @@ def test_mcp_module_handles_errors() -> None:
     assert "not found" in response["result"]["content"][0]["text"].lower()
 
 
-def test_structured_content_that_is_not_json_is_a_tool_error() -> None:
-    """Strict JSON has no Infinity, so the endpoint could not render such a result."""
+def test_skill_result_without_strict_json_answers_with_text_only() -> None:
+    """Strict JSON has no Infinity, so the endpoint could not render it as structuredContent."""
     schema = json.dumps({"type": "object", "properties": {}})
     skills = [SkillInfo(class_name="TestSkills", func_name="measure", args_schema=schema)]
 
-    def measure(**_: object) -> ToolResult:
-        return ToolResult("distance inf", {"distance": float("inf")})
+    def measure(**_: object) -> SkillResult:
+        return SkillResult("distance inf", metadata={"distance": float("inf")})
 
     response = asyncio.run(
         handle_request(
@@ -195,12 +195,14 @@ def test_structured_content_that_is_not_json_is_a_tool_error() -> None:
         )
     )
     assert response is not None
-    assert set(response["result"]) == {"content", "isError"}
-    assert response["result"]["isError"] is True
-    assert response["result"]["content"][0]["text"].startswith(
-        "Tool 'measure' returned structured content that is not JSON: "
-        "Out of range float values are not JSON compliant"
-    )
+    assert response["result"] == {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"message": "distance inf", "duration_ms": 0.0, "metadata": {"distance": Infinity}}',
+            }
+        ]
+    }
 
 
 def test_mcp_module_initialize_and_unknown() -> None:

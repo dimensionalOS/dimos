@@ -27,10 +27,10 @@ import numpy as np
 from dimos.agents.harness.runtime.constants import (
     EXPORTS_DIR,
     JPEG_QUALITY,
+    JSON,
     MAX_EXPORT_FILES,
     MAX_EXPORT_POINTS,
 )
-from dimos.agents.mcp.tool_result import JSON
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 

@@ -34,7 +34,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
-from dimos.agents.mcp.tool_result import ToolResult
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
@@ -224,24 +224,18 @@ async def _handle_tools_call(
     duration = f"{time.monotonic() - t0:.3f}s"
     response = str(result)[:200]
 
-    if isinstance(result, ToolResult):
-        try:
-            # The response is rendered as strict JSON, which has no NaN or Infinity.
-            json.dumps(result.structured, allow_nan=False)
-        except (TypeError, ValueError) as e:
-            logger.error("MCP tool returned non-JSON structured content", tool=name, error=str(e))
-            return _jsonrpc_tool_error(
-                req_id, f"Tool '{name}' returned structured content that is not JSON: {e}"
-            )
+    if isinstance(result, SkillResult):
+        content = result.agent_encode()
+        structured = result.to_json()
         logger.info("MCP tool done", tool=name, duration=duration, response=response)
-        return _jsonrpc_result(
-            req_id,
-            {
-                "content": result.agent_encode(),
-                "structuredContent": result.structured,
-                "isError": result.is_error,
-            },
-        )
+        try:
+            # The response is rendered as strict JSON, which has no NaN or Infinity; the
+            # text content tolerates them, so the call still answers with it alone.
+            json.dumps(structured, allow_nan=False)
+        except ValueError as e:
+            logger.warning("MCP tool result has no strict JSON form", tool=name, error=str(e))
+            return _jsonrpc_result(req_id, {"content": content})
+        return _jsonrpc_result(req_id, {"content": content, "structuredContent": structured})
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)

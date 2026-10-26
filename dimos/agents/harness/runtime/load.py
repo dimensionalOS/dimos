@@ -22,11 +22,11 @@ import os
 import sys
 from urllib.parse import urlsplit
 
+from dimos.agents.harness.runtime.constants import JSON
 from dimos.agents.harness.runtime.harness_runtime import HarnessRuntime
 from dimos.agents.mcp.constants import mcp_url
 from dimos.agents.mcp.mcp_server import McpServer, McpServerConfig
 from dimos.agents.mcp.spec import McpServerSpec
-from dimos.agents.mcp.tool_result import JSON
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.porcelain.dimos import Dimos

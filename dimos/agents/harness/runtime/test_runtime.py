@@ -41,7 +41,7 @@ from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
-from dimos.agents.mcp.tool_result import ToolResult
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -120,7 +120,7 @@ class HarnessProbe(Module):
                 self.color_image.publish(frame)
 
     @skill
-    def recorded_steps(self) -> ToolResult:
+    def recorded_steps(self) -> SkillResult:
         """Reopen the ordinary recording and return its persisted agent_step messages."""
         path = STATE_DIR / "recordings" / os.environ["DIMOS_RUN_ID"] / "memory.db"
         steps = []
@@ -142,7 +142,7 @@ class HarnessProbe(Module):
                         )
             finally:
                 store.stop()
-        return ToolResult(json.dumps(steps), {"steps": steps})
+        return SkillResult(metadata={"steps": steps})
 
     @rpc
     def scale(self, factor: float = 2.0) -> float:
@@ -273,8 +273,8 @@ class Client:
     def call(self, tool: str, /, **arguments: Any) -> dict[str, Any]:
         result = self.call_raw(tool, arguments, {"dimos/conversation": self.conversation})
         assert not result.get("isError"), result["content"][0]["text"]
-        structured: dict[str, Any] = result["structuredContent"]
-        return structured
+        metadata: dict[str, Any] = result["structuredContent"]["metadata"]
+        return metadata
 
     def error(self, tool: str, /, **arguments: Any) -> str:
         result = self.call_raw(tool, arguments, {})
@@ -431,14 +431,17 @@ def test_inventory_follows_a_module_loaded_at_runtime(
 
 
 def test_compact_inventory_lists_facts_and_drills_down(runtime: Client) -> None:
-    result = runtime.call_raw("inventory", {"compact": True}, {})
-    text = result["content"][0]["text"]
-    signature = "HarnessProbe.scale(factor: float = 2.0) -> float"
-    assert f"{signature} — Multiply the probe's scale by factor and return the new scale." in text
-    assert "HarnessProbe.start(" not in text
-    assert "HarnessProbe.position out Vector3" in text
-    keyed = {fact["key"]: fact for fact in result["structuredContent"]["facts"]}
-    assert keyed["rpc:HarnessProbe.scale"]["section"] == "RPCs"
+    keyed = {fact["key"]: fact for fact in runtime.call("inventory", compact=True)["facts"]}
+    assert keyed["rpc:HarnessProbe.scale"] == {
+        "section": "RPCs",
+        "key": "rpc:HarnessProbe.scale",
+        "line": "HarnessProbe.scale(factor: float = 2.0) -> float — Multiply the probe's scale "
+        "by factor and return the new scale.",
+    }
+    assert "rpc:HarnessProbe.start" not in keyed
+    assert keyed["stream:HarnessProbe.position"]["line"].startswith(
+        "HarnessProbe.position out Vector3"
+    )
     assert keyed["rpc:HarnessProbe.echo"]["line"] == (
         "HarnessProbe.echo(text: str) -> str — Return the given text."
     )
@@ -451,9 +454,8 @@ def test_compact_inventory_lists_facts_and_drills_down(runtime: Client) -> None:
     assert "clients and modules call it directly" not in module_text
     position = next(line for line in module_text.splitlines() if "HarnessProbe.position" in line)
     assert position.endswith("· from dimos.msgs.geometry_msgs.Vector3 import Vector3")
-    assert detail["structuredContent"]["module"] == "HarnessProbe"
-    full = runtime.call("inventory", module="HarnessProbe", rpc="scale")
-    assert "clients and modules call it directly" in full["rpc"]["doc"]
+    full = runtime.call_raw("inventory", {"module": "HarnessProbe", "rpc": "scale"}, {})
+    assert "clients and modules call it directly" in full["content"][0]["text"]
     assert "nope" in runtime.error("inventory", module="HarnessProbe", rpc="nope")
     assert "rpc needs module" in runtime.error("inventory", rpc="scale")
 
@@ -566,10 +568,10 @@ def _module(runtime: Client, **arguments: Any) -> tuple[str, dict[str, Any]]:
     result = runtime.call_raw(
         "agent_module", arguments, {"dimos/conversation": runtime.conversation}
     )
-    text: str = result["content"][0]["text"]
-    structured: dict[str, Any] = result["structuredContent"]
-    assert result["isError"] is not structured["ok"], text
-    return text, structured
+    assert "isError" not in result, result["content"][0]["text"]
+    message: str = result["structuredContent"]["message"]
+    outcome: dict[str, Any] = result["structuredContent"]["metadata"]
+    return message, outcome
 
 
 @pytest.mark.skipif_no_turbojpeg
@@ -722,7 +724,7 @@ class Caller(AgentModule):
         "error": error,
         "traceback": trace,
     }
-    assert text == f"caller restart failed: {error}\nNow running r1 from {source}.\n{trace}"
+    assert text == f"caller restart failed: {error}\nNow running r1 from {source}."
     assert [module["path"] for module in _running(runtime, "Caller")] == [
         "dimos_agent.caller_r1.Caller"
     ]
@@ -750,10 +752,7 @@ class Looper(AgentModule):
         f'Traceback (most recent call last):\n  File "{source}", line 5, in <module>\n'
         "    class Looper(AgentModule):\n"
     )
-    assert text == (
-        f"looper create failed: {error}\nNow not created; its source is {source}.\n"
-        f"{refused['traceback']}"
-    )
+    assert text == f"looper create failed: {error}\nNow not created; its source is {source}."
     assert runtime.call("agent_module", op="list")["agent_modules"] == []
     source.unlink()
 
@@ -793,8 +792,7 @@ class Broken(AgentModule):
         "RuntimeError: no camera"
     )
     assert text == (
-        f"broken create failed: RuntimeError: no camera\n"
-        f"Now not running; its source is {source}.\n{failed['traceback']}"
+        f"broken create failed: RuntimeError: no camera\nNow not running; its source is {source}."
     )
     assert _running(runtime, "Broken") == []
     (listed,) = runtime.call("agent_module", op="list")["agent_modules"]
@@ -823,9 +821,10 @@ class Divider(AgentModule):
     text, failed = _module(runtime, op="create", name="bad")
     assert text == (
         "bad create failed: SyntaxError: invalid syntax (bad.py, line 1)\n"
-        f"Now not created; its source is {source}.\n"
-        f'  File "{source}", line 1\n    class (\n          ^\n'
-        "SyntaxError: invalid syntax"
+        f"Now not created; its source is {source}."
+    )
+    assert failed["traceback"] == (
+        f'  File "{source}", line 1\n    class (\n          ^\nSyntaxError: invalid syntax'
     )
     source.write_text("x = 1")
     text, failed = _module(runtime, op="create", name="bad")

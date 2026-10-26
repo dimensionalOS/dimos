@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixed protocol names, module naming rules, and runtime output limits."""
+"""Fixed protocol names, module naming rules, runtime output limits, and the JSON results hold."""
 
 import re
+from typing import TypeAlias
 
 from dimos.constants import HARNESS_STATE_DIR
+
+JSON: TypeAlias = "str | int | float | bool | None | list[JSON] | dict[str, JSON]"
 
 HARNESS_EVENT_METHOD = "dimos/harness_event"
 HARNESS_STATUS_METHOD = "dimos/harness_status"
@@ -35,11 +38,9 @@ TRACEBACK_HEADER = "Traceback (most recent call last):"
 # The margin an exception group's traceback puts before each line of its members.
 EXCEPTION_GROUP_MARGIN = re.compile(r"^\s*\| ?")
 
-# These limits apply to compact inventory text; the full result holds everything.
+# These limits apply to compact inventory facts; the full result holds everything.
 INVENTORY_SECTION_LIMIT = 200
 INVENTORY_DOC_CHARS = 160
-INVENTORY_SECTIONS = ("Modules", "RPCs", "Streams", "Agent modules")
-INVENTORY_ALWAYS_SHOWN = frozenset({"Agent modules"})
 LIFECYCLE_RPCS = frozenset(
     {
         "build",
