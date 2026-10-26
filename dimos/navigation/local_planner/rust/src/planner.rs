@@ -32,6 +32,8 @@ const PERIOD: f64 = 0.24; // 2 * CELL == 3 * VOXEL == 6 * FINE
 const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
 const OFFSET_STEP: f64 = 0.05;
+/// Farthest a point inside a footprint can sit from its nearest sample.
+const SAMPLE_GAP: f64 = OFFSET_STEP * std::f64::consts::FRAC_1_SQRT_2;
 /// Worst-case distance between the fine-grid snaps of two coincident points.
 const SNAP: f64 = FINE * std::f64::consts::SQRT_2;
 /// Side of the point-index bucket, in metres.
@@ -1779,7 +1781,7 @@ fn committed(
     // Re-validate first (cheap), carry second (a search); collision-free, not
     // the planning margin.
     for pair in route.windows(2) {
-        if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], 0.0) {
+        if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], SAMPLE_GAP) {
             return None;
         }
     }
@@ -1805,7 +1807,7 @@ fn committed(
                 margin,
             )?);
             for pair in route[join..].windows(2) {
-                if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], 0.0) {
+                if !seg_free(cl.w, fps, emb, &pair[0], &pair[1], SAMPLE_GAP) {
                     return None;
                 }
             }
@@ -2706,5 +2708,32 @@ mod tests {
             }
         }
         assert!(noff > 0);
+    }
+
+    #[test]
+    fn incumbent_through_a_late_seen_box_is_dropped() {
+        let emb = Emb::fixture();
+        let (pose, goal) = ((0.0, 0.0, 0.0), (4.0, 0.0));
+        let held = plan(&[], pose, goal, &emb, 0.1, None, COMMIT_MARGIN).unwrap();
+        // Voxel centers of a 0.2 m box on the held route, between the footprint samples.
+        let mut cube = Vec::new();
+        for i in 0..4 {
+            for j in 0..4 {
+                cube.push([2.025 + 0.05 * i as f64, -0.075 + 0.05 * j as f64]);
+            }
+        }
+        let path = plan(&cube, pose, goal, &emb, 0.1, Some(&held), COMMIT_MARGIN).unwrap();
+        let [length, width, off_x, _] = emb.union_box();
+        for s in &path {
+            let (sn, c) = s[2].sin_cos();
+            for p in &cube {
+                let (dx, dy) = (p[0] - s[0], p[1] - s[1]);
+                let (bx, by) = (c * dx + sn * dy - off_x, -sn * dx + c * dy);
+                assert!(
+                    bx.abs() > length / 2.0 || by.abs() > width / 2.0,
+                    "body at {s:?} covers the box point {p:?}"
+                );
+            }
+        }
     }
 }
