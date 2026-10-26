@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y \
     python-is-python3 \
     curl \
     libsndfile1 \
-    ffmpeg \
     gnupg2 \
     lsb-release \
     python3-pip \

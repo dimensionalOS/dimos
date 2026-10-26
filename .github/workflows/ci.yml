@@ -581,10 +581,10 @@ jobs:
         uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
-      - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
+      - name: Install native dependencies (pyaudio build, JPEG encoding)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
@@ -658,15 +658,15 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-      # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
+      # pyaudio needs portaudio; relay tests need TurboJPEG.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: brew install portaudio ffmpeg
+        run: brew install portaudio
       - name: Configure LCM networking (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
@@ -849,7 +849,6 @@ jobs:
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
-          brew install ffmpeg
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv run playwright install chromium firefox
       - name: Install Node 24 for the Pi and dimcode CLIs
