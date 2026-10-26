@@ -72,6 +72,10 @@ class PGOConfig(NativeModuleConfig):
     scan_context_lidar_height_m: float = 2.0
     # recompute the loop-overlap pressure (debug_log unresolved_loop_probability) every this-many-th scan; 0 = never
     pressure_check_frequency: int = 5
+    # soft_pressure (display only: the same probability without the cliff) is 50% where log10 of the loop hazard
+    # (pressure = 1 - e^-hazard) is soft_pressure_half_log10_hazard, falling log-compressed to 0% soft_pressure_decades below
+    soft_pressure_half_log10_hazard: float = -0.5
+    soft_pressure_decades: float = 100.0
 
     # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
     # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k

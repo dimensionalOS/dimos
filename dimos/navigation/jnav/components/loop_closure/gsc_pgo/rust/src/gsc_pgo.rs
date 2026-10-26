@@ -341,6 +341,10 @@ pub struct Config {
     pub scan_context_lidar_height_m: f64,
     /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
     pub pressure_check_frequency: usize,
+    /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
+    /// (unresolved_loop_probability = 1 - e^-hazard) is this, and 0% this many decades below it (log-compressed).
+    pub soft_pressure_half_log10_hazard: f64,
+    pub soft_pressure_decades: f64,
 }
 
 impl Default for Config {
@@ -373,6 +377,8 @@ impl Default for Config {
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
             pressure_check_frequency: 5,
+            soft_pressure_half_log10_hazard: -0.5,
+            soft_pressure_decades: 100.0,
         }
     }
 }

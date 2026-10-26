@@ -32,6 +32,12 @@ pub struct LoopOverlap {
     /// Chance the newest scan overlaps at least one earlier, unresolved stretch of the path (keyframes a sensor range
     /// apart along the path counted as independent).
     pub unresolved_loop_probability: f64,
+    /// log10 of the hazard H behind it (unresolved_loop_probability = 1 - e^-H), summed in log space so it stays finite
+    /// where the probability underflows to 0; -inf when nothing could overlap.
+    pub log10_hazard: f64,
+    /// The same probability without the cliff, for display: below 50% log-compressed in decades of hazard under
+    /// `soft_pressure_half_log10_hazard`, above it linear in the probability up to 1 (see Config).
+    pub soft_pressure: f64,
     /// Sum over those keyframes of the chance of overlapping each (resolved or not).
     pub expected_overlaps: f64,
     /// The keyframe with the highest unresolved overlap chance, and that chance.
@@ -218,6 +224,7 @@ impl GscPgo {
         let mut overlap = LoopOverlap::default();
         let mut none_overlap = 1.0;
         let mut last_counted: Option<Vec3> = None;
+        let mut ln_hazards = Vec::new();
         for j in 0..self.newest_closure_target() {
             let position = self.key_poses[j].translation_global;
             // keyframes closer than a sensor range along the path see the same place: count one of them
@@ -227,8 +234,15 @@ impl GscPgo {
                 continue;
             }
             last_counted = Some(position);
-            let (probability, unresolved) = model.overlap(j);
+            let (probability, unresolved, ln_chance) = model.overlap(j);
             let chance = (probability * unresolved).clamp(0.0, 1.0);
+            // this place's hazard -ln(1 - chance), in log space: ln(chance) where -ln(1 - chance) ~ chance
+            let ln_hazard = if chance > 1e-8 {
+                (-(-chance).ln_1p()).ln()
+            } else {
+                ln_chance.min(0.0)
+            };
+            ln_hazards.push(ln_hazard);
             overlap.expected_overlaps += probability;
             none_overlap *= 1.0 - chance;
             if chance > overlap.most_likely_probability {
@@ -237,8 +251,35 @@ impl GscPgo {
             }
         }
         overlap.unresolved_loop_probability = 1.0 - none_overlap;
+        let top = ln_hazards.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        overlap.log10_hazard = if top.is_finite() {
+            (top + ln_hazards.iter().map(|h| (h - top).exp()).sum::<f64>().ln())
+                / std::f64::consts::LN_10
+        } else {
+            f64::NEG_INFINITY
+        };
+        overlap.soft_pressure = soft_pressure(
+            overlap.unresolved_loop_probability,
+            overlap.log10_hazard,
+            self.config.soft_pressure_half_log10_hazard,
+            self.config.soft_pressure_decades,
+        );
         Some(overlap)
     }
+}
+
+/// `LoopOverlap::soft_pressure`: below half, 0.5 (1 - ln(1 + d) / ln(1 + decades)) with d the decades of hazard under
+/// `half_log10`; above, linear in the probability from the half point's to 1.
+pub fn soft_pressure(probability: f64, log10_hazard: f64, half_log10: f64, decades: f64) -> f64 {
+    if !log10_hazard.is_finite() {
+        return 0.0;
+    }
+    let below = half_log10 - log10_hazard;
+    if below > 0.0 {
+        return (0.5 * (1.0 - below.ln_1p() / decades.ln_1p())).max(0.0);
+    }
+    let half = -(-(10f64.powf(half_log10))).exp_m1();
+    0.5 + 0.5 * ((probability - half) / (1.0 - half)).clamp(0.0, 1.0)
 }
 
 /// Each earlier keyframe's position uncertainty as seen from a reference keyframe (see `GscPgo::overlap_model`).
@@ -272,8 +313,9 @@ impl OverlapModel<'_> {
     }
     /// The chance the reference scan overlaps keyframe `j`'s (the probability product kernel of j's uncertainty with a
     /// sensor-reach Gaussian of standard deviation sensor_range, e^-1/2 at its edge), and the chance j is off by more than
-    /// the position search's radius (3-dof chi tail, isotropic), i.e. that only a search by appearance could find it.
-    pub(crate) fn overlap(&self, j: usize) -> (f64, f64) {
+    /// the position search's radius (3-dof chi tail, isotropic), i.e. that only a search by appearance could find it; and
+    /// the log of their product, finite where the product underflows.
+    pub(crate) fn overlap(&self, j: usize) -> (f64, f64, f64) {
         let covariance = self.relative(j);
         let sensor = self.sensor_range * self.sensor_range;
         let blurred = add_mat(
@@ -281,20 +323,33 @@ impl OverlapModel<'_> {
             &[[sensor, 0.0, 0.0], [0.0, sensor, 0.0], [0.0, 0.0, sensor]],
         );
         let offset = mat3::sub(&self.key_poses[j].translation_global, &self.newest);
+        let ln_probability = 0.5 * (sensor.powi(3) / det(&blurred)).ln()
+            - 0.5 * quadratic_inverse(&blurred, &offset);
         let probability = ((sensor.powi(3) / det(&blurred)).sqrt()
             * (-0.5 * quadratic_inverse(&blurred, &offset)).exp())
         .clamp(0.0, 1.0);
         let spread = ((covariance[0][0] + covariance[1][1] + covariance[2][2]) / 3.0)
             .max(0.0)
             .sqrt();
-        let unresolved = if spread > 0.0 {
+        let (unresolved, ln_unresolved) = if spread > 0.0 {
             let x = self.search_radius / spread;
-            (erfc(x / std::f64::consts::SQRT_2)
+            let tail = (erfc(x / std::f64::consts::SQRT_2)
                 + (2.0 / std::f64::consts::PI).sqrt() * x * (-0.5 * x * x).exp())
-            .clamp(0.0, 1.0)
+            .clamp(0.0, 1.0);
+            // far in the tail: ln of its asymptote sqrt(2/pi) (x + 1/x) e^(-x^2/2), which does not underflow
+            let ln_tail = if tail > 1e-300 {
+                tail.ln()
+            } else {
+                ((2.0 / std::f64::consts::PI).sqrt() * (x + 1.0 / x)).ln() - 0.5 * x * x
+            };
+            (tail, ln_tail)
         } else {
-            0.0
+            (0.0, f64::NEG_INFINITY)
         };
-        (probability, unresolved)
+        (
+            probability,
+            unresolved,
+            ln_probability.min(0.0) + ln_unresolved,
+        )
     }
 }
