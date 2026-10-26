@@ -110,6 +110,18 @@ pub struct ClosureCandidateDiag {
     pub scan_context_best: f32,
     pub scan_context_second: f32,
     pub lowe_ratio: f32,
+    /// The search's inputs from the rest of the run: the loop-overlap pressure when it started (`GscPgo::pressure`, 0
+    /// before any), the share of judged closures with a similar yank_z that the solve kept ((kept + 1) / (judged + 2),
+    /// each weighted by e^(-(yank_z difference)^2 / 2)), the extension budget in
+    /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
+    /// this target, counted only as far as the decision needed (0 when it was never counted).
+    pub pressure: f64,
+    /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
+    /// scales with.
+    pub target_overlap: f64,
+    pub keep_rate: f64,
+    pub extension_budget: usize,
+    pub look_alike_places: usize,
     /// Global distance between source and candidate keyframe (the
     /// candidate-distance gate input).
     pub candidate_distance: f64,
@@ -173,6 +185,11 @@ impl ClosureCandidateDiag {
             scan_context_best: f32::NAN,
             scan_context_second: f32::NAN,
             lowe_ratio: f32::NAN,
+            pressure: 0.0,
+            target_overlap: 0.0,
+            keep_rate: f64::NAN,
+            extension_budget: 0,
+            look_alike_places: 0,
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
@@ -314,9 +331,6 @@ pub struct Config {
     /// Probability that a true inlier's residual falls under GNC's chi-squared
     /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
     pub closure_gnc_inlier_probability: f64,
-    /// Hold keyframes with two or more independent cycles nearby (see `big_picture_fit::dispatch_solve`), so a solve
-    /// covers only the part of the map that can still move.
-    pub closure_cooling: bool,
     /// Odometry drift per keyframe (variance; rad², m²); see module.py for where the defaults come from.
     pub odom_rot_roll_pitch_var: f64,
     pub odom_rot_yaw_var: f64,
@@ -351,7 +365,6 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            closure_cooling: false,
             odom_rot_roll_pitch_var: 1e-6,
             odom_rot_yaw_var: 3e-6,
             odom_trans_xy_var: 1e-4,
@@ -389,7 +402,8 @@ pub struct GscPgo {
     pub(crate) keyframe_reach: (f64, usize),
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
-    pub(crate) scan_context_descriptors: Vec<similarity_discovery::Descriptor>,
+    /// Shared, so a closure search can count look-alike places without copying them.
+    pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
     pub(crate) translation_offset: Vec3,
@@ -427,6 +441,8 @@ pub struct ClosureProposal {
     pub(crate) target_idx: usize,
     pub(crate) sector_shift: i32,
     pub(crate) similarity: f32,
+    /// Every earlier keyframe's ring-key distance (the top k in order), for the search's look-alike count.
+    pub(crate) ranked: Vec<(f32, usize)>,
 }
 
 pub struct ClosureSearch {
@@ -439,6 +455,11 @@ pub struct ClosureSearch {
     pub(crate) target_idx: usize,
     pub(crate) init_rotation: Mat3,
     pub(crate) init_translation: Vec3,
+    pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
+    pub(crate) scan_context_config: similarity_discovery::Config,
+    pub(crate) ranked: Vec<(f32, usize)>,
+    /// Every closure the solve has judged: its yank_z when committed, and whether the solve kept it.
+    pub(crate) judged_yanks: Vec<(f64, bool)>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -592,9 +613,69 @@ impl ClosureSearch {
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
 
         scored_yank = Some(self.score_candidate(&mut diag));
-        if diag.confidence < diag.required_confidence {
+        // the solve's record on closures that pulled about as hard as this one (within about one yank unit): rejected
+        // closures are the hard pullers, so a gentle closure is not charged for them
+        let (kept, judged) =
+            self.judged_yanks
+                .iter()
+                .fold((0.0, 0.0), |(kept, judged), &(z, was_kept)| {
+                    let weight = (-0.5 * (z - diag.yank_z).powi(2)).exp();
+                    (kept + weight * was_kept as u8 as f64, judged + weight)
+                });
+        diag.keep_rate = (kept + 1.0) / (judged + 2.0);
+        // stage 4b, look-alike places, counted only as far as the decision needs: picking one of N places the scan fits
+        // equally well costs ln N of evidence, so with `evidence` in hand only a count above e^(evidence - bar) matters.
+        // Not desperate (low pressure), the candidates checked stay near scan_context_top_k; desperate, they grow
+        // toward every keyframe.
+        let cap = (self.scan_context_config.candidate_top_k as f64
+            / (1.0 - diag.pressure).max(f64::EPSILON))
+        .ceil()
+        .min(usize::MAX as f64) as usize;
+        let mut look_alikes = similarity_discovery::LookAlikes::new(self.ranked.clone(), cap);
+        let base = self.required_evidence(&diag);
+        // two matching keyframes are one place if the odometry between them could have drifted that far apart
+        let mut noise_sums: Option<Vec<crate::loop_overlap::Sums>> = None;
+        let same_place_cutoff =
+            crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability);
+        let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
+            if !diag.from_scan_context {
+                return base;
+            }
+            let sums = noise_sums.get_or_insert_with(|| {
+                crate::loop_overlap::odometry_noise_sums(&self.key_poses, &self.config)
+            });
+            let places = look_alikes.count_past(
+                (evidence - base).exp(),
+                &self.scan_context_descriptors[cur_idx],
+                &self.scan_context_descriptors,
+                self.scan_context_config.match_threshold,
+                |a, b| {
+                    crate::loop_overlap::could_be_same_place(
+                        &self.key_poses,
+                        sums,
+                        a,
+                        b,
+                        self.config.closure_search_radius,
+                        same_place_cutoff,
+                    )
+                },
+            );
+            diag.look_alike_places = places;
+            base + (places as f64).ln()
+        };
+        let evidence = -(1.0 - diag.confidence).ln();
+        let single_required = required(evidence, &mut diag);
+        diag.required_confidence = 1.0 - (-single_required).exp();
+        if evidence < single_required {
             let t0 = std::time::Instant::now();
-            let extended = self.extended_icp(cur_idx, target_idx, &source_cloud, &icp, &mut diag);
+            let extended = self.extended_icp(
+                cur_idx,
+                target_idx,
+                &source_cloud,
+                &icp,
+                &mut diag,
+                &mut required,
+            );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
                 return rejected(diag, "yank_confidence_reject", scored_yank, timing);
@@ -787,7 +868,8 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (mut target_idx, sector_shift, sc_best, sc_second) = self.search_by_scan_context();
+        let (mut target_idx, sector_shift, sc_best, sc_second, ranked) =
+            self.search_by_scan_context();
         self.timing.scan_context_s += t0.elapsed().as_secs_f64();
         diag.from_scan_context = target_idx >= 0;
         if target_idx < 0 {
@@ -815,6 +897,7 @@ impl GscPgo {
             target_idx,
             sector_shift,
             similarity,
+            ranked,
         };
         let loser = match self.waiting_proposal.take() {
             Some(waiting) if waiting.similarity <= proposal.similarity => {
@@ -840,8 +923,25 @@ impl GscPgo {
             diag,
             target_idx,
             sector_shift,
+            ranked,
             ..
         } = self.waiting_proposal.take()?;
+        let mut diag = diag;
+        diag.pressure = self
+            .pressure
+            .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
+        // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
+        // the doubling step that covers max keyframes x that chance
+        diag.target_overlap = self
+            .overlap_model(diag.source_id)
+            .map_or(0.0, |model| model.overlap(target_idx).0);
+        // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
+        // overlaps this target
+        let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
+        diag.extension_budget = ((self.config.closure_extended_icp_max_keyframes as f64 * worth)
+            .ceil() as usize)
+            .next_power_of_two()
+            .min(self.config.closure_extended_icp_max_keyframes);
         let source_position = self.key_poses[diag.source_id].translation_global;
         let target_position = self.key_poses[target_idx].translation_global;
         // ICP starts with the source keyframe at the target's position, turned by the scan-context yaw:
@@ -865,12 +965,22 @@ impl GscPgo {
             kept_closures: closure_edges(
                 self.committed_closures
                     .iter()
-                    .filter(|l| !(l.gnc_weight <= 0.5)),
+                    .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
             ),
             diag,
             target_idx,
             init_rotation,
             init_translation,
+            scan_context_descriptors: self.scan_context_descriptors.clone(),
+            scan_context_config: self.scan_context_config,
+            ranked,
+            judged_yanks: self
+                .committed_closures
+                .iter()
+                .zip(&self.closure_yank_z)
+                .filter(|(c, z)| !c.gnc_weight.is_nan() && z.is_finite())
+                .map(|(c, z)| (*z, c.gnc_weight > 0.5))
+                .collect(),
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
@@ -957,7 +1067,7 @@ impl GscPgo {
         // an empty descriptor's ring key is empty too
         self.scan_context_ring_keys
             .push(similarity_discovery::make_ring_key(&descriptor));
-        self.scan_context_descriptors.push(descriptor);
+        self.scan_context_descriptors.push(Arc::new(descriptor));
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.

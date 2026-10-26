@@ -92,8 +92,6 @@ class PGOConfig(NativeModuleConfig):
     closure_gnc_inlier_probability: float = 0.95
     # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
     closure_robust_huber_k: float = 1.345
-    # Hold keyframes with two or more independent cycles nearby, so a solve covers only the part of the map that can still move
-    closure_cooling: bool = False
 
     # Odometry drift per keyframe (variance): Point-LIO's measured against ground truth on gir_stairs2 (roll/pitch
     # 1.4e-6, yaw 3.5e-6, xy 2.9e-4 over 50-keyframe spans, z 2.8e-5..1.6e-4). Locking roll/pitch and z tighter (a
@@ -128,8 +126,10 @@ class GscPGO(NativeModule):
     # each closure candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
     # with both keyframes' current positions and a confidence, for drawing closure edges
     closure_edges: Out[PointCloud2]
-    # debugging numbers as JSON lines, one per pressure recompute (pressure_check_frequency): ts, unresolved_loop_probability (chance the newest scan
-    # overlaps an earlier stretch of the path no closure has tied it to), expected_overlaps, most_likely_keyframe/_probability
+    # debugging numbers as JSON lines, each with "kind" and "ts", for graphing: "pressure" (every pressure_check_frequency-th
+    # scan: unresolved_loop_probability, the chance the newest scan overlaps an earlier stretch no closure has tied it to),
+    # "closure" (every closure search: each gate's inputs and the outcome), "keyframe" (scan queue, running threads, stage
+    # seconds), "solve" (each adopted solve: closures committed / judged / kept, graph error)
     debug_log: Out[String]
 
     @rpc

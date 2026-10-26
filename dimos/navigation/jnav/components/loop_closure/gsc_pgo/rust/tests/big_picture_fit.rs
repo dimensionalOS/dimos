@@ -19,9 +19,11 @@ use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
 const SIDE: usize = 40;
 
+type Poses = Vec<(Mat3, Vec3)>;
+
 /// A square walk of 4 * SIDE keyframes, 1 m apart, back to the start: the true poses, and the
 /// odometry's, which over-turns every keyframe by `yaw_bias`.
-fn square(yaw_bias: f64) -> (Vec<(Mat3, Vec3)>, Vec<(Mat3, Vec3)>) {
+fn square(yaw_bias: f64) -> (Poses, Poses) {
     let (mut truth, mut odometry) = (Vec::new(), Vec::new());
     let (mut true_yaw, mut drift_yaw) = (0.0f64, 0.0f64);
     let (mut true_xy, mut drift_xy) = ([0.0; 3], [0.0; 3]);

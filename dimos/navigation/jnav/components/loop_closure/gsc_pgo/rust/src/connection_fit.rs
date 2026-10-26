@@ -21,6 +21,9 @@ use rayon::prelude::*;
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, KdTree};
 
+/// A source point moved by the current guess, its nearest target point, and their squared distance.
+type Correspondence = ([f32; 3], [f32; 3], f32);
+
 pub struct IcpParams {
     pub max_iterations: usize,
     /// Pairs farther apart than this (m) are not correspondences.
@@ -61,7 +64,7 @@ pub fn icp(
     if !source.is_empty() && !target.is_empty() {
         for iteration in 1..=params.max_iterations {
             let moved = transform_cloud(source, &rotation, &translation);
-            let pairs: Vec<([f32; 3], [f32; 3], f32)> = moved
+            let pairs: Vec<Correspondence> = moved
                 .par_iter()
                 .filter_map(|p| {
                     tree.nearest(p)
@@ -125,9 +128,9 @@ pub fn fit_quality(points: &[[f32; 3]], tree: &KdTree, inlier_squared_distance: 
 
 /// The rotation and translation that best map each pair's first point onto its second (Horn's
 /// quaternion method: the top eigenvector of a 4x4 built from the cross-covariance).
-fn rigid_fit(pairs: &[([f32; 3], [f32; 3], f32)]) -> (Mat3, Vec3) {
+fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
     let n = pairs.len() as f64;
-    let mean = |pick: fn(&([f32; 3], [f32; 3], f32)) -> [f32; 3]| {
+    let mean = |pick: fn(&Correspondence) -> [f32; 3]| {
         let mut m = [0.0; 3];
         for p in pairs {
             for (k, v) in pick(p).iter().enumerate() {

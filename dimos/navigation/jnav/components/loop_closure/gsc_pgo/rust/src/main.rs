@@ -95,7 +95,6 @@ config! {
     closure_icp_max_correspondence_m: f64,
     closure_gnc_var_scale: f64,
     closure_gnc_inlier_probability: f64,
-    closure_cooling: bool,
     odom_rot_roll_pitch_var: f64,
     odom_rot_yaw_var: f64,
     odom_trans_xy_var: f64,
@@ -163,7 +162,8 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     closure_edges: Output<PointCloud2>,
 
-    // Debugging numbers as JSON lines, one per pressure recompute (every pressure_check_frequency-th scan): {"ts", "unresolved_loop_probability", "expected_overlaps",
+    // Debugging numbers as JSON lines tagged with "kind" and "ts": "pressure" (every pressure_check_frequency-th scan),
+    // "closure" (every closure search), "keyframe" (queue, threads, stage seconds), "solve" (each adopted solve). Pressure: {"ts", "unresolved_loop_probability", "expected_overlaps",
     // "most_likely_keyframe", "most_likely_probability"} (see gsc_pgo::loop_overlap).
     #[output(encode = std_msgs::String::encode)]
     debug_log: Output<std_msgs::String>,
@@ -334,8 +334,9 @@ impl Worker {
 
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
-        // The scan count of the last loop-overlap pressure sent on debug_log.
+        // The scan count of the last loop-overlap pressure sent on debug_log, and the closure searches sent there.
         let mut pressure_sent = 0usize;
+        let mut closures_logged = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
         // Search diagnostics already written to <dump_path>.closures.jsonl.
@@ -352,9 +353,11 @@ impl Worker {
             if solve_finished && pgo.wait_for_solve() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
+                self.log_solve(&pgo, last_time);
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
             self.dump_closure_diagnostics(&pgo, &mut diagnostics_written);
+            self.log_closures(&pgo, &mut closures_logged);
             // Strict FIFO: process scans oldest-first (backlog bounded at
             // enqueue time). Loops back immediately when more remain, so a
             // burst drains at full speed rather than one-per-tick.
@@ -379,12 +382,11 @@ impl Worker {
             if let Some((scan, overlap)) = pgo.pressure() {
                 if scan != pressure_sent {
                     pressure_sent = scan;
-                    let mut line = serde_json::to_value(overlap).unwrap_or_default();
-                    line["ts"] = cur_time.into();
-                    let msg = std_msgs::String {
-                        data: line.to_string(),
-                    };
-                    self.publish(&self.debug_log, &msg, "debug_log");
+                    self.log(
+                        "pressure",
+                        cur_time,
+                        serde_json::to_value(overlap).unwrap_or_default(),
+                    );
                 }
             }
             if !keyframe {
@@ -431,6 +433,9 @@ impl Worker {
             // a finished solve moves the keyframes
             let moved = pgo.update();
             self.publish_pose_changes(&pgo, &mut published, moved, cur_time, &frame_id);
+            if moved {
+                self.log_solve(&pgo, cur_time);
+            }
 
             self.publish_corrected(
                 &pgo,
@@ -443,7 +448,60 @@ impl Worker {
 
             // every keyframe's current pose, each keyframe
             self.publish_graph(&pgo, cur_time, &frame_id);
+            let scan_queue = self.state.lock().expect("state").cloud_buffer.len();
+            self.log(
+                "keyframe",
+                cur_time,
+                serde_json::json!({
+                    "keyframes": pgo.key_poses().len(),
+                    "scan_queue": scan_queue,
+                    "closure_search_running": closure_search.is_some(),
+                    "solve_running": pgo.solve_started().is_some(),
+                    "stage_seconds": pgo.stage_seconds().iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<_, _>>(),
+                }),
+            );
         }
+    }
+
+    /// One debug_log line: `fields` plus its `kind` and `ts`, as JSON.
+    fn log(&self, kind: &str, ts: f64, mut fields: serde_json::Value) {
+        fields["kind"] = kind.into();
+        fields["ts"] = ts.into();
+        let msg = std_msgs::String {
+            data: fields.to_string(),
+        };
+        self.publish(&self.debug_log, &msg, "debug_log");
+    }
+
+    /// Every closure search since the last call on debug_log (`kind` "closure": the candidate, every gate input and the
+    /// outcome, as `ClosureCandidateDiag`).
+    fn log_closures(&self, pgo: &GscPgo, logged: &mut usize) {
+        for diag in &pgo.closure_diagnostics()[*logged..] {
+            self.log(
+                "closure",
+                diag.source_time,
+                serde_json::to_value(diag).unwrap_or_default(),
+            );
+        }
+        *logged = pgo.closure_diagnostics().len();
+    }
+
+    /// An adopted solve on debug_log (`kind` "solve"): the closures it kept and judged, and the graph's error.
+    fn log_solve(&self, pgo: &GscPgo, ts: f64) {
+        let closures = pgo.committed_closures();
+        let judged = closures.iter().filter(|c| !c.gnc_weight.is_nan()).count();
+        let kept = closures.iter().filter(|c| c.gnc_weight > 0.5).count();
+        self.log(
+            "solve",
+            ts,
+            serde_json::json!({
+                "committed": closures.len(),
+                "judged": judged,
+                "kept": kept,
+                "graph_error": pgo.graph_error(),
+                "keyframes": pgo.key_poses().len(),
+            }),
+        );
     }
 
     /// Publish every keyframe's current pose (and dump them with `dump_path`).

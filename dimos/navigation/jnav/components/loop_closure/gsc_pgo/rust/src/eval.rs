@@ -46,13 +46,25 @@ use memory2::{for_each_scan, read_odometry, OdomRow};
 /// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
 // Unknown keys are ignored on purpose: the resolved config is dumped from the Python PGOConfig, which
 // carries module-lifecycle fields (executable, cwd, global_map_*, ...) this eval never uses.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct EvalConfig {
     #[serde(flatten)]
     pgo: PgoConfig,
     /// The scans arrive in the world frame: bring them into the body frame with the odometry.
     subtract_odom_from_cloud: bool,
+    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue).
+    max_scan_queue: usize,
+}
+
+impl Default for EvalConfig {
+    fn default() -> EvalConfig {
+        EvalConfig {
+            pgo: PgoConfig::default(),
+            subtract_odom_from_cloud: false,
+            max_scan_queue: 5,
+        }
+    }
 }
 
 /// A committed closure's ICP-refined relative pose (target frame -> source), so an
@@ -103,6 +115,11 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
+    /// `--live` replay (else lockstep), the scans it dropped from a full queue, and each processed scan's ms from arriving
+    /// to done (queue wait + processing).
+    live: bool,
+    scans_dropped: usize,
+    scan_latency_ms: Vec<f32>,
     /// Per keyframe, ms the scan thread spends on it (add_key_pose + closure search), in order.
     keyframe_scan_thread_ms: Vec<f32>,
     /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
@@ -148,6 +165,11 @@ struct Args {
     /// cost grows with the map, so the delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac
     /// solve at 5k keyframes is ~0.5%).
     solve_delay_fraction: f64,
+    /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
+    odom_scale: f64,
+    /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
+    /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
+    live: bool,
 }
 
 fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
@@ -172,6 +194,8 @@ fn parse_args() -> Result<Args, String> {
     let mut body_tf = None;
     let mut event_dump = None;
     let mut solve_delay_fraction = 0.01;
+    let mut odom_scale = 1.0;
+    let mut live = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -186,7 +210,9 @@ fn parse_args() -> Result<Args, String> {
             "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
             "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
+            "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
+            "--live" => live = true,
             "--solve-delay-fraction" => {
                 solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
             }
@@ -206,6 +232,8 @@ fn parse_args() -> Result<Args, String> {
         body_tf,
         event_dump,
         solve_delay_fraction,
+        odom_scale,
+        live,
     })
 }
 
@@ -276,6 +304,9 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
     let mut odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    for row in &mut odoms {
+        row.translation = row.translation.map(|v| v * args.odom_scale);
+    }
     let body_tf = args
         .body_tf
         .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
@@ -346,8 +377,11 @@ fn run() -> Result<(), String> {
     let mut loop_overlap: Vec<(f64, LoopOverlap, usize)> = Vec::new();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
-    // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
-    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+    let live_queue = config.max_scan_queue;
+    let mut scans_dropped = 0usize;
+    let mut scan_latency_ms: Vec<f32> = Vec::new();
+    // each scan paired with the newest odometry and brought into the body frame, as the module receives it
+    let mut prepare = |scan: memory2::ScanRow| -> Result<Option<(CloudWithPose, f64)>, String> {
         match &lidar_frame {
             Some(frame) if *frame != scan.frame_id => {
                 return Err(format!(
@@ -368,7 +402,7 @@ fn run() -> Result<(), String> {
         }
         last_ts = scan.ts;
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
-            return Ok(());
+            return Ok(None);
         };
         scans_processed += 1;
 
@@ -406,51 +440,174 @@ fn run() -> Result<(), String> {
             pose,
             frame_id: latest.frame_id.clone(),
         };
+        Ok(Some((cloud_with_pose, latest.ts)))
+    };
+    if args.live {
+        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (oldest dropped when
+        // full), the closure search runs on its own thread and only starts while no scans wait, solves adopt when done
+        let queue = std::sync::Mutex::new((std::collections::VecDeque::new(), false));
+        let arrived = std::sync::Condvar::new();
+        let wall_start = Instant::now();
+        let mut feed_error = Ok(());
+        std::thread::scope(|scope| -> Result<(), String> {
+            scope.spawn(|| {
+                let connection = match Connection::open_with_flags(
+                    &args.db,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
+                    Ok(connection) => connection,
+                    Err(e) => {
+                        feed_error = Err(format!("open {:?}: {e}", args.db));
+                        queue.lock().expect("queue").1 = true;
+                        arrived.notify_all();
+                        return;
+                    }
+                };
+                let mut recording_start = None;
+                feed_error =
+                    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+                        let Some((cloud_with_pose, ts)) = prepare(scan)? else {
+                            return Ok(());
+                        };
+                        let offset = ts - *recording_start.get_or_insert(ts);
+                        if let Some(wait) = std::time::Duration::from_secs_f64(offset.max(0.0))
+                            .checked_sub(wall_start.elapsed())
+                        {
+                            std::thread::sleep(wait);
+                        }
+                        let mut queued = queue.lock().expect("queue");
+                        queued.0.push_back((cloud_with_pose, ts, Instant::now()));
+                        while live_queue > 0 && queued.0.len() > live_queue {
+                            queued.0.pop_front();
+                            scans_dropped += 1;
+                        }
+                        drop(queued);
+                        arrived.notify_one();
+                        Ok(())
+                    });
+                queue.lock().expect("queue").1 = true;
+                arrived.notify_all();
+            });
+            let mut closure_search: Option<std::thread::ScopedJoinHandle<'_, _>> = None;
+            loop {
+                let (cloud_with_pose, ts, arrived_at) = {
+                    let mut queued = queue.lock().expect("queue");
+                    loop {
+                        if let Some(next) = queued.0.pop_front() {
+                            break next;
+                        }
+                        if queued.1 {
+                            if let Some(search) = closure_search.take() {
+                                pgo.finish_closure_search(
+                                    search.join().expect("closure search thread panicked"),
+                                );
+                            }
+                            return Ok(());
+                        }
+                        queued = arrived.wait(queued).expect("queue");
+                    }
+                };
+                let step_started = Instant::now();
+                let keyframe = pgo.add_key_pose(&cloud_with_pose);
+                if let Some((scan, overlap)) = pgo.pressure() {
+                    if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
+                        loop_overlap.push((ts, overlap, scan));
+                    }
+                }
+                if keyframe {
+                    published.extend(
+                        pgo.key_poses()[published.len()..]
+                            .iter()
+                            .map(|kp| (kp.rotation_global, kp.translation_global)),
+                    );
+                    if closure_search
+                        .as_ref()
+                        .is_some_and(|search| search.is_finished())
+                    {
+                        let search = closure_search.take().expect("checked above");
+                        pgo.finish_closure_search(
+                            search.join().expect("closure search thread panicked"),
+                        );
+                    }
+                    pgo.propose_closure();
+                    let behind = !queue.lock().expect("queue").0.is_empty();
+                    if !behind && closure_search.is_none() {
+                        if let Some(search) = pgo.begin_closure_search() {
+                            closure_search = Some(scope.spawn(move || search.run()));
+                        }
+                    }
+                    let had_closure = pgo.has_closure();
+                    if had_closure {
+                        closures += 1;
+                    }
+                    keyframe_scan_thread_ms
+                        .push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+                    let gnc_started = Instant::now();
+                    pgo.update();
+                    keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+                    if let Some(events) = &mut events {
+                        write_pose_changes(events, &pgo, &mut published, had_closure, ts)?;
+                    }
+                    if let Some(edges) = &mut edges {
+                        write_closure_edges(edges, &pgo, &mut edges_written)?;
+                    }
+                }
+                scan_latency_ms.push((arrived_at.elapsed().as_secs_f64() * 1e3) as f32);
+            }
+        })?;
+        feed_error?;
+    } else {
+        // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
+        for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+            let Some((cloud_with_pose, ts)) = prepare(scan)? else {
+                return Ok(());
+            };
+            let step_started = Instant::now();
+            let keyframe = pgo.add_key_pose(&cloud_with_pose);
+            if let Some((scan, overlap)) = pgo.pressure() {
+                if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
+                    loop_overlap.push((ts, overlap, scan));
+                }
+            }
+            if !keyframe {
+                return Ok(());
+            }
+            published.extend(
+                pgo.key_poses()[published.len()..]
+                    .iter()
+                    .map(|kp| (kp.rotation_global, kp.translation_global)),
+            );
+            pgo.search_for_closure_pairs();
+            let had_closure = pgo.has_closure();
+            if had_closure {
+                closures += 1;
+            }
+            keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+            let gnc_started = Instant::now();
+            match pgo.solve_started() {
+                Some((keyframes, free))
+                    if pgo.key_poses().len()
+                        < keyframes
+                            + ((free as f64 * args.solve_delay_fraction).ceil() as usize)
+                                .max(1) => {}
+                Some(_) => {
+                    pgo.wait_for_solve();
+                }
+                None => {
+                    pgo.update();
+                }
+            }
+            keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
 
-        let step_started = Instant::now();
-        let keyframe = pgo.add_key_pose(&cloud_with_pose);
-        if let Some((scan, overlap)) = pgo.pressure() {
-            if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
-                loop_overlap.push((latest.ts, overlap, scan));
+            if let Some(events) = &mut events {
+                write_pose_changes(events, &pgo, &mut published, had_closure, ts)?;
             }
-        }
-        if !keyframe {
-            return Ok(());
-        }
-        published.extend(
-            pgo.key_poses()[published.len()..]
-                .iter()
-                .map(|kp| (kp.rotation_global, kp.translation_global)),
-        );
-        pgo.search_for_closure_pairs();
-        let had_closure = pgo.has_closure();
-        if had_closure {
-            closures += 1;
-        }
-        keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
-        let gnc_started = Instant::now();
-        match pgo.solve_started() {
-            Some((keyframes, free))
-                if pgo.key_poses().len()
-                    < keyframes
-                        + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {}
-            Some(_) => {
-                pgo.wait_for_solve();
+            if let Some(edges) = &mut edges {
+                write_closure_edges(edges, &pgo, &mut edges_written)?;
             }
-            None => {
-                pgo.update();
-            }
-        }
-        keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
-
-        if let Some(events) = &mut events {
-            write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
-        }
-        if let Some(edges) = &mut edges {
-            write_closure_edges(edges, &pgo, &mut edges_written)?;
-        }
-        Ok(())
-    })?;
+            Ok(())
+        })?;
+    }
     pgo.finish();
     if let Some(events) = &mut events {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
@@ -525,6 +682,9 @@ fn run() -> Result<(), String> {
         data_duration_s,
         runtime_s,
         realtime_factor,
+        live: args.live,
+        scans_dropped,
+        scan_latency_ms,
         keyframe_scan_thread_ms,
         keyframe_gnc_ms,
         stage_seconds: pgo
