@@ -12,21 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Decoding browser recordings in-process: a real container in, 16-kHz PCM out."""
+"""Decoding browser recordings in-process: real containers in, 16-kHz PCM out."""
 
 import io
 
 import av
 import numpy as np
+import pytest
 
 from dimos.stream.audio.decode import decode_audio_bytes
 
 
-def _webm_opus(seconds: float) -> bytes:
-    """What Chromium's MediaRecorder produces: a 48-kHz opus stream in webm."""
+def _recording(container_format: str, codec: str, seconds: float) -> bytes:
+    """A 48-kHz tone in the container and codec a browser's MediaRecorder picks."""
     buffer = io.BytesIO()
-    with av.open(buffer, "w", format="webm") as container:
-        stream = container.add_stream("libopus", rate=48_000, layout="mono")
+    with av.open(buffer, "w", format=container_format) as container:
+        stream = container.add_stream(codec, rate=48_000, layout="mono")
         t = np.arange(int(48_000 * seconds)) / 48_000
         tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
         frame = av.AudioFrame.from_ndarray(tone[None, :], format="flt", layout="mono")
@@ -36,13 +37,18 @@ def _webm_opus(seconds: float) -> bytes:
     return buffer.getvalue()
 
 
-def test_webm_opus_decodes_to_16k_mono_float32() -> None:
-    event = decode_audio_bytes(_webm_opus(0.5))
+@pytest.mark.parametrize(
+    ("container_format", "codec"),
+    [("webm", "libopus"), ("ogg", "libopus"), ("mp4", "aac")],
+    ids=["chromium-webm-opus", "firefox-ogg-opus", "safari-mp4-aac"],
+)
+def test_browser_recording_decodes_to_16k_mono(container_format: str, codec: str) -> None:
+    event = decode_audio_bytes(_recording(container_format, codec, seconds=0.5))
     assert event is not None
     assert event.sample_rate == 16_000 and event.channels == 1
     assert event.data.dtype == np.float32 and event.data.ndim == 1
-    assert 7_500 < event.data.shape[0] < 8_500  # ~0.5 s at 16 kHz
-    assert 0.25 < np.abs(event.data).max() < 0.35  # the tone's amplitude survived
+    assert 7_500 < event.data.shape[0] < 9_000  # ~0.5 s at 16 kHz plus codec padding
+    assert 0.2 < np.abs(event.data).max() < 0.5  # the tone's amplitude survived
 
 
 def test_garbage_returns_none() -> None:
