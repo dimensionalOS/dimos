@@ -197,6 +197,12 @@ def dimos_executable() -> str:
     return str(Path(sys.executable).with_name("dimos"))
 
 
+def unit_search_path(executable: str) -> str:
+    """The unit's PATH: the venv, then nix (native modules build with it), then the system."""
+    nix = [Path.home() / ".nix-profile/bin", "/nix/var/nix/profiles/default/bin"]
+    return ":".join(map(str, [Path(executable).parent, *nix, "/usr/local/bin", "/usr/bin", "/bin"]))
+
+
 def render_unit(executable: str, working_directory: Path) -> str:
     return f"""[Unit]
 Description=DimOS Host daemon (zenoh router + fragment supervisor)
@@ -206,8 +212,8 @@ Wants=network-online.target
 [Service]
 ExecStart={executable} host start --foreground
 WorkingDirectory={working_directory}
-# The venv's tools (dimos-viewer, rerun) are spawned by name.
-Environment=PATH={Path(executable).parent}:/usr/local/bin:/usr/bin:/bin
+# The venv's tools (dimos-viewer, rerun) and nix are spawned by name.
+Environment=PATH={unit_search_path(executable)}
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT
