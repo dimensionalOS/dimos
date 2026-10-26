@@ -90,9 +90,9 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Configuration source of truth
 
-Prefer DimOS module configuration over ad-hoc native-binary flags. Define operational settings as typed fields on the `NativeModuleConfig` subclass, then pass values through blueprint overrides, config files, environment-backed global config, or `dimos run -o ...`. This keeps configuration discoverable from Python, visible to `--help`, and reusable across local replay, simulation, and hardware blueprints.
+Prefer dimOS module configuration over ad-hoc native-binary flags. Define operational settings as typed fields on the `NativeModuleConfig` subclass, then pass values through blueprint overrides, config files, environment-backed global config, or `dimos run -o ...`. This keeps configuration discoverable from Python, visible to `--help`, and reusable across local replay, simulation, and hardware blueprints.
 
-Use `extra_args` only for temporary migration or third-party flags that cannot yet be modeled as typed config. New DimOS-native wrappers should avoid documenting custom user-facing CLI flags on the C++ or Rust executable as the primary configuration interface.
+Use `extra_args` only for temporary migration or third-party flags that cannot yet be modeled as typed config. New dimOS-native wrappers should avoid documenting custom user-facing CLI flags on the C++ or Rust executable as the primary configuration interface.
 
 Recommended migration pattern:
 
@@ -123,7 +123,7 @@ or from the CLI with a blueprint option:
 dimos run my-lidar-blueprint -o mylidar.host_ip=192.168.1.10 -o mylidar.frequency=20
 ```
 
-Avoid making users pass the same settings directly to the native executable, for example by documenting `extra_args=["--host-ip", "192.168.1.10"]` as the normal path. That bypasses DimOS config introspection and makes it harder to validate blueprint configuration before the subprocess starts.
+Avoid making users pass the same settings directly to the native executable, for example by documenting `extra_args=["--host-ip", "192.168.1.10"]` as the normal path. That bypasses dimOS config introspection and makes it harder to validate blueprint configuration before the subprocess starts.
 
 ### Auto CLI arg generation
 
