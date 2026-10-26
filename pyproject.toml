@@ -28,6 +28,8 @@ include = ["dimos*", "experimental.gateway*"]
 # .py modules out of the wheel too).
 exclude = [
     "experimental.gateway.tests*",
+    "dimos.agents.node_modules*",
+    "dimos.agents.dist*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -56,9 +58,16 @@ exclude = [
 "experimental.gateway" = ["annotations.yaml"]
 
 [tool.setuptools.exclude-package-data]
-# Trims data the recursive globs above would otherwise pull in: test fixtures
-# and the native (C++/nix) build tree, which is built separately.
+# Trims data the recursive globs above would otherwise pull in: test fixtures,
+# the on-robot agent's Node package (it runs from a checkout) and the native
+# (C++/nix) build tree, which is built separately.
 "dimos" = [
+    "agents/node_modules/**",
+    "agents/dist/**",
+    "agents/package.json",
+    "agents/package-lock.json",
+    "agents/tsconfig.json",
+    "agents/.prettierrc.json",
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",

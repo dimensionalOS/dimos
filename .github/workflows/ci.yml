@@ -610,6 +610,35 @@ jobs:
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
 
+  agent:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    defaults:
+      run:
+        working-directory: dimos/agents
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dimos/agents/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
   tests:
     if: |
       !cancelled() &&
@@ -1374,6 +1403,7 @@ jobs:
     - pyo3
     - md-babel
     - web
+    - agent
     - tests
     - self-hosted-tests
     - benchmark-track
