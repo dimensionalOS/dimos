@@ -54,7 +54,7 @@ from dimos.agents.harness.runtime.inventory import (
 )
 from dimos.agents.mcp.tool_stream import TOOL_STREAM_TOPIC
 from dimos.agents.skill_result import SkillResult
-from dimos.constants import HARNESS_STATE_DIR, MODULES_DIR
+from dimos.constants import HARNESS_STATE_DIR, RUNTIME_MODULES_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RPCClient
@@ -108,7 +108,7 @@ class HarnessRuntime(Module):
         self._tool_streams: PubSubTransport[dict[str, JSON]] | None = None
         self._modules = AgentModuleManager(
             HARNESS_STATE_DIR / "modules",
-            MODULES_DIR / AGENT_MODULE_PACKAGE,
+            RUNTIME_MODULES_DIR / AGENT_MODULE_PACKAGE,
             connect=self._connect,
             reconnect=self._reconnect,
         )

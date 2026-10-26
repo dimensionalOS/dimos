@@ -842,7 +842,7 @@ def test_check_requirements_failure(mocker) -> None:
 def test_module_saved_in_modules_dir_after_start_loads(
     dedicated: bool, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("dimos.core.coordination.module_coordinator.MODULES_DIR", tmp_path)
+    monkeypatch.setattr("dimos.core.coordination.module_coordinator.RUNTIME_MODULES_DIR", tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))
     coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
     coordinator.start()
@@ -857,14 +857,14 @@ def test_module_saved_in_modules_dir_after_start_loads(
             f"    dedicated_worker = {dedicated}\n\n"
             "    @rpc\n"
             "    def greet(self) -> str:\n"
-            "        return 'hello from MODULES_DIR'\n"
+            "        return 'hello from RUNTIME_MODULES_DIR'\n"
         )
         importlib.invalidate_caches()
         greeter = importlib.import_module(f"{package}.greeter").Greeter
 
         coordinator.load_module(greeter)
 
-        assert coordinator.get_instance(greeter).greet() == "hello from MODULES_DIR"
+        assert coordinator.get_instance(greeter).greet() == "hello from RUNTIME_MODULES_DIR"
     finally:
         coordinator.stop()
 

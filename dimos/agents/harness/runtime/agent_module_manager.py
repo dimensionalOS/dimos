@@ -15,7 +15,7 @@
 """Agent modules and their deployment into the running system.
 
 Each module has one source file, ``NAME.py`` in the ``dimos_agent`` package of
-``MODULES_DIR``, which the agent edits. A restart snapshots it into a new revision,
+``RUNTIME_MODULES_DIR``, which the agent edits. A restart snapshots it into a new revision,
 ``NAME_rN.pyc``, so no process runs a stale copy: the deployed revision is unloaded and
 the new one runs. A module runs under its class name, and the harness finds it in the
 running system by its import path.
@@ -218,7 +218,7 @@ class AgentModuleManager:
         connect: Callable[[], Dimos],
         reconnect: Callable[[], None],
     ) -> None:
-        """root keeps metadata; package_dir is MODULES_DIR/dimos_agent."""
+        """root keeps metadata; package_dir is RUNTIME_MODULES_DIR/dimos_agent."""
         self._root = root
         self._package_dir = package_dir
         self._connect = connect

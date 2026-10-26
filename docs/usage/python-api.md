@@ -207,7 +207,7 @@ Module classes and `Blueprint` objects are pickled and unpickled on the
 daemon, so their module classes must be importable there and all kwargs must
 be picklable.
 
-The daemon and its workers also import from `dimos.constants.MODULES_DIR`
+The daemon and its workers also import from `dimos.constants.RUNTIME_MODULES_DIR`
 (`~/.local/state/dimos/modules`, or under `$XDG_STATE_HOME`), so a module saved
 there loads without a daemon restart, even if it was saved after the daemon
 started. Put your files in a package so their names cannot shadow installed
@@ -216,10 +216,10 @@ modules, and add the directory to the client's `sys.path` to import the class:
 ```python skip
 import sys
 
-from dimos.constants import MODULES_DIR
+from dimos.constants import RUNTIME_MODULES_DIR
 
-sys.path.append(str(MODULES_DIR))
-from my_modules.watcher import Watcher  # MODULES_DIR/my_modules/watcher.py
+sys.path.append(str(RUNTIME_MODULES_DIR))
+from my_modules.watcher import Watcher  # RUNTIME_MODULES_DIR/my_modules/watcher.py
 
 app.run(Watcher)
 ```

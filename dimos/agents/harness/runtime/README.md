@@ -176,12 +176,12 @@ The paths are defined in [constants.py](/dimos/agents/harness/runtime/constants.
 
 | Path | Contents |
 | --- | --- |
-| `MODULES_DIR/dimos_agent/NAME.py` | Editable module source. Operation results return its absolute path. |
-| `MODULES_DIR/dimos_agent/NAME_rN.pyc` | Compiled revision loaded into a worker. |
+| `RUNTIME_MODULES_DIR/dimos_agent/NAME.py` | Editable module source. Operation results return its absolute path. |
+| `RUNTIME_MODULES_DIR/dimos_agent/NAME_rN.pyc` | Compiled revision loaded into a worker. |
 | `HARNESS_STATE_DIR/modules/NAME/module.json` | Owner, class name, and last error. |
 | `HARNESS_STATE_DIR/exports/` | Notice attachments. |
 
-By default, `MODULES_DIR` is `~/.local/state/dimos/modules` and `HARNESS_STATE_DIR` is
+By default, `RUNTIME_MODULES_DIR` is `~/.local/state/dimos/modules` and `HARNESS_STATE_DIR` is
 `~/.local/state/dimos/harness`. `XDG_STATE_HOME` changes their state root.
 
 ## See also
