@@ -56,4 +56,27 @@ flowchart LR
   CS -. rayon pool .- RP[(worker_threads = 2)]
   SV -. rayon pool .- RP
 </pre></div>
+<h3>4. Pressure and need: when to spend extra effort</h3>
+<p>Extra work (checking more scan-context candidates, stacking more keyframes into ICP) is only spent when two things both say so. <b>Pressure</b> says a loop is likely right now. <b>Need</b> says the match in hand isn't convincing enough yet. Otherwise GSC does exactly the cheap single-scan check.</p>
+<ul>
+<li><b>Pressure: are we probably back somewhere old that no closure has tied in yet?</b> This is <code>unresolved_loop_probability</code>. Each earlier keyframe's position as seen from the newest one has an uncertainty: from the solved graph (Takahashi covariance recovery after each solve), plus the odometry since that solve. Each earlier keyframe gets the chance the newest scan overlaps it (probability product kernel against the scans' average reach). That chance is weighted by how likely the keyframe is off by more than <code>closure_search_radius</code>, since the position search would find it otherwise. Recomputed every <code>pressure_check_frequency</code> scans (default 5) and published on <code>debug_log</code>. It rises before real loops and drops once they close.</li>
+<li><b>Need: how convincing must this match be?</b> Evidence = −ln(1 − confidence), confidence = scan-context × ICP × degeneracy factors. Required evidence = the yank part (bigger corrections need more proof) + the solve's record (if it has lately rejected more closures than it kept, add ln((1 − keep_rate) / keep_rate), never below 0) + ln(look-alike places) (picking one of N places the scan fits equally well).</li>
+<li><b>Rule 1, widen the scan-context search: as far as pressure allows, and only while more look-alikes could change the answer.</b> After ICP, look-alike places are counted in ring-key order up to e^(evidence − bar), the point where one more look-alike would make the match not convincing. Candidates checked are capped at <code>scan_context_top_k</code> / (1 − pressure): today's 10 when no loop is expected, more as pressure rises.</li>
+<li><b>Rule 2, extend ICP: as far as pressure allows, and only while the match isn't convincing yet.</b> Extended ICP stacks 2, 4, 8 … keyframes while evidence &lt; required, up to <code>closure_extended_icp_max_keyframes</code> × pressure keyframes. As evidence grows it may count further look-alikes. Out of budget, the match is rejected for now and can come back when pressure is higher.</li>
+</ul>
+<p class="note">Status: pressure (<code>debug_log</code>, <code>pressure_check_frequency</code>) is committed (mls_reform e4665e32c1). Rules 1–2 and the need terms are under test on Go2 L1 and Mid-360 and not committed yet.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+  P[pressure: unresolved_loop_probability<br/>every pressure_check_frequency scans] --> CAP["candidate cap = top_k / (1 - pressure)<br/>extension budget = max keyframes x pressure"]
+  M[candidate match after ICP + gates] --> E["evidence = -ln(1 - confidence)"]
+  E --> N{count look-alike places<br/>only up to the decision point}
+  CAP --> N
+  N --> B["bar = yank + solve record + ln(places)"]
+  B --> D{evidence &gt;= bar?}
+  D -- yes --> ACC([accept])
+  D -- no --> X{budget left?}
+  CAP --> X
+  X -- no --> REJ([reject for now])
+  X -- yes --> EXT[extend ICP: double keyframes,<br/>recount look-alikes if evidence grew] --> D
+</pre></div>
 </section>
