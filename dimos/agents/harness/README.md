@@ -27,48 +27,62 @@ as a commit. One `Harness` owns the store, and the `Agent` exposes it as `harnes
 
 ## Quickstart
 
-Open the agent with the scripted model the tests use and an MCP URL that nothing answers, as
-[test/agent-child.ts](../test/agent-child.ts) does, then start a conversation, submit one input and read the answer. The
-gateway's [main.ts](../gateway/main.ts) opens it the same way with real paths and the configured model. The snippets
-under Usage continue from this `agent` and `conversation`.
+Start a DimOS system first, such as `dimos --replay run unitree-go2 --daemon`, and set `OPENAI_API_KEY` in the
+environment or in the checkout's `.env`. The Quickstart opens the agent on this checkout with `gpt-5.6-luna`. The agent
+finds the running system, runs `dimos agent load`, and connects to McpServer. Then the Quickstart asks what is running
+and prints the answer. The gateway's [main.ts](../gateway/main.ts) opens the agent the same way, with the model and
+credentials from its config. The snippets under Usage continue from this `agent` and `conversation`.
 
 ```ts
 import type { UserRequestId } from "../shared/protocol/conversation/input.ts";
 import { AssistantEntry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { existsSync, mkdtempSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
 import { openAgent } from "./main.ts";
-import { scriptedModel } from "../test/scripted-model.ts";
-import { tmpdir } from "node:os";
+import { until } from "../sdk/until.ts";
 
 const context = BACKGROUND_CONTEXT;
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+if (existsSync(join(root, ".env"))) process.loadEnvFile(join(root, ".env"));
+const state = join(process.env["XDG_STATE_HOME"] ?? join(homedir(), ".local", "state"), "dimos");
 const dir = mkdtempSync(join(tmpdir(), "dimos-agent-"));
-const model = scriptedModel();
-model.script([fauxAssistantMessage("no robot here")]);
+const models = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null });
 
 const agent = await openAgent(
     {
         install: {
-            root: dir,
-            python: "/usr/bin/python3",
-            cli: join(dir, "dimos"),
-            mcpUrl: new URL("http://127.0.0.1:1/mcp"),
-            runsDir: join(dir, "runs"),
-            stateDir: join(dir, "state"),
+            root,
+            python: join(root, ".venv", "bin", "python"),
+            cli: join(root, ".venv", "bin", "dimos"),
+            mcpUrl: new URL("http://127.0.0.1:9990/mcp"),
+            runsDir: join(state, "runs"),
+            stateDir: state,
         },
-        models: model.models,
+        models,
         storePath: join(dir, "agent.sqlite"),
         toolResultsDir: join(dir, "tool-results"),
         renderCacheDir: join(dir, "render"),
-        skillRoots: [],
-        defaults: () => ({ model: model.model, thinkingLevel: null, workspace: dir }),
+        skillRoots: [join(root, "dimos", "agents", "harness", "skills")],
+        defaults: () => ({
+            model: { provider: "openai", modelId: "gpt-5.6-luna" },
+            thinkingLevel: null,
+            workspace: root,
+        }),
         gatewayEnv: process.env,
         report: (error) => console.error(error),
     },
     context,
 );
+
+const load = await until(agent.loader.status, (status) =>
+    status.state === "idle" || status.state === "running" ? undefined : status,
+);
+if (load.state !== "loaded") throw new Error(`the runtime did not load: ${JSON.stringify(load)}`);
+await until(agent.connection.status, (link) => (link.state === "up" ? link : undefined));
 
 const conversation = await agent.conversations.start(null, "readme-start", context);
 const sent = await agent.inputs.submit(
@@ -88,7 +102,10 @@ if (handle === undefined) throw new Error("submission vanished");
 const settled = await handle.wait(context);
 if (settled.answer === undefined) throw new Error(`unanswered: ${settled.reason}`);
 const answer = await agent.harness.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
-console.log(answer?.model);
+const message = answer?.model?.[0];
+if (message?.role === "assistant") {
+    for (const part of message.content) if (part.type === "text") console.log(part.text);
+}
 ```
 
 ## Usage
