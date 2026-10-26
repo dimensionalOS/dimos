@@ -52,7 +52,7 @@ class PointsExport:
     path: str
     sha256: str
     points: int
-    """Points written, after the stride."""
+    """Points written, after dropping non-finite points and applying the stride."""
     source_points: int
     """Points in the message."""
     kind: Literal["points"] = "points"
@@ -97,18 +97,23 @@ def export(message: Exportable, stem: str, directory: Path = EXPORTS_DIR) -> Exp
         result: Export = ImageExport(str(path), hashlib.sha256(data).hexdigest())
     else:
         points, colors = message.as_numpy()
-        stride = max(1, -(-len(points) // MAX_EXPORT_POINTS))
-        selected = points[::stride, :3]
+        finite = np.isfinite(points[:, :3]).all(axis=1)
+        kept = points[finite]
+        stride = max(1, -(-len(kept) // MAX_EXPORT_POINTS))
+        selected = kept[::stride, :3]
         cloud: dict[str, JSON] = {
             "points": selected.astype(float).round(4).tolist(),
             "frame": message.frame_id,
-            "timestamp": float(message.ts),
         }
+        if message.ts is not None:
+            cloud["timestamp"] = float(message.ts)
         if colors is not None and len(colors) == len(points):
             # PointCloud2 colors are in [0, 1]; the XYZ JSON export uses 0-255.
-            cloud["colors"] = (colors[::stride, :3] * 255).round().clip(0, 255).astype(int).tolist()
+            cloud["colors"] = (
+                (colors[finite][::stride, :3] * 255).round().clip(0, 255).astype(int).tolist()
+            )
         path = directory / f"{stem}.json"
-        text = json.dumps(cloud)
+        text = json.dumps(cloud, allow_nan=False)
         path.write_text(text)
         result = PointsExport(
             str(path), hashlib.sha256(text.encode()).hexdigest(), len(selected), len(points)

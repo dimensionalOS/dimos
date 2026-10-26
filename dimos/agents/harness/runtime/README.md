@@ -154,8 +154,8 @@ remain available. Declare `In[T]` and `Out[T]` ports to join streams by name and
 `notify(text, **data)` publishes an `AgentNotice` and returns `True`. It returns `False` when rate-limited by the class
 attribute `notify_interval_s`, which defaults to 10 seconds. The next published notice includes the number suppressed.
 Nested `Image` and `PointCloud2` values become exported files and path references. Other values must be JSON with finite
-numbers. Images are saved as JPEG; clouds are saved as XYZ JSON, with a uniform stride above 200,000 points. The export
-directory retains at most 50 files.
+numbers. Images are saved as JPEG; clouds are saved as XYZ JSON, with a uniform stride above 200,000 points. Points with
+a NaN or infinite coordinate are dropped. The export directory retains at most 50 files.
 
 ### Notifications and trajectory entries
 
