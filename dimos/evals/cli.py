@@ -130,7 +130,8 @@ def run(
     """Run an eval suite.
 
     Exits 1 when a case errored or no case was selected. A case that scored
-    below its threshold is a measurement, not an error, and exits 0.
+    below its threshold is a measurement, not an error, and exits 0. With
+    --docker the status only says whether the container started.
     """
     if docker:
         _run_in_docker(suite, agent, set_, allow, exclude, tags, limit)
