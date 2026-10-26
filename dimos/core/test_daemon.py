@@ -19,19 +19,26 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
+import time
 from unittest import mock
+import uuid
 
+import psutil
 import pytest
 
 from dimos.core import run_registry
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.core.run_registry import (
     RunEntry,
     blueprint_from_run_id,
     cleanup_stale,
     generate_run_id,
     list_runs,
+    stop_entry,
 )
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture()
@@ -309,39 +316,75 @@ class TestForkDaemon:
 
 
 class TestSignalHandler:
-    """The handler stops the coordinator and exits; the registry is the caller's."""
+    """Signal callbacks request shutdown without running cleanup reentrantly."""
 
-    def test_signal_handler_stops_and_exits(self):
-        coord = mock.MagicMock()
-        with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers("run-1", coord)
-            # Capture the handler closure registered for SIGTERM
-            handler = mock_signal.call_args_list[0][0][1]
+    def test_signal_handler_requests_shutdown(self, mocker):
+        coord = mocker.Mock()
+        register = mocker.patch("signal.signal")
+        install_signal_handlers("run-1", coord)
+        handler = register.call_args_list[0].args[1]
 
-        with (
-            mock.patch("dimos.core.daemon.kill_run_processes") as sweep,
-            pytest.raises(SystemExit),
-        ):
-            handler(signal.SIGTERM, None)
+        handler(signal.SIGTERM, None)
 
-        coord.stop.assert_called_once()
-        sweep.assert_called_once_with("run-1")
+        coord.shutdown.assert_called_once_with()
+        coord.stop.assert_not_called()
+        assert [call.args[0] for call in register.call_args_list] == [signal.SIGTERM, signal.SIGINT]
 
-    def test_signal_handler_tolerates_stop_error(self):
-        coord = mock.MagicMock()
-        coord.stop.side_effect = RuntimeError("boom")
-        with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers("run-1", coord)
-            handler = mock_signal.call_args_list[0][0][1]
+    def test_foreground_preserves_sigint_handler(self, mocker):
+        coord = mocker.Mock()
+        register = mocker.patch("signal.signal")
 
-        with (
-            mock.patch("dimos.core.daemon.kill_run_processes") as sweep,
-            pytest.raises(SystemExit),
-        ):
-            handler(signal.SIGTERM, None)
+        install_signal_handlers("run-1", coord, sigint=False)
 
-        # The sweep still runs if stop() throws
-        sweep.assert_called_once_with("run-1")
+        assert [call.args[0] for call in register.call_args_list] == [signal.SIGTERM]
+
+
+@pytest.mark.parametrize("shutdown", ["SIGTERM", "SIGINT", "rpc"])
+def test_coordinator_shutdown_exits_cleanly_and_stops_modules_once(tmp_path, shutdown):
+    run_id = f"shutdown-test-{uuid.uuid4().hex}"
+    stop_file = tmp_path / "stops"
+    ready_file = tmp_path / "ready"
+    code = """
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+
+from dimos.core.coordination._test_module import StopCountingModule
+from dimos.core.daemon import run_coordinator
+
+stop_file, ready_file, run_id, shutdown = sys.argv[1:]
+blueprint = StopCountingModule.blueprint(stop_file=stop_file).global_config(
+    n_workers=2, viewer="none",
+)
+coordinators = []
+
+def ready(coordinator):
+    coordinators.append(coordinator)
+    Path(ready_file).write_text(str(time.monotonic()))
+    if shutdown == "rpc":
+        coordinator.shutdown()
+    else:
+        os.kill(os.getpid(), getattr(signal, shutdown))
+        os.kill(os.getpid(), getattr(signal, shutdown))
+
+run_coordinator(blueprint, None, run_id=run_id, log_dir=Path(stop_file).parent, on_ready=ready)
+coordinators[0].stop()
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(stop_file), str(ready_file), run_id, shutdown],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert time.monotonic() - float(ready_file.read_text()) < 5
+        assert "Traceback" not in result.stderr, result.stderr
+        assert stop_file.read_text().splitlines() == ["stop"]
+    finally:
+        kill_run_processes(run_id)
 
 
 class TestStatusCommand:
@@ -393,6 +436,23 @@ class TestStatusCommand:
 
 class TestStopCommand:
     """Tests for `dimos stop` CLI command."""
+
+    def test_stop_recognizes_exited_child_without_reaping_it(self, tmp_registry, mocker):
+        with subprocess.Popen([sys.executable, "-c", "raise SystemExit(23)"]) as child:
+            wait_until(
+                lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, timeout=5
+            )
+            entry = _make_entry(pid=child.pid)
+            entry.save()
+            mocker.patch(
+                "dimos.core.run_registry.time.sleep",
+                side_effect=AssertionError("An exited process must not delay shutdown"),
+            )
+
+            assert stop_entry(entry) == ("Stopped with SIGTERM", True)
+            assert not entry.registry_path.exists()
+            # The status still belongs to Popen, not the liveness check.
+            assert child.wait(timeout=1) == 23
 
     def test_stop_sends_sigterm(self, tmp_path, monkeypatch):
         """Verify stop sends SIGTERM to the correct PID."""

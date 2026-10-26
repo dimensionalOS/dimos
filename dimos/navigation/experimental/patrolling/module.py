@@ -52,6 +52,9 @@ class PatrollingModule(Module):
     _planner_spec: ReplanningAStarPlannerSpec
     _latest_pose: PoseStamped | None = None
     _patrol_task: asyncio.Task[None] | None = None
+    # True from the first planner override in start_patrol until stop_patrol
+    # undoes it, so a start that fails halfway is still cleaned up.
+    _planner_needs_restore = False
 
     _clearance_multiplier = 0.5
 
@@ -85,6 +88,7 @@ class PatrollingModule(Module):
             return "Patrol is already running. Use `stop_patrol` to stop."
 
         self._router.reset()
+        self._planner_needs_restore = True
         self._planner_spec.set_replanning_enabled(False)
         self._planner_spec.set_safe_goal_clearance(
             self.config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
@@ -110,6 +114,12 @@ class PatrollingModule(Module):
             except asyncio.CancelledError:
                 pass
         self._patrol_task = None
+        if not self._planner_needs_restore:
+            # Idle shutdown must not issue planner RPCs or a new navigation
+            # goal while the rest of the stack is being stopped.
+            self.stop_tool("start_patrol")
+            return
+        self._planner_needs_restore = False
         self._planner_spec.set_replanning_enabled(True)
         self._planner_spec.reset_safe_goal_clearance()
         # Closes the tool-stream and releases the `movement` capability via
