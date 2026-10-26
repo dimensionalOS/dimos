@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.core.transport_factory import make_transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -200,6 +202,36 @@ def test_peek_stream_returns_published_value(app):
     assert value is not None
     assert isinstance(value, int)
     assert value > 1000
+
+
+@pytest.mark.parametrize("transport", ["lcm", "zenoh"])
+@pytest.mark.parametrize("remote", [False, True])
+def test_peek_stream_receives_external_odometry(app, transport, remote):
+    global_config.update(transport=transport, n_workers=1, viewer="none")
+    app.run(RecordingSource)
+    expected = PoseStamped(ts=123.0, frame_id="world", position=(1.0, 2.0, 3.0))
+
+    with ExitStack() as stack:
+        client = app
+        if remote:
+            app._coordinator.start_rpc_service()
+            client = Dimos.connect()
+            stack.callback(client.stop)
+        publisher = stack.enter_context(make_transport("/odom", PoseStamped))
+        executor = stack.enter_context(ThreadPoolExecutor())
+        result = executor.submit(client.peek_stream, "odom", timeout=3.0)
+
+        def publish_until_done():
+            publisher.publish(expected)
+            return result.done()
+
+        wait_until(publish_until_done, timeout=5.0, interval=0.02)
+        pose = result.result()
+
+    assert isinstance(pose, PoseStamped)
+    assert pose.ts == expected.ts
+    assert pose.frame_id == expected.frame_id
+    assert (pose.x, pose.y, pose.z) == (1.0, 2.0, 3.0)
 
 
 def test_restart_before_run(app):
