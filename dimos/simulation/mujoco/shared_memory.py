@@ -32,8 +32,6 @@ T = TypeVar("T")
 
 # Video buffer: VIDEO_WIDTH x VIDEO_HEIGHT x 3 RGB
 _video_size = VIDEO_WIDTH * VIDEO_HEIGHT * 3
-# Depth buffers: 3 cameras x VIDEO_WIDTH x VIDEO_HEIGHT float32
-_depth_size = VIDEO_WIDTH * VIDEO_HEIGHT * 4  # float32 = 4 bytes
 # Odometry buffer: position(3) + quaternion(4) + timestamp(1) = 8 floats
 _odom_size = 8 * 8  # 8 float64 values
 # Command buffer: linear(3) + angular(3) = 6 floats
@@ -48,9 +46,6 @@ _control_size = 3 * 4  # 3 int32 values
 
 _shm_sizes = {
     "video": _video_size,
-    "depth_front": _depth_size,
-    "depth_left": _depth_size,
-    "depth_right": _depth_size,
     "odom": _odom_size,
     "cmd": _cmd_size,
     "lidar": _lidar_size,
@@ -71,9 +66,6 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
 @dataclass(frozen=True)
 class ShmSet:
     video: SharedMemory
-    depth_front: SharedMemory
-    depth_left: SharedMemory
-    depth_right: SharedMemory
     odom: SharedMemory
     cmd: SharedMemory
     lidar: SharedMemory
@@ -164,18 +156,6 @@ class ShmReader(_ShmEnd):
         )
         with self._writing(0):
             video_array[:] = pixels
-
-    def write_depth(self, front: NDArray[Any], left: NDArray[Any], right: NDArray[Any]) -> None:
-        with self._writing(1):
-            for shm, depth in (
-                (self.shm.depth_front, front),
-                (self.shm.depth_left, left),
-                (self.shm.depth_right, right),
-            ):
-                depth_array: NDArray[Any] = np.ndarray(
-                    (VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.float32, buffer=shm.buf
-                )
-                depth_array[:] = depth
 
     def write_odom(self, pos: NDArray[Any], quat: NDArray[Any], timestamp: float) -> None:
         odom_array: NDArray[Any] = np.ndarray((8,), dtype=np.float64, buffer=self.shm.odom.buf)

@@ -64,6 +64,20 @@ def test_command_round_trip(shm_pair: tuple[ShmWriter, ShmReader]) -> None:
     assert reader.read_command() is None  # the same command again
 
 
+def test_empty_lidar_frame_replaces_previous_hits(shm_pair: tuple[ShmWriter, ShmReader]) -> None:
+    writer, reader = shm_pair
+    reader.write_lidar(_frame_1, 1.0)
+
+    reader.write_lidar(np.empty((0, 3), dtype=np.float32), 2.0)
+
+    lidar, seq = writer.read_lidar()
+    assert seq == 2
+    assert lidar is not None
+    points, ts = lidar
+    assert ts == 2.0
+    np.testing.assert_array_equal(points, np.empty((0, 3), dtype=np.float32))
+
+
 def test_torn_lidar_read_is_retried(
     shm_pair: tuple[ShmWriter, ShmReader], monkeypatch: MonkeyPatch
 ) -> None:

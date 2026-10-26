@@ -1,6 +1,7 @@
 """mujoco is ~20 MB, so we have a stub to avoid installing in lint job."""
 
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any
 
 import numpy as np
@@ -54,6 +55,13 @@ class MjvOption:
 
 class Renderer:
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
+    def __enter__(self) -> Renderer: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
     def update_scene(
         self,
         data: MjData,
@@ -108,12 +116,18 @@ class mjtCamera:
     mjCAMERA_TRACKING: int
 
 class mjtGeom:
+    def __init__(self, value: int) -> None: ...
+    @property
+    def name(self) -> str: ...
     mjGEOM_PLANE: int
+    mjGEOM_HFIELD: int
     mjGEOM_SPHERE: int
     mjGEOM_CAPSULE: int
+    mjGEOM_ELLIPSOID: int
     mjGEOM_CYLINDER: int
     mjGEOM_BOX: int
     mjGEOM_MESH: int
+    mjGEOM_SDF: int
 
 class mjtTexture:
     mjTEXTURE_2D: int

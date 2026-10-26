@@ -68,9 +68,11 @@ def load_model(
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
-    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    assets = get_assets()
+    assets[f"{robot}.xml"] = add_lidar_site(assets[f"{robot}.xml"], robot)
+    model = mujoco.MjModel.from_xml_string(xml_string, assets=assets)
     # clip planes in meters: MuJoCo scales them by the scene's extent, which differs ~200x between rooms, and a far
-    # near plane hides what is close to the lidar's depth cameras
+    # near plane hides what is close to the video camera
     model.vis.map.znear = 0.01 / model.stat.extent
     model.vis.map.zfar = 100 / model.stat.extent
     data = mujoco.MjData(model)
@@ -107,6 +109,27 @@ def load_model(
     mujoco.set_mjcb_control(policy.get_control)
 
     return model, data
+
+
+def add_lidar_site(robot_xml: bytes, robot: str) -> bytes:
+    """Mount a lidar in memory without changing the downloaded robot XML."""
+    match robot:
+        case "unitree_g1":
+            mount_body = "torso_link"
+            # Above the head mesh: the old camera height (0.42) shadows most rays.
+            position = "0.05 0 0.50"
+        case "unitree_go1":
+            mount_body = "trunk"
+            position = "0.3 0 0.1"
+        case _:
+            raise ValueError(f"Unknown robot lidar mount: {robot}")
+
+    root = ET.fromstring(robot_xml)
+    body = root.find(f".//body[@name='{mount_body}']")
+    if body is None:
+        raise ValueError(f"Missing lidar mount body {mount_body!r} in {robot}")
+    ET.SubElement(body, "site", name="lidar", pos=position, size="0.01", group="5")
+    return ET.tostring(root)
 
 
 def get_model_xml(robot: str, scene_xml: str) -> str:
