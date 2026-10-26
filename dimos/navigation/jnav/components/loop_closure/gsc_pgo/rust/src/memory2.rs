@@ -23,6 +23,7 @@
 //! here comes from decoding the blob.
 
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
+use dimos_gsc_pgo::records::extract_xyz;
 use lcm_msgs::geometry_msgs::PoseStamped;
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
@@ -58,18 +59,13 @@ fn quote_ident(name: &str) -> Result<String, String> {
 /// Join a stream's metadata + blob tables on id, ordered by timestamp, and hand
 /// each `(ts, blob)` to `decode`. Rows the decoder returns `None` for are
 /// skipped (e.g. a corrupt frame), so a single bad message never aborts a run.
-///
-/// `stride` keeps every `stride`-th row (1 = all). The stride is applied here,
-/// before decoding, so strided-out blobs are never decoded or retained — a huge
-/// recording can be subsampled without materializing every scan in memory.
 fn read_stream<T>(
     connection: &Connection,
     stream: &str,
-    stride: usize,
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let mut out = Vec::new();
-    for_each_row(connection, stream, stride, |ts, data| {
+    for_each_row(connection, stream, 1, |ts, data| {
         if let Some(value) = decode(ts, data) {
             out.push(value);
         }
@@ -78,7 +74,8 @@ fn read_stream<T>(
     Ok(out)
 }
 
-/// Call `visit` with every `stride`th row's (ts, blob) in time order, one row in memory at a time.
+/// Call `visit` with every `stride`th row's (ts, blob) in time order, one row in memory at a time: strided-out blobs are
+/// never decoded or retained, so a huge recording can be subsampled without materializing every scan in memory.
 fn for_each_row(
     connection: &Connection,
     stream: &str,
@@ -160,12 +157,8 @@ fn odom_from_pose(
 /// Read an odometry stream, accepting either `nav_msgs/Odometry` or
 /// `geometry_msgs/PoseStamped` payloads (legacy go2 recordings store the
 /// latter). The fingerprint check makes the choice unambiguous per blob.
-pub fn read_odometry(
-    connection: &Connection,
-    stream: &str,
-    stride: usize,
-) -> Result<Vec<OdomRow>, String> {
-    let rows = read_stream(connection, stream, stride, |ts, data| {
+pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRow>, String> {
+    let rows = read_stream(connection, stream, |ts, data| {
         if let Ok(message) = Odometry::decode(data) {
             return Some(odom_from_odometry(ts, &message));
         }
@@ -182,46 +175,6 @@ pub fn read_odometry(
     Ok(rows)
 }
 
-/// Extract xyz points from a PointCloud2 (mirrors the module's `extract_xyz`;
-/// intensity and other fields are dropped — the PGO core never reads them).
-fn extract_xyz(message: &PointCloud2) -> Option<Vec<[f32; 3]>> {
-    let mut offset_x = None;
-    let mut offset_y = None;
-    let mut offset_z = None;
-    for field in &message.fields {
-        match field.name.as_str() {
-            "x" => offset_x = Some(field.offset as usize),
-            "y" => offset_y = Some(field.offset as usize),
-            "z" => offset_z = Some(field.offset as usize),
-            _ => {}
-        }
-    }
-    let (offset_x, offset_y, offset_z) = (offset_x?, offset_y?, offset_z?);
-    let step = message.point_step as usize;
-    if step == 0 {
-        return None;
-    }
-    let point_count = (message.width as usize) * (message.height as usize);
-    let data = &message.data;
-    let mut points = Vec::with_capacity(point_count);
-    let read = |base: usize, offset: usize| -> f32 {
-        let bytes = &data[base + offset..base + offset + 4];
-        f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    };
-    for index in 0..point_count {
-        let base = index * step;
-        if base + step > data.len() {
-            break;
-        }
-        points.push([
-            read(base, offset_x),
-            read(base, offset_y),
-            read(base, offset_z),
-        ]);
-    }
-    Some(points)
-}
-
 /// Call `visit` with each scan of a lidar stream of PointCloud2s, in time order, one at a time.
 pub fn for_each_scan(
     connection: &Connection,
@@ -233,7 +186,7 @@ pub fn for_each_scan(
         let Ok(message) = PointCloud2::decode(data) else {
             return Ok(());
         };
-        let Some(points) = extract_xyz(&message) else {
+        let Ok(points) = extract_xyz(&message) else {
             return Ok(());
         };
         visit(ScanRow {

@@ -271,7 +271,7 @@ fn relative_position_covariances(
                 // δ = δp_tip - δp_k + skew(p_tip - p_k) R_k δθ_k (k's own heading uncertainty does not move the tip
                 // relative to k)
                 let lever = mul(
-                    &skew(&mat3::sub(&state.position[tip], &state.position[k])),
+                    &mat3::skew(&mat3::sub(&state.position[tip], &state.position[k])),
                     &state.rotation[k],
                 );
                 let block = |r: usize, c: usize| -> Mat3 {
@@ -300,15 +300,6 @@ fn relative_position_covariances(
             })
             .collect(),
     )
-}
-
-/// Each edge's squared whitened residual at the given poses.
-pub fn residuals(rotations: &[Mat3], positions: &[Vec3], edges: &[Edge]) -> Vec<f64> {
-    let state = State {
-        rotation: rotations.to_vec(),
-        position: positions.to_vec(),
-    };
-    edges.iter().map(|e| whitened_squared(e, &state)).collect()
 }
 
 struct State {
@@ -369,7 +360,7 @@ fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]
     // rotation error phi = Log(E), E = (Ri Rm)^T Rj; to first order d phi = Jr^-1 (d theta_j - E^T Rm^T d theta_i),
     // with Jr^-1 ~ I + [phi]x / 2
     let phi = [residual[0], residual[1], residual[2]];
-    let mut jr_inv = skew(&phi);
+    let mut jr_inv = mat3::skew(&phi);
     for row in jr_inv.iter_mut() {
         for v in row.iter_mut() {
             *v *= 0.5;
@@ -383,7 +374,7 @@ fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]
         &jr_inv,
         &mat3::mat_mul(&mat3::transpose(&error), &mat3::transpose(&e.rotation)),
     );
-    let skew_local = skew(&local);
+    let skew_local = mat3::skew(&local);
     let (mut jf, mut jt) = ([[0.0; 6]; 6], [[0.0; 6]; 6]);
     for r in 0..3 {
         for c in 0..3 {
@@ -396,10 +387,6 @@ fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]
         }
     }
     (residual, jf, jt)
-}
-
-fn skew(v: &Vec3) -> Mat3 {
-    [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]
 }
 
 fn cost(state: &State, odometry: &[Edge], closures: &[Edge], closure_weights: &[f64]) -> f64 {
@@ -584,23 +571,16 @@ fn normal_equations(
 
 /// The chi-square value a 6-DoF residual stays under with probability `p` (CDF 1 - e^{-x/2}(1 + x/2 + x²/8)).
 fn chi2_inverse_6dof(p: f64) -> f64 {
-    let (mut lo, mut hi) = (0.0f64, 200.0f64);
-    for _ in 0..100 {
-        let x = 0.5 * (lo + hi);
+    crate::loop_overlap::chi2_inverse(p, |x| {
         let half = x / 2.0;
-        if 1.0 - (-half).exp() * (1.0 + half + half * half / 2.0) < p {
-            lo = x;
-        } else {
-            hi = x;
-        }
-    }
-    0.5 * (lo + hi)
+        1.0 - (-half).exp() * (1.0 + half + half * half / 2.0)
+    })
 }
 
 /// Rotation by axis-angle `w` (Rodrigues).
 fn exp(w: Vec3) -> Mat3 {
     let angle = mat3::norm(&w);
-    let k = [[0.0, -w[2], w[1]], [w[2], 0.0, -w[0]], [-w[1], w[0], 0.0]];
+    let k = mat3::skew(&w);
     let (a, b) = if angle < 1e-9 {
         (1.0, 0.5)
     } else {
@@ -631,14 +611,12 @@ fn log(r: &Mat3) -> Vec3 {
 
 // ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
 
-/// A pose-graph solve running on another thread over the first `keyframes` keyframes (`free` of them
-/// free), adopted once it finishes (`GscPgo::update`) or when waited for (`GscPgo::wait_for_solve`).
+/// A pose-graph solve running on another thread over the first `keyframes` keyframes (all but keyframe 0 free) and the
+/// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
+/// (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
     handle: JoinHandle<(Solution, f64)>,
     keyframes: usize,
-    free: usize,
-    /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
-    judged: Vec<usize>,
 }
 
 impl GscPgo {
@@ -649,10 +627,6 @@ impl GscPgo {
     }
     pub fn committed_closures(&self) -> &[CommittedClosure] {
         &self.committed_closures
-    }
-    /// Whether a solve is running or closures are waiting for one.
-    pub fn solve_pending(&self) -> bool {
-        self.solving.is_some() || self.committed_closures.len() > self.closures_dispatched
     }
     /// Apply the running solve if it has finished, and start one when closures have arrived since the
     /// last. Never blocks. Returns whether keyframes moved.
@@ -669,7 +643,9 @@ impl GscPgo {
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
-        self.solving.as_ref().map(|s| (s.keyframes, s.free))
+        self.solving
+            .as_ref()
+            .map(|s| (s.keyframes, s.keyframes - 1))
     }
     /// Call `solved` (from the solve's thread) whenever a solve finishes, so a caller can sleep until then.
     pub fn notify_when_solved(&mut self, solved: impl Fn() + Send + Sync + 'static) {
@@ -699,43 +675,30 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let all_closures = closure_edges(self.committed_closures.iter());
-        // keyframe 0 pins the map
+        let closures = closure_edges(self.committed_closures.iter());
+        // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
+        let pinned = &self.key_poses[0];
+        let offset_rotation = mat3::mat_mul(
+            &pinned.rotation_global,
+            &mat3::transpose(&pinned.rotation_local),
+        );
+        let offset_translation = mat3::sub(
+            &pinned.translation_global,
+            &mat3::mat_vec(&offset_rotation, &pinned.translation_local),
+        );
         let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        let mut offset = (mat3::identity(), [0.0; 3]);
-        for (k, key_pose) in self.key_poses.iter().enumerate() {
-            if free[k] {
-                rotations.push(mat3::mat_mul(&offset.0, &key_pose.rotation_local));
-                positions.push(mat3::add(
-                    &mat3::mat_vec(&offset.0, &key_pose.translation_local),
-                    &offset.1,
-                ));
-            } else {
-                let rotation = mat3::mat_mul(
-                    &key_pose.rotation_global,
-                    &mat3::transpose(&key_pose.rotation_local),
-                );
-                let translation = mat3::sub(
-                    &key_pose.translation_global,
-                    &mat3::mat_vec(&rotation, &key_pose.translation_local),
-                );
-                offset = (rotation, translation);
-                rotations.push(key_pose.rotation_global);
-                positions.push(key_pose.translation_global);
-            }
+        rotations.push(pinned.rotation_global);
+        positions.push(pinned.translation_global);
+        for key_pose in &self.key_poses[1..] {
+            rotations.push(mat3::mat_mul(&offset_rotation, &key_pose.rotation_local));
+            positions.push(mat3::add(
+                &mat3::mat_vec(&offset_rotation, &key_pose.translation_local),
+                &offset_translation,
+            ));
         }
-        let touches_free = |e: &Edge| free[e.from] || free[e.to];
-        let odometry: Vec<Edge> = odometry_edges(&self.key_poses, config)
-            .into_iter()
-            .filter(touches_free)
-            .collect();
-        let judged: Vec<usize> = (0..all_closures.len())
-            .filter(|&i| touches_free(&all_closures[i]))
-            .collect();
-        let closures: Vec<Edge> = judged.iter().map(|&i| all_closures[i]).collect();
-        let free_count = free.iter().filter(|&&f| f).count();
+        // every odometry edge and closure has an end past keyframe 0, so all of them are in
+        let odometry = odometry_edges(&self.key_poses, config);
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
@@ -765,8 +728,6 @@ impl GscPgo {
         self.solving = Some(Solving {
             handle,
             keyframes: n,
-            free: free_count,
-            judged,
         });
     }
     /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
@@ -806,22 +767,8 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        // a closure this solve had but did not judge (both ends held) agreed with a map that holds without it; one
-        // committed while it ran was not in it, so it stays unjudged
-        let mut weights: Vec<f64> = self.committed_closures[..self.closures_dispatched]
-            .iter()
-            .map(|c| {
-                if c.gnc_weight.is_nan() {
-                    1.0
-                } else {
-                    c.gnc_weight
-                }
-            })
-            .collect();
-        for (&index, &weight) in solving.judged.iter().zip(&solution.closure_weights) {
-            weights[index] = weight;
-        }
-        for (index, weight) in weights.into_iter().enumerate() {
+        // the solve judged every closure dispatched to it; one committed while it ran was not in it, so it stays unjudged
+        for (index, weight) in solution.closure_weights.iter().copied().enumerate() {
             let previous = self.committed_closures[index].gnc_weight;
             self.committed_closures[index].gnc_weight = weight;
             if previous == weight {

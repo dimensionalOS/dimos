@@ -142,7 +142,6 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);
     let newest = positions[n - 1];
-    let skew = |v: &Vec3| [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]];
     let sandwich = |a: &Mat3, d: [f64; 3]| -> Mat3 {
         std::array::from_fn(|r| {
             std::array::from_fn(|c| (0..3).map(|k| a[r][k] * d[k] * a[c][k]).sum())
@@ -153,7 +152,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         for i in j..n - 1 {
             let translation = sandwich(&rotations[i], [translation_variance; 3]);
             // the step's rotation noise, in the turned-to keyframe's axes, swings the newest one about it
-            let lever = skew(&mat3::sub(&newest, &positions[i + 1]));
+            let lever = mat3::skew(&mat3::sub(&newest, &positions[i + 1]));
             let rotation = mat3::mat_mul(&lever, &rotations[i + 1]);
             let swing = sandwich(&rotation, rotation_variances);
             for r in 0..3 {

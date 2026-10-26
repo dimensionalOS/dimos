@@ -22,7 +22,7 @@ use std::sync::Arc;
 use crate::big_picture_fit::{closure_edges, Edge, Solving};
 use crate::connection_fit::{dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{voxel_downsample, KdTree, PointCloud};
 use crate::similarity_discovery;
 use crate::uniqueness;
 
@@ -59,7 +59,6 @@ impl PoseWithTime {
 pub struct CloudWithPose {
     pub cloud: Option<Arc<PointCloud>>,
     pub pose: PoseWithTime,
-    pub frame_id: String,
 }
 /// A keyframe: its local and global poses, time, and body-frame cloud.
 #[derive(Debug, Clone)]
@@ -122,8 +121,7 @@ pub struct ClosureCandidateDiag {
     pub keep_rate: f64,
     pub extension_budget: usize,
     pub look_alike_places: usize,
-    /// Global distance between source and candidate keyframe (the
-    /// candidate-distance gate input).
+    /// Global distance between source and candidate keyframe.
     pub candidate_distance: f64,
     /// Minimum degeneracy (observability) of the source submap, -1 if not
     /// computed on this path.
@@ -229,8 +227,7 @@ pub enum ClosureEdgeState {
     GateRejected = 1,
     /// Passed every gate; waits for GNC to vote it into the graph.
     Committed = 2,
-    /// One GNC solve's weight for it.
-    Vote = 3,
+    // 3 was a single GNC solve's weight, no longer sent
     /// GNC voted it into the graph.
     Accepted = 4,
     /// GNC voted it out of the graph (never in, or taken back out).
@@ -420,8 +417,7 @@ pub struct GscPgo {
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
-/// Cumulative per-stage wall time, printed periodically when `debug` is on —
-/// purely observational (never read back into the pipeline).
+/// Cumulative per-stage wall time (`GscPgo::stage_seconds`), purely observational (never read back into the pipeline).
 #[derive(Default)]
 pub(crate) struct TimingStats {
     pub(crate) scan_context_s: f64,
@@ -432,8 +428,6 @@ pub(crate) struct TimingStats {
     pub(crate) solve_s: f64,
 }
 
-/// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
-/// while scans keep arriving (`GscPgo::begin_closure_search` makes it, `finish_closure_search` applies it).
 /// A keyframe through stages 1 and 2, waiting for the search thread: its candidate target, the
 /// scan-context column shift between them, and the match's cosine distance (lower is better).
 pub struct ClosureProposal {
@@ -445,6 +439,8 @@ pub struct ClosureProposal {
     pub(crate) ranked: Vec<(f32, usize)>,
 }
 
+/// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
+/// while scans keep arriving (`GscPgo::begin_closure_search` makes it, `finish_closure_search` applies it).
 pub struct ClosureSearch {
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) config: Config,
@@ -496,18 +492,12 @@ impl ClosureSearch {
         let mut timing = TimingStats::default();
         let mut scored_yank = None;
         let t0 = std::time::Instant::now();
-        let target_cloud = sub_map(
-            &self.key_poses,
-            target_idx as i32,
-            self.config.closure_submap_half_range,
-            self.config.submap_resolution,
+        let half_range = self.config.closure_submap_half_range.max(0) as usize;
+        let target_cloud = self.stacked_cloud(
+            target_idx.saturating_sub(half_range)
+                ..=(target_idx + half_range).min(self.key_poses.len() - 1),
         );
-        let source_cloud = sub_map(
-            &self.key_poses,
-            cur_idx as i32,
-            0,
-            self.config.submap_resolution,
-        );
+        let source_cloud = self.stacked_cloud(std::iter::once(cur_idx));
         timing.submap_s += t0.elapsed().as_secs_f64();
 
         let t0 = std::time::Instant::now();
@@ -801,8 +791,6 @@ impl GscPgo {
         delta_trans > self.config.keyframe_min_distance_meters
             || delta_deg > self.config.keyframe_min_rotation_degrees
     }
-    /// Insert a keyframe if the pose clears the keyframe gate; returns
-    /// whether it was added.
     /// Add `cloud_with_pose` as a keyframe if it moved far enough from the last one (returns whether it did); every
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
@@ -837,11 +825,6 @@ impl GscPgo {
         self.new_closure
     }
 
-    /// Candidate search (scan context with position fallback) + all the
-    /// gates, ICP verification, and LoopPair construction.
-    /// Record that this keyframe's closure search was skipped because newer scans
-    /// are already queued behind it: a search (an ICP on a large cloud can take
-    /// seconds) must never be what makes the module fall behind.
     /// Stages 1 and 2 for the newest keyframe, inline on every keyframe: it becomes the waiting
     /// proposal if its scan-context match beats the one already waiting (the loser is recorded as
     /// "outranked"), so a busy search thread still gets the most promising keyframe it missed.
@@ -868,19 +851,15 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (mut target_idx, sector_shift, sc_best, sc_second, ranked) =
+        let (scan_context_target, sector_shift, sc_best, sc_second, ranked) =
             self.search_by_scan_context();
         self.timing.scan_context_s += t0.elapsed().as_secs_f64();
-        diag.from_scan_context = target_idx >= 0;
-        if target_idx < 0 {
-            target_idx = self.search_by_position();
-        }
-        if target_idx < 0 {
+        diag.from_scan_context = scan_context_target.is_some();
+        let Some(target_idx) = scan_context_target.or_else(|| self.search_by_position()) else {
             diag.outcome = "no_candidate";
             self.record_search(diag);
             return;
-        }
-        let target_idx = target_idx as usize;
+        };
         diag.target_id = target_idx as i64;
         diag.target_time = self.key_poses[target_idx].time;
         diag.target_xyz = self.key_poses[target_idx].translation_global;
@@ -899,18 +878,14 @@ impl GscPgo {
             similarity,
             ranked,
         };
-        let loser = match self.waiting_proposal.take() {
-            Some(waiting) if waiting.similarity <= proposal.similarity => {
-                self.waiting_proposal = Some(waiting);
-                proposal
-            }
-            waiting => {
-                self.waiting_proposal = Some(proposal);
-                match waiting {
-                    Some(waiting) => waiting,
-                    None => return,
-                }
-            }
+        let (winner, loser) = match self.waiting_proposal.take() {
+            None => (proposal, None),
+            Some(waiting) if waiting.similarity <= proposal.similarity => (waiting, Some(proposal)),
+            Some(waiting) => (proposal, Some(waiting)),
+        };
+        self.waiting_proposal = Some(winner);
+        let Some(loser) = loser else {
+            return;
         };
         let mut diag = loser.diag;
         diag.outcome = "outranked";
@@ -1089,33 +1064,4 @@ impl GscPgo {
         });
         self.new_closure = true;
     }
-}
-
-/// Aggregate the body clouds of keyframes [idx-half_range, idx+half_range] transformed by their
-/// GLOBAL poses, then voxel-downsample at `resolution` (when > 0).
-pub fn sub_map(
-    key_poses: &[KeyPoseWithCloud],
-    idx: i32,
-    half_range: i32,
-    resolution: f64,
-) -> PointCloud {
-    assert!(idx >= 0 && (idx as usize) < key_poses.len());
-    let min_idx = 0.max(idx - half_range) as usize;
-    let max_idx = (key_poses.len() as i32 - 1).min(idx + half_range) as usize;
-
-    let mut ret: PointCloud = Vec::new();
-    for key_pose in &key_poses[min_idx..=max_idx] {
-        if let Some(body_cloud) = &key_pose.body_cloud {
-            let global_cloud = transform_cloud(
-                body_cloud,
-                &key_pose.rotation_global,
-                &key_pose.translation_global,
-            );
-            ret.extend_from_slice(&global_cloud);
-        }
-    }
-    if resolution > 0.0 {
-        ret = voxel_downsample(&ret, resolution);
-    }
-    ret
 }

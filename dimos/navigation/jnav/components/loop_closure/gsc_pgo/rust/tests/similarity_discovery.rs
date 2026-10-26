@@ -21,7 +21,7 @@ use std::f64::consts::PI;
 
 use dimos_gsc_pgo::similarity_discovery::{
     self, auto_max_range, best_distance, column_cosine_distance, descriptor_occupancy,
-    make_descriptor, make_ring_key, ring_key_top_k, yaw_from_shift, Config,
+    make_descriptor, make_ring_key, yaw_from_shift, Config,
 };
 
 /// A synthetic structured scene: one point per chosen (ring, sector) cell,
@@ -172,40 +172,6 @@ fn structure_occupancy_and_edge_cases() {
     let none = similarity_discovery::Descriptor::empty();
     assert!(none.is_empty());
     assert_eq!(column_cosine_distance(&descriptor, &none, 0), 2.0);
-}
-
-#[test]
-fn ring_key_top_k_ranks_by_l2_distance() {
-    let config = Config::default();
-    let cloud = synthetic_cloud(&config);
-    let query = make_ring_key(&make_descriptor(&cloud, &config));
-
-    let sector_step = 2.0 * PI32 / config.n_sectors as f32;
-    // Candidate 0: same place rotated (ring key ~identical). Candidate 1: a
-    // different scene (taller, sparser). Candidate 2: cloud-less (skipped).
-    let rotated = make_ring_key(&make_descriptor(
-        &rotate_cloud(&cloud, 5.0 * sector_step),
-        &config,
-    ));
-    let other_cloud: Vec<[f32; 3]> = (0..40)
-        .map(|i| [1.0 + i as f32, 0.5, 3.0 + 0.1 * i as f32])
-        .collect();
-    let other = make_ring_key(&make_descriptor(&other_cloud, &config));
-    let candidates = vec![rotated, other, Vec::new()];
-
-    let ranked = ring_key_top_k(&query, &candidates, 10);
-    assert_eq!(ranked.len(), 2, "empty ring keys are skipped");
-    assert_eq!(ranked[0].1, 0, "the rotated revisit ranks first");
-    assert!(
-        ranked[0].0 < 1e-4,
-        "revisit ring-key distance ~0: {}",
-        ranked[0].0
-    );
-    assert!(ranked[1].0 > ranked[0].0);
-
-    let top_1 = ring_key_top_k(&query, &candidates, 1);
-    assert_eq!(top_1.len(), 1);
-    assert_eq!(top_1[0].1, 0);
 }
 
 #[test]

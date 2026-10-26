@@ -91,7 +91,8 @@ impl ClosureSearch {
         };
         diag.yank_z * diag.yank_z / (2.0 * width * width) + record
     }
-    /// Global-frame cloud of keyframes `ids`, voxel-downsampled at the submap resolution.
+    /// Global-frame cloud of keyframes `ids` (body clouds moved by their global poses, in order), voxel-downsampled at the
+    /// submap resolution.
     pub(crate) fn stacked_cloud(&self, ids: impl Iterator<Item = usize>) -> PointCloud {
         let mut cloud = PointCloud::new();
         for k in ids {
@@ -104,10 +105,7 @@ impl ClosureSearch {
                 ));
             }
         }
-        if self.config.submap_resolution > 0.0 {
-            cloud = voxel_downsample(&cloud, self.config.submap_resolution);
-        }
-        cloud
+        voxel_downsample(&cloud, self.config.submap_resolution)
     }
     /// Extended ICP on 2, 4, 8, ... keyframes, up to `diag.extension_budget` (closure_extended_icp_max_keyframes x
     /// pressure). Returns the extended ICP of the first round whose evidence reaches `required(evidence)` (which may

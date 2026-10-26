@@ -12,17 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Standalone helpers for the native PGO module: odometry interpolation, quaternion slerp, the
-//! published-message builders and the inbound PointCloud2 parser.
+//! What the native binaries (`gsc-pgo`, `pgo-eval`) send and dump: the published messages, the packed keyframe,
+//! pose-change and closure-edge records, the keyframe / pose-change dump files, and the inbound PointCloud2 parser.
 
-use dimos_gsc_pgo::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
-use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
-use dimos_gsc_pgo::pointcloud::PointCloud;
+use std::io::Write;
+use std::path::Path;
+
+use crate::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
+use crate::mat3::{self, Mat3, Vec3};
+use crate::pointcloud::PointCloud;
 use lcm_msgs::geometry_msgs::{Point, Quaternion, Transform, TransformStamped, Vector3};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use lcm_msgs::tf2_msgs::TFMessage;
+
+/// A keyframe pose change smaller than this waits to add up before it is sent.
+const POSE_CHANGE_M: f64 = 1e-3;
+const POSE_CHANGE_RAD: f64 = 1e-4;
+/// Bytes per pose-change record: a keyframe record (40) then the delta (28).
+const POSE_CHANGE_RECORD_BYTES: usize = 68;
 
 pub fn make_header(frame_id: &str, ts: f64) -> Header {
     let stamp = Time {
@@ -180,39 +189,119 @@ pub fn build_pose_graph_records(
     record_cloud(&KEYFRAME_FIELDS, data, frame_id, ts)
 }
 
-/// loop_closure_event as packed records: each keyframe's pre pose, then the
-/// delta with post = delta * pre.
-pub fn build_loop_closure_records(
-    pre_poses: &[(Mat3, Vec3)],
-    post_poses: &[KeyPoseWithCloud],
-    ts: f64,
-    frame_id: &str,
-) -> PointCloud2 {
-    let count = pre_poses.len().min(post_poses.len());
-    let mut data = Vec::with_capacity(count * 68);
-    for i in 0..count {
-        let (pre_rotation, pre_translation) = &pre_poses[i];
-        let post = &post_poses[i];
-        let rotation_delta = mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
-        let translation_delta = mat3::sub(
-            &post.translation_global,
-            &mat3::mat_vec(&rotation_delta, pre_translation),
-        );
-        put_keyframe_record(&mut data, i, post.time, pre_rotation, pre_translation);
-        let q = mat3::quat_from_mat(&rotation_delta);
-        for v in translation_delta {
-            data.extend_from_slice(&(v as f32).to_le_bytes());
-        }
-        for v in [q[1], q[2], q[3], q[0]] {
-            data.extend_from_slice(&(v as f32).to_le_bytes());
-        }
-    }
+/// loop_closure_event from `HeardPoses::take_changes` records.
+pub fn build_loop_closure_records(data: Vec<u8>, ts: f64, frame_id: &str) -> PointCloud2 {
     let fields: Vec<(&str, u8)> = KEYFRAME_FIELDS
         .iter()
         .chain(&DELTA_FIELDS)
         .copied()
         .collect();
     record_cloud(&fields, data, frame_id, ts)
+}
+
+/// Each keyframe's pose as fast-reform consumers last heard it.
+#[derive(Default)]
+pub struct HeardPoses(Vec<(Mat3, Vec3)>);
+
+impl HeardPoses {
+    /// Keyframes added since the last call: consumers hold their scans where the current offset put them.
+    pub fn add_new(&mut self, key_poses: &[KeyPoseWithCloud]) {
+        self.0.extend(
+            key_poses[self.0.len()..]
+                .iter()
+                .map(|kp| (kp.rotation_global, kp.translation_global)),
+        );
+    }
+
+    /// When a closure closed or any keyframe moved past POSE_CHANGE_*, every heard keyframe's pose change as packed
+    /// records (pre x y z, id, ts, pre q (xyzw), then dt, dq with post = delta * pre; f32 but id u32, ts f64), now heard.
+    pub fn take_changes(
+        &mut self,
+        key_poses: &[KeyPoseWithCloud],
+        closure_closed: bool,
+    ) -> Option<Vec<u8>> {
+        let moved = key_poses
+            .iter()
+            .zip(&self.0)
+            .any(|(kp, (rotation, translation))| {
+                let shift = mat3::sub(&kp.translation_global, translation);
+                let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
+                let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+                mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
+            });
+        if !closure_closed && !moved {
+            return None;
+        }
+        let count = self.0.len().min(key_poses.len());
+        let mut data = Vec::with_capacity(count * POSE_CHANGE_RECORD_BYTES);
+        for (i, ((pre_rotation, pre_translation), post)) in self.0.iter().zip(key_poses).enumerate()
+        {
+            let rotation_delta =
+                mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
+            let translation_delta = mat3::sub(
+                &post.translation_global,
+                &mat3::mat_vec(&rotation_delta, pre_translation),
+            );
+            put_keyframe_record(&mut data, i, post.time, pre_rotation, pre_translation);
+            let q = mat3::quat_from_mat(&rotation_delta);
+            for v in translation_delta {
+                data.extend_from_slice(&(v as f32).to_le_bytes());
+            }
+            for v in [q[1], q[2], q[3], q[0]] {
+                data.extend_from_slice(&(v as f32).to_le_bytes());
+            }
+        }
+        self.0 = key_poses
+            .iter()
+            .map(|kp| (kp.rotation_global, kp.translation_global))
+            .collect();
+        Some(data)
+    }
+}
+
+/// Append one `take_changes` to a pose-change dump (`<keyframes>.closures`): f64 ts, u32 record count, the records.
+pub fn append_pose_changes(file: &mut impl Write, ts: f64, records: &[u8]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(12 + records.len());
+    bytes.extend_from_slice(&ts.to_le_bytes());
+    bytes.extend_from_slice(&((records.len() / POSE_CHANGE_RECORD_BYTES) as u32).to_le_bytes());
+    bytes.extend_from_slice(records);
+    file.write_all(&bytes)
+}
+
+/// Write each keyframe as little-endian f64s: ts, raw (local) x y z qx qy qz qw, then corrected (global) x y z qx qy
+/// qz qw, atomically.
+pub fn write_keyframes(path: &Path, key_poses: &[KeyPoseWithCloud]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(key_poses.len() * 15 * 8);
+    for kp in key_poses {
+        let mut values = vec![kp.time];
+        for (rotation, translation) in [
+            (&kp.rotation_local, &kp.translation_local),
+            (&kp.rotation_global, &kp.translation_global),
+        ] {
+            let q = mat3::quat_from_mat(rotation);
+            values.extend_from_slice(translation);
+            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+        }
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Closure-edge events as packed records (see `ClosureEdgeEvent::put_record`).
+pub fn closure_edge_records(
+    events: &[ClosureEdgeEvent],
+    key_poses: &[KeyPoseWithCloud],
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
+    for event in events {
+        event.put_record(&mut data, key_poses);
+    }
+    data
 }
 
 const CLOSURE_EDGE_FIELDS: [(&str, u8); 12] = [
@@ -237,11 +326,12 @@ pub fn build_closure_edge_records(
     ts: f64,
     frame_id: &str,
 ) -> PointCloud2 {
-    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
-    for event in events {
-        event.put_record(&mut data, key_poses);
-    }
-    record_cloud(&CLOSURE_EDGE_FIELDS, data, frame_id, ts)
+    record_cloud(
+        &CLOSURE_EDGE_FIELDS,
+        closure_edge_records(events, key_poses),
+        frame_id,
+        ts,
+    )
 }
 
 #[derive(Debug)]

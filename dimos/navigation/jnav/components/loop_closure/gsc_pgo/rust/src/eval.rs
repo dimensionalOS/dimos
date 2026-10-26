@@ -23,19 +23,22 @@
 //! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
 //! reuses `trajectory_metrics`.
 
+use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use std::collections::BTreeMap;
-
 use dimos_gsc_pgo::gsc_pgo::{
     ClosureCandidateDiag, CloudWithPose, CommittedClosure, Config as PgoConfig, GscPgo,
-    PoseWithTime, CLOSURE_EDGE_RECORD_BYTES,
+    PoseWithTime,
 };
 use dimos_gsc_pgo::loop_overlap::LoopOverlap;
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
+use dimos_gsc_pgo::records::{
+    append_pose_changes, closure_edge_records, write_keyframes, HeardPoses,
+};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -51,17 +54,14 @@ use memory2::{for_each_scan, read_odometry, OdomRow};
 struct EvalConfig {
     #[serde(flatten)]
     pgo: PgoConfig,
-    /// The scans arrive in the world frame: bring them into the body frame with the odometry.
-    subtract_odom_from_cloud: bool,
-    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue).
-    max_scan_queue: usize,
+    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
+    max_scan_queue: i32,
 }
 
 impl Default for EvalConfig {
     fn default() -> EvalConfig {
         EvalConfig {
             pgo: PgoConfig::default(),
-            subtract_odom_from_cloud: false,
             max_scan_queue: 5,
         }
     }
@@ -76,8 +76,7 @@ struct CommittedClosureEdge {
     rotation: [[f64; 3]; 3],
     translation: [f64; 3],
     score: f64,
-    /// Final GNC weight (~1 kept / green, ~0 rejected / red). 1.0 when the batch
-    /// GNC pass is disabled.
+    /// 1 kept, 0 rejected by the newest applied solve; NaN until a solve has judged it.
     gnc_weight: f64,
 }
 
@@ -102,7 +101,6 @@ struct EvalOutput {
     odom_frame: String,
     lidar_frame: String,
     scan_stride: usize,
-    odom_stride: usize,
     config: serde_json::Value,
     /// Raw odom trajectory: [ts, x, y, z, qx, qy, qz, qw] per row.
     odom_rows: Vec<[f64; 8]>,
@@ -149,7 +147,6 @@ struct Args {
     config_path: Option<PathBuf>,
     output: PathBuf,
     scan_stride: usize,
-    odom_stride: usize,
     /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
     /// points, for lidar streams not already expressed in the odom body frame.
     lidar_tf: Option<[f64; 7]>,
@@ -160,11 +157,6 @@ struct Args {
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
-    /// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free
-    /// keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine; a solve's
-    /// cost grows with the map, so the delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac
-    /// solve at 5k keyframes is ~0.5%).
-    solve_delay_fraction: f64,
     /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
     odom_scale: f64,
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
@@ -189,11 +181,9 @@ fn parse_args() -> Result<Args, String> {
     let mut config_path = None;
     let mut output = None;
     let mut scan_stride = 1usize;
-    let mut odom_stride = 1usize;
     let mut lidar_tf = None;
     let mut body_tf = None;
     let mut event_dump = None;
-    let mut solve_delay_fraction = 0.01;
     let mut odom_scale = 1.0;
     let mut live = false;
 
@@ -201,21 +191,17 @@ fn parse_args() -> Result<Args, String> {
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
-            "--db" | "--db-path" => db = Some(PathBuf::from(value()?)),
+            "--db" => db = Some(PathBuf::from(value()?)),
             "--odom-stream" => odom_stream = Some(value()?),
             "--lidar-stream" => lidar_stream = Some(value()?),
-            "--config" | "--pgo-config-json" => config_path = Some(PathBuf::from(value()?)),
-            "--output" | "-o" => output = Some(PathBuf::from(value()?)),
+            "--config" => config_path = Some(PathBuf::from(value()?)),
+            "--output" => output = Some(PathBuf::from(value()?)),
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
             "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
             "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
-            "--solve-delay-fraction" => {
-                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
-            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -227,11 +213,9 @@ fn parse_args() -> Result<Args, String> {
         config_path,
         output: output.ok_or("--output is required")?,
         scan_stride: scan_stride.max(1),
-        odom_stride: odom_stride.max(1),
         lidar_tf,
         body_tf,
         event_dump,
-        solve_delay_fraction,
         odom_scale,
         live,
     })
@@ -303,7 +287,7 @@ fn run() -> Result<(), String> {
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
-    let mut odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    let mut odoms = read_odometry(&connection, &args.odom_stream)?;
     for row in &mut odoms {
         row.translation = row.translation.map(|v| v * args.odom_scale);
     }
@@ -350,31 +334,9 @@ fn run() -> Result<(), String> {
 
     let mut pgo = GscPgo::new(config.pgo.clone());
     let mut cursor = 0usize;
-    let mut closures = 0usize;
     let mut scans_processed = 0usize;
-
-    // Each keyframe's pose as the module last published it, and the event file.
-    let mut published: Vec<(mat3::Mat3, mat3::Vec3)> = Vec::new();
-    let mut events = match &args.event_dump {
-        Some(path) => Some(
-            std::fs::File::create(format!("{}.closures", path.display()))
-                .map_err(|e| format!("create event dump: {e}"))?,
-        ),
-        None => None,
-    };
-    // Closure-edge events as packed records (`<path>.edges`), written as they happen.
-    let mut edges = match &args.event_dump {
-        Some(path) => Some(
-            std::fs::File::create(format!("{}.edges", path.display()))
-                .map_err(|e| format!("create edge dump: {e}"))?,
-        ),
-        None => None,
-    };
-    let mut edges_written = 0usize;
+    let mut recorder = Recorder::new(args.event_dump.as_deref())?;
     let started = Instant::now();
-    let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
-    let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
-    let mut loop_overlap: Vec<(f64, LoopOverlap, usize)> = Vec::new();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
     let live_queue = config.max_scan_queue;
@@ -419,16 +381,6 @@ fn run() -> Result<(), String> {
                 &[-offset[0], -offset[1], -offset[2]],
             );
         }
-        if config.subtract_odom_from_cloud && !cloud.is_empty() {
-            let rotation_inverse = mat3::transpose(&latest.rotation);
-            let negated = [
-                -latest.translation[0],
-                -latest.translation[1],
-                -latest.translation[2],
-            ];
-            let translation_body = mat3::mat_vec(&rotation_inverse, &negated);
-            cloud = pointcloud::transform_cloud(&cloud, &rotation_inverse, &translation_body);
-        }
 
         let mut pose = PoseWithTime::new(latest.rotation, latest.translation);
         let seconds = latest.ts as i32;
@@ -438,7 +390,6 @@ fn run() -> Result<(), String> {
         let cloud_with_pose = CloudWithPose {
             cloud: Some(Arc::new(cloud)),
             pose,
-            frame_id: latest.frame_id.clone(),
         };
         Ok(Some((cloud_with_pose, latest.ts)))
     };
@@ -477,7 +428,7 @@ fn run() -> Result<(), String> {
                         }
                         let mut queued = queue.lock().expect("queue");
                         queued.0.push_back((cloud_with_pose, ts, Instant::now()));
-                        while live_queue > 0 && queued.0.len() > live_queue {
+                        while live_queue > 0 && queued.0.len() > live_queue as usize {
                             queued.0.pop_front();
                             scans_dropped += 1;
                         }
@@ -508,18 +459,7 @@ fn run() -> Result<(), String> {
                     }
                 };
                 let step_started = Instant::now();
-                let keyframe = pgo.add_key_pose(&cloud_with_pose);
-                if let Some((scan, overlap)) = pgo.pressure() {
-                    if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
-                        loop_overlap.push((ts, overlap, scan));
-                    }
-                }
-                if keyframe {
-                    published.extend(
-                        pgo.key_poses()[published.len()..]
-                            .iter()
-                            .map(|kp| (kp.rotation_global, kp.translation_global)),
-                    );
+                if recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
                     if closure_search
                         .as_ref()
                         .is_some_and(|search| search.is_finished())
@@ -536,21 +476,9 @@ fn run() -> Result<(), String> {
                             closure_search = Some(scope.spawn(move || search.run()));
                         }
                     }
-                    let had_closure = pgo.has_closure();
-                    if had_closure {
-                        closures += 1;
-                    }
-                    keyframe_scan_thread_ms
-                        .push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
-                    let gnc_started = Instant::now();
-                    pgo.update();
-                    keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
-                    if let Some(events) = &mut events {
-                        write_pose_changes(events, &pgo, &mut published, had_closure, ts)?;
-                    }
-                    if let Some(edges) = &mut edges {
-                        write_closure_edges(edges, &pgo, &mut edges_written)?;
-                    }
+                    recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                        pgo.update();
+                    })?;
                 }
                 scan_latency_ms.push((arrived_at.elapsed().as_secs_f64() * 1e3) as f32);
             }
@@ -563,61 +491,33 @@ fn run() -> Result<(), String> {
                 return Ok(());
             };
             let step_started = Instant::now();
-            let keyframe = pgo.add_key_pose(&cloud_with_pose);
-            if let Some((scan, overlap)) = pgo.pressure() {
-                if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
-                    loop_overlap.push((ts, overlap, scan));
-                }
-            }
-            if !keyframe {
+            if !recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
                 return Ok(());
             }
-            published.extend(
-                pgo.key_poses()[published.len()..]
-                    .iter()
-                    .map(|kp| (kp.rotation_global, kp.translation_global)),
-            );
             pgo.search_for_closure_pairs();
-            let had_closure = pgo.has_closure();
-            if had_closure {
-                closures += 1;
-            }
-            keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
-            let gnc_started = Instant::now();
-            match pgo.solve_started() {
-                Some((keyframes, free))
-                    if pgo.key_poses().len()
-                        < keyframes
-                            + ((free as f64 * args.solve_delay_fraction).ceil() as usize)
-                                .max(1) => {}
-                Some(_) => {
-                    pgo.wait_for_solve();
+            recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                match pgo.solve_started() {
+                    Some((keyframes, free))
+                        if pgo.key_poses().len()
+                            < keyframes
+                                + ((free as f64 * SOLVE_DELAY_FRACTION).ceil() as usize).max(1) => {
+                    }
+                    Some(_) => {
+                        pgo.wait_for_solve();
+                    }
+                    None => {
+                        pgo.update();
+                    }
                 }
-                None => {
-                    pgo.update();
-                }
-            }
-            keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
-
-            if let Some(events) = &mut events {
-                write_pose_changes(events, &pgo, &mut published, had_closure, ts)?;
-            }
-            if let Some(edges) = &mut edges {
-                write_closure_edges(edges, &pgo, &mut edges_written)?;
-            }
+            })?;
             Ok(())
         })?;
     }
     pgo.finish();
-    if let Some(events) = &mut events {
-        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-        write_pose_changes(events, &pgo, &mut published, false, ts)?;
-    }
-    if let Some(edges) = &mut edges {
-        write_closure_edges(edges, &pgo, &mut edges_written)?;
-    }
+    let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+    recorder.dump(&pgo, false, ts)?;
     if let Some(path) = &args.event_dump {
-        write_keyframes(path, &pgo)?;
+        write_keyframes(path, pgo.key_poses()).map_err(|e| format!("write keyframes: {e}"))?;
     }
     let runtime_s = started.elapsed().as_secs_f64();
 
@@ -671,12 +571,11 @@ fn run() -> Result<(), String> {
         odom_frame,
         lidar_frame,
         scan_stride: args.scan_stride,
-        odom_stride: args.odom_stride,
         config: serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
         keyframes: graph.len(),
         odom_rows,
         graph,
-        closures,
+        closures: recorder.closures,
         scans_processed,
         odoms_used: odoms.len(),
         data_duration_s,
@@ -685,14 +584,14 @@ fn run() -> Result<(), String> {
         live: args.live,
         scans_dropped,
         scan_latency_ms,
-        keyframe_scan_thread_ms,
-        keyframe_gnc_ms,
+        keyframe_scan_thread_ms: recorder.keyframe_scan_thread_ms,
+        keyframe_gnc_ms: recorder.keyframe_gnc_ms,
         stage_seconds: pgo
             .stage_seconds()
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
-        loop_overlap,
+        loop_overlap: recorder.loop_overlap,
         gate_counts,
         closure_diagnostics,
         graph_error,
@@ -715,106 +614,103 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// A keyframe pose change smaller than this waits to add up, as in the module.
-const POSE_CHANGE_M: f64 = 1e-3;
-const POSE_CHANGE_RAD: f64 = 1e-4;
+/// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free keyframes (at least
+/// one), waiting for it if needed, so it gives the same graph on any machine; a solve's cost grows with the map, so the
+/// delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac solve at 5k keyframes is ~0.5%).
+const SOLVE_DELAY_FRACTION: f64 = 0.01;
 
-/// Append the closure-edge events since the last call as packed records.
-fn write_closure_edges(
-    file: &mut std::fs::File,
-    pgo: &GscPgo,
-    written: &mut usize,
-) -> Result<(), String> {
-    use std::io::Write;
-    let events = &pgo.closure_edge_events()[*written..];
-    if events.is_empty() {
-        return Ok(());
-    }
-    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
-    for event in events {
-        event.put_record(&mut data, pgo.key_poses());
-    }
-    file.write_all(&data)
-        .map_err(|e| format!("write edge dump: {e}"))?;
-    *written += events.len();
-    Ok(())
+/// What both replays record per scan and keyframe: the loop-overlap pressures, per-keyframe timings and closures, and
+/// with `--event-dump` every keyframe pose change as the module publishes it (`<path>.closures`) and the closure-edge
+/// events (`<path>.edges`).
+struct Recorder {
+    heard: HeardPoses,
+    events: Option<(std::fs::File, std::fs::File)>,
+    edges_written: usize,
+    closures: usize,
+    keyframe_scan_thread_ms: Vec<f32>,
+    keyframe_gnc_ms: Vec<f32>,
+    loop_overlap: Vec<(f64, LoopOverlap, usize)>,
 }
 
-/// Append, as the module's loop_closure_records would, every keyframe's pose
-/// change since `published` when a closure closed or any keyframe moved:
-/// f64 ts, u32 count, then per keyframe pre xyz, id, ts, pre q (xyzw), dt, dq (f32).
-fn write_pose_changes(
-    out: &mut std::fs::File,
-    pgo: &GscPgo,
-    published: &mut Vec<(mat3::Mat3, mat3::Vec3)>,
-    closure_closed: bool,
-    ts: f64,
-) -> Result<(), String> {
-    use std::io::Write;
-    let poses = pgo.key_poses();
-    let moved = poses
-        .iter()
-        .zip(published.iter())
-        .any(|(kp, (rotation, translation))| {
-            let shift = mat3::sub(&kp.translation_global, translation);
-            let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
-            let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
-            mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
-        });
-    if !closure_closed && !moved {
-        return Ok(());
+impl Recorder {
+    fn new(event_dump: Option<&std::path::Path>) -> Result<Recorder, String> {
+        let create = |suffix: &str, path: &std::path::Path| {
+            std::fs::File::create(format!("{}{suffix}", path.display()))
+                .map_err(|e| format!("create {suffix} dump: {e}"))
+        };
+        let events = match event_dump {
+            Some(path) => Some((create(".closures", path)?, create(".edges", path)?)),
+            None => None,
+        };
+        Ok(Recorder {
+            heard: HeardPoses::default(),
+            events,
+            edges_written: 0,
+            closures: 0,
+            keyframe_scan_thread_ms: Vec::new(),
+            keyframe_gnc_ms: Vec::new(),
+            loop_overlap: Vec::new(),
+        })
     }
-    let count = poses.len().min(published.len());
-    let mut data: Vec<u8> = Vec::with_capacity(12 + count * 68);
-    data.extend_from_slice(&ts.to_le_bytes());
-    data.extend_from_slice(&(count as u32).to_le_bytes());
-    let f32s = |data: &mut Vec<u8>, values: &[f64]| {
-        for v in values {
-            data.extend_from_slice(&(*v as f32).to_le_bytes());
-        }
-    };
-    for (i, ((pre_rotation, pre_translation), post)) in published.iter().zip(poses).enumerate() {
-        let delta = mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
-        let dt = mat3::sub(
-            &post.translation_global,
-            &mat3::mat_vec(&delta, pre_translation),
-        );
-        let q = mat3::quat_from_mat(pre_rotation);
-        let dq = mat3::quat_from_mat(&delta);
-        f32s(&mut data, pre_translation);
-        data.extend_from_slice(&(i as u32).to_le_bytes());
-        data.extend_from_slice(&post.time.to_le_bytes());
-        f32s(&mut data, &[q[1], q[2], q[3], q[0]]);
-        f32s(&mut data, &dt);
-        f32s(&mut data, &[dq[1], dq[2], dq[3], dq[0]]);
-    }
-    out.write_all(&data)
-        .map_err(|e| format!("write event dump: {e}"))?;
-    *published = poses
-        .iter()
-        .map(|kp| (kp.rotation_global, kp.translation_global))
-        .collect();
-    Ok(())
-}
 
-/// Each keyframe as little-endian f64s: ts, raw xyz qx qy qz qw, corrected xyz qx qy qz qw.
-fn write_keyframes(path: &std::path::Path, pgo: &GscPgo) -> Result<(), String> {
-    let mut bytes = Vec::new();
-    for kp in pgo.key_poses() {
-        let mut values = vec![kp.time];
-        for (rotation, translation) in [
-            (&kp.rotation_local, &kp.translation_local),
-            (&kp.rotation_global, &kp.translation_global),
-        ] {
-            let q = mat3::quat_from_mat(rotation);
-            values.extend_from_slice(translation);
-            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+    /// `add_key_pose`, keeping each new pressure; returns whether the scan became a keyframe.
+    fn add_scan(&mut self, pgo: &mut GscPgo, cloud_with_pose: &CloudWithPose, ts: f64) -> bool {
+        let keyframe = pgo.add_key_pose(cloud_with_pose);
+        if let Some((scan, overlap)) = pgo.pressure() {
+            if self
+                .loop_overlap
+                .last()
+                .is_none_or(|(_, _, sent)| *sent != scan)
+            {
+                self.loop_overlap.push((ts, overlap, scan));
+            }
         }
-        for v in values {
-            bytes.extend_from_slice(&v.to_le_bytes());
+        if keyframe {
+            self.heard.add_new(pgo.key_poses());
         }
+        keyframe
     }
-    std::fs::write(path, bytes).map_err(|e| format!("write keyframes: {e}"))
+
+    /// After a keyframe's closure search: count its closure and time the scan thread, run `solve` (timed), then dump.
+    fn keyframe_done(
+        &mut self,
+        pgo: &mut GscPgo,
+        step_started: Instant,
+        ts: f64,
+        solve: impl FnOnce(&mut GscPgo),
+    ) -> Result<(), String> {
+        let had_closure = pgo.has_closure();
+        if had_closure {
+            self.closures += 1;
+        }
+        self.keyframe_scan_thread_ms
+            .push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+        let gnc_started = Instant::now();
+        solve(pgo);
+        self.keyframe_gnc_ms
+            .push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+        self.dump(pgo, had_closure, ts)
+    }
+
+    /// With `--event-dump`, append the pose changes (when a closure closed or a keyframe moved) and the new closure-edge
+    /// events.
+    fn dump(&mut self, pgo: &GscPgo, closure_closed: bool, ts: f64) -> Result<(), String> {
+        let Some((events, edges)) = &mut self.events else {
+            return Ok(());
+        };
+        if let Some(changes) = self.heard.take_changes(pgo.key_poses(), closure_closed) {
+            append_pose_changes(events, ts, &changes)
+                .map_err(|e| format!("write event dump: {e}"))?;
+        }
+        let new_edges = &pgo.closure_edge_events()[self.edges_written..];
+        if !new_edges.is_empty() {
+            edges
+                .write_all(&closure_edge_records(new_edges, pgo.key_poses()))
+                .map_err(|e| format!("write edge dump: {e}"))?;
+            self.edges_written += new_edges.len();
+        }
+        Ok(())
+    }
 }
 
 fn main() {

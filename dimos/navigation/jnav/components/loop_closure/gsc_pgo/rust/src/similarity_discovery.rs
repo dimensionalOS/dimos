@@ -277,23 +277,8 @@ pub fn yaw_from_shift(shift: i32, n_sectors: usize) -> f64 {
     yaw
 }
 
-/// Rank candidate ring keys by L2 distance to `query_key` and return the
-/// top-k `(distance, index)` pairs, ascending — the coarse retrieval stage of
-/// `SimplePGO::searchByScanContext` (a linear scan + partial selection; small
-/// enough at keyframe counts that a kd-tree buys nothing yet). Entries whose
-/// ring key length differs from the query (e.g. cloud-less nodes) are
-/// skipped.
-///
-/// TODO: switch to a kd-tree later for O(log n) instead of O(n) — this linear
-/// scan is O(N) per query (O(N^2) over a run) and won't scale to massive maps.
-pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> Vec<(f32, usize)> {
-    let mut ranked = ring_key_distances(query_key, candidates);
-    order_closest(&mut ranked, 0, k);
-    ranked.truncate(k);
-    ranked
-}
-
-/// `(ring-key distance, index)` to every candidate, unordered; see `ring_key_top_k`.
+/// `(ring-key L2 distance, index)` to every candidate, unordered: the coarse retrieval stage (a linear scan, O(N) per
+/// query). Candidates whose ring key length differs from the query (e.g. cloud-less keyframes) are skipped.
 pub fn ring_key_distances(query_key: &RingKey, candidates: &[RingKey]) -> Vec<(f32, usize)> {
     let mut distances: Vec<(f32, usize)> = Vec::with_capacity(candidates.len());
     for (idx, key) in candidates.iter().enumerate() {
@@ -335,7 +320,7 @@ pub struct LookAlikes {
     ordered: usize,
     scored: usize,
     places: Vec<usize>,
-    pub cap: usize,
+    cap: usize,
 }
 
 impl LookAlikes {
@@ -351,10 +336,6 @@ impl LookAlikes {
     /// Places counted so far (at least one: the scan's own match).
     pub fn places(&self) -> usize {
         self.places.len().max(1)
-    }
-    /// Candidates scored so far.
-    pub fn scored(&self) -> usize {
-        self.scored
     }
     /// Count until more than `limit` places are known (the caller's decision can't change past that) or the
     /// candidates or `cap` run out; returns the places counted.
@@ -395,7 +376,7 @@ impl crate::gsc_pgo::GscPgo {
     }
     /// Radius search on past key-pose global positions (candidates ascending
     /// by distance), returning the nearest that is far enough back.
-    pub(crate) fn search_by_position(&self) -> i64 {
+    pub(crate) fn search_by_position(&self) -> Option<usize> {
         let here = self.key_poses.last().unwrap().translation_global;
         self.key_poses[..self.newest_closure_target()]
             .iter()
@@ -403,21 +384,24 @@ impl crate::gsc_pgo::GscPgo {
             .enumerate()
             .filter(|&(_, d)| d <= self.config.closure_search_radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map_or(-1, |(i, _)| i as i64)
+            .map(|(i, _)| i)
     }
     /// Scan-context candidate search, on the hot path: every earlier keyframe's ring-key distance, the closest
-    /// `candidate_top_k` scored on the full descriptor. Returns (target_idx or -1, sector_shift, best, second, ranking):
-    /// the accepted candidate under the match threshold, the closest / 2nd-closest cosine distances (the Lowe ratio) and
-    /// the ring-key distances (top k in order), which the closure search reuses to count look-alike places.
-    pub(crate) fn search_by_scan_context(&self) -> (i64, i32, f32, f32, Vec<(f32, usize)>) {
-        let mut out_best = 2.0f32;
-        let mut out_second = 2.0f32;
-        if self.scan_context_descriptors.is_empty()
-            || self.scan_context_descriptors.last().unwrap().is_empty()
-        {
-            return (-1, 0, out_best, out_second, Vec::new());
-        }
-        let query = self.scan_context_descriptors.last().unwrap();
+    /// `candidate_top_k` scored on the full descriptor. Returns (target_idx, sector_shift, best, second, ranking):
+    /// the accepted candidate under the match threshold, the closest / 2nd-closest cosine distances (the Lowe ratio, 2
+    /// when missing) and the ring-key distances (top k in order), which the closure search reuses to count look-alike
+    /// places.
+    pub(crate) fn search_by_scan_context(
+        &self,
+    ) -> (Option<usize>, i32, f32, f32, Vec<(f32, usize)>) {
+        let (mut best_dist, mut second_dist) = (2.0f32, 2.0f32);
+        let Some(query) = self
+            .scan_context_descriptors
+            .last()
+            .filter(|d| !d.is_empty())
+        else {
+            return (None, 0, best_dist, second_dist, Vec::new());
+        };
         // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
         let mut ranked = ring_key_distances(
             self.scan_context_ring_keys.last().unwrap(),
@@ -425,10 +409,8 @@ impl crate::gsc_pgo::GscPgo {
         );
         let top_k = self.scan_context_config.candidate_top_k;
         order_closest(&mut ranked, 0, top_k);
-        let mut best_dist = f32::MAX;
-        let mut second_dist = f32::MAX;
         let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
-        let mut best_idx: i64 = -1;
+        let mut best: Option<usize> = None;
         let mut best_shift = 0i32;
         for &(_, idx) in ranked.iter().take(top_k) {
             let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
@@ -440,17 +422,10 @@ impl crate::gsc_pgo::GscPgo {
             }
             if distance < best_dist_filtered {
                 best_dist_filtered = distance;
-                best_idx = idx as i64;
+                best = Some(idx);
                 best_shift = shift;
             }
         }
-
-        if best_dist < 2.0 {
-            out_best = best_dist;
-        }
-        if second_dist < 2.0 {
-            out_second = second_dist;
-        }
-        (best_idx, best_shift, out_best, out_second, ranked)
+        (best, best_shift, best_dist, second_dist, ranked)
     }
 }

@@ -67,6 +67,25 @@ pub fn norm(v: &Vec3) -> f64 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
 
+/// The cross-product matrix: `skew(v) * u == v x u`.
+pub fn skew(v: &Vec3) -> Mat3 {
+    [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]
+}
+
+pub fn add_mat(a: &Mat3, b: &Mat3) -> Mat3 {
+    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
+}
+
+pub fn sub_mat(a: &Mat3, b: &Mat3) -> Mat3 {
+    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] - b[i][j]))
+}
+
+pub fn det(m: &Mat3) -> f64 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+}
+
 /// Rotation about +z by `yaw` radians (Eigen `AngleAxisd(yaw, UnitZ())`).
 pub fn rot_z(yaw: f64) -> Mat3 {
     let (s, c) = yaw.sin_cos();
