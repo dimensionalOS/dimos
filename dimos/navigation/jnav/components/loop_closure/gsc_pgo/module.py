@@ -23,6 +23,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -125,6 +126,9 @@ class GscPGO(NativeModule):
     # each closure candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
     # with both keyframes' current positions and a confidence, for drawing closure edges
     closure_edges: Out[PointCloud2]
+    # debugging numbers as JSON lines, one per keyframe: ts, unresolved_loop_probability (chance the newest scan
+    # overlaps an earlier stretch of the path no closure has tied it to), expected_overlaps, most_likely_keyframe/_probability
+    debug_log: Out[String]
 
     @rpc
     def stop(self) -> None:

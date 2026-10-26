@@ -182,9 +182,8 @@ pub fn auto_max_range(points: &[[f32; 3]]) -> f64 {
     if ranges.is_empty() {
         return 0.0;
     }
-    ranges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let index = ((ranges.len() - 1) as f64 * RANGE_PERCENTILE).round() as usize;
-    ranges[index]
+    *ranges.select_nth_unstable_by(index, f64::total_cmp).1
 }
 
 /// Mean per row (over ALL columns, zeros included) — the retrieval key.
@@ -279,7 +278,7 @@ pub fn yaw_from_shift(shift: i32, n_sectors: usize) -> f64 {
 
 /// Rank candidate ring keys by L2 distance to `query_key` and return the
 /// top-k `(distance, index)` pairs, ascending — the coarse retrieval stage of
-/// `SimplePGO::searchByScanContext` (a linear scan + partial sort; small
+/// `SimplePGO::searchByScanContext` (a linear scan + partial selection; small
 /// enough at keyframe counts that a kd-tree buys nothing yet). Entries whose
 /// ring key length differs from the query (e.g. cloud-less nodes) are
 /// skipped.
@@ -299,8 +298,15 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
         }
         ranked.push((sq.sqrt(), idx));
     }
-    ranked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    ranked.truncate(k);
+    let by_distance = |a: &(f32, usize), b: &(f32, usize)| a.0.total_cmp(&b.0);
+    if k == 0 {
+        return Vec::new();
+    }
+    if k < ranked.len() {
+        ranked.select_nth_unstable_by(k - 1, by_distance);
+        ranked.truncate(k);
+    }
+    ranked.sort_unstable_by(by_distance);
     ranked
 }
 

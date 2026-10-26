@@ -20,7 +20,7 @@
 //! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
 //!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
 //!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
-//!   closure_edges (each closure candidate's lifecycle). Closure
+//!   closure_edges (each closure candidate's lifecycle), debug_log (JSON debugging numbers). Closure
 //!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
 //!   runtime via a captured Handle.
 
@@ -36,6 +36,7 @@ use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs;
 use lcm_msgs::tf2_msgs::TFMessage;
 
 mod utils;
@@ -161,6 +162,11 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     closure_edges: Output<PointCloud2>,
 
+    // Debugging numbers as JSON lines, one per keyframe: {"ts", "unresolved_loop_probability", "expected_overlaps",
+    // "most_likely_keyframe", "most_likely_probability"} (see gsc_pgo::loop_overlap).
+    #[output(encode = std_msgs::String::encode)]
+    debug_log: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -186,6 +192,7 @@ impl GscPgoModule {
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
             closure_edges: self.closure_edges.clone(),
+            debug_log: self.debug_log.clone(),
             tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
@@ -276,6 +283,7 @@ struct Worker {
     pose_graph: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
     closure_edges: Output<PointCloud2>,
+    debug_log: Output<std_msgs::String>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
@@ -419,6 +427,14 @@ impl Worker {
 
             // every keyframe's current pose, each keyframe
             self.publish_graph(&pgo, cur_time, &frame_id);
+            if let Some(overlap) = pgo.loop_overlap() {
+                let mut line = serde_json::to_value(overlap).unwrap_or_default();
+                line["ts"] = cur_time.into();
+                let msg = std_msgs::String {
+                    data: line.to_string(),
+                };
+                self.publish(&self.debug_log, &msg, "debug_log");
+            }
         }
     }
 

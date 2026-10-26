@@ -93,3 +93,84 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
         "the closure should close the end onto the start: {closed_end}"
     );
 }
+
+/// On an odometry chain (no closures) a keyframe's position uncertainty relative to the newest one is the chain's noise
+/// between them: each step's translation noise, plus each step's rotation noise swinging the newest keyframe by its lever
+/// arm. The solver's Takahashi readout must give the same.
+#[test]
+fn relative_covariance_of_a_chain_is_its_odometry_noise() {
+    let (translation_variance, rotation_variances) = (1e-4, [1e-6, 1e-6, 3e-6]);
+    let n = 30;
+    let (mut rotations, mut positions) = (Vec::new(), Vec::new());
+    let (mut yaw, mut position) = (0.0f64, [0.0; 3]);
+    for _ in 0..n {
+        rotations.push(mat3::rot_z(yaw));
+        positions.push(position);
+        position = mat3::add(
+            &position,
+            &mat3::mat_vec(&mat3::rot_z(yaw), &[1.0, 0.0, 0.1]),
+        );
+        yaw += 0.1;
+    }
+    let odometry: Vec<Edge> = (0..n - 1)
+        .map(|i| {
+            let back = mat3::transpose(&rotations[i]);
+            Edge {
+                from: i,
+                to: i + 1,
+                rotation: mat3::mat_mul(&back, &rotations[i + 1]),
+                translation: mat3::mat_vec(&back, &mat3::sub(&positions[i + 1], &positions[i])),
+                variances: [
+                    rotation_variances[0],
+                    rotation_variances[1],
+                    rotation_variances[2],
+                    translation_variance,
+                    translation_variance,
+                    translation_variance,
+                ],
+            }
+        })
+        .collect();
+    let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+    let config = SolveConfig {
+        gnc_variance_scale: 10.0,
+        gnc_inlier_probability: 0.95,
+        huber_k: 0.0,
+    };
+    let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
+    assert_eq!(solution.relative_position_covariance.len(), n);
+    let newest = positions[n - 1];
+    let skew = |v: &Vec3| [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]];
+    let sandwich = |a: &Mat3, d: [f64; 3]| -> Mat3 {
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| (0..3).map(|k| a[r][k] * d[k] * a[c][k]).sum())
+        })
+    };
+    for j in 0..n {
+        let mut expected = [[0.0; 3]; 3];
+        for i in j..n - 1 {
+            let translation = sandwich(&rotations[i], [translation_variance; 3]);
+            // the step's rotation noise, in the turned-to keyframe's axes, swings the newest one about it
+            let lever = skew(&mat3::sub(&newest, &positions[i + 1]));
+            let rotation = mat3::mat_mul(&lever, &rotations[i + 1]);
+            let swing = sandwich(&rotation, rotation_variances);
+            for r in 0..3 {
+                for c in 0..3 {
+                    expected[r][c] += translation[r][c] + swing[r][c];
+                }
+            }
+        }
+        let got = solution.relative_position_covariance[j];
+        for r in 0..3 {
+            for c in 0..3 {
+                let scale = expected[r][r].abs().max(expected[c][c].abs()).max(1e-12);
+                assert!(
+                    (got[r][c] - expected[r][c]).abs() <= 1e-3 * scale,
+                    "keyframe {j} [{r}][{c}]: solver {} vs chain {}",
+                    got[r][c],
+                    expected[r][c]
+                );
+            }
+        }
+    }
+}

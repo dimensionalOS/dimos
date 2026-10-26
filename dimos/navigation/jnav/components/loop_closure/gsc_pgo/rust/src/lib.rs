@@ -27,6 +27,7 @@
 pub mod big_picture_fit;
 pub mod connection_fit;
 pub mod gsc_pgo;
+pub mod loop_overlap;
 pub mod mat3;
 pub mod pointcloud;
 pub mod proportional_confidence;

@@ -15,10 +15,15 @@
 //! A pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, with graduated non-convexity (truncated least squares) deciding which closures are inliers by
 //! how well they agree with the odometry and with each other, then a Huber pass on the kept ones.
 
+use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::linalg::solvers::SolveCore;
+use faer::sparse::linalg::cholesky::{
+    factorize_symbolic_cholesky, CholeskySymbolicParams, SymbolicCholeskyRaw, SymmetricOrdering,
+};
 use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
+use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
-use faer::{Conj, Mat, Side};
+use faer::{Conj, Mat, Par, Side};
 
 use std::thread::JoinHandle;
 
@@ -54,6 +59,9 @@ pub struct Solution {
     pub closure_weights: Vec<f64>,
     /// Half the sum of squared whitened residuals of everything kept.
     pub error: f64,
+    /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
+    /// world axes, m²), from the solved graph; empty if the graph could not be factored.
+    pub relative_position_covariance: Vec<Mat3>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -136,12 +144,162 @@ pub fn solve(
         }
     }
     let error = 0.5 * cost(&state, odometry, closures, &huber);
+    let relative_position_covariance = relative_position_covariances(
+        &state,
+        &pattern,
+        odometry,
+        closures,
+        &huber,
+        positions.len() - 1,
+    )
+    .unwrap_or_default();
     Solution {
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
         error,
+        relative_position_covariance,
     }
+}
+
+/// The covariance of keyframe `tip`'s position as seen from each keyframe (its offset in that keyframe's own frame, in world
+/// axes, m²) at `state`, so the map's overall heading uncertainty does not count. Σ, the inverse of the normal equations'
+/// matrix, is needed at each keyframe's own 6x6 block, from the Takahashi recursion over its sparse Cholesky factor (the
+/// entries the factor's pattern holds, one backward pass), and at its cross blocks with the tip's position, from one solve
+/// against the tip's position columns. A held keyframe has no uncertainty of its own.
+fn relative_position_covariances(
+    state: &State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    tip: usize,
+) -> Option<Vec<Mat3>> {
+    let size = pattern.size;
+    let (mut values, _, diagonal) =
+        normal_equations(state, pattern, odometry, closures, closure_weights);
+    // the pattern's damping diagonal, at Levenberg-Marquardt's smallest damping
+    values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
+    let hessian =
+        SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values).ok()?;
+    let symbolic = factorize_symbolic_cholesky(
+        hessian.symbolic(),
+        Side::Lower,
+        SymmetricOrdering::Amd,
+        CholeskySymbolicParams {
+            // the recursion walks the factor column by column
+            supernodal_flop_ratio_threshold: SupernodalThreshold::FORCE_SIMPLICIAL,
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    let mut factor = vec![0.0; symbolic.len_val()];
+    let par = Par::Seq;
+    let tip_slot = pattern.slot[tip]?;
+    // Σ's position columns of the tip: one solve with the tip's three position unit vectors
+    let mut tip_columns =
+        Mat::<f64>::from_fn(size, 3, |i, c| (i == 6 * tip_slot + 3 + c) as u8 as f64);
+    {
+        let llt = symbolic
+            .factorize_numeric_llt(
+                &mut factor,
+                hessian.as_ref(),
+                Side::Lower,
+                Default::default(),
+                par,
+                MemStack::new(&mut MemBuffer::new(
+                    symbolic.factorize_numeric_llt_scratch::<f64>(par, Default::default()),
+                )),
+                Default::default(),
+            )
+            .ok()?;
+        llt.solve_in_place_with_conj(
+            Conj::No,
+            tip_columns.as_mut(),
+            par,
+            MemStack::new(&mut MemBuffer::new(
+                llt.solve_in_place_scratch::<f64>(3, par),
+            )),
+        );
+    }
+    let SymbolicCholeskyRaw::Simplicial(simplicial) = symbolic.raw() else {
+        return None;
+    };
+    let (col_ptr, row_idx) = (simplicial.col_ptr(), simplicial.row_idx());
+    let (_, inverse_order) = symbolic.perm()?.arrays();
+    // Σ in the factor's order, at the factor's pattern: column j from the columns after it
+    let mut sigma = vec![0.0; factor.len()];
+    let at = |sigma: &[f64], row: usize, col: usize| -> f64 {
+        let (row, col) = (row.max(col), row.min(col));
+        let span = col_ptr[col]..col_ptr[col + 1];
+        row_idx[span.clone()]
+            .binary_search(&row)
+            .map_or(0.0, |k| sigma[span.start + k])
+    };
+    for j in (0..size).rev() {
+        let (first, end) = (col_ptr[j], col_ptr[j + 1]);
+        let pivot = factor[first];
+        for p in first + 1..end {
+            let i = row_idx[p];
+            let sum: f64 = (first + 1..end)
+                .map(|q| factor[q] * at(&sigma, i, row_idx[q]))
+                .sum();
+            sigma[p] = -sum / pivot;
+        }
+        let sum: f64 = (first + 1..end).map(|q| factor[q] * sigma[q]).sum();
+        sigma[first] = (1.0 / pivot - sum) / pivot;
+    }
+    let entry = |slot: usize, u: usize, v: usize| {
+        at(
+            &sigma,
+            inverse_order[6 * slot + u],
+            inverse_order[6 * slot + v],
+        )
+    };
+    let tip_block: Mat3 =
+        std::array::from_fn(|u| std::array::from_fn(|v| tip_columns[(6 * tip_slot + 3 + u, v)]));
+    let mul = |a: &Mat3, b: &Mat3| mat3::mat_mul(a, b);
+    let t = mat3::transpose;
+    Some(
+        pattern
+            .slot
+            .iter()
+            .enumerate()
+            .map(|(k, slot)| {
+                let Some(s) = *slot else { return tip_block };
+                // the tip's offset in keyframe k's own frame, turned back to world axes:
+                // δ = δp_tip - δp_k + skew(p_tip - p_k) R_k δθ_k (k's own heading uncertainty does not move the tip
+                // relative to k)
+                let lever = mul(
+                    &skew(&mat3::sub(&state.position[tip], &state.position[k])),
+                    &state.rotation[k],
+                );
+                let block = |r: usize, c: usize| -> Mat3 {
+                    std::array::from_fn(|u| std::array::from_fn(|v| entry(s, r + u, c + v)))
+                };
+                let with_tip = |r: usize| -> Mat3 {
+                    std::array::from_fn(|u| {
+                        std::array::from_fn(|v| tip_columns[(6 * s + r + u, v)])
+                    })
+                };
+                let (turn_turn, turn_shift, shift_shift) = (block(0, 0), block(0, 3), block(3, 3));
+                let (turn_tip, shift_tip) = (with_tip(0), with_tip(3));
+                let swing_tip = mul(&lever, &turn_tip);
+                let swing_shift = mul(&lever, &turn_shift);
+                let swing = mul(&mul(&lever, &turn_turn), &t(&lever));
+                std::array::from_fn(|u| {
+                    std::array::from_fn(|v| {
+                        tip_block[u][v] + shift_shift[u][v] - shift_tip[u][v] - shift_tip[v][u]
+                            + swing[u][v]
+                            + swing_tip[u][v]
+                            + swing_tip[v][u]
+                            - swing_shift[u][v]
+                            - swing_shift[v][u]
+                    })
+                })
+            })
+            .collect(),
+    )
 }
 
 /// Each edge's squared whitened residual at the given poses.
@@ -652,6 +810,9 @@ impl GscPgo {
         let (solution, seconds) = solving.handle.join().expect("pose graph solve panicked");
         self.timing.solve_s += seconds;
         let n = solving.keyframes;
+        self.solved_relative_covariance =
+            Some((n - 1, solution.relative_position_covariance.clone()))
+                .filter(|(_, covariance)| covariance.len() == n);
         for (key_pose, (rotation, position)) in self.key_poses[..n]
             .iter_mut()
             .zip(solution.rotations.iter().zip(&solution.positions))

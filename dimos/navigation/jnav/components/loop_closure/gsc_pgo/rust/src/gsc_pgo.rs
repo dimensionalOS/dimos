@@ -379,6 +379,10 @@ pub struct GscPgo {
     pub(crate) closures_dispatched: usize,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
+    /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
+    pub(crate) keyframe_reach: (f64, usize),
+    /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
+    pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     pub(crate) scan_context_descriptors: Vec<similarity_discovery::Descriptor>,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
@@ -892,6 +896,14 @@ impl GscPgo {
             ))),
             _ => cloud.clone(),
         };
+        // how far this keyframe's scan reaches, for loop_overlap's sensor range
+        if let Some(stored) = &stored {
+            let reach = similarity_discovery::auto_max_range(stored);
+            if reach > 0.0 {
+                self.keyframe_reach.0 += reach;
+                self.keyframe_reach.1 += 1;
+            }
+        }
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,

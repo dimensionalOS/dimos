@@ -33,6 +33,7 @@ use dimos_gsc_pgo::gsc_pgo::{
     ClosureCandidateDiag, CloudWithPose, CommittedClosure, Config as PgoConfig, GscPgo,
     PoseWithTime, CLOSURE_EDGE_RECORD_BYTES,
 };
+use dimos_gsc_pgo::loop_overlap::LoopOverlap;
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
 use rusqlite::Connection;
@@ -108,6 +109,8 @@ struct EvalOutput {
     keyframe_gnc_ms: Vec<f32>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
+    /// Per keyframe, its time and `GscPgo::loop_overlap` after it (the module's debug_log numbers).
+    loop_overlap: Vec<(f64, LoopOverlap)>,
     /// Count of closure-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
     /// One record per closure-search evaluation (accepted + rejected), with the
@@ -339,6 +342,7 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
     let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
+    let mut loop_overlap: Vec<(f64, LoopOverlap)> = Vec::new();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
     // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
@@ -431,6 +435,9 @@ fn run() -> Result<(), String> {
             }
         }
         keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+        if let Some(overlap) = pgo.loop_overlap() {
+            loop_overlap.push((latest.ts, overlap));
+        }
         if let Some(events) = &mut events {
             write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
         }
@@ -520,6 +527,7 @@ fn run() -> Result<(), String> {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
+        loop_overlap,
         gate_counts,
         closure_diagnostics,
         graph_error,
