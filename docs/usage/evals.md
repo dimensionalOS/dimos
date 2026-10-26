@@ -502,11 +502,15 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 
-- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`.
+  The exit status is 1 when a case errored or no case matched the selection.
+  A case that scored below its threshold is a measurement, not an error, and
+  leaves the status at 0.
 - **Docker**: add `--docker` to run that eval in a fresh, detached container
   from the eval image, one per invocation, any number side by side on one
-  host; setup, GPU rendering and an EC2 runbook are in
-  [`evals-docker.md`](/docs/usage/evals-docker.md).
+  host. The command returns once the container has started, so its exit
+  status says nothing about the eval. Setup, GPU rendering and an EC2 runbook
+  are in [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`

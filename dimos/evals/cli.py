@@ -127,6 +127,12 @@ def run(
         False, "--docker", help="Run in a detached container (docker/evals/compose.yaml)"
     ),
 ) -> None:
+    """Run an eval suite.
+
+    Exits 1 when a case errored or no case was selected. A case that scored
+    below its threshold is a measurement, not an error, and exits 0. With
+    --docker the status only says whether the container started.
+    """
     if docker:
         _run_in_docker(suite, agent, set_, allow, exclude, tags, limit)
         return
@@ -164,6 +170,8 @@ def run(
         f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
         f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
     )
+    if s.errors or not s.n:
+        raise typer.Exit(1)
 
 
 def _run_in_docker(
