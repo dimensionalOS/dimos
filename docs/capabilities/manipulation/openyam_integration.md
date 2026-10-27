@@ -7,7 +7,7 @@ arm and its gripper; motor topology is independent of the host operating system.
 ## CAN transport
 
 The generic Damiao layer selects the native transport provided by
-`can-motor-control>=0.0.8`:
+`can-motor-control>=0.0.10`:
 
 | Host | Default | `runtime_config.bus_devices["openyam"]` override |
 |------|---------|-----------------------|

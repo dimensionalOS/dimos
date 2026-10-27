@@ -82,7 +82,7 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
         profile_type = getattr(damiao, "MotorProfile", None)
         if profile_type is None:
             raise RuntimeError(
-                "Metal Arm requires a can-motor-control release with custom MotorProfile support; "
+                "Metal Arm requires can-motor-control>=0.0.10 with custom MotorProfile support; "
                 "stock DM profiles use incompatible firmware scaling"
             )
         # Firmware ranges from MakerMods, registered only on this robot's codec.
