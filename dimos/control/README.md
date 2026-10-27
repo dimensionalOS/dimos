@@ -145,8 +145,7 @@ person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
 (zero velocity for a base). Add it with `operator_hold_task()` from
 `dimos/control/tasks/operator_hold_task/operator_hold_task.py`, on an
 `OperatorHoldCoordinator`
-(`dimos/robot/manipulators/xarm/blueprints/hybrid_teleop_sim.py`) or a
-subclass of it. That coordinator adds two ports: `operator_hold_command` takes
+(`dimos/control/operator_hold_coordinator.py`) or a subclass of it. That coordinator adds two ports: `operator_hold_command` takes
 an `OperatorHoldCommand` (`action` "request" with a `route` and `reason`, or
 "acknowledge"), and `operator_hold_status` carries the hold's
 `OperatorHoldStatus`. A web page sends the command as JSON with the
@@ -173,7 +172,16 @@ encoding). True latches `set_estop(True)`, requests the hold (route
 `failsafe`, reason `e-stop`) and cancels the running trajectory; False only
 calls `set_estop(False)`, so the hold stays on until someone acknowledges it.
 `operator_estop_status` sends an `OperatorEstopStatus` (`estopped`, and
-`stamp` in unix seconds) at start and on every `set_estop`.
+`stamp` in unix seconds) at start and on every `set_estop`. A page that
+calls RPCs instead (a Desktop app through the dimos gateway) uses
+`estop(estopped)` for the same stop and clear, and `get_operator_status()`
+for the hold and the latch as plain JSON.
+
+`OperatorHandoff` (`dimos/control/operator_handoff.py`) sits beside it: the
+agent's `request_operator(reason)` skill (route `agent`), the operator event
+log (`operator_events.jsonl` in the run's log directory), the operator's
+`restart_autonomy`, and `operator_status`, the same state as JSON in a
+`std_msgs.String` for a page reading zenoh. Acknowledge is never a skill.
 
 ## Control Modes
 
