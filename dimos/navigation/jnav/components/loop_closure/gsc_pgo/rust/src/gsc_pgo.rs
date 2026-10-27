@@ -1023,7 +1023,12 @@ impl GscPgo {
     }
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
     /// as closure-edge events.
-    pub(crate) fn record_search(&mut self, diag: ClosureCandidateDiag) {
+    pub(crate) fn record_search(&mut self, mut diag: ClosureCandidateDiag) {
+        // a search that ended before its proposal was built never saw the noise scales
+        if diag.target_id < 0 {
+            diag.odometry_noise_scale = self.odometry_noise_scale();
+            diag.closure_noise_scale = self.closure_noise_scale();
+        }
         if diag.target_id >= 0 {
             let (source, target) = (diag.source_id, diag.target_id as usize);
             let proposed = if diag.scan_context_best.is_finite() {
