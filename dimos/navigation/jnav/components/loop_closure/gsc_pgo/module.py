@@ -84,6 +84,43 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
     closure_extended_icp_max_keyframes: int = 16
+    # Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower; 0 keeps every point
+    closure_ground_clearance_m: float = 0.0
+    # Above 0: score a closure's fit by its sharpness s (share within submap_resolution, times how much overlap falls when
+    # nudged closure_sharpness_nudge_m / _deg) as s / (s + this), extended stacks by their own sharpness; 0 = fitness
+    closure_sharpness_half: float = 0.0
+    closure_sharpness_nudge_m: float = 1.0
+    closure_sharpness_nudge_deg: float = 5.0
+    # True: a closure's confidence is its overlap score (connection_fit::overlap_score: fit quality inside the box both
+    # clouds share, evidence growing with log2 of its points / coin_flip) instead of scan-context x ICP x degeneracy
+    # True: a closure's evidence is its likelihood ratio (mean log ratio per point: aligned half-normal of a width measured
+    # from the clouds vs uniform out to the ICP match distance), in place of scan-context x ICP x degeneracy
+    closure_likelihood_confidence: bool = False
+    # True: a keyframe whose closure search is rejected tries its next scan-context match, up to 1 + ceil(1/(1 - pressure))
+    # tries (2 at no pressure), at most scan_context_top_k
+    closure_alternative_places: bool = False
+    # True: skip a scan-context match whose relative position the graph already knows better than accepted closures' median ICP fit
+    closure_skip_known: bool = False
+    # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
+    closure_pcm: bool = False
+    # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
+    closure_hessian_observability: bool = False
+    # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
+    closure_likelihood_visibility: bool = False
+    # True (with visibility): count every source point a target scan could see (beam model), no inlier-distance gate
+    closure_likelihood_beam: bool = False
+    # True: try a keyframe's scan-context matches in order of how unsure the graph is of their relative position
+    closure_rank_by_information: bool = False
+    # True: measure the yank scale from closures the solve kept instead of every ICP-scored candidate
+    closure_yank_scale_from_kept: bool = False
+    closure_overlap_score: bool = False
+    closure_overlap_sigma_m: float = 0.03
+    closure_overlap_reach_m: float = 0.5
+    closure_overlap_noise_sigmas: float = 3.0
+    closure_overlap_per_doubling: float = 2.7
+    closure_overlap_coin_flip: float = 350.0
+    # Score only points within the shared radius (noise_sigmas x sigma) of a shared point, not their whole bounding box
+    closure_overlap_local: bool = False
     # Closure-verification ICP: iteration cap and correspondence gate (m).
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

@@ -32,6 +32,28 @@ pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) 
         .collect()
 }
 
+/// The points more than `clearance` (m) above the cloud's floor, its 5th-percentile height; the whole cloud when
+/// `clearance` is 0 or nothing is left. A lidar scan seen mostly as ground (the Go2's L1) lines up with any other
+/// floor, so closure ICP and its scores look only at what stands on it.
+pub fn above_floor(cloud: &[[f32; 3]], clearance: f64) -> PointCloud {
+    if clearance <= 0.0 || cloud.is_empty() {
+        return cloud.to_vec();
+    }
+    let mut heights: Vec<f32> = cloud.iter().map(|p| p[2]).collect();
+    let k = heights.len() / 20;
+    let floor = *heights.select_nth_unstable_by(k, f32::total_cmp).1;
+    let kept: PointCloud = cloud
+        .iter()
+        .copied()
+        .filter(|p| (p[2] - floor) as f64 > clearance)
+        .collect();
+    if kept.is_empty() {
+        cloud.to_vec()
+    } else {
+        kept
+    }
+}
+
 /// Voxel-grid downsample with cubic leaf size: hash points into cells on
 /// `floor(p * (1/leaf))` (f32 math), emit the centroid of each occupied
 /// cell, ordered by (z, y, x) cell index.
