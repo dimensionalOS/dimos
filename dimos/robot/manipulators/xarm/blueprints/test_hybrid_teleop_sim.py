@@ -34,6 +34,7 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.operator_hold_coordinator import OperatorHoldCoordinator
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -61,7 +62,6 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
-from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import OperatorHoldCoordinator
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -403,6 +403,28 @@ class TestEstopPort:
         assert statuses[-1].estopped is True and statuses[-1].stamp > 0.0
         rig.tick()
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+
+    def test_estop_rpc_stops_like_the_port_and_answers_in_plain_types(self, rig, estop):
+        stub, _ = estop
+        rig.coordinator.execute_trajectory(_trajectory())
+        rig.tick()
+
+        stopped = rig.coordinator.estop(True)
+        cleared = rig.coordinator.estop(False)
+
+        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
+        assert stopped["estopped"] is True and cleared["estopped"] is False
+        assert stub.estopped is False
+        hold = cleared["hold"]
+        assert (hold["on"], hold["route"], hold["reason"]) == (True, "failsafe", "e-stop")
+        assert hold["unheld"] == []
+
+    def test_operator_status_without_a_hold_task(self):
+        coordinator = OperatorHoldCoordinator(publish_joint_state=False)
+        try:
+            assert coordinator.get_operator_status() == {"hold": None, "estopped": False}
+        finally:
+            coordinator.stop()
 
     def test_clear_releases_the_latch_but_not_the_hold(self, rig, estop):
         stub, statuses = estop

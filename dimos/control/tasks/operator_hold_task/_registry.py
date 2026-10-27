@@ -17,7 +17,7 @@ TASK_FACTORIES = {
 }
 
 # The coordinator needs an operator_hold_command input port for this stream;
-# OperatorHoldCoordinator in the hybrid-teleop-sim blueprint declares it.
+# OperatorHoldCoordinator (dimos/control/operator_hold_coordinator.py) declares it.
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
     "operator_hold": {"operator_hold_command": ("on_command", "direct")},
 }
