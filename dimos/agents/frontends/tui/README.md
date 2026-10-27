@@ -404,8 +404,9 @@ opens view N in its panel. `/panel 0` returns to the overview. `/panel N` opens 
 the source timing and never plays the GIF. clip.test.ts checks that playback never blanks between frames.
 
 [sidebar/](sidebar/) draws the stream sidebar. [sidebar.ts](sidebar/sidebar.ts) is `Sidebar`, `SidebarSource`, and
-`SIDEBAR_COLUMNS`, which is 40 cells with the `│ ` gutter. main.ts places `sidebar.viewport`, a `ScrollView`, in the
-layout and passes a function that returns the shown conversation's `SidebarSource` or `null`. The column lists the
+`SIDEBAR_COLUMNS`, which is 40 cells with the `│ ` gutter. main.ts places `sidebar.column`, the gutter beside a
+`ScrollView`, in the layout. It passes a function that returns the shown conversation's `SidebarSource` or `null`, and
+one that returns the screen's rows, so the gutter reaches the bottom of the screen. The column lists the
 conversation's agent modules with their streams, its jobs with their next due time and last three runs, and its
 admitted notices in the input queue. Below them it lists the system's picture streams the conversation does
 not show. `sidebarGroups` and `systemGroups` from shared/view-models/streams/ build the groups. Each render collects the

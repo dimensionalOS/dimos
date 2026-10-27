@@ -114,12 +114,13 @@ test("sidebar navigates measured picture rows and folds duplicate occurrences th
       changes++;
       tui.requestRender();
     },
+    () => terminal.rows,
   );
   const editor = new PromptEditor(tui, [], process.cwd());
   const layout = new HStack([
     { component: editor, basis: 0, grow: 1, minSize: 60 },
     {
-      component: sidebar.viewport,
+      component: sidebar.column,
       basis: 40,
       visible: ({ width }) => {
         const visible = sidebar.isOpen && width >= 100;

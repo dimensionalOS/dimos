@@ -229,7 +229,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         : null,
     );
   };
-  const sidebar = new Sidebar(sidebarSource, frames, requestRender);
+  const sidebar = new Sidebar(sidebarSource, frames, requestRender, () => device.rows);
 
   const conversationText = (): string => {
     if (showing === null) return "";
@@ -327,7 +327,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   const layout = new HStack([
     { component: chat, basis: 0, grow: 1, minSize: CHAT_MIN_COLUMNS },
     {
-      component: sidebar.viewport,
+      component: sidebar.column,
       basis: SIDEBAR_COLUMNS,
       visible: (viewport) => {
         const visible = sidebar.isOpen && overlay === null && viewport.width >= CHAT_MIN_COLUMNS + SIDEBAR_COLUMNS;

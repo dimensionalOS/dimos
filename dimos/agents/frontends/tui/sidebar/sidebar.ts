@@ -11,6 +11,7 @@ import type { OwnedStream, Transcript } from "../../../shared/protocol/conversat
 import type { RateTable } from "../../../shared/view-models/streams/rates.ts";
 import { FramePainter } from "./painter.ts";
 import {
+  HStack,
   ScrollView,
   Text,
   allocateImageId,
@@ -97,6 +98,8 @@ function markText(mark: JobMark): string {
  */
 export class Sidebar implements Component {
   readonly viewport: ScrollView;
+  /** What the layout places: the gutter beside the viewport. */
+  readonly column: HStack;
   private hasFocus = false;
   private readonly source: () => SidebarSource | null;
   private readonly frames: FrameSource;
@@ -116,11 +119,21 @@ export class Sidebar implements Component {
   private closed = false;
   private readonly stopRecords: () => void;
 
-  constructor(source: () => SidebarSource | null, frames: FrameSource, changed: () => void) {
+  constructor(source: () => SidebarSource | null, frames: FrameSource, changed: () => void, screenRows: () => number) {
     this.source = source;
     this.frames = frames;
     this.changed = changed;
     this.viewport = new SidebarViewport(this, () => this.afterLayout());
+    // A leaf only learns its width, so the gutter draws a row for every screen row and the layout clips it to the
+    // column's height.
+    const gutter: Component = {
+      render: () => Array.from({ length: screenRows() }, () => muted(GUTTER)),
+      invalidate: () => {},
+    };
+    this.column = new HStack([
+      { component: gutter, basis: GUTTER.length },
+      { component: this.viewport, basis: 0, grow: 1 },
+    ]);
     const cell = getCellDimensions();
     this.painter = new FramePainter({ width: PICTURE_COLUMNS * cell.widthPx, height: PICTURE_ROWS * cell.heightPx });
     this.stopRecords = frames.onRecord((record) => this.receive(record));
@@ -182,10 +195,9 @@ export class Sidebar implements Component {
   render(width: number): string[] {
     const source = this.source();
     const now = Date.now() as EpochMs;
-    const inner = Math.max(1, width - GUTTER.length);
     const content: string[] = [];
     const add = (component: Component): void => {
-      content.push(...component.render(inner));
+      content.push(...component.render(width));
     };
     const rows: Row[] = [];
     const shown = new Set<Channel>();
@@ -195,13 +207,13 @@ export class Sidebar implements Component {
       add(line(muted("no conversation")));
     } else {
       const own = sidebarGroups(source.streams, source.modules, this.rates, now);
-      this.showGroups(own, "owned", now, inner, content, rows, shown, wanted, occurrences);
+      this.showGroups(own, "owned", now, width, content, rows, shown, wanted, occurrences);
       this.showJobs(source.jobs, now, add);
       this.showNotices(source, add);
       const system = systemGroups(source.system.streams, source.system.modules, shown, this.rates, now);
       if (system.groups.length > 0) {
         add(line(`${accent("◉")} system`));
-        this.showGroups(system.groups, "system", now, inner, content, rows, shown, wanted, occurrences);
+        this.showGroups(system.groups, "system", now, width, content, rows, shown, wanted, occurrences);
       }
       if (system.others > 0) add(line(muted(`  + ${system.others} more streams in /runtime`)));
     }
@@ -220,7 +232,7 @@ export class Sidebar implements Component {
     this.prune(shown);
     this.want(this.open && this.visible && source !== null ? wanted : new Set());
     add(line(muted(this.focused ? "↑↓ move · ←→ fold · Esc chat" : "Shift+Tab streams · Ctrl+T hides")));
-    return content.map((text) => muted(GUTTER) + truncateToWidth(text, inner));
+    return content.map((text) => truncateToWidth(text, width));
   }
 
   invalidate(): void {
