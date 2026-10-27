@@ -34,6 +34,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
 
 
 class _Task(PoseTargetIKTask):
@@ -383,3 +384,22 @@ def test_measured_frame_poses_follow_measured_joints_not_the_target(mocker: Mock
 def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixture) -> None:
     task = _Task(_config(), _solver(mocker), _snapshot())
     assert task.measured_frame_poses(_state(positions={"arm/a": 0.2})) == {}
+
+
+def test_a_joint_just_past_its_limit_is_steered_back_through_step() -> None:
+    model = make_xarm7_sim_robot_config()
+    names = list(model.joint_names)
+    solver = PinkPoseTargetSolver(
+        PoseTargetIKTaskConfig(
+            joint_names=tuple(names), robot_model=model, target_frames=("link_tcp",)
+        )
+    )
+    inside = [0.0, 0.3, 0.0, 1.0, 0.0, 0.7, 0.0]
+    targets = solver.frame_poses(JointState(name=names, position=inside), ("link_tcp",))
+    elbow_limit = 3.1101767270538954
+    past = [*inside[:3], elbow_limit + 0.02, *inside[4:]]
+
+    command = solver.step(targets, JointState(name=names, position=past), 0.01)
+
+    assert command is not None
+    assert command.position[3] <= elbow_limit
