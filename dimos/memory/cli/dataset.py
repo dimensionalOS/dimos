@@ -17,7 +17,8 @@
 One entry point for every CLI that opens a recording. :func:`open_dataset`
 resolves a dataset name/path (bare names look up the cwd / repo ``data/`` dir)
 and picks the store by file extension: ``.db`` -> SqliteStore, ``.mcap`` ->
-Go2McapStore. Use :func:`open_store` when the path is already resolved.
+McapStore (with a legacy Go2 codec preset when needed). Use :func:`open_store`
+when the path is already resolved.
 """
 
 from __future__ import annotations
@@ -35,9 +36,45 @@ def open_store(path: str | Path) -> Store:
     """Open an already-resolved dataset *path*, dispatching on its extension."""
     s = str(path)
     if s.endswith(".mcap"):
-        from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codecs
+        from mcap.reader import make_reader
 
-        return Go2McapStore(path=s)
+        from dimos.memory.store.mcap import McapStore
+
+        with open(s, "rb") as recording:
+            reader = make_reader(recording)
+            summary = reader.get_summary()
+            channels = list(summary.channels.values()) if summary else []
+            legacy_topics = {
+                channel.topic
+                for channel in channels
+                if (
+                    channel.message_encoding == "cdr"
+                    and (
+                        channel.topic.startswith(("rt/utlidar/", "rt/frontvideo"))
+                        or channel.topic in {"rt/lowstate", "rt/lowcmd", "rt/sportmodestate"}
+                    )
+                )
+                or (
+                    reader.get_header().profile != "dimos"
+                    and channel.message_encoding == "json"
+                    and channel.topic in {"telemetry", "control_log"}
+                    and "dimos.payload_type" not in channel.metadata
+                )
+            }
+        if legacy_topics:
+            # Inject only legacy channels: a mixed file's native channels must
+            # still select their own codec from encoding/type metadata.
+            from dimos.robot.unitree.go2.dds.codec import GO2_CODECS
+            from dimos.robot.unitree.go2.dds.store import STREAMS
+
+            return McapStore(
+                path=s,
+                codecs={
+                    topic: codec for topic, codec in GO2_CODECS.items() if topic in legacy_topics
+                },
+                streams={name: topic for name, topic in STREAMS.items() if topic in legacy_topics},
+            )
+        return McapStore(path=s)
     if s.endswith(".db"):
         from dimos.memory.store.sqlite import SqliteStore
 

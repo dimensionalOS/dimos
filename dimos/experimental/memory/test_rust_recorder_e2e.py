@@ -25,8 +25,10 @@ import time
 from typing import cast
 import uuid
 
+from mcap.reader import make_reader
 import numpy as np
 import pytest
+from typer.testing import CliRunner
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
@@ -40,8 +42,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.cli.app import mem_app
+from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -148,7 +150,6 @@ def test_rust_artifact_is_readable_by_python_memory2(
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
-    memory: SqliteStore | McapStore
     if store_kind == "sqlite":
         store = RustSqliteStoreConfig(path=str(artifact))
     else:
@@ -246,16 +247,44 @@ def test_rust_artifact_is_readable_by_python_memory2(
             process.wait(timeout=10.0)
         recorder.stop()
 
-    if store_kind == "sqlite":
-        memory = SqliteStore(path=str(artifact))
-    else:
-        memory = McapStore(
-            path=str(artifact),
-            codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-        )
-    with memory:
+    if store_kind == "mcap":
+        with artifact.open("rb") as recording:
+            reader = make_reader(recording)
+            assert reader.get_header().profile == "dimos"
+            summary = reader.get_summary()
+            assert summary is not None
+            assert summary.statistics is not None
+            assert summary.statistics.message_count == 2
+            channels = {channel.topic: channel for channel in summary.channels.values()}
+            assert set(channels) == {"imu", "color_image"}
+            assert channels["imu"].message_encoding == "lz4+lcm"
+            assert channels["color_image"].message_encoding == "jpeg"
+            assert summary.schemas == {}
+            assert channels["imu"].schema_id == channels["color_image"].schema_id == 0
+            assert channels["imu"].metadata["dimos.payload_type"] == (
+                "dimos.msgs.sensor_msgs.Imu.Imu"
+            )
+            assert channels["color_image"].metadata["dimos.payload_type"] == (
+                "dimos.msgs.sensor_msgs.Image.Image"
+            )
+            messages = {channel.topic: message for _, channel, message in reader.iter_messages()}
+            assert messages["imu"].publish_time == 12_500_000_000
+            assert messages["color_image"].publish_time == 12_750_000_000
+            assert all(message.log_time > message.publish_time for message in messages.values())
+
+    result = CliRunner().invoke(mem_app, ["summary", str(artifact)])
+    assert result.exit_code == 0, result.output
+    assert "imu" in result.output
+    assert "color_image" in result.output
+    assert "raw bytes" not in result.output
+
+    with open_dataset(artifact) as memory:
+        assert memory.list_streams() == ["color_image", "imu"]
+        assert memory.stream("imu").count() == 1
+        assert memory.stream("color_image").count() == 1
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
+        assert isinstance(observation.data, Imu)
         assert observation.data.lcm_encode() == expected.lcm_encode()
         image_observation = cast("Observation[Image]", memory.stream("color_image").first())
         decoded_image = image_observation.data
@@ -316,10 +345,11 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
-        memory = McapStore(path=str(artifact), codecs={"imu": LcmCodec(Imu)})
+        memory = McapStore(path=str(artifact))
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
+        assert isinstance(observation.data, Imu)
         assert observation.data.lcm_encode() == expected.lcm_encode()
 
 
