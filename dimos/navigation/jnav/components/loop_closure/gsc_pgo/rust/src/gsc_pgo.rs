@@ -374,6 +374,10 @@ pub struct Config {
     /// (m²), z translation (m²), yaw (rad²) and roll/pitch (rad²), so it does not depend on how far apart keyframes are
     /// (the per-keyframe variances above are then unused).
     pub odom_noise_per_motion: bool,
+    /// When true, a closure is uninformative only where the graph's own covariance of its two ends (heading swing and
+    /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
+    /// keyframe gap (always on with `odom_noise_per_motion`).
+    pub closure_informative_by_graph_covariance: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -500,6 +504,7 @@ impl Default for Config {
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-4,
             odom_noise_per_motion: false,
+            closure_informative_by_graph_covariance: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -791,7 +796,8 @@ impl ClosureSearch {
         // kept would count the same evidence twice
         let odometry_step = self.mean_step_xy_variance * diag.odometry_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let known = if self.config.odom_noise_per_motion
+        let known = if (self.config.odom_noise_per_motion
+            || self.config.closure_informative_by_graph_covariance)
             && diag
                 .innovation_covariance
                 .iter()
@@ -1025,17 +1031,22 @@ impl GscPgo {
         if !fit_odometry && !fit_closure {
             return;
         }
-        // every committed closure, weighed by the right/wrong mixture (`odometry_noise::fit`); a wrong one points
-        // anywhere a scan could have been matched to: within a scan's reach of the path
+        // the closures the solve kept, weighed by the right/wrong mixture (`odometry_noise::fit`; a wrong one points
+        // anywhere a scan could have been matched to: within a scan's reach of the path) in case a few wrong ones were
+        // kept. Not every committed closure: wrong ones that agree with each other (stairs mistaken for the floor
+        // below, all one floor apart) would look right to the mixture and inflate the noise without bound
         let innovations: Vec<crate::odometry_noise::Innovation> = self
-            .closure_innovations
+            .committed_closures
             .iter()
-            .filter(|n| {
-                n.v.iter()
-                    .chain(n.pieces.iter().flatten().flatten())
-                    .all(|x| x.is_finite())
+            .zip(&self.closure_innovations)
+            .filter(|(c, n)| {
+                c.gnc_weight > 0.5
+                    && n.v
+                        .iter()
+                        .chain(n.pieces.iter().flatten().flatten())
+                        .all(|x| x.is_finite())
             })
-            .copied()
+            .map(|(_, &n)| n)
             .collect();
         let (reach_sum, reach_count) = self.keyframe_reach;
         let reach = reach_sum / reach_count.max(1) as f64;

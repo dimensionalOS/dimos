@@ -150,6 +150,8 @@ class PGOConfig(NativeModuleConfig):
     odom_trans_z_var: float = 1e-4
     # True: odometry noise per unit of motion (rate per metre travelled + rate per radian turned, per source) instead of per keyframe
     odom_noise_per_motion: bool = False
+    # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
+    closure_informative_by_graph_covariance: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5

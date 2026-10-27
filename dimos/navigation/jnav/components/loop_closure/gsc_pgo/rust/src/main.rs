@@ -92,6 +92,7 @@ config! {
     odom_trans_xy_var: f64,
     odom_trans_z_var: f64,
     odom_noise_per_motion: bool,
+    closure_informative_by_graph_covariance: bool,
     odom_xy_var_per_m: f64,
     odom_xy_var_per_rad: f64,
     odom_z_var_per_m: f64,
