@@ -229,7 +229,10 @@ class RgbdMesh(Module):
             try:
                 item = self._pair_queue.get(timeout=0.1)
             except queue.Empty:
-                if self._dirty:
+                if (
+                    self._dirty
+                    and time.monotonic() - self._last_emit >= self.config.min_emit_interval_s
+                ):
                     self._emit_dirty(time.time())
                 continue
             if item is None or self._stop_event.is_set():
