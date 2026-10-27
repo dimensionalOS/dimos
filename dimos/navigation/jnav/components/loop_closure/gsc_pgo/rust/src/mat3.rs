@@ -87,6 +87,20 @@ pub fn det(m: &Mat3) -> f64 {
 }
 
 /// Rotation about +z by `yaw` radians (Eigen `AngleAxisd(yaw, UnitZ())`).
+/// The inverse of `m` (adjugate over determinant), or None when it is singular.
+pub fn inverse(m: &Mat3) -> Option<Mat3> {
+    let d = det(m);
+    if d.abs() < f64::EPSILON {
+        return None;
+    }
+    let c =
+        |r0: usize, c0: usize, r1: usize, c1: usize| m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0];
+    Some([
+        [c(1, 1, 2, 2) / d, -c(0, 1, 2, 2) / d, c(0, 1, 1, 2) / d],
+        [-c(1, 0, 2, 2) / d, c(0, 0, 2, 2) / d, -c(0, 0, 1, 2) / d],
+        [c(1, 0, 2, 1) / d, -c(0, 0, 2, 1) / d, c(0, 0, 1, 1) / d],
+    ])
+}
 pub fn rot_z(yaw: f64) -> Mat3 {
     let (s, c) = yaw.sin_cos();
     [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
