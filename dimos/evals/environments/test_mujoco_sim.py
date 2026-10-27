@@ -21,6 +21,7 @@ import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
+from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
@@ -52,7 +53,7 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom",
     ]
 
     proc = DimosCliCall()
@@ -186,8 +187,15 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
         store.stream("coordinator_joint_state", JointState).append(
             JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
         )
-        store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
+        store.stream("body_poses", TFMessage).append(_tf(now, "apple", 0.17))
         env.wait_ready(store, deadline=time.monotonic() + 2.0)
+
+
+def test_body_poses_are_read_from_body_poses_not_tf():
+    with MemoryStore() as store:
+        store.stream("tf", TFMessage).append(_tf(1.0, "apple", 0.17))
+        store.stream("body_poses", TFMessage).append(_tf(1.0, "apple", 0.2))
+        assert last_body_transform(store, "apple").translation.z == pytest.approx(0.2)
 
 
 def test_settle_waits_for_joints_to_stop():

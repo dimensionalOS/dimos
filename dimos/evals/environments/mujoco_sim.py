@@ -43,6 +43,7 @@ class MujocoEnvironmentConfig(SimConfig):
         "camera_info",
         "coordinator_joint_state",
         "tf",
+        "body_poses",
         "odom",
     )
     # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
@@ -51,7 +52,7 @@ class MujocoEnvironmentConfig(SimConfig):
 
 
 class MujocoEnvironment(Sim):
-    """Run agent evaluations in a MuJoCo scene, with ground-truth object poses recorded on tf."""
+    """Run agent evaluations in a MuJoCo scene, with ground-truth object poses recorded on body_poses."""
 
     config: MujocoEnvironmentConfig
 
