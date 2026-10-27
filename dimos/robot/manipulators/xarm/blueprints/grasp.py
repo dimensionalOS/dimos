@@ -233,5 +233,7 @@ xarm_grasp_graspgenx = autoconnect(
     GraspGenXModule.blueprint(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
     ),
 )
