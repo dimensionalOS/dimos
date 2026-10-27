@@ -21,11 +21,10 @@ use std::path::Path;
 use crate::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::PointCloud;
-use lcm_msgs::geometry_msgs::{Point, Quaternion, Transform, TransformStamped, Vector3};
+use lcm_msgs::geometry_msgs::{Point, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use lcm_msgs::tf2_msgs::TFMessage;
 
 /// A keyframe pose change smaller than this waits to add up before it is sent.
 const POSE_CHANGE_M: f64 = 1e-3;
@@ -69,29 +68,6 @@ pub fn build_odometry(
     };
     odom.pose.pose.orientation = quaternion(rotation);
     odom
-}
-
-pub fn build_tf_message(
-    correction_rotation: &Mat3,
-    correction_translation: &Vec3,
-    ts: f64,
-    frame_id: &str,
-    child_frame_id: &str,
-) -> TFMessage {
-    TFMessage {
-        transforms: vec![TransformStamped {
-            header: make_header(frame_id, ts),
-            child_frame_id: child_frame_id.to_string(),
-            transform: Transform {
-                translation: Vector3 {
-                    x: correction_translation[0],
-                    y: correction_translation[1],
-                    z: correction_translation[2],
-                },
-                rotation: quaternion(correction_rotation),
-            },
-        }],
-    }
 }
 
 /// One little-endian record per keyframe, the layout fast-reform consumers

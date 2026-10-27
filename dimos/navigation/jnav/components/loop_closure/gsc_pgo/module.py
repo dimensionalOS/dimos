@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
@@ -157,9 +157,11 @@ class GscPGO(NativeModule):
 
     cloud: In[PointCloud2]
     odometry: In[Odometry]
+    # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
+    world_position: In[Odometry]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
     # a packed record per keyframe: x, y, z, node_id, ts, qx, qy, qz, qw
     pose_graph: Out[PointCloud2]
     # a packed record per keyframe a solve moved: its pose before, then the delta (post = delta * pre)

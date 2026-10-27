@@ -33,13 +33,13 @@ use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config as PgoConfig, GscPgo, PoseWit
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::records::{
     append_pose_changes, build_closure_edge_records, build_loop_closure_records, build_odometry,
-    build_pose_graph_records, build_tf_message, extract_xyz, write_keyframes, HeardPoses,
+    build_pose_graph_records, extract_xyz, write_keyframes, HeardPoses,
 };
-use dimos_module::{native_config, run_with_transport, Input, Module, Output};
+use dimos_module::nalgebra::{Isometry3, Matrix3, Rotation3, Translation3, UnitQuaternion};
+use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf, Transform};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::std_msgs;
-use lcm_msgs::tf2_msgs::TFMessage;
 use tracing::{error, info, warn};
 
 /// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
@@ -131,8 +131,21 @@ struct OdomSample {
     translation: Vec3,
 }
 
+/// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_world_position`).
+struct WorldFix {
+    ts: f64,
+    frame: u32,
+    lever: Vec3,
+    position: Vec3,
+    covariance: Mat3,
+}
+
 #[derive(Default)]
 struct SharedState {
+    /// World-position fixes not yet handed to the pose graph.
+    world_fixes: Vec<WorldFix>,
+    /// Each world frame's name, its index the frame id the pose graph knows it by.
+    world_frames: Vec<String>,
     latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
     last_message_time: f64,
@@ -155,12 +168,18 @@ struct GscPgoModule {
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
 
+    // A sensor's position in a fixed world frame (GPS, mocap, ...): header.frame_id names the world frame,
+    // child_frame_id the sensor's mount (its offset from body_frame comes from tf), pose.covariance's xyz block (m²)
+    // its uncertainty. Orientation and twist are ignored.
+    #[input(decode = Odometry::decode, handler = on_world_position)]
+    world_position: Input<Odometry>,
+
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
 
     // The map -> odometry correction.
-    #[output(encode = TFMessage::encode)]
-    tf: Output<TFMessage>,
+    #[tf]
+    tf: Tf,
 
     // One packed record per keyframe at its current pose.
     #[output(encode = PointCloud2::encode)]
@@ -245,6 +264,59 @@ impl GscPgoModule {
         });
     }
 
+    async fn on_world_position(&mut self, msg: Odometry) {
+        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let mount = &msg.child_frame_id;
+        let body = &self.config.body_frame;
+        let lever = if mount.is_empty() || mount == body {
+            [0.0; 3]
+        } else {
+            // a fix placed through a guessed mount would bias the map, so one without its mount is dropped
+            let Some(t) = self.tf.lookup(body, mount).at(ts).get() else {
+                return;
+            };
+            let v = t.translation();
+            [v.x, v.y, v.z]
+        };
+        let c = &msg.pose.covariance;
+        let covariance = [
+            [c[0], c[1], c[2]],
+            [c[6], c[7], c[8]],
+            [c[12], c[13], c[14]],
+        ];
+        let p = &msg.pose.pose.position;
+        let position = [p.x, p.y, p.z];
+        if !position
+            .iter()
+            .chain(covariance.iter().flatten())
+            .all(|v| v.is_finite())
+        {
+            warn!(frame = %msg.header.frame_id, "world position not finite; dropped");
+            return;
+        }
+        let mut state = self.state.lock().expect("state");
+        let frame = match state
+            .world_frames
+            .iter()
+            .position(|f| *f == msg.header.frame_id)
+        {
+            Some(i) => i,
+            None => {
+                state.world_frames.push(msg.header.frame_id.clone());
+                state.world_frames.len() - 1
+            }
+        } as u32;
+        state.world_fixes.push(WorldFix {
+            ts,
+            frame,
+            lever,
+            position,
+            covariance,
+        });
+        drop(state);
+        self.wake.notify_one();
+    }
+
     /// Handle an incoming lidar scan: pair it with the latest odometry pose
     /// and enqueue it on the bounded scan FIFO.
     async fn on_cloud(&mut self, msg: PointCloud2) {
@@ -289,7 +361,7 @@ struct Worker {
     state: Shared<SharedState>,
     config: Config,
     corrected_odometry: Output<Odometry>,
-    tf: Output<TFMessage>,
+    tf: Tf,
     pose_graph: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
     closure_edges: Output<PointCloud2>,
@@ -328,14 +400,13 @@ impl Worker {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        let identity = build_tf_message(
+        self.publish_tf(
             &mat3::identity(),
             &[0.0; 3],
             now,
             &frame_id,
             &child_frame_id,
         );
-        self.publish(&self.tf, &identity, "tf");
 
         // Backstop for the Condvar wait so the stop flag is still observed even
         // if a notify is somehow missed; normal wakeups come from callbacks.
@@ -361,6 +432,17 @@ impl Worker {
                 self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
                 self.log_solve(&pgo, last_time);
             }
+            // world-position fixes join the graph as they arrive; a fix alone starts a solve
+            let fixes = std::mem::take(&mut self.state.lock().expect("state").world_fixes);
+            if !fixes.is_empty() {
+                for f in fixes {
+                    pgo.add_world_position(f.ts, f.frame, f.lever, f.position, f.covariance);
+                }
+                if pgo.update() {
+                    let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+                    self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
+                }
+            }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
             self.log_closures(&pgo, &mut closures_logged);
             // Strict FIFO: process scans oldest-first (backlog bounded at
@@ -374,7 +456,10 @@ impl Worker {
                 // Nothing to do: block until a callback signals new work,
                 // re-checking under the lock to avoid a lost wakeup.
                 let state = self.state.lock().expect("state");
-                if state.cloud_buffer.is_empty() && !state.solve_finished {
+                if state.cloud_buffer.is_empty()
+                    && !state.solve_finished
+                    && state.world_fixes.is_empty()
+                {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
                 continue;
@@ -577,14 +662,29 @@ impl Worker {
         );
         self.publish(&self.corrected_odometry, &corrected, "corrected_odometry");
 
-        let tf_msg = build_tf_message(
+        self.publish_tf(
             &pgo.rotation_offset(),
             &pgo.translation_offset(),
             ts,
             frame_id,
             child_frame_id,
         );
-        self.publish(&self.tf, &tf_msg, "tf");
+    }
+
+    /// The map -> odometry correction on tf.
+    fn publish_tf(&self, rotation: &Mat3, translation: &Vec3, ts: f64, parent: &str, child: &str) {
+        let iso = Isometry3::from_parts(
+            Translation3::new(translation[0], translation[1], translation[2]),
+            UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
+                Matrix3::from_fn(|i, j| rotation[i][j]),
+            )),
+        );
+        if let Err(e) = self
+            .rt
+            .block_on(self.tf.publish(&[Transform::new(parent, child, ts, iso)]))
+        {
+            error!(error = %e, "tf failed to publish");
+        }
     }
 }
 
