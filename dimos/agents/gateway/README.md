@@ -40,9 +40,10 @@ import { randomUUID } from "node:crypto";
 import { until } from "../sdk/until.ts";
 
 const socket = new WebSocket(`ws+unix:${agentPaths(process.env).socket}:/?terminal=${randomUUID()}&label=example`);
-await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve()));
+const opened = new Promise<void>((resolve) => socket.addEventListener("open", () => resolve()));
 const host = createHost({ name: "client", self: { kind: "gateway" }, kind: "client" });
 host.connect(webSocketLink(socket), { principal: { kind: "gateway" } });
+await opened;
 
 const lifecycle = await host.get(LifecycleContract, {});
 console.log(`gateway pid ${lifecycle.process.value.pid}`);
@@ -93,7 +94,9 @@ without that variable. The file is mode 0600, so every process that can open it 
 The WebSocket URL carries two query parameters: `terminal`, a UUID that stays the same for the life of a client process,
 and `label`, 1 to 32 of `[A-Za-z0-9_-]` naming the kind of client. The gateway keys objects by `terminal`, so a client
 that reconnects with the same UUID reaches the same objects. A missing or malformed parameter closes the link with the
-reason `unauthorized`. An upgrade before the objects are ready gets HTTP 503, so dial with backoff.
+reason `unauthorized`. An upgrade before the objects are ready gets HTTP 503, so dial with backoff. Connect the host to
+the socket's link before the socket opens. The gateway's `hello` can arrive in the same read as the upgrade response,
+and a link made after `open` misses it, so the link closes with a protocol error at the first acknowledgement.
 
 ### The objects
 
