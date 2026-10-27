@@ -107,6 +107,11 @@ class DimosAgentAdapter(PiAdapter):
     tool_names: ClassVar[tuple[str, ...] | None] = None
     robot_via_bash: ClassVar[bool] = False
 
+    def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
+        """The harness's tools. The gateway, not the case's McpServer, decides the rest, and the
+        runner records them from the raw requests."""
+        return self.default_tools
+
     def validate_tools(self) -> None:
         name = type(self).__name__
         if self.config.allowed_tools is not None:
