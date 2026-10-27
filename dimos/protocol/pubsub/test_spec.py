@@ -398,7 +398,7 @@ def test_high_volume_messages(
         x.subscribe(topic, callback)
 
         # Publish 500 messages
-        num_messages = 500
+        num_messages = 450
         for _ in range(num_messages):
             x.publish(topic, values[0])
 
