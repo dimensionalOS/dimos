@@ -1023,7 +1023,7 @@ impl GscPgo {
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
     /// re-solve when either moved by more than its own standard error since the solve began, so the graph is solved at
     /// the noise its closures imply.
-    pub(crate) fn update_odometry_noise_scale(&mut self) {
+    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 4]>) {
         let (fit_odometry, fit_closure) = (
             self.config.odometry_noise_from_closures,
             self.config.closure_noise_from_closures,
@@ -1059,18 +1059,47 @@ impl GscPgo {
                 (high - low).max(0.0) + 2.0 * reach
             })
             .product();
-        let Some((ln_odometry, ln_closure, _)) = crate::odometry_noise::fit(
-            &innovations,
-            self.odometry_noise_prior(),
-            fit_odometry,
-            fit_closure,
-            1.0 / volume.max(f64::MIN_POSITIVE),
-        ) else {
-            return;
+        // the closure scale from the closures' innovations (fitted with the odometry's noise held where it is)
+        let ln_closure = if fit_closure {
+            match crate::odometry_noise::fit(
+                &innovations,
+                self.odometry_noise_prior(),
+                false,
+                true,
+                1.0 / volume.max(f64::MIN_POSITIVE),
+            ) {
+                Some((_, ln_closure, _)) => ln_closure,
+                None => self.closure_noise_ln_scale,
+            }
+        } else {
+            0.0
         };
+        // the odometry's noise from the solved graph's own residuals: how far the solve bent each source's part of the
+        // odometry edges against how many independent checks the graph gave it (`odometry_noise_evidence`), which tells
+        // turning from sliding where a closure's single innovation cannot
+        let mut ln_odometry = self.odometry_noise_ln;
+        let mut redundancy = [0.0; 4];
+        if fit_odometry {
+            if let Some(evidence) = evidence {
+                for c in 0..4 {
+                    let (sum, r) = evidence[c];
+                    redundancy[c] = r;
+                    if r > 0.5 && sum.is_finite() {
+                        ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
+                            sum,
+                            r,
+                            self.odometry_noise_ln_dispatched[c],
+                            c,
+                            self.odometry_noise_prior()[c],
+                        );
+                    }
+                }
+            }
+        }
         let moved = (0..4).any(|c| {
-            (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
-                > crate::odometry_noise::standard_error(c, innovations.len())
+            redundancy[c] > 0.5
+                && (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
+                    > (2.0 / redundancy[c]).sqrt()
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
             > (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt();
         if moved {

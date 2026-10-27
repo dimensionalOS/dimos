@@ -72,6 +72,10 @@ pub struct Solution {
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
+    /// Variance-component evidence on the odometry noise from the solved graph (`odometry_noise_evidence`): per source
+    /// (xy, z, yaw, roll/pitch), the sum of its odometry residuals squared and whitened, and its redundancy; None if the
+    /// graph could not be factored.
+    pub odometry_noise_evidence: Option<[(f64, f64); 4]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -679,7 +683,19 @@ fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
+    let odometry_noise_evidence = odometry_noise_evidence(
+        &state,
+        &pattern,
+        odometry,
+        closures,
+        &huber,
+        unary,
+        &unary_kept,
+        sightings,
+        &sighting_kept,
+    );
     Solution {
+        odometry_noise_evidence,
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
@@ -690,6 +706,96 @@ fn solve_core(
         error,
         relative_position_covariance,
     }
+}
+
+/// The noise source (xy, z, yaw, roll/pitch) of each component of an odometry edge's residual [rotation x, y, z,
+/// translation x, y, z].
+const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
+
+/// Variance-component evidence on the odometry noise from the solved graph (Förstner's estimator): for each noise source,
+/// how far the solve had to bend its parts of the odometry edges (their residuals squared, whitened by the variances
+/// the solve used) and how many independent checks the graph gave it, its redundancy r_c = n_c - tr(N^-1 N_c) (n_c its
+/// residual count; N the solve's information matrix, N_c the source's own share of it). A source's variance times
+/// sum / r_c is the variance that explains the residuals. The trace comes from Hutchinson's estimator, the mean of
+/// z^T N^-1 N_c z over fixed random +-1 vectors z (one solve each with the solve's factorization). None if the
+/// information matrix cannot be factored.
+#[allow(clippy::too_many_arguments)]
+fn odometry_noise_evidence(
+    state: &State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> Option<[(f64, f64); 4]> {
+    let size = pattern.size;
+    let (mut values, _, diagonal) = normal_equations(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    );
+    values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
+    let hessian =
+        SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values).ok()?;
+    let llt =
+        Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower).ok()?;
+    let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
+        odometry.iter().map(|e| linearize(e, state)).collect();
+    let mut evidence = [(0.0, 0.0); 4];
+    for (e, (r, _, _)) in odometry.iter().zip(&linear) {
+        for k in 0..6 {
+            let source = RESIDUAL_SOURCE[k];
+            evidence[source].0 += r[k] * r[k] / e.variances[k];
+            evidence[source].1 += 1.0;
+        }
+    }
+    // a deterministic +-1 sequence (the trace is an expectation over any such sequence)
+    let sign = |probe: usize, i: usize| {
+        let x = ((probe * 7919 + i * 104729) as f64 * 12.9898).sin() * 43758.5453;
+        if x.rem_euclid(1.0) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        }
+    };
+    const PROBES: usize = 32;
+    let mut trace = [0.0; 4];
+    for probe in 0..PROBES {
+        let z: Vec<f64> = (0..size).map(|i| sign(probe, i)).collect();
+        let mut y = Mat::<f64>::from_fn(size, 1, |i, _| z[i]);
+        llt.solve_in_place_with_conj(Conj::No, y.as_mut());
+        // y^T N_c z, edge by edge: N_c z = sum_e J_e^T W_e,c J_e z
+        for (e, (_, jf, jt)) in odometry.iter().zip(&linear) {
+            let (a, b) = (pattern.slot[e.from], pattern.slot[e.to]);
+            let apply =
+                |j: &[[f64; 6]; 6], slot: Option<usize>, v: &dyn Fn(usize) -> f64| -> [f64; 6] {
+                    std::array::from_fn(|k| {
+                        slot.map_or(0.0, |s| (0..6).map(|i| j[k][i] * v(6 * s + i)).sum())
+                    })
+                };
+            let jz_from = apply(jf, a, &|i| z[i]);
+            let jz_to = apply(jt, b, &|i| z[i]);
+            let jy_from = apply(jf, a, &|i| y[(i, 0)]);
+            let jy_to = apply(jt, b, &|i| y[(i, 0)]);
+            for k in 0..6 {
+                let (jz, jy) = (jz_from[k] + jz_to[k], jy_from[k] + jy_to[k]);
+                trace[RESIDUAL_SOURCE[k]] += jy * jz / e.variances[k] / PROBES as f64;
+            }
+        }
+    }
+    for (source, t) in trace.iter().enumerate() {
+        evidence[source].1 -= t;
+    }
+    Some(evidence)
 }
 
 /// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
@@ -1746,7 +1852,7 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
-        self.update_odometry_noise_scale();
+        self.update_odometry_noise_scale(solution.odometry_noise_evidence);
         true
     }
 }

@@ -206,6 +206,37 @@ pub fn fit(
     Some((odometry, closure, 1.0 / (1.0 + (-logit).exp())))
 }
 
+/// A noise source's ln ratio to its reported variance from the solved graph's residuals: they were whitened at
+/// e^(dispatched), and sum ~ e^(u - dispatched) chi-square(redundancy) for the true ln ratio u, so this minimizes
+/// redundancy (u - dispatched) + sum e^(dispatched - u) + prior_weight u^2 (-2 ln of likelihood times prior). Its
+/// standard error is about sqrt(2 / redundancy).
+pub fn residual_ln_ratio(
+    sum: f64,
+    redundancy: f64,
+    dispatched: f64,
+    component: usize,
+    prior_sd: f64,
+) -> f64 {
+    let weight = prior_weight(component, prior_sd);
+    let f = |u: f64| redundancy * (u - dispatched) + sum * (dispatched - u).exp() + weight * u * u;
+    // Newton on a convex function, from the likelihood's own maximum
+    let mut u = dispatched + (sum / redundancy).max(f64::MIN_POSITIVE).ln();
+    for _ in 0..50 {
+        let e = sum * (dispatched - u).exp();
+        let (gradient, curvature) = (redundancy - e + 2.0 * weight * u, e + 2.0 * weight);
+        let next = u - gradient / curvature;
+        if (next - u).abs() < 1e-10 {
+            break;
+        }
+        u = next;
+    }
+    if f(u).is_finite() {
+        u
+    } else {
+        dispatched
+    }
+}
+
 /// A component's prior weight on its ln ratio squared, in -2 ln units: 1 / sd^2 for a measured spread across
 /// recordings, else one innovation's information (axes / 2, a unit-information prior).
 fn prior_weight(component: usize, sd: f64) -> f64 {
