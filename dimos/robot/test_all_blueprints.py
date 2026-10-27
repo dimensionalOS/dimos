@@ -44,6 +44,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "dual-xarm6-planner-coordinator",
         "learning-collect-webxr-xarm7",
         "openarm-planner-coordinator",
+        "seeedstudio-planner-coordinator",
         "teleop-hosted-go2-multicam",
         "teleop-hosted-go2-transport",
         "teleop-hosted-xarm6",
