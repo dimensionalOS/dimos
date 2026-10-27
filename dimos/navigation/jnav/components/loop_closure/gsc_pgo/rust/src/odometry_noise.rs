@@ -90,23 +90,33 @@ pub fn innovation(
     }
 }
 
-/// The ln ratios to the reported values of the four odometry variances, and the ln closure scale (each 0 unless
-/// fitted), most probable given the innovations: each is zero-mean Gaussian with covariance
-/// S = sum_c reported_c e^(r_c) pieces_c + e^(k) fitness I, so this minimizes
-/// sum(ln det S + v^T S^-1 v) + sum_c (axes_c / 2) r_c^2 + 1.5 k^2. One ln at a time: a grid (numerical range only)
-/// finds its basin and golden-section search refines it, alternated until they settle. None without an innovation.
+/// The ln ratios to the reported values of the four odometry variances, the ln closure scale (each 0 unless fitted)
+/// and the share of the closures that are right, most probable given the innovations. A right closure's innovation is
+/// zero-mean Gaussian with covariance S = sum_c reported_c e^(r_c) pieces_c + e^(k) fitness I; a wrong one (a look-alike
+/// place) points anywhere a scan could have been matched to, uniform with density `outlier_density`. Every committed
+/// closure counts, weighed by that mixture rather than by the solve's verdict, which was itself reached with the noise
+/// being estimated (low noise rejects the right closures that would raise it). This minimizes
+/// -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c (axes_c / 2) r_c^2 + 1.5 k^2 over the lns and the share w
+/// (uniform prior). One at a time: a grid (numerical range only) finds its basin and golden-section search refines it,
+/// alternated until they settle. None without an innovation.
 pub fn fit(
     innovations: &[Innovation],
     reported: [f64; COMPONENTS],
     fit_odometry: bool,
     fit_closure: bool,
-) -> Option<([f64; COMPONENTS], f64)> {
+    outlier_density: f64,
+) -> Option<([f64; COMPONENTS], f64, f64)> {
     if innovations.is_empty() {
         return None;
     }
-    let cost = |odometry: &[f64; COMPONENTS], closure: f64| -> f64 {
+    let ln_outlier = outlier_density.ln();
+    let ln_two_pi = (2.0 * std::f64::consts::PI).ln();
+    // the share of right closures as a logit
+    let cost = |odometry: &[f64; COMPONENTS], closure: f64, logit: f64| -> f64 {
         let variances: [f64; COMPONENTS] = std::array::from_fn(|c| reported[c] * odometry[c].exp());
         let k = closure.exp();
+        let share = 1.0 / (1.0 + (-logit).exp());
+        let (ln_right, ln_wrong) = (share.ln(), (1.0 - share).ln());
         innovations
             .iter()
             .map(|n| {
@@ -122,7 +132,12 @@ pub fn fit(
                     return f64::INFINITY;
                 };
                 let iv = mat3::mat_vec(&inverse, &n.v);
-                mat3::det(&covariance).ln() + n.v[0] * iv[0] + n.v[1] * iv[1] + n.v[2] * iv[2]
+                let quadratic = n.v[0] * iv[0] + n.v[1] * iv[1] + n.v[2] * iv[2];
+                let ln_gaussian =
+                    -0.5 * (quadratic + mat3::det(&covariance).ln() + 3.0 * ln_two_pi);
+                let (a, b) = (ln_right + ln_gaussian, ln_wrong + ln_outlier);
+                let high = a.max(b);
+                -2.0 * (high + ((a - high).exp() + (b - high).exp()).ln())
             })
             .sum::<f64>()
             + (0..COMPONENTS)
@@ -151,32 +166,36 @@ pub fn fit(
         }
         (low + high) / 2.0
     };
-    let (mut odometry, mut closure) = ([0.0; COMPONENTS], 0.0);
+    let (mut odometry, mut closure, mut logit) = ([0.0; COMPONENTS], 0.0, 0.0);
     for _ in 0..30 {
-        let previous = (odometry, closure);
+        let previous = (odometry, closure, logit);
         if fit_odometry {
             for c in 0..COMPONENTS {
                 odometry[c] = minimize(
                     &|t| {
                         let mut trial = odometry;
                         trial[c] = t;
-                        cost(&trial, closure)
+                        cost(&trial, closure, logit)
                     },
                     odometry[c],
                 );
             }
         }
         if fit_closure {
-            closure = minimize(&|t| cost(&odometry, t), closure);
+            closure = minimize(&|t| cost(&odometry, t, logit), closure);
         }
+        logit = minimize(&|t| cost(&odometry, closure, t), logit);
         let moved = (0..COMPONENTS)
             .map(|c| (odometry[c] - previous.0[c]).abs())
-            .fold((closure - previous.1).abs(), f64::max);
+            .fold(
+                (closure - previous.1).abs().max((logit - previous.2).abs()),
+                f64::max,
+            );
         if moved < 1e-6 {
             break;
         }
     }
-    Some((odometry, closure))
+    Some((odometry, closure, 1.0 / (1.0 + (-logit).exp())))
 }
 
 /// The standard error of a component's fitted ln variance after `count` innovations (and the prior's one).

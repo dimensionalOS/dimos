@@ -970,32 +970,43 @@ impl GscPgo {
         if !fit_odometry && !fit_closure {
             return;
         }
-        let kept: Vec<crate::odometry_noise::Innovation> = self
-            .committed_closures
+        // every committed closure, weighed by the right/wrong mixture (`odometry_noise::fit`); a wrong one points
+        // anywhere a scan could have been matched to: within a scan's reach of the path
+        let innovations: Vec<crate::odometry_noise::Innovation> = self
+            .closure_innovations
             .iter()
-            .zip(&self.closure_innovations)
-            .filter(|(c, n)| {
-                c.gnc_weight > 0.5
-                    && n.v
-                        .iter()
-                        .chain(n.pieces.iter().flatten().flatten())
-                        .all(|x| x.is_finite())
+            .filter(|n| {
+                n.v.iter()
+                    .chain(n.pieces.iter().flatten().flatten())
+                    .all(|x| x.is_finite())
             })
-            .map(|(_, &n)| n)
+            .copied()
             .collect();
-        let Some((ln_odometry, ln_closure)) = crate::odometry_noise::fit(
-            &kept,
+        let (reach_sum, reach_count) = self.keyframe_reach;
+        let reach = reach_sum / reach_count.max(1) as f64;
+        let volume: f64 = (0..3)
+            .map(|axis| {
+                let values = self.key_poses.iter().map(|k| k.translation_local[axis]);
+                let (low, high) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), v| {
+                    (l.min(v), h.max(v))
+                });
+                (high - low).max(0.0) + 2.0 * reach
+            })
+            .product();
+        let Some((ln_odometry, ln_closure, _)) = crate::odometry_noise::fit(
+            &innovations,
             self.reported_odometry_noise(),
             fit_odometry,
             fit_closure,
+            1.0 / volume.max(f64::MIN_POSITIVE),
         ) else {
             return;
         };
         let moved = (0..4).any(|c| {
             (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
-                > crate::odometry_noise::standard_error(c, kept.len())
+                > crate::odometry_noise::standard_error(c, innovations.len())
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
-            > (2.0 / (3.0 * (kept.len() + 1) as f64)).sqrt();
+            > (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt();
         if moved {
             self.odometry_noise_rescale = true;
         }

@@ -65,9 +65,25 @@ fn translation_and_heading_noise_are_measured_apart() {
     }
     let key_poses: Vec<KeyPoseWithCloud> =
         odometry.iter().map(|&(yaw, p)| key_pose(yaw, p)).collect();
-    // closures over stretches of 5 to 600 keyframes, each measuring the true relative position with 5 cm noise
+    // closures over stretches of 5 to 600 keyframes, each measuring the true relative position with 5 cm noise, and
+    // one in five a look-alike place: anywhere in the mapped area
     let fitness = 0.05_f64.powi(2);
-    let innovations: Vec<_> = (0..200)
+    let (low, high) = truth.iter().fold(
+        ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+        |(l, h), (_, p)| {
+            (
+                [l[0].min(p[0]), l[1].min(p[1])],
+                [h[0].max(p[0]), h[1].max(p[1])],
+            )
+        },
+    );
+    let reach = 20.0;
+    let extent = [
+        high[0] - low[0] + 2.0 * reach,
+        high[1] - low[1] + 2.0 * reach,
+        2.0 * reach,
+    ];
+    let innovations: Vec<_> = (0..250)
         .map(|c| {
             let span = 5 + (c * 37) % 600;
             let target = (c * 53) % (n - span);
@@ -77,24 +93,35 @@ fn translation_and_heading_noise_are_measured_apart() {
                 &mat3::transpose(&mat3::rot_z(yaw_t)),
                 &mat3::sub(&truth[source].1, &p_t),
             );
+            if c % 5 == 4 {
+                measured = std::array::from_fn(|axis| {
+                    (uniform(c, 7.0 + axis as f64) - 0.5) * extent[axis]
+                });
+            }
             for (axis, m) in measured.iter_mut().enumerate() {
                 *m += fitness.sqrt() * normal(c * 3 + axis, 4.0);
             }
             innovation(&key_poses, target, source, &measured, fitness)
         })
         .collect();
+    let outlier_density = 1.0 / extent.iter().product::<f64>();
     let reported = [1e-4, 1e-4, 3e-6, 1e-6];
-    let (ln, _) = fit(&innovations, reported, true, false).expect("innovations given");
+    let (ln, _, share) =
+        fit(&innovations, reported, true, false, outlier_density).expect("innovations given");
+    eprintln!("share of right closures {share:.2} (true 0.8)");
     let (xy, yaw) = (reported[0] * ln[0].exp(), reported[2] * ln[2].exp());
     eprintln!("xy {xy:.2e} (true {true_xy:.0e}), yaw {yaw:.2e} (true {true_yaw:.0e})");
     // heading noise swings a long stretch so far that it is measured well; translation noise adds little to any
     // stretch here (600 steps of 4e-6 m^2 against the heading's ~1e3 m^2), so the closures barely inform it and it
     // stays near its prior, the reported value, without being pushed past either end
-    assert!((yaw / true_yaw).ln().abs() < 0.35, "yaw {yaw}");
+    // within 40%: the xy variance held near its (25x too high) prior explains part of the short closures' spread, which
+    // pulls the yaw variance low
+    assert!((yaw / true_yaw).ln().abs() < 0.5, "yaw {yaw}");
+    assert!((share - 0.8).abs() < 0.05, "share {share}");
     assert!(xy > true_xy / 2.0 && xy < reported[0] * 2.0, "xy {xy}");
 }
 
 #[test]
 fn no_closures_no_estimate() {
-    assert!(fit(&[], [1e-4, 1e-4, 3e-6, 1e-6], true, false).is_none());
+    assert!(fit(&[], [1e-4, 1e-4, 3e-6, 1e-6], true, false, 1e-6).is_none());
 }
