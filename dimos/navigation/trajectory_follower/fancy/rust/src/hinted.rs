@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The follower's law: the seed plus gait slip inverse, constant time headway,
-//! and the stamped precision profile as the governor's input. Kept out of
-//! `geom` so the frozen `seed` baseline cannot move.
+//! The follower's law: holonomic pursuit with a gait slip inverse, constant time
+//! headway, and the stamped precision profile as the governor's input.
 
 use crate::geom::{
     arcs_of, body_error, carrot_lerp, clearance_governor, fan_target, progress_index, yaw_command,
@@ -32,8 +31,8 @@ pub struct HintedParams {
     pub slip_ramp: f64,
 }
 
-/// The command for a ground speed of `want`: inverse of `ground ~= gain * cmd - slip`
-/// (`laws/hinted.py::walk_command`). Identity at 0, full inverse from `ramp` up.
+/// The command for a ground speed of `want`: inverse of `ground ~= gain * cmd - slip`.
+/// Identity at 0, full inverse from `ramp` up.
 #[inline]
 pub fn walk_command(want: f64, gain: f64, slip: f64, ramp: f64) -> f64 {
     if want <= 0.0 {
