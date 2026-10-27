@@ -15,6 +15,7 @@
 """Behavior tests for the shared pose-target IK control core."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -383,3 +384,59 @@ def test_measured_frame_poses_follow_measured_joints_not_the_target(mocker: Mock
 def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixture) -> None:
     task = _Task(_config(), _solver(mocker), _snapshot())
     assert task.measured_frame_poses(_state(positions={"arm/a": 0.2})) == {}
+
+
+def _one_joint_context(lower: float, upper: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        mapping=SimpleNamespace(
+            idx_q=[0], idx_v=[0], dimos_joint_names=("arm/a",), periodic_indices=()
+        ),
+        model=SimpleNamespace(
+            nq=1,
+            nv=1,
+            velocityLimit=np.array([np.inf]),
+            lowerPositionLimit=np.array([lower]),
+            upperPositionLimit=np.array([upper]),
+        ),
+    )
+
+
+@pytest.mark.parametrize("joint", [3.2, -1.2])
+def test_command_envelope_steers_a_joint_past_its_limit_back(
+    mocker: MockerFixture, joint: float
+) -> None:
+    solver = _stateful_solver(mocker)
+    here = np.array([joint])
+
+    command = solver._apply_streaming_command_envelope(
+        context=_one_joint_context(-1.0, 3.0),
+        candidate=np.array([1.0]),
+        previous=here,
+        measured=here,
+        dt=0.01,
+        max_joint_velocity=1.0,
+        joint_velocity_limits={},
+        max_tracking_error=0.2,
+        command_limit_margin=0.0,
+    )
+
+    assert command == pytest.approx(here - np.sign(joint) * 0.01)
+
+
+def test_command_envelope_still_enforces_limits_from_inside(mocker: MockerFixture) -> None:
+    solver = _stateful_solver(mocker)
+    here = np.array([2.995])
+
+    command = solver._apply_streaming_command_envelope(
+        context=_one_joint_context(-1.0, 3.0),
+        candidate=np.array([3.5]),
+        previous=here,
+        measured=here,
+        dt=0.01,
+        max_joint_velocity=1.0,
+        joint_velocity_limits={},
+        max_tracking_error=0.2,
+        command_limit_margin=0.0,
+    )
+
+    assert command == pytest.approx([3.0])

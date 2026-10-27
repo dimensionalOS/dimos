@@ -117,6 +117,41 @@ def test_materializes_trajectory_and_preserves_source_path() -> None:
     assert parametrizer.calls == [0.4]
 
 
+def _untimed(positions: list[list[float]]) -> PlanningResult:
+    return PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[JointState(name=["arm/a", "arm/b"], position=p) for p in positions],
+    )
+
+
+def test_path_that_goes_nowhere_holds_still_without_the_backend() -> None:
+    parametrizer = _FixedParametrizer(_output())
+
+    plan = parametrizer.materialize_plan(
+        MagicMock(spec=WorldSpec),
+        _selection(),
+        _untimed([[0.3, 0.1], [0.3, 0.1], [0.3 + 5e-5, 0.1]]),
+    )
+
+    assert parametrizer.calls == []
+    assert [point.positions for point in plan.trajectory.points] == [[0.3, 0.1]]
+    assert plan.trajectory.points[0].velocities == [0.0, 0.0]
+    assert plan.trajectory.duration == 0.0
+
+
+def test_repeated_waypoints_are_merged_before_the_backend_and_the_goal_kept() -> None:
+    parametrizer = _FixedParametrizer(_output())
+
+    plan = parametrizer.materialize_plan(
+        MagicMock(spec=WorldSpec),
+        _selection(),
+        _untimed([[0.0, 0.0], [0.0, 0.0], [0.2, 0.1], [0.4 - 5e-5, 0.0], [0.4, 0.0]]),
+    )
+
+    assert [state.position for state in plan.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.0]]
+    assert parametrizer.calls == [1.0]
+
+
 def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     parametrizer = _FixedParametrizer(_output())
     path = [

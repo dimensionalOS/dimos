@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from enum import Enum
 import math
 import threading
@@ -578,12 +579,27 @@ class ManipulationModule(Module):
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning("Cannot plan in current state", state=self._state.name)
+                self._error_message = (
+                    f"Cannot plan while manipulation is {self._state.name}; "
+                    "wait for the motion to finish, or call reset()"
+                )
                 return None
             self._planning_epoch += 1
             self._last_plan = None
             self._error_message = ""
             self._state = ManipulationState.PLANNING
             return self._planning_epoch, float(resolved_speed)
+
+    @contextmanager
+    def _planning_guard(self, planning_epoch: int) -> Iterator[None]:
+        """Fail the planning epoch on any exception, so planning never stays in PLANNING.
+
+        Code after the ``with`` block runs only when the body raised; it returns None.
+        """
+        try:
+            yield
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Planning failed: {exc}")
 
     def _require_unique_pose_group_id(self) -> PlanningGroupID:
         """Return the unique pose-targetable group or raise if it is ambiguous."""
@@ -784,6 +800,31 @@ class ManipulationModule(Module):
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
+    @rpc
+    def check_reachable(
+        self,
+        poses: Sequence[PoseStamped],
+        planning_group: PlanningGroupID | None = None,
+    ) -> list[str]:
+        """Whether IK reaches each TCP pose within the joint limits, from the current joints.
+
+        One entry per pose: empty when it is reachable, otherwise why not. Nothing moves and
+        no plan is stored; collisions are not checked.
+        """
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            return [group.message] * len(poses)
+        reasons = []
+        for pose in poses:
+            ik = self.inverse_kinematics({group.id: pose}, check_collision=False)
+            if ik.is_success():
+                reasons.append("")
+            else:
+                reasons.append(
+                    f"IK failed: {ik.status.name}" + (f": {ik.message}" if ik.message else "")
+                )
+        return reasons
+
     def generate_plan_to_joint_targets(
         self,
         joint_targets: Mapping[PlanningGroupID, JointState],
@@ -801,28 +842,46 @@ class ManipulationModule(Module):
         if planning is None:
             return None
         planning_epoch, resolved_speed_scale = planning
-
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        _selection, start = resolved
-
-        goal_names: list[str] = []
-        goal_positions: list[float] = []
-        for group_id, target in joint_targets.items():
-            try:
-                target_group = self._world_monitor.planning_groups.get(group_id)
-                normalized_target = normalize_joint_target(target_group, target)
-            except (KeyError, ValueError) as exc:
-                logger.error(str(exc))
-                self._fail_planning_epoch(planning_epoch, f"Invalid joint target for '{group_id}'")
+        with self._planning_guard(planning_epoch):
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
                 return None
-            goal_names.extend(normalized_target.name)
-            goal_positions.extend(normalized_target.position)
+            _selection, start = resolved
 
-        goal = JointState(name=goal_names, position=goal_positions)
-        return self._plan_selected_path(
-            group_ids, start, goal, planning_epoch, resolved_speed_scale
+            goal_names: list[str] = []
+            goal_positions: list[float] = []
+            for group_id, target in joint_targets.items():
+                try:
+                    target_group = self._world_monitor.planning_groups.get(group_id)
+                    normalized_target = normalize_joint_target(target_group, target)
+                except (KeyError, ValueError) as exc:
+                    logger.error(str(exc))
+                    self._fail_planning_epoch(
+                        planning_epoch, f"Invalid joint target for '{group_id}'"
+                    )
+                    return None
+                goal_names.extend(normalized_target.name)
+                goal_positions.extend(normalized_target.position)
+
+            outside = self._outside_position_limits(goal_names, goal_positions)
+            if outside:
+                self._fail_planning_epoch(planning_epoch, f"Joint target outside limits: {outside}")
+                return None
+            goal = JointState(name=goal_names, position=goal_positions)
+            return self._plan_selected_path(
+                group_ids, start, goal, planning_epoch, resolved_speed_scale
+            )
+        return None
+
+    def _outside_position_limits(self, names: Sequence[str], positions: Sequence[float]) -> str:
+        """Describe each target position outside its joint's limits; empty when all are inside."""
+        assert self._world_monitor is not None
+        joint_space = self._world_monitor.get_prepared_model().joint_space.select(list(names))
+        lower, upper = joint_space.position_limits()
+        return ", ".join(
+            f"{name} target {position:.3f} outside [{lo:.3f}, {hi:.3f}]"
+            for name, position, lo, hi in zip(names, positions, lower, upper, strict=True)
+            if not lo <= position <= hi
         )
 
     def generate_plan_to_pose_targets(
@@ -851,23 +910,25 @@ class ManipulationModule(Module):
         if planning is None:
             return None
         planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        _selection, start = resolved
-        ik = self.inverse_kinematics(
-            pose_targets=stamped_targets,
-            auxiliary_group_ids=auxiliary_ids,
-            seed=start,
-        )
-        if not ik.is_success() or ik.joint_state is None:
-            detail = f": {ik.message}" if ik.message else ""
-            self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
-            return None
-        logger.info("IK solved", position_error=ik.position_error)
-        return self._plan_selected_path(
-            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
-        )
+        with self._planning_guard(planning_epoch):
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
+                return None
+            _selection, start = resolved
+            ik = self.inverse_kinematics(
+                pose_targets=stamped_targets,
+                auxiliary_group_ids=auxiliary_ids,
+                seed=start,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                detail = f": {ik.message}" if ik.message else ""
+                self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
+                return None
+            logger.info("IK solved", position_error=ik.position_error)
+            return self._plan_selected_path(
+                group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+            )
+        return None
 
     def generate_cartesian_plan(
         self,
@@ -889,32 +950,36 @@ class ManipulationModule(Module):
         if planning is None:
             return None
         planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        selection, start = resolved
-        scaled_config = config.model_copy(
-            update={
-                "velocity_scale": config.velocity_scale * resolved_speed_scale,
-                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
-            }
-        )
-        result = self._planner.plan_cartesian_path(
-            world=self._world_monitor.world,
-            selection=selection,
-            start=start,
-            targets=targets,
-            config=scaled_config,
-            auxiliary_groups=auxiliary_ids,
-            check_collision=check_collision,
-        )
-        if not result.is_success():
-            detail = f": {result.message}" if result.message else ""
-            self._fail_planning_epoch(
-                planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+        with self._planning_guard(planning_epoch):
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
+                return None
+            selection, start = resolved
+            scaled_config = config.model_copy(
+                update={
+                    "velocity_scale": config.velocity_scale * resolved_speed_scale,
+                    "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
+                }
             )
-            return None
-        return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+            result = self._planner.plan_cartesian_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                targets=targets,
+                config=scaled_config,
+                auxiliary_groups=auxiliary_ids,
+                check_collision=check_collision,
+            )
+            if not result.is_success():
+                detail = f": {result.message}" if result.message else ""
+                self._fail_planning_epoch(
+                    planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+                )
+                return None
+            return self._store_generated_plan(
+                group_ids, result, planning_epoch, resolved_speed_scale
+            )
+        return None
 
     @rpc
     def move_linear(

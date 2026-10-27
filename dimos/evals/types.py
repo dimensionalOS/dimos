@@ -150,6 +150,7 @@ class RunningEnvironment:
     artifacts: Mapping[str, Path]  # files produced by the environment, by name
     raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
     raw_guide: str | None = None  # ROBOT.md template for raw_endpoint, required with it
+    python_guide: str | None = None  # DIMOS.md: the robot through the Python API, not MCP tools
 
 
 @dataclass(frozen=True, kw_only=True)

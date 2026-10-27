@@ -624,8 +624,13 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             context
         ):
             index = controlled_index_by_q[q_index]
-            lower[index] = max(lower[index], urdf_lower + command_limit_margin)
-            upper[index] = min(upper[index], urdf_upper - command_limit_margin)
+            # A joint already past its limit (pushed by contact, or a robot whose range is
+            # wider than the model's) cannot get back inside in one step: take the bound
+            # nearest the limit, so the command heads back at full speed instead of the
+            # envelope going empty and the arm freezing there.
+            env_lower, env_upper = lower[index], upper[index]
+            lower[index] = max(env_lower, min(urdf_lower + command_limit_margin, env_upper))
+            upper[index] = min(env_upper, max(urdf_upper - command_limit_margin, env_lower))
 
         invalid = np.flatnonzero(lower > upper)
         if invalid.size:

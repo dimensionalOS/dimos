@@ -799,6 +799,7 @@ class TestPlanningGroupApis:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -1122,10 +1123,9 @@ class TestPlanningGroupApis:
         assert module.get_error() == ""
         assert module._state == ManipulationState.IDLE
 
-
-class TestPlanningDiagnostics:
-    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
-        """Planning diagnostics include the backend message."""
+    def test_check_reachable_says_why_per_pose_and_plans_nothing(
+        self, robot_config, module_factory
+    ):
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
@@ -1134,7 +1134,49 @@ class TestPlanningDiagnostics:
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
+        module._kinematics = MagicMock()
+        module._kinematics.solve_pose_targets.side_effect = [
+            IKResult(status=IKStatus.SUCCESS, joint_state=JointState()),
+            IKResult(status=IKStatus.NO_SOLUTION, message="target is outside the workspace"),
+        ]
+
+        reasons = module.check_reachable(
+            [PoseStamped(frame_id="world"), PoseStamped(frame_id="world")]
+        )
+
+        assert reasons == ["", "IK failed: NO_SOLUTION: target is outside the workspace"]
+        assert all(
+            c.kwargs["check_collision"] is False
+            for c in module._kinematics.solve_pose_targets.call_args_list
+        )
+        assert module._state == ManipulationState.IDLE
+        assert module._last_plan is None
+
+
+class TestPlanningDiagnostics:
+    @staticmethod
+    def _planning_module(robot_config, module_factory):
+        module = module_factory()
+        module.config.model = robot_config
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.current_model_joint_state.return_value = JointState(
+            name=robot_config.joint_names,
+            position=[0.0, 0.0, 0.0],
+        )
         module._planner = MagicMock()
+        return module
+
+    @staticmethod
+    def _plan(module, robot_config, position):
+        return module.plan_to_joints(
+            {"manipulator": JointState(name=robot_config.joint_names, position=position)}
+        )
+
+    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
+        """Planning diagnostics include the backend message."""
+        module = self._planning_module(robot_config, module_factory)
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
             status=PlanningStatus.TIMEOUT, message="planner timed out"
         )
@@ -1150,6 +1192,50 @@ class TestPlanningDiagnostics:
         assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
         assert module._state == ManipulationState.IDLE
+
+    def test_planner_exception_fails_only_that_request(self, robot_config, module_factory):
+        """A backend that raises fails that one request; the next one is planned."""
+        module = self._planning_module(robot_config, module_factory)
+        module._planner.plan_selected_joint_path.side_effect = RuntimeError(
+            "Invalid goal configuration requested, cannot plan!"
+        )
+
+        result = self._plan(module, robot_config, [0.5, 0.5, 0.5])
+
+        assert result.status is PlanStatus.FAILED
+        assert result.message == (
+            "Planning failed: Invalid goal configuration requested, cannot plan!"
+        )
+        assert module._state == ManipulationState.IDLE
+        self._plan(module, robot_config, [0.5, 0.5, 0.5])
+        assert module._planner.plan_selected_joint_path.call_count == 2
+
+    def test_joint_target_outside_limits_names_the_joint_and_its_limits(
+        self, robot_config, module_factory
+    ):
+        module = self._planning_module(robot_config, module_factory)
+
+        result = self._plan(module, robot_config, [0.0, 1.5, 0.0])
+
+        assert result.status is PlanStatus.FAILED
+        assert result.message == (
+            "Joint target outside limits: joint2 target 1.500 outside [-1.000, 1.000]"
+        )
+        module._planner.plan_selected_joint_path.assert_not_called()
+        assert module._state == ManipulationState.IDLE
+
+    def test_planning_while_not_idle_says_how_to_recover(self, robot_config, module_factory):
+        module = self._planning_module(robot_config, module_factory)
+        module._state = ManipulationState.FAULT
+
+        result = self._plan(module, robot_config, [0.5, 0.5, 0.5])
+
+        assert result.status is PlanStatus.FAILED
+        assert result.message == (
+            "Cannot plan while manipulation is FAULT; "
+            "wait for the motion to finish, or call reset()"
+        )
+        module._planner.plan_selected_joint_path.assert_not_called()
 
 
 class TestExecute:

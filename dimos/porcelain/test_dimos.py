@@ -204,6 +204,13 @@ def test_peek_stream_returns_published_value(app):
     assert value > 1000
 
 
+def test_peek_stream_hidden_stream_reads_as_absent(app, monkeypatch):
+    monkeypatch.setattr(global_config, "peek_hidden_streams", "other,tick")
+    app.run(TickerModule)
+    with pytest.raises(LookupError, match="No running module exposes a stream named 'tick'"):
+        app.peek_stream("tick", timeout=2.0)
+
+
 @pytest.mark.parametrize("transport", ["lcm", "zenoh"])
 @pytest.mark.parametrize("remote", [False, True])
 def test_peek_stream_receives_external_odometry(app, transport, remote):
