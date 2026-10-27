@@ -67,11 +67,12 @@ Hello from the pygame community. https://www.pygame.org/contribute.html
 	22  libsystem_pthread.dylib             0x000000018a833cd0 thread_start + 8
 )
 libc++abi: terminating due to uncaught exception of type NSException
-Downloading LFS objects:   0% (0/1), 0 B | 0 B/s                                2026-10-22T05:28:54.628853Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+Downloading LFS objects:   0% (0/1), 0 B | 0 B/s
+2026-10-22T05:28:54.628853Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
 2026-10-22T05:28:54.628855Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
 2026-10-22T05:28:54.631183Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
 2026-10-22T05:28:54.638044Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
-05:28:54.669 [inf][/visualization/rerun/bridge.py] 
+05:28:54.669 [inf][/visualization/rerun/bridge.py]
 ============================================================
 Rerun gRPC server running (no viewer opened)
 
@@ -85,9 +86,14 @@ Connect a viewer:
 
 05:28:54.670 [inf][/visualization/rerun/bridge.py] bridge listening on Zenoh
 05:28:54.671 [inf][/visualization/rerun/bridge.py] Rerun static entity archetypes=['Boxes3D', 'Transform3D'] entity_path=world/robot_body
-Downloading LFS objects:   0% (0/1), 0 B | 0 B/s                                2026-10-22T05:28:54.810401Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
+Downloading LFS objects:   0% (0/1), 0 B | 0 B/s
+2026-10-22T05:28:54.810401Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
 2026-10-22T05:28:54.954165Z  WARN net-0 ThreadId(03) zenoh::net::runtime::orchestrator: Unable to connect to any locator of scouted peer 5b7bd20f815962f22497c4038a6a5c13: [tcp/[fe80::1]:49153, tcp/[fe80::596:2e26:1d3:6af1]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::5115:3726:72c7:4bd6]:49153, tcp/[fe80::6c83:36ff:feef:baa7]:49153, tcp/[fe80::9b6b:4c7e:9ad1:ed79]:49153, tcp/[fe80::ce81:b1c:bd2c:69e]:49153]
-Downloading LFS objects:   0% (0/1), 16 KB | 0 B/s                              Downloading LFS objects:   0% (0/1), 410 KB | 0 B/s                             Downloading LFS objects:   0% (0/1), 5.4 MB | 0 B/s                             Downloading LFS objects: 100% (1/1), 5.4 MB | 0 B/s                             05:28:55.861 [inf][os/simulation/go2_sim/world.py] Sim world ready scene=office_1
+Downloading LFS objects:   0% (0/1), 16 KB | 0 B/s
+Downloading LFS objects:   0% (0/1), 410 KB | 0 B/s
+Downloading LFS objects:   0% (0/1), 5.4 MB | 0 B/s
+Downloading LFS objects: 100% (1/1), 5.4 MB | 0 B/s
+05:28:55.861 [inf][os/simulation/go2_sim/world.py] Sim world ready scene=office_1
 objc[27424]: Class GLFWHelper is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dbb8) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584ba28). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
 objc[27424]: Class GLFWApplicationDelegate is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dc08) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584ba78). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
 objc[27424]: Class GLFWWindowDelegate is implemented in both /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/glfw/libglfw.3.dylib (0x10631dc30) and /Users/dev/.dimos/dimos/.venv/lib/python3.12/site-packages/open3d/cpu/pybind.cpython-312-darwin.so (0x12584baa0). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
