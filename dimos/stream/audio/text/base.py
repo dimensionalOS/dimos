@@ -18,27 +18,27 @@ from reactivex import Observable
 
 
 class AbstractTextEmitter(ABC):
-    """Base class for components that emit audio."""
+    """Base class for components that emit text."""
 
     @abstractmethod
     def emit_text(self) -> Observable:  # type: ignore[type-arg]
-        """Create an observable that emits audio frames.
+        """Create an observable that emits text.
 
         Returns:
-            Observable emitting audio frames
+            Observable emitting text
         """
         pass
 
 
 class AbstractTextConsumer(ABC):
-    """Base class for components that consume audio."""
+    """Base class for components that consume text."""
 
     @abstractmethod
     def consume_text(self, text_observable: Observable) -> "AbstractTextConsumer":  # type: ignore[type-arg]
-        """Set the audio observable to consume.
+        """Set the text observable to consume.
 
         Args:
-            audio_observable: Observable emitting audio frames
+            text_observable: Observable emitting text
 
         Returns:
             Self for method chaining
@@ -47,9 +47,9 @@ class AbstractTextConsumer(ABC):
 
 
 class AbstractTextTransform(AbstractTextConsumer, AbstractTextEmitter):
-    """Base class for components that both consume and emit audio.
+    """Base class for components that both consume and emit text.
 
-    This represents a transform in an audio processing pipeline.
+    This represents a transform in a text processing pipeline.
     """
 
     pass
