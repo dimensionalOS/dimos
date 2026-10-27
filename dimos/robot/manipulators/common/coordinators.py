@@ -24,20 +24,58 @@ deployments declare a port per arm and bind each task with
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
-class ArmPoseCoordinator(ControlCoordinator):
+class ArmCoordinator(ControlCoordinator):
+    arm_position_command: Out[JointState]
+    arm_velocity_command: Out[JointState]
+    arm_joint_state: In[JointState]
+    arm_joints: Out[JointState]
+
+
+class DualArmCoordinator(ControlCoordinator):
+    left_arm_position_command: Out[JointState]
+    left_arm_velocity_command: Out[JointState]
+    left_arm_joint_state: In[JointState]
+    left_arm_joints: Out[JointState]
+    right_arm_position_command: Out[JointState]
+    right_arm_velocity_command: Out[JointState]
+    right_arm_joint_state: In[JointState]
+    right_arm_joints: Out[JointState]
+
+
+class ArmTeleopCoordinator(ArmCoordinator, TeleopControlCoordinator):
+    pass
+
+
+class MixedArmCoordinator(ControlCoordinator):
+    xarm_arm_position_command: Out[JointState]
+    xarm_arm_velocity_command: Out[JointState]
+    xarm_arm_joint_state: In[JointState]
+    xarm_arm_joints: Out[JointState]
+    piper_arm_position_command: Out[JointState]
+    piper_arm_joint_state: In[JointState]
+    piper_arm_joints: Out[JointState]
+
+
+class MixedArmTeleopCoordinator(MixedArmCoordinator, TeleopControlCoordinator):
+    pass
+
+
+class ArmPoseCoordinator(ArmCoordinator):
     """Arm driven by target poses; the cartesian_ik / teleop_ik cards name-match."""
 
     cartesian_command: In[PoseStamped]
     tf: Out[TFMessage]
 
 
-class ArmTwistCoordinator(ControlCoordinator):
+class ArmTwistCoordinator(ArmCoordinator):
     """Arm driven by EEF twists; the eef_twist card name-matches."""
 
     ee_twist_command: In[TwistStamped]

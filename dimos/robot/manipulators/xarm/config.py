@@ -33,6 +33,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import joint_names
+from dimos.robot.manipulators.common.sim import arm_base_pose
 from dimos.utils.data import LfsPath
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -82,7 +83,7 @@ def make_xarm7_sim_robot_config(
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
+        base_pose=arm_base_pose() if base_pose is None else base_pose,
         tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
@@ -91,8 +92,8 @@ def make_xarm7_sim_robot_config(
 
 def make_dual_xarm6_model_config() -> RobotModelConfig:
     """Return one statically authored model containing two canonical xArm6 chains."""
-    left_joints = joint_names(6, prefix="left/joint")
-    right_joints = joint_names(6, prefix="right/joint")
+    left_joints = joint_names(6, prefix="left_arm/joint")
+    right_joints = joint_names(6, prefix="right_arm/joint")
     canonical_joints = [*left_joints, *right_joints]
     return RobotModelConfig(
         model=RobotModel.from_file(
@@ -107,7 +108,15 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "add_gripper_1": "true",
                 "add_gripper_2": "true",
             },
-        ).with_default_joint_acceleration_limit(2.0),
+        )
+        .with_renamed_joints(
+            {
+                f"{side}/joint{i}": f"{side}_arm/joint{i}"
+                for side in ("left", "right")
+                for i in range(1, 7)
+            }
+        )
+        .with_default_joint_acceleration_limit(2.0),
         joint_names=canonical_joints,
         base_link="world",
         planning_groups=[
@@ -142,27 +151,16 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
 def make_xarm7_sim_hardware(
     address: str | Path | None = None, *, home_joints: list[float] | None = None
 ) -> HardwareComponent:
-    """The simulated xArm7; without ``address`` it attaches to the blueprint's MujocoSimModule."""
+    """The xArm7 device definition used by simulation-only stacks."""
     selected_home = XARM7_SIM_HOME if home_joints is None else home_joints
     return make_xarm_hardware(
         "arm",
         7,
-        adapter_type="sim_mujoco",
+        adapter_type="xarm",
         address=address,
         gripper=True,
         home_joints=selected_home,
     )
-
-
-def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
-    return {
-        "address": address,
-        "headless": False,
-        "dof": 7,
-        "camera_name": "wrist_camera",
-        "base_frame_id": "link7",
-        "reset_joint_positions": XARM7_SIM_HOME,
-    }
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
@@ -201,7 +199,10 @@ def make_xarm_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=[*(canonical_joint_names or joint_names(dof)), *gripper_joints],
+        joints=[
+            *(canonical_joint_names or joint_names(dof, prefix=f"{hw_id}/joint")),
+            *gripper_joints,
+        ],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
@@ -220,16 +221,7 @@ def xarm7_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    """The xArm7; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            7,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
+    """xArm7 joint ownership; XArmConnection selects SDK or sim2 IO."""
     return make_xarm_hardware(
         hw_id,
         7,
@@ -251,16 +243,7 @@ def xarm6_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    """The xArm6; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
+    """xArm6 joint ownership; XArmConnection selects SDK or sim2 IO."""
     return make_xarm_hardware(
         hw_id,
         6,
@@ -278,6 +261,7 @@ def make_xarm_model_config(
     *,
     robot_type: str = "xarm",
     prefix: str = "",
+    joint_prefix: str = "arm/",
     add_gripper: bool = True,
     gripper_hardware_id: str | None = None,
     base_pose: PoseStamped | None = None,
@@ -296,7 +280,7 @@ def make_xarm_model_config(
     if add_gripper:
         xacro_args["add_gripper"] = "true"
 
-    model_joint_names = joint_names(dof, prefix=f"{prefix}joint")
+    model_joint_names = joint_names(dof, prefix=f"{prefix or joint_prefix}joint")
     tip_link = f"{prefix}link_tcp" if add_gripper else f"{prefix}link{dof}"
     collision_exclusions = [
         (f"{prefix}{left}", f"{prefix}{right}") for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
@@ -306,8 +290,14 @@ def make_xarm_model_config(
             XARM_MODEL_PATH,
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
-        ).with_default_joint_acceleration_limit(2.0),
-        base_pose=base_pose if base_pose is not None else PoseStamped(),
+        )
+        .with_renamed_joints(
+            {f"{prefix}joint{i}": model_joint_names[i - 1] for i in range(1, dof + 1)}
+        )
+        .with_default_joint_acceleration_limit(2.0),
+        base_pose=base_pose
+        if base_pose is not None
+        else (arm_base_pose() if global_config.simulation == "mujoco" else PoseStamped()),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
         planning_groups=[
@@ -361,6 +351,7 @@ def lite6_hardware(
         hw_id,
         6,
         adapter_type="xarm",
+        adapter_kwargs={"robot_type": "lite"},
         address=address,
         gripper=gripper,
         home_joints=home_joints,

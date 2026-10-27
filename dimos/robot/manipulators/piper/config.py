@@ -24,11 +24,13 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.common.sim import arm_base_pose
 from dimos.utils.data import LfsPath
 
 PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -99,7 +101,10 @@ def make_piper_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=[*(canonical_joint_names or joint_names(6)), *gripper_joints],
+        joints=[
+            *(canonical_joint_names or joint_names(6, prefix=f"{hw_id}/joint")),
+            *gripper_joints,
+        ],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
@@ -118,15 +123,7 @@ def piper_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    """The Piper on a CAN interface; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_piper_hardware(
-            hw_id,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
+    """Piper joint ownership; PiperConnection selects CAN or sim2 IO."""
     return make_piper_hardware(
         hw_id,
         adapter_type="piper",
@@ -141,15 +138,20 @@ def piper_hardware(
 def make_piper_model_config(
     *,
     home_joints: list[float] | None = None,
+    joint_prefix: str = "arm/",
+    base_pose: PoseStamped | None = None,
 ) -> RobotModelConfig:
     dof = 6
-    model_joint_names = joint_names(dof)
+    model_joint_names = joint_names(dof, prefix=f"{joint_prefix}joint")
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
-        model=RobotModel.from_file(
-            PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS
-        ).with_default_joint_acceleration_limit(2.0),
+        model=RobotModel.from_file(PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS)
+        .with_renamed_joints({f"joint{i}": f"{joint_prefix}joint{i}" for i in range(1, 7)})
+        .with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
+        base_pose=base_pose
+        if base_pose is not None
+        else (arm_base_pose() if global_config.simulation == "mujoco" else PoseStamped()),
         base_link="base_link",
         planning_groups=[
             PlanningGroupDefinition(
@@ -161,6 +163,6 @@ def make_piper_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
-        gripper_hardware_id="arm",
+        gripper_hardware_id=joint_prefix.rstrip("/") or "arm",
         home_joints=model_home_joints,
     )

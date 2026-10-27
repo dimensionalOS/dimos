@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
-from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
-    XARM6_SIM_PATH,
-    XARM7_SIM_PATH,
     lite6_hardware,
     make_dual_xarm6_model_config,
     make_lite6_model_config,
@@ -83,7 +82,6 @@ coordinator_xarm7 = autoconnect(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
 )
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
@@ -93,12 +91,11 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
 )
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
 
-coordinator_lite6 = ControlCoordinator.blueprint(
+coordinator_lite6 = coordinator(
     hardware=[_coordinator_lite6_hw],
     tasks=[trajectory_task(_coordinator_lite6_hw), _gripper_task()],
 )
@@ -126,7 +123,11 @@ _xarm6_right = xarm6_hardware(
     "right_arm", canonical_joint_names=[f"right_arm/joint{i}" for i in range(1, 7)]
 )
 
-coordinator_dual_xarm = ControlCoordinator.blueprint(
+coordinator_dual_xarm = coordinator(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[trajectory_task(_xarm7_left, _xarm6_right)],
+    base_poses={
+        "left_arm": PoseStamped(frame_id="world", position=Vector3(0, 0.4, 0.12)),
+        "right_arm": PoseStamped(frame_id="world", position=Vector3(0, -0.4, 0.12)),
+    },
 )

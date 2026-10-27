@@ -240,6 +240,7 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
+    position_limits: list[tuple[float, float]] | None = None
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
@@ -287,6 +288,8 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
 
 def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
+    if len(set(cfg.joint_names)) != len(cfg.joint_names):
+        raise ValueError("gripper task joint_names must not contain duplicates")
     return GripperControlTask(
         cfg.name,
         GripperControlTaskConfig(
@@ -294,5 +297,9 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             priority=cfg.priority,
             hold_duration=params.hold_duration,
         ),
-        limits=_resolve_limits(cfg, hardware),
+        limits=(
+            params.position_limits
+            if params.position_limits is not None
+            else _resolve_limits(cfg, hardware)
+        ),
     )

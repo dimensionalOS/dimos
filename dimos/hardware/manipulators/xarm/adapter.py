@@ -269,7 +269,7 @@ class XArmAdapter(ManipulatorAdapter):
         code: int = self._arm.set_servo_angle_j(angles, speed=100, mvacc=500)
         ok = code == 0
         if grip:
-            ok = self._write_gripper(grip[0]) and ok
+            ok = self.write_gripper_position(grip[0]) and ok
         return ok
 
     def activate(self) -> bool:
@@ -435,7 +435,7 @@ class XArmAdapter(ManipulatorAdapter):
             return float(pos)
         return 0.0
 
-    def _write_gripper(self, position: float) -> bool:
+    def write_gripper_position(self, position: float) -> bool:
         """Command the gripper in SDK units (0-850)."""
         if not self._arm:
             return False

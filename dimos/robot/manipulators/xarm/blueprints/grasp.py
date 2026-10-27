@@ -46,20 +46,19 @@ from dimos.robot.manipulators.common.blueprints import (
     manipulation_mapping,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.sim import arm_base_pose, arm_scene, arm_world
 from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
-    make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
     xarm7_hardware,
 )
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-SIMULATED = bool(global_config.simulation)
+SIMULATED = global_config.simulation == "mujoco"
 
-XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
+XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/world.xml")
 # The stock xArm home points the narrow wrist-camera frustum between the widely
 # spaced targets. This collision-free top-down pose raises the camera enough to
 # put every mesh in one frame, without changing the configured base pose.
@@ -115,11 +114,9 @@ XARM_WRIST_CAMERA_TRANSFORM = Transform(
 
 
 if SIMULATED:
-    # data/xarm_grasp_sim/xarm7.xml bolts link_base to the world origin instead
-    # of the 12 cm pedestal data/xarm7 uses. Inheriting that offset would put the
-    # planning model 12 cm above the arm MuJoCo simulates.
+    _scene = arm_scene(XARM_GRASP_SCENE_PATH)
     _model = make_xarm7_sim_robot_config(
-        base_pose=PoseStamped(frame_id="world"),
+        base_pose=arm_base_pose(_scene),
         tf_extra_links=[],
     )
     _hardware = make_xarm7_sim_hardware(home_joints=XARM_GRASP_SCAN_JOINTS)
@@ -136,23 +133,7 @@ else:
 def _sensing() -> tuple[Blueprint, ...]:
     """The camera, and in sim the engine that produces its frames."""
     if SIMULATED:
-        return (
-            MujocoSimModule.blueprint(
-                **{
-                    **make_xarm7_sim_module_kwargs(XARM_GRASP_SCENE_PATH),
-                    "headless": True,
-                    # Publish the simulated camera pose directly in the planning
-                    # frame. A wrist-relative TF would need a second
-                    # asynchronously stamped world->link7 edge and can make an
-                    # otherwise valid scan unregistrable.
-                    "base_frame_id": "world",
-                    "reset_joint_positions": XARM_GRASP_SCAN_JOINTS,
-                    # Off by default, and the voxel chain has nothing to map
-                    # without it. Scene registration reads colour and depth.
-                    "enable_pointcloud": True,
-                }
-            ),
-        )
+        return (arm_world(_scene),)
     return (
         # enable_pointcloud is off by default here too, and the voxel chain has
         # nothing to map without it.
@@ -213,6 +194,7 @@ _XARM_GRASP_MODULES = (
     RerunBridgeModule.blueprint(),
     coordinator(
         hardware=[_hardware],
+        camera_pointcloud=SIMULATED,
         tasks=[
             trajectory_task(_hardware),
             TaskConfig(

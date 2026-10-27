@@ -20,12 +20,30 @@ from pathlib import Path
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.spec import WorldConfig
+from dimos.sim2.world.scene import describe_scene, scene_path
 
 
-def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
-    if not global_config.simulation:
-        return ()
+def arm_scene(default: str | Path = "workbench.xml") -> Path:
+    return scene_path(global_config.scene_package, str(default))
 
-    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+def arm_base_pose(scene: Path | None = None, spawn: str = "workbench") -> PoseStamped:
+    """Use the same authored support as the robot connection."""
+    description = describe_scene(scene if scene is not None else arm_scene())
+    if description.spawns and spawn not in description.spawns:
+        raise ValueError(f"scene {description.id!r} has no authored {spawn!r} support")
+    pose = description.spawns.get(spawn, Pose(0, 0, 0.12))
+    return PoseStamped(
+        frame_id="world",
+        position=pose.position,
+        orientation=pose.orientation,
+    )
+
+
+def arm_world(scene: Path) -> Blueprint:
+    """World settings only; robot connections are collected at deployment."""
+    return SimulationModule.blueprint(world=WorldConfig(scene=scene, robots={}))

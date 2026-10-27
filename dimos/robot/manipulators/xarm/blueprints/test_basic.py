@@ -22,6 +22,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.stream import In
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.robot.manipulators.common.connection import ArmConnection
 from dimos.robot.manipulators.common.mixed import coordinator_piper_xarm, coordinator_teleop_dual
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     coordinator_dual_xarm,
@@ -37,8 +38,16 @@ def test_dual_arm_trajectory_uses_unique_hardware_joints(blueprint) -> None:
     atom = next(
         atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
-    hardware = atom.kwargs["hardware"]
-    names = [name for component in hardware for name in component.joints]
+    names = []
+    for device in blueprint.active_blueprints:
+        if issubclass(device.module, ArmConnection):
+            config = get_type_hints(device.module)["config"](**device.kwargs)
+            names.extend(
+                [
+                    *(f"{config.source}/joint{i}" for i in range(1, config.dof + 1)),
+                    *([f"{config.source}/gripper"] if config.gripper else []),
+                ]
+            )
     assert len(names) == len(set(names))
 
     config = next(task for task in atom.kwargs["tasks"] if task.type == "trajectory")
@@ -53,8 +62,8 @@ def test_standalone_xarm7_has_only_arm_tasks() -> None:
         for atom in coordinator_xarm7.active_blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
-    hardware_joints = {name for component in atom.kwargs["hardware"] for name in component.joints}
-    assert hardware_joints == {f"joint{i}" for i in range(1, 8)}
+    assert atom.kwargs["hardware"] == []
+    hardware_joints = {f"arm/joint{i}" for i in range(1, 8)}
     for config in atom.kwargs["tasks"]:
         assert set(config.joint_names) <= hardware_joints
         task = control_task_registry.create(config.type, config, hardware={})
