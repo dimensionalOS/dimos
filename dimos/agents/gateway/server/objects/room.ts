@@ -4,9 +4,12 @@ import type {
   ConversationId,
   ConversationView,
   ConversationWatch,
+  Cursor,
   JsonObject,
+  Storage,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
+import type { Context } from "@earendil-works/chord/context";
 import type { InputOutcome, OwnedStream } from "../../../shared/protocol/conversation/state.ts";
 import type { JobRow } from "../../../shared/protocol/jobs/state.ts";
 import type { ModuleRow } from "../../../shared/protocol/runtime/module.ts";
@@ -68,6 +71,30 @@ function outcomeOf(record: SubmissionRecord & { readonly type: "input" }): Input
   return null;
 }
 
+/** The newest `KEPT_OUTCOMES` settled input submissions of the conversation in the store, oldest first. */
+async function storedOutcomes(
+  storage: Pick<Storage, "scanSubmissions">,
+  conversation: ConversationId,
+  context: Context,
+): Promise<readonly InputOutcome[]> {
+  const found: InputOutcome[] = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await storage.scanSubmissions(
+      { conversationId: conversation, order: "descending" },
+      KEPT_OUTCOMES,
+      cursor,
+      context,
+    );
+    for (const record of page.items) {
+      const outcome = record.type === "input" ? outcomeOf(record) : null;
+      if (outcome !== null) found.push(outcome);
+    }
+    cursor = page.next;
+  } while (cursor !== undefined && found.length < KEPT_OUTCOMES);
+  return found.slice(0, KEPT_OUTCOMES).reverse();
+}
+
 /** The settled input submissions of this conversation in a publication folded into the newest `KEPT_OUTCOMES`. */
 function foldOutcomes(
   rows: readonly InputOutcome[],
@@ -107,9 +134,11 @@ function ownedStreams(modules: readonly ModuleRow[], streams: readonly StreamRef
 /**
  * Feeds from pi-durable's `watch()`: on each frame, `record`, `live`, `queue`, `usage` and `agent` are replaced with the
  * view's own subtrees (shared containers, so Chord sends ops), and `transcript` with `projectTranscript`, diffed, as
- * its new array holds the previous frame's items. `outcomes` is folded from the submission changes of commit
- * publications, `detachable` fed from the Detacher. The DimOS members are derivations over the store, filtered to this
- * conversation. The watch resource opens before the store reference goes live, so its `open` touches only the harness.
+ * its new array holds the previous frame's items. `outcomes` starts from the settled inputs in the store, so a reopened
+ * room still has the ones that settled while it was closed, and folds in the submission changes of later commit
+ * publications. `detachable` is fed from the Detacher. The DimOS members are derivations over the store, filtered to
+ * this conversation. The watch resource opens before the store reference goes live, so its `open` touches only the
+ * harness.
  */
 export const serveRoom: ServeObject = (host, deps) =>
   host.serve(
@@ -149,14 +178,28 @@ export const serveRoom: ServeObject = (host, deps) =>
       });
       const commits = self.resource("commits", {
         version: 1,
-        open: () => commitEvents(agent.harness),
-        close: (events) => events.close(),
+        open: async ({ signal }) => {
+          // Subscribed before the scan, so an input settling meanwhile is in the scan or in the events.
+          const events = commitEvents(agent.harness);
+          try {
+            const stored = await storedOutcomes(
+              agent.storage,
+              conversation,
+              withAbortSignal(signal, BACKGROUND_CONTEXT),
+            );
+            return { events, stored };
+          } catch (error) {
+            events.close();
+            throw error;
+          }
+        },
+        close: ({ events }) => events.close(),
       });
-      const outcomes = self.state("outcomes", ConversationState.outcomes, []);
+      const outcomes = self.state("outcomes", ConversationState.outcomes, { init: () => commits.value.stored });
       self.on(
         "outcomes",
         commits,
-        (events) => events,
+        ({ events }) => events,
         (publication, ctx) => {
           const next = foldOutcomes(outcomes.value, publication, conversation);
           if (next !== outcomes.value) outcomes.replace(ctx, next);
