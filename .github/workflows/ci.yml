@@ -324,7 +324,6 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
 
       - name: Run pre-commit
         env:
@@ -653,11 +652,12 @@ jobs:
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
+      # and nothing creates it until the relay tests first run deno.
       - name: Install Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
       # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')

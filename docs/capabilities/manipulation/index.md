@@ -394,6 +394,12 @@ clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
 
+The **Zero** preset sets selected groups' joint targets to `0.0` without moving the
+robot. Use **Joint space → Plan → Execute**; the existing feasibility checks apply.
+If any selected joint's limits exclude zero, the preset is rejected and targets
+stay unchanged. Unselected joints stay unchanged. Zero is not Home or hardware
+calibration.
+
 The panel's **Planning mode** selector chooses how the current target is
 reached:
 
@@ -448,6 +454,12 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+A manipulation stack that plans around a camera-built voxel map adds
+`manipulation_mapping()` from
+[`common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) (self
+filter, voxel mapper, `PointCloudBoxFilter`), which feeds `ManipulationModule`'s
+`voxel_map` input.
 
 ### Streaming pose-target control
 
@@ -524,7 +536,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and hardware config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
@@ -144,6 +145,47 @@ def test_worker_manager_basic(create_worker_manager):
     assert result == 2
 
     module.stop()
+
+
+def test_worker_manager_stops_workers_concurrently_and_only_once(mocker, monkeypatch):
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=0))
+    workers = [PythonWorker(), PythonWorker()]
+    monkeypatch.setattr(manager, "_workers", workers)
+    barrier = threading.Barrier(len(workers), timeout=2)
+    finished = []
+
+    def shutdown() -> None:
+        barrier.wait()
+        finished.append(True)
+
+    shutdowns = [
+        mocker.patch.object(worker, "shutdown", side_effect=shutdown) for worker in workers
+    ]
+    try:
+        manager.stop()
+        manager.stop()
+        assert finished == [True, True]
+        for stop in shutdowns:
+            stop.assert_called_once_with()
+        assert manager.workers == []
+    finally:
+        manager.stop()
+
+
+def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker, monkeypatch):
+    worker = PythonWorker()
+    process = mocker.Mock()
+    process.is_alive.side_effect = [True, True, False]
+    monkeypatch.setattr(worker, "_process", process)
+
+    worker.shutdown()
+    worker.shutdown()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    process.close.assert_called_once_with()
+    assert process.join.call_count == 3
+    assert worker.pid is None
 
 
 def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):

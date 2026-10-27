@@ -40,12 +40,7 @@ logger = setup_logger()
 def window(
     scans: Observable[PointCloud2], cfg: RelocalizeConfig, interval: float
 ) -> Observable[PointCloud2]:
-    """The last ``max_frames`` scans merged, at most one merge every ``interval`` s.
-
-    Every scan enters the window and only the throttle decides when one is
-    matched, so the scans that arrive during a failed attempt are the next
-    attempt's evidence - which is how ``tune.py`` scores a retry too.
-    """
+    """The last ``max_frames`` scans merged, at most one merge every ``interval`` s."""
     held: deque[PointCloud2] = deque(maxlen=cfg.max_frames)
     return scans.pipe(
         ops.do_action(held.append),
@@ -57,20 +52,16 @@ def window(
 
 class LidarConfig(Config):
     reloc_interval: float = 2.0
-    # Sanity check, skip a cloud too sparse to be worth a match,
-    # A mid360 sweep is only ~3k points and two of them voxel down to ~3.5k
-    # which is already enough to relocalize
+    # Skip clouds sparser than this (a mid360 sweep is ~3k points)
     min_local_points: int = 2_000
-    # Which rig's measured scales to align with. mid360 because that is
-    # what has been measured; a different sensor wants its own preset
-    # (see relocalize.PRESETS and tune.md), not these numbers.
+    # Rig preset to align with, see relocalize.PRESETS
     relocalize: RelocalizeConfig = MID360
 
 
 class CloudRelocalization(RelocalizationModule):
     """Coarse FPFH+RANSAC then ICP of a windowed live cloud against a pointcloud premap.
 
-    A subclass names where that window comes from, and nothing else.
+    Subclasses supply :meth:`clouds`.
     """
 
     config: LidarConfig
@@ -89,8 +80,7 @@ class CloudRelocalization(RelocalizationModule):
         super().start()
         if self.premap is None:
             return
-        # Downsampling the premap and computing its normals and FPFH is the
-        # pipeline's dominant cost, so it is a startup cost, not a per-fix one.
+        # Premap preprocessing is the dominant cost, paid once here.
         self._relocalizer = LidarRelocalizer(self.premap.pointcloud, self.config.relocalize)
         self.register_disposable(
             backpressure(
@@ -138,7 +128,7 @@ class CloudRelocalization(RelocalizationModule):
 
 
 class LidarWindowRelocalization(CloudRelocalization):
-    """Matches the last `max_frames` scans, the way tune.py's probes are built."""
+    """Matches the last `max_frames` scans merged."""
 
     lidar: In[PointCloud2]
 
@@ -151,7 +141,7 @@ class LidarWindowRelocalization(CloudRelocalization):
 
 
 class LocalMapConfig(LidarConfig):
-    # The carved map around the robot: under this it is too small a patch to match.
+    # Smaller carved local maps are too small a patch to match
     min_local_points: int = 20_000
 
 

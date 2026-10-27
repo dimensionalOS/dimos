@@ -33,10 +33,10 @@ The shipped pair was built like this.
 Both files are available in LFS so this is only for reproducing them:
 
     dimos map global recording_go2_mid360_2026-05-29_4-45pm-PST_corrected \
-      --lidar fastlio_lidar --voxel 0.005 --seek 400 --export --no-gui
+      --lidar fastlio_lidar --voxel 0.005 --seek 400 --export-pc2 --no-gui
 
 `--seek 400` does the split: the premap is the walk after 400 s, and probes
-come from before it. `--export` implies `--pgo` and writes
+come from before it. `--export-pc2` implies `--pgo` and writes
 `./<dataset>.pc2.lcm`. The walk is a loop, so the two halves still cover some
 of the same ground. Without that they would never match.
 
@@ -111,7 +111,7 @@ The procedure:
 
 1. **Get a recording and a premap that share a frame.** The cheap way is one
    recording with its premap built from a different stretch of it:
-   `dimos map global <recording> --seek <t> --export`. Ground truth is then
+   `dimos map global <recording> --seek <t> --export-pc2`. Ground truth is then
    the identity and nothing needs labelling.
 2. **Register the pair** in `DATASETS`, with a `window` covering the stretch
    the premap does *not* come from. Include some ground the premap never saw.

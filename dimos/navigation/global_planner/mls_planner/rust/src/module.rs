@@ -474,6 +474,7 @@ impl Worker {
             self.config.viz_sweep_cells as usize,
         );
         let mut seed_progress = SeedProgress::default();
+        let mut path_out = false;
         loop {
             let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
             let update = self.pending.lock().expect("pending mutex").take();
@@ -489,7 +490,8 @@ impl Worker {
                     None => false,
                 };
                 if replan_due(goal_changed, live_update) {
-                    self.maybe_replan(&mut planner, &mut last_path_at).await;
+                    self.maybe_replan(&mut planner, goal_changed, &mut last_path_at, &mut path_out)
+                        .await;
                 }
                 self.warn_if_seeds_starved(&mut seed_progress);
                 continue;
@@ -664,21 +666,32 @@ impl Worker {
     }
 
     /// Gate and publish a replan. The planning itself lives in Planner::plan.
-    async fn maybe_replan(&self, planner: &mut Planner, last_path_at: &mut Option<Instant>) {
-        let Some(start) = self.base_position() else {
-            return;
-        };
-        let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
-        let goal = {
-            let mut guard = self.active_goal.lock().expect("goal mutex");
-            let Some(goal) = *guard else {
-                return;
-            };
-            if is_at_goal(start, goal, self.config.goal_tolerance) {
-                *guard = None;
+    async fn maybe_replan(
+        &self,
+        planner: &mut Planner,
+        goal_changed: bool,
+        last_path_at: &mut Option<Instant>,
+        path_out: &mut bool,
+    ) {
+        let start = self
+            .base_position()
+            .map(|s| (s.0, s.1, s.2 - self.config.start_z_offset_m));
+        let step = goal_step(
+            &mut self.active_goal.lock().expect("goal mutex"),
+            goal_changed,
+            *path_out,
+            start,
+            self.config.goal_tolerance,
+        );
+        let (start, goal) = match step {
+            GoalStep::Idle => return,
+            GoalStep::Clear => {
+                info!("Goal cancelled, clearing the path.");
+                *path_out = false;
+                publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 return;
             }
-            goal
+            GoalStep::Plan { start, goal } => (start, goal),
         };
 
         let plan_start = Instant::now();
@@ -686,6 +699,7 @@ impl Worker {
             tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
         if waypoints.is_empty() {
             // No full path and nothing safe ahead on the cached path, so stop.
+            *path_out = false;
             publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             return;
         }
@@ -703,7 +717,41 @@ impl Worker {
             since_last_ms,
             "path planned"
         );
+        *path_out = true;
         publish_path(&self.path, &path_msg).await;
+    }
+}
+
+/// What a replan pass does with the active goal.
+#[derive(Debug, PartialEq)]
+enum GoalStep {
+    /// No goal to plan for, or no pose to plan from.
+    Idle,
+    /// The goal was cancelled while a path is out: publish an empty one.
+    Clear,
+    Plan {
+        start: Xyz,
+        goal: Xyz,
+    },
+}
+
+/// Decide a replan pass. A goal reached is dropped and its path kept, so the
+/// follower settles on its own tolerance.
+fn goal_step(
+    goal: &mut Option<Xyz>,
+    goal_changed: bool,
+    path_out: bool,
+    start: Option<Xyz>,
+    tol: f32,
+) -> GoalStep {
+    match (*goal, start) {
+        (None, _) if goal_changed && path_out => GoalStep::Clear,
+        (None, _) | (Some(_), None) => GoalStep::Idle,
+        (Some(g), Some(s)) if is_at_goal(s, g, tol) => {
+            *goal = None;
+            GoalStep::Idle
+        }
+        (Some(goal), Some(start)) => GoalStep::Plan { start, goal },
     }
 }
 
@@ -1208,6 +1256,56 @@ mod tests {
 
     fn point(x: f64, y: f64, z: f64) -> Point {
         Point { x, y, z }
+    }
+
+    #[test]
+    fn a_cancel_clears_the_path_once() {
+        let start = Some((0.0, 0.0, 0.0));
+        let mut goal = Some((5.0, 0.0, 0.0));
+        assert_eq!(
+            goal_step(&mut goal, true, false, start, 0.3),
+            GoalStep::Plan {
+                start: (0.0, 0.0, 0.0),
+                goal: (5.0, 0.0, 0.0)
+            }
+        );
+
+        let mut cancelled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN));
+        // Even with no pose on tf.
+        assert_eq!(
+            goal_step(&mut cancelled, true, true, None, 0.3),
+            GoalStep::Clear
+        );
+        // Teleop repeats the cancel every command, and nothing is out to clear.
+        assert_eq!(
+            goal_step(&mut cancelled, true, false, start, 0.3),
+            GoalStep::Idle
+        );
+        // A live update with no goal publishes nothing.
+        assert_eq!(
+            goal_step(&mut cancelled, false, false, start, 0.3),
+            GoalStep::Idle
+        );
+    }
+
+    #[test]
+    fn a_reached_goal_is_dropped_and_its_path_kept() {
+        let mut goal = Some((0.1, 0.0, 0.0));
+        let start = Some((0.0, 0.0, 0.0));
+        assert_eq!(
+            goal_step(&mut goal, false, true, start, 0.3),
+            GoalStep::Idle
+        );
+        assert_eq!(goal, None);
+        assert_eq!(
+            goal_step(&mut goal, false, true, start, 0.3),
+            GoalStep::Idle
+        );
+        // A cancel after arrival still clears the held path.
+        assert_eq!(
+            goal_step(&mut goal, true, true, start, 0.3),
+            GoalStep::Clear
+        );
     }
 
     #[test]

@@ -314,6 +314,16 @@ class Panel(ABC):
     def _panel_params(self) -> dict[str, Any]:
         return {}
 
+    def _bound_streams(self, *names: str) -> dict[str, str]:
+        """Validate and return the optional stream bindings that are set."""
+        bound: dict[str, str] = {}
+        for name in names:
+            stream = getattr(self, name)
+            if stream is not None:
+                _check_stream(name, stream)
+                bound[name] = stream
+        return bound
+
 
 @dataclass(frozen=True)
 class Video(Panel):
@@ -348,6 +358,30 @@ class Video(Panel):
         )
 
 
+def _goal_channel(stream: str) -> Channel:
+    return Channel(
+        stream,
+        PointStamped,
+        dir="tx",
+        encoding="point.json.v1",
+        publish="shared",
+        max_hz=5.0,
+    )
+
+
+def _path_channel(stream: str) -> Channel:
+    # Sampling can drop the final path or clear in a planner burst.
+    return Channel(
+        stream,
+        Path,
+        encoding="path.json.v1",
+        delivery="latest",
+        max_hz=10.0,
+        paced=True,
+        resend_on_subscribe=True,
+    )
+
+
 @dataclass(frozen=True)
 class Map2D(Panel):
     """2D costmap with optional pose and path overlays.
@@ -368,39 +402,16 @@ class Map2D(Panel):
 
     def __post_init__(self) -> None:
         _check_stream("costmap", self.costmap)
-        for name in ("pose", "path", "click", "stop"):
-            stream = getattr(self, name)
-            if stream is not None:
-                _check_stream(name, stream)
+        self._bound_streams("pose", "path", "click", "stop")
         _check_rate("costmap_hz", self.costmap_hz)
         _check_rate("pose_hz", self.pose_hz)
 
     def _channels(self) -> tuple[Channel, ...]:
         channels = []
         if self.path is not None:
-            # Sampling can drop the final path or clear in a planner burst.
-            channels.append(
-                Channel(
-                    self.path,
-                    Path,
-                    encoding="path.json.v1",
-                    delivery="latest",
-                    max_hz=10.0,
-                    paced=True,
-                    resend_on_subscribe=True,
-                )
-            )
+            channels.append(_path_channel(self.path))
         if self.click is not None:
-            channels.append(
-                Channel(
-                    self.click,
-                    PointStamped,
-                    dir="tx",
-                    encoding="point.json.v1",
-                    publish="shared",
-                    max_hz=5.0,
-                )
-            )
+            channels.append(_goal_channel(self.click))
         if self.stop is not None:
             channels.append(
                 Channel(
@@ -411,8 +422,7 @@ class Map2D(Panel):
 
     def _panel_params(self) -> dict[str, Any]:
         # Keep the existing costmap/pose slots compatible with older viewers.
-        bound = {"path": self.path, "click": self.click, "stop": self.stop}
-        return {key: stream for key, stream in bound.items() if stream is not None}
+        return self._bound_streams("path", "click", "stop")
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         requests = [
@@ -428,11 +438,18 @@ class Map2D(Panel):
 @dataclass(frozen=True)
 class Map3D(Panel):
     """3D voxel map: a PointCloud2 stream (the mapper's global map by
-    default) voxelized at `res` and drawn as points, with the pose marker."""
+    default) voxelized at `res` and drawn as points, with the pose marker.
+
+    `click` publishes PointStamped goals at the clicked voxel's x/y or the
+    click ray's intersection with the z=0 ground plane. `path` overlays the
+    planner's 2D route on that plane.
+    """
 
     kind: ClassVar[str] = "map3d"
     cloud: str = "global_map"
     pose: str | None = "odom"
+    path: str | None = field(default=None, kw_only=True)
+    click: str | None = field(default=None, kw_only=True)
     res: float = field(default=0.05, kw_only=True)
     max_hz: float = field(default=1.0, kw_only=True)
     pose_hz: float = field(default=20.0, kw_only=True)
@@ -440,8 +457,7 @@ class Map3D(Panel):
 
     def __post_init__(self) -> None:
         _check_stream("cloud", self.cloud)
-        if self.pose is not None:
-            _check_stream("pose", self.pose)
+        self._bound_streams("pose", "path", "click")
         _check_rate("res", self.res)
         _check_rate("max_hz", self.max_hz)
         _check_rate("pose_hz", self.pose_hz)
@@ -450,7 +466,7 @@ class Map3D(Panel):
         # Not a built-in bridge port, so the panel declares it (like Map2D's
         # path) and cockpit() generates the typed port. A late viewer gets the
         # last full map through the resend.
-        return (
+        channels = [
             Channel(
                 self.cloud,
                 PointCloud2,
@@ -460,7 +476,15 @@ class Map3D(Panel):
                 params={"res": self.res},
                 resend_on_subscribe=True,
             ),
-        )
+        ]
+        if self.path is not None:
+            channels.append(_path_channel(self.path))
+        if self.click is not None:
+            channels.append(_goal_channel(self.click))
+        return tuple(channels)
+
+    def _panel_params(self) -> dict[str, Any]:
+        return self._bound_streams("path", "click")
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         requests = [

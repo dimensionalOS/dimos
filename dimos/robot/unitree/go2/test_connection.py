@@ -28,6 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
+from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
@@ -211,6 +212,21 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     assert conn.odom.publish.call_count == 1
 
 
+def test_stop_disposes_stream_readers_before_closing_connection(connection, mocker) -> None:
+    conn = connection(publish_tf=False)
+    subscription = conn.register_disposable(Disposable())
+    disposed_at_close = []
+    mocker.patch.object(
+        conn.connection,
+        "stop",
+        side_effect=lambda: disposed_at_close.append(subscription.is_disposed),
+    )
+
+    conn.stop()
+
+    assert disposed_at_close == [True]
+
+
 class _StopLoopError(Exception):
     pass
 
@@ -227,7 +243,7 @@ def test_camera_info_is_restamped_on_each_publish(
         if conn.camera_info.publish.call_count >= 2:
             raise _StopLoopError
 
-    mocker.patch.object(go2_conn.time, "sleep", side_effect=sleep)
+    mocker.patch.object(conn._camera_info_stop, "wait", side_effect=sleep)
     before = time.time()
     with pytest.raises(_StopLoopError):
         conn.publish_camera_info()
@@ -236,6 +252,24 @@ def test_camera_info_is_restamped_on_each_publish(
     assert [info.ts >= before for info in published] == [True, True]
     assert [info.frame_id for info in published] == [conn.camera_info_static.frame_id] * 2
     assert conn.camera_info_static.ts == 1.0
+
+
+def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> None:
+    conn = connection(publish_tf=False)
+    published = threading.Event()
+    mocker.patch.object(conn.camera_info, "publish", side_effect=lambda _: published.set())
+    thread = threading.Thread(target=conn.publish_camera_info, daemon=True)
+    monkeypatch.setattr(conn, "_camera_info_thread", thread)
+    thread.start()
+    try:
+        assert published.wait(timeout=2)
+
+        conn.stop()
+
+        assert not thread.is_alive()
+    finally:
+        conn.stop()
+        thread.join(timeout=2)
 
 
 def test_odom_to_tf_prefixed() -> None:

@@ -43,6 +43,13 @@ import {
 
 const DEFAULT_UI_TICK_MS = 500;
 
+// Liveness: a ping on the control stream every interval, and the connection
+// is closed (so the transport reconnects) once this many pings in a row got
+// no pong. A dead relay is otherwise noticed only at the QUIC idle timeout
+// (15 s negotiated with the relay; Chromium alone sees the ICMP error).
+export const DEFAULT_PING_INTERVAL_MS = 3000;
+export const PING_MISSES = 2;
+
 // Local safety net over the relay's own 10 s publish timeout: a wedged-but-
 // alive transport must not leak pending promises forever.
 const PUBLISH_LOCAL_TIMEOUT_MS = 20_000;
@@ -68,6 +75,8 @@ export interface ConnectOptions {
   token?: string;
   /** Period of the UI snapshot tick that feeds subscribe() callbacks. */
   uiTickMs?: number;
+  /** Period of the liveness ping on the control stream. */
+  pingIntervalMs?: number;
 }
 
 /** A resolved publish: the bridge decoded the value and called the DimOS
@@ -245,6 +254,7 @@ class SessionImpl implements Session {
   #registry: DecoderRegistry;
   #token: string | undefined;
   #ticker: ReturnType<typeof setInterval>;
+  #pingIntervalMs: number;
   #closed = false;
 
   // Bumped per connection; data-plane writes from a previous connection's
@@ -331,6 +341,7 @@ class SessionImpl implements Session {
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
     this.#token = options.token;
+    this.#pingIntervalMs = options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
     this.#pinned = options.robot ?? null;
     this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
     const infoUrl = resolveInfoUrl(options.url);
@@ -712,6 +723,20 @@ class SessionImpl implements Session {
     });
     void this.#readUniStreams(wt, runId);
 
+    // After hello on the same ordered stream, so the relay is greeted by the
+    // time it reads the first ping.
+    let pingN = 0;
+    let unanswered = 0;
+    const pinger = setInterval(() => {
+      if (unanswered >= PING_MISSES) {
+        clearInterval(pinger);
+        wt.close(); // the transport sees the connection end and reconnects
+        return;
+      }
+      unanswered += 1;
+      void send({ t: "ping", n: ++pingN, ts: Date.now() / 1000 }).catch(() => {});
+    }, this.#pingIntervalMs);
+
     const reader = control.readable.getReader();
     const frames = new ControlFrameReader();
     try {
@@ -725,6 +750,9 @@ class SessionImpl implements Session {
               // now the transport may show "connected".
               this.transport.sessionReady();
               this.status.update({ lastError: null });
+              break;
+            case "pong":
+              unanswered = 0;
               break;
             case "robots":
               this.#applyWatchTarget(msg.robots);
@@ -838,7 +866,7 @@ class SessionImpl implements Session {
               break;
             }
             default:
-              // pong, robot-side messages: nothing to do
+              // robot-side messages: nothing to do
               break;
           }
         }
@@ -846,6 +874,7 @@ class SessionImpl implements Session {
     } catch {
       // control stream died with the connection; the transport reconnects
     } finally {
+      clearInterval(pinger);
       // This connection can never answer its publishes; the commands may
       // have been delivered before it died, so the outcome is unknown and
       // nothing is ever resent.

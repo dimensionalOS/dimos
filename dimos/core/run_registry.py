@@ -27,7 +27,10 @@ import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
-from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.coordination.process_lifecycle import (
+    is_pid_alive as is_pid_alive,
+    kill_run_processes,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -109,18 +112,6 @@ def blueprint_from_run_id(run_id: str) -> str | None:
     """
     m = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
     return m.group(1) if m else None
-
-
-def is_pid_alive(pid: int) -> bool:
-    """Check whether a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it — still alive.
-        return True
 
 
 def list_runs(alive_only: bool = True) -> list[RunEntry]:

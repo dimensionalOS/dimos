@@ -18,6 +18,12 @@ DEFAULT_MCP_PORT = 9990
 DEFAULT_MCP_TIMEOUT = 30
 DEFAULT_MCP_URL = f"http://localhost:{DEFAULT_MCP_PORT}/mcp"
 
+# `HumanMessage.additional_kwargs` key naming the tool a message on McpClient's
+# `agent` stream came from. A tool's image result is fed to the model as a user
+# turn (a tool response cannot carry images for OpenAI models), and chat UIs read
+# this key to render that turn as tool output rather than as typed input.
+TOOL_ORIGIN_KEY = "tool_origin"
+
 
 def mcp_url(host: str, port: int) -> str:
     """Convert a local server bind address into a dialable MCP URL."""

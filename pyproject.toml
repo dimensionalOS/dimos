@@ -22,11 +22,12 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["dimos*"]
+include = ["dimos*", "experimental.gateway*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
 exclude = [
+    "experimental.gateway.tests*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -52,6 +53,8 @@ exclude = [
     "robot/galaxea/r1pro/vendor_setup.sh",
 ]
 
+"experimental.gateway" = ["annotations.yaml"]
+
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures
 # and the native (C++/nix) build tree, which is built separately.
@@ -75,7 +78,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.14"
+version = "0.0.15"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10,<3.13"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -244,6 +247,7 @@ web = [
     "sse-starlette>=2.2.1",
     "starlette>=0.52",  # McpServer request/response types
     "uvicorn>=0.34.0",
+    "watchfiles>=1.0",  # the dimos gateway's file watchers
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
@@ -426,6 +430,8 @@ project-deps = [
 ]
 
 tests = [
+    "dimos-cdrgen==0.1.0",
+    "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
     "pytest-asyncio==1.4.0",
@@ -483,6 +489,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
+    "dimos-cdrgen==0.1.0",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -523,6 +530,7 @@ tests-self-hosted = [
     "dim-odom>=0.4.1",
 ]
 docs = [
+    "mkdocstrings[python]==1.0.7",
     "mkdocs-awesome-nav>=3.3.0",
     "mkdocs-glightbox>=0.5.2",
     "mkdocs-material>=9.7.7",
@@ -533,11 +541,14 @@ dev = [
     "optuna>=4.9.0",
 ]
 
+[tool.uv.dependency-groups]
+docs = {requires-python = ">=3.11"}
+
 [tool.uv]
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -697,7 +708,7 @@ exclude = [
 line-ending = "lf"
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252"]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252", "D405", "D416"]
 ignore = [
     # TODO: All of these should be fixed, but it's easier commit autofixes first
     "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
@@ -713,8 +724,12 @@ ignore = [
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
+"experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]
@@ -728,7 +743,7 @@ ban-relative-imports = "all"
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
-files = ["dimos/"]
+files = ["dimos/", "experimental/gateway/"]
 mypy_path = "stubs/"
 python_version = "3.12"
 incremental = true
@@ -830,7 +845,7 @@ module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
-testpaths = ["dimos"]
+testpaths = ["dimos", "experimental/gateway/tests"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",

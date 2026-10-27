@@ -25,7 +25,7 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
 from dimos.agents.mcp.mcp_client import McpClient
 
 
@@ -145,6 +145,32 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
 
     assert add_tool.func(x=2, y=3) == "5"
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
+
+
+def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: McpClient) -> None:
+    """An image cannot ride the tool response, so it follows as a HumanMessage
+    naming its tool, or chat UIs would show it as typed input."""
+    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
+
+    def image_payload(body: dict[str, object]) -> dict[str, object]:
+        if body["method"] != "tools/call":
+            return _mock_payload(body)
+        return {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [image]}}
+
+    mcp_client._http_client = _mock_session(image_payload)
+    greet_tool = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
+
+    reply = greet_tool.func(name="Alice")
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+
+    assert reply.startswith("Tool call started with UUID: ")
+    uuid_ = reply.removeprefix("Tool call started with UUID: ").split(".")[0]
+    assert isinstance(msg, HumanMessage)
+    assert msg.additional_kwargs[TOOL_ORIGIN_KEY] == "greet"
+    assert msg.content == [
+        {"type": "text", "text": f"This is the artefact for the 'greet' tool with UUID:={uuid_}."},
+        image,
+    ]
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:

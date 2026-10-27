@@ -50,7 +50,7 @@ sudo chown 1993:1993 /srv/dimos/docker/relay/config/auth.json
 sudo chmod 600 /srv/dimos/docker/relay/config/auth.json
 ```
 
-A robot id here has to match the robot's `--relaybridgemodule.robot-id` (its hostname when not given). Adding or rotating a secret is an edit plus `docker compose restart relay`. The relay refuses a malformed file with a message that names the entry, never the secret, and it never logs secrets.
+A robot id here has to match the robot's `--robot-id` (its hostname when not given). Adding or rotating a secret is an edit plus `docker compose restart relay`. The relay refuses a malformed file with a message that names the entry, never the secret, and it never logs secrets.
 
 ## Run
 
@@ -65,13 +65,13 @@ The first build takes a few minutes: Deno installs the web dependencies and buil
 
 ## Robot
 
-The robot needs the key bound to its id, from the environment or the `.env` file of the checkout it runs from (the `--relaybridgemodule.relay-key` flag exists but shows in the process list). The robot-side flags are listed on the [Bridge](/docs/web/bridge.md#robot-side-options) page:
+The robot needs the key bound to its id. A plain robot blueprint takes it from the environment or the `.env` file of the checkout it runs from (the `--relay-key` flag exists but shows in the process list). A blueprint with `cockpit(...)` has a generated bridge module name, so `RELAYBRIDGEMODULE__RELAY_KEY` does not reach it: give it `--relay-key` on the command line, as in [LAN without a domain](#lan-without-a-domain). The robot-side flags are listed on the [Bridge](/docs/web/bridge.md#robot-side-options) page:
 
 ```bash
-RELAYBRIDGEMODULE__RELAY_KEY=<key> dimos run unitree-go2 --relay-url https://dimos-relay.example.com --relaybridgemodule.robot-id go2-lab
+RELAYBRIDGEMODULE__RELAY_KEY=<key> dimos run unitree-go2 --relay-url https://dimos-relay.example.com --robot-id go2-lab
 ```
 
-It dials out, so it works behind NAT with no open ports. A wrong key is logged once as `auth_failed` and the bridge gives up rather than retrying: fix `RELAYBRIDGEMODULE__RELAY_KEY` and start again.
+It dials out, so it works behind NAT with no open ports. A wrong key is logged once as `auth_failed` and the bridge gives up rather than retrying: fix the key and start again.
 
 ## Operator
 
@@ -139,7 +139,7 @@ WantedBy=multi-user.target
 
 ## LAN without a domain
 
-On a LAN with no public name, sign your own certificate with mkcert. It creates a private CA and a certificate for the relay's address. The robot trusts the CA through `--relaybridgemodule.relay-ca`. The auth file stays mandatory: the relay binds a non-loopback address only with certificate, key, and auth file together. The image and the compose file are the same as on a VM. Only the certificate step changes. `192.168.1.20` below is the relay machine's LAN address.
+On a LAN with no public name, sign your own certificate with mkcert. It creates a private CA and a certificate for the relay's address. The robot trusts the CA through `--relay-ca`. The auth file stays mandatory: the relay binds a non-loopback address only with certificate, key, and auth file together. The image and the compose file are the same as on a VM. Only the certificate step changes. `192.168.1.20` below is the relay machine's LAN address.
 
 ```bash
 sudo apt install -y mkcert libnss3-tools
@@ -150,11 +150,11 @@ mkcert -cert-file docker/relay/config/fullchain.pem -key-file docker/relay/confi
 
 `libnss3-tools` is what lets `mkcert -install` add the CA to Firefox. Write `auth.json` as in [Auth file](#auth-file), give all three files to uid 1993 the same way, and start the relay as in [Run](#run).
 
-The robot needs the CA bundle: its QUIC client trusts certifi's roots, not the system store.
+The robot needs the CA bundle: its QUIC client trusts certifi's roots, not the system store. This blueprint has a `cockpit(...)` layout, so its key goes on the command line (see [Robot](#robot)).
 
 ```bash
-RELAYBRIDGEMODULE__RELAY_KEY=<key> uv run dimos --simulation run unitree-go2-agentic-cockpit --relay-url https://192.168.1.20 \
-  --relaybridgemodule.relay-ca "$(mkcert -CAROOT)/rootCA.pem" --relaybridgemodule.robot-id go2-lab
+uv run dimos --simulation run unitree-go2-agentic-cockpit --relay-url https://192.168.1.20 \
+  --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --relay-key <key> --robot-id go2-lab
 ```
 
 Browsers are the catch. Firefox trusts the certificate for the page but drops QUIC through a root that is not built in. In `about:config` set `network.http.http3.disable_when_third_party_roots_found` to `false` and restart Firefox. Then open `https://192.168.1.20/` and enter the viewer token. Chromium refuses a private root for QUIC by default (`QUIC_CERT_ROOT_NOT_KNOWN`): the page loads over HTTPS and never connects. Its `--webtransport-developer-mode` switch turns that check off, which is fine for a development machine. Anyone else on Chromium needs a publicly trusted certificate, which a domain you own provides without any inbound port: point a name at the LAN address and use certbot's DNS challenge (`certbot certonly --manual --preferred-challenges dns -d relay.lan.example.com`).
@@ -163,9 +163,9 @@ Without Docker, the command from [Without Docker](#without-docker) works with th
 
 ## Troubleshooting
 
-- **`auth_failed`.** The relay's message says `missing` (the client sent no secret: `RELAYBRIDGEMODULE__RELAY_KEY` not in the robot's environment, no token stored in the browser) or `invalid` (wrong secret, or a robot key used with another robot id). It is terminal: the bridge stops and the page shows the token form. Fix the secret and start the client again. The relay log names the rejected robot id or viewer.
+- **`auth_failed`.** The relay's message says `missing` (the client sent no secret: the robot started without `--relay-key` or `RELAYBRIDGEMODULE__RELAY_KEY`, no token stored in the browser) or `invalid` (wrong secret, or a robot key used with another robot id). It is terminal: the bridge stops and the page shows the token form. Fix the secret and start the client again. The relay log names the rejected robot id or viewer.
 - **`accept failed: aborted by peer: the application or application protocol caused the connection to be closed during the handshake`**, repeating every 8 s, with no `viewer N authenticated` line. A browser is retrying and closing the connection itself after the TLS check: with a private CA, Firefox without the `about:config` pref from [LAN without a domain](#lan-without-a-domain), or Chromium. The page shows "Waiting for a robot to register..." meanwhile, which also covers a page still connecting. The status bar shows the real state. The robot and `/api/stats` are unaffected.
-- **Certificate errors.** Check the VM clock (`timedatectl`). The robot fails with `CERTIFICATE_VERIFY_FAILED` when the relay serves `cert.pem` instead of `fullchain.pem` (browsers fetch the missing intermediate, OpenSSL does not) or when `--relaybridgemodule.relay-ca` points at the wrong CA.
+- **Certificate errors.** Check the VM clock (`timedatectl`). The robot fails with `CERTIFICATE_VERIFY_FAILED` when the relay serves `cert.pem` instead of `fullchain.pem` (browsers fetch the missing intermediate, OpenSSL does not) or when `--relay-ca` points at the wrong CA.
 - **UDP 443 blocked.** HTTPS works, the page loads and stays "reconnecting", the robot's startup attempts time out (`relay startup connection attempt N failed`) and it gives up. Check both firewalls for UDP. `sudo ss -ulnp | grep 443` on the VM shows the published UDP port.
 - **Robot behind NAT.** Fine: it dials out, and the QUIC session sends keepalives every 4 s.
 - **Relay behind NAT** (a home server). Forward TCP 443 and UDP 443 to it. `/api/info` advertises the name the client dialed, so nothing else changes.
@@ -181,5 +181,5 @@ What a hosted relay is verified with. Repeat it after changes to the relay, the 
 - [ ] `docker compose restart relay` with the page open: the page reconnects, the robot re-registers.
 - [ ] The deploy hook by hand: the relay restarts with the installed files, and `sudo certbot renew --dry-run` passes.
 - [ ] `/api/stats`: 401 without the token, 200 with it.
-- [ ] The LAN recipe: the robot registers with `--relaybridgemodule.relay-ca`, Firefox with the pref connects, Chromium without its developer switch loads the page and never connects.
+- [ ] The LAN recipe: the robot registers with `--relay-ca`, Firefox with the pref connects, Chromium without its developer switch loads the page and never connects.
 - [ ] [Video through Cloudflare](#video-through-cloudflare) with `rtc.json` installed: the video panel plays a WebRTC track in Chromium and Firefox (`/api/stats` shows one `rtc.pulls` per viewer, zero `color_image` frames through the relay), and a robot without aiortc stays on JPEG.

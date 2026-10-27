@@ -37,7 +37,10 @@ unitree_go2_agentic_cockpit = (
         unitree_go2_agentic,
         cockpit(
             layout=Row(
-                Col(Video("color_image", title="Front camera"), Map3D(title="Map 3D")),
+                Col(
+                    Video("color_image", title="Front camera"),
+                    Map3D(path="path", click="clicked_point", title="Map 3D"),
+                ),
                 Col(
                     Map2D(path="path", click="clicked_point", stop="stop_movement", title="Map"),
                     Teleop(title="Keyboard teleop"),

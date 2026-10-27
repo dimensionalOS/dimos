@@ -52,11 +52,12 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -287,7 +288,6 @@ class Config(ModuleConfig):
     # Topic names without the `dimos/` prefix; empty means every topic.
     # On zenoh an unlisted topic never crosses the link, unlike `visual_override: None`.
     topics: list[str] = field(default_factory=list)
-
     entity_prefix: str = "world"
     # Length of the triads to draw
     tf_axes: float = 0.0
@@ -438,9 +438,8 @@ class RerunBridgeModule(Module):
         if isinstance(raw, str):
             topic_str = raw
         topic_str = topic_str.split("#")[0]
-        # Strip Zenoh key prefix (dimos/) to match LCM entity paths
-        if topic_str.startswith("dimos/"):
-            topic_str = "/" + topic_str.removeprefix("dimos/")
+        # Strip the zenoh key prefix (dimos/ or dimos-domains/<domain>/) to match LCM entity paths
+        topic_str = KEY_PREFIX.sub("/", topic_str)
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
@@ -616,10 +615,8 @@ class RerunBridgeModule(Module):
             return pubsub.subscribe_all(self._on_message)
 
         # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
-        unsubs = [
-            pubsub.subscribe(ZenohTopic(f"dimos/{name.strip('/')}/*"), self._on_message)  # type: ignore[arg-type]
-            for name in self.config.topics
-        ]
+        keys = [f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics]
+        unsubs = [pubsub.subscribe(ZenohTopic(key), self._on_message) for key in keys]  # type: ignore[arg-type]
         logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
 
         def unsubscribe() -> None:

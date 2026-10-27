@@ -25,7 +25,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.embodiment.go2 import GO2
 
 
 class LocalPlannerNativeConfig(NativeModuleConfig):
@@ -37,7 +36,7 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
 
     # Every field crosses to rust verbatim and rust has no defaults, so a field missing
     # here fails startup.
-    embodiment: Embodiment = GO2
+    embodiment: Embodiment
     # Grows (negative: shrinks) every planning box per side; the hard margin stays the embodiment's precision floor.
     body_dilate_m: float = 0.0
     # Price multiplier per meter over lattice cells the cloud saw no floor under; <= 1 turns it off.

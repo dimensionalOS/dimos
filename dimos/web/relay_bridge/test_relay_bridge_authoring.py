@@ -506,7 +506,9 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -
             if len(sent) == 3:
                 drained.set()
 
-        pacer = pacing.PacedSender(loop, 0.02, send)
+        warnings: list[str] = []
+        monkeypatch.setattr(pacing.logger, "warning", warnings.append)
+        pacer = pacing.PacedSender(loop, 0.02, send, name="agent")
         try:
             for i in range(3):
                 pacer(bytes([i]), None, None)
@@ -521,6 +523,8 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -
                 for i in range(pacing._PACED_QUEUE_MAX + 10):
                     pacer(bytes([i % 256]), None, None)
                 assert pacer.dropped == 9
+                # The drops are logged, throttled to one line per interval.
+                assert len(warnings) == 1 and "paced channel agent" in warnings[0]
                 pacer.close()
                 clock.setattr(loop, "time", lambda: sent[2][1] + 2.0)
                 # Let any uncancelled timer run after its deadline.
