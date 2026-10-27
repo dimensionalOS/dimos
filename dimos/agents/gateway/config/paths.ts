@@ -7,6 +7,8 @@ export type AgentPaths = {
   readonly configDir: string;
   readonly authFile: string;
   readonly configFile: string;
+  /** Optional provider overrides in pi's models.json format, such as a base URL. */
+  readonly modelsFile: string;
   /** Skills the user adds; the catalog lists them after the bundled ones. */
   readonly userSkillsDir: string;
   /** `~/.local/state/dimos/agent/`. */
@@ -33,6 +35,7 @@ export function agentPaths(env: NodeJS.ProcessEnv): AgentPaths {
     configDir,
     authFile: join(configDir, "auth.json"),
     configFile: join(configDir, "config.json"),
+    modelsFile: join(configDir, "models.json"),
     userSkillsDir: join(configDir, "skills"),
     stateDir,
     storeFile: join(stateDir, "agent.sqlite"),

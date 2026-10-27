@@ -128,6 +128,7 @@ A running gateway keeps the build it started with. After a rebuild, `dimos agent
 | Path | Owner | Contents |
 |---|---|---|
 | `~/.config/dimos/agent/` | gateway | `auth.json` and `config.json`, copied once from `~/.dimcode` when it exists |
+| `~/.config/dimos/agent/models.json` | you | Optional provider overrides in pi's `models.json` format, such as a base URL |
 | `~/.config/dimos/agent/skills/` | you | Your own skills, one `NAME/SKILL.md` each. The agent lists them after the bundled ones in `dimos/agents/harness/skills/`. |
 | `~/.config/systemd/user/dimos-agent.service` | `dimos agent service install` | The service unit |
 | `~/.local/state/dimos/agent/agent.sqlite` | gateway | Conversations, entries, tasks, submissions and documents, including jobs and the event and trajectory positions |
