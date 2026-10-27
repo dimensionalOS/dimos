@@ -786,18 +786,35 @@ impl ClosureSearch {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
-        // ends' relative position than that (along the odometry, or across one kept closure), the closure adds only
-        // ICP's noise, and repeats of a closure already kept would count the same evidence twice
+        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
+        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
+        // kept would count the same evidence twice
         let odometry_step = self.mean_step_xy_variance * diag.odometry_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let known = self
-            .kept_closures
-            .iter()
-            .fold(step(cur_idx, target_idx), |known, l| {
-                let via =
-                    |a: usize, b: usize| step(target_idx, a) + l.variances[3] + step(cur_idx, b);
-                known.min(via(l.from, l.to)).min(via(l.to, l.from))
-            });
+        let known = if self.config.odom_noise_per_motion
+            && diag
+                .innovation_covariance
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite())
+        {
+            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
+            // closures included): the closure adds something only where it is surer than the graph in some direction.
+            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
+            mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
+        } else {
+            self.kept_closures
+                .iter()
+                .fold(step(cur_idx, target_idx), |known, l| {
+                    let via = |a: usize, b: usize| {
+                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
+                    };
+                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
+                })
+        };
         if icp.fitness * diag.closure_noise_scale >= known {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
