@@ -28,7 +28,10 @@ from dimos.manipulation.planning.gripper_contact import GraspContactChecker, sce
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
 from dimos.utils.transform_utils import matrix_to_pose
 
 CONTACT_MARGIN = 0.005
@@ -173,6 +176,25 @@ def test_xarm_rejects_the_table_and_a_neighbour(
     assert _clear(xarm_open, low, short_box)
     assert not _clear(xarm_open, low, short_box, BOX_TABLE)
     assert not _clear(xarm, _top_down(0.0, 0.0, 0.03), BOX, BOX_TABLE, neighbour)
+
+
+@pytest.mark.self_hosted
+def test_xarm_depth_search_slides_a_grasp_down_onto_the_box(xarm: GraspContactChecker) -> None:
+    # The fingertips 2 cm above the box's top: the fingers close on nothing.
+    high = GraspCandidateArray(Header("world"), [GraspCandidate(_top_down(0.0, 0.0, 0.07))])
+    target, table = _cloud(*BOX), _cloud(*BOX_TABLE)
+
+    def kept(depth_search: float) -> list[GraspCandidate]:
+        return xarm.keep_clear(
+            high, target, table, [], CONTACT_MARGIN, OBSTACLE_MARGIN, None, depth_search
+        ).candidates
+
+    assert kept(0.0) == []
+    [slid] = kept(0.05)
+    assert 0.03 <= slid.pose.position.z < 0.07
+    assert slid.pose.orientation.to_numpy() == pytest.approx(
+        high.candidates[0].pose.orientation.to_numpy()
+    )
 
 
 def test_gripper_config_steps_from_open_to_closed() -> None:
