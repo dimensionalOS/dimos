@@ -500,6 +500,11 @@ pub struct GscPgo {
     pub(crate) new_closure: bool,
     /// Committed closures a solve has been started for.
     pub(crate) closures_dispatched: usize,
+    /// World-frame position fixes (`add_world_position`): time, frame id, sensor offset in the body frame, position,
+    /// covariance; how many a solve has been started for; and the newest solve's map -> frame alignments.
+    pub(crate) world_positions: Vec<(f64, u32, Vec3, Vec3, Mat3)>,
+    pub(crate) world_positions_dispatched: usize,
+    pub(crate) world_alignment: Vec<(u32, f64, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.

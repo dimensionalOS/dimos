@@ -162,6 +162,45 @@ struct Args {
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
     /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
     live: bool,
+    /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_world_position`), a CSV with one
+    /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
+    /// (x, y, z). Lockstep replay only.
+    world_positions: Option<PathBuf>,
+}
+
+/// The fixes of a `--world-positions` file, in time order.
+fn read_world_positions(
+    path: &PathBuf,
+) -> Result<Vec<(f64, u32, [f64; 3], [f64; 3], [[f64; 3]; 3])>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut fixes = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        let v: Vec<f64> = line
+            .split(',')
+            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
+            .collect::<Result<_, _>>()?;
+        if v.len() != 17 {
+            return Err(format!(
+                "{line}: needs 17 values (time, frame, xyz, 3x3 covariance, lever xyz)"
+            ));
+        }
+        fixes.push((
+            v[0],
+            v[1] as u32,
+            [v[14], v[15], v[16]],
+            [v[2], v[3], v[4]],
+            [
+                [v[5], v[6], v[7]],
+                [v[8], v[9], v[10]],
+                [v[11], v[12], v[13]],
+            ],
+        ));
+    }
+    fixes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(fixes)
 }
 
 fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
@@ -186,6 +225,7 @@ fn parse_args() -> Result<Args, String> {
     let mut event_dump = None;
     let mut odom_scale = 1.0;
     let mut live = false;
+    let mut world_positions = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -202,6 +242,7 @@ fn parse_args() -> Result<Args, String> {
             "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
+            "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -218,6 +259,7 @@ fn parse_args() -> Result<Args, String> {
         event_dump,
         odom_scale,
         live,
+        world_positions,
     })
 }
 
@@ -486,10 +528,21 @@ fn run() -> Result<(), String> {
         feed_error?;
     } else {
         // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
+        let fixes = match &args.world_positions {
+            Some(path) => read_world_positions(path)?,
+            None => Vec::new(),
+        };
+        let mut next_fix = 0;
         for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
             let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                 return Ok(());
             };
+            // the fixes up to this scan's time, as the module would have received them
+            while next_fix < fixes.len() && fixes[next_fix].0 <= ts {
+                let (time, frame, lever, position, covariance) = fixes[next_fix];
+                pgo.add_world_position(time, frame, lever, position, covariance);
+                next_fix += 1;
+            }
             let step_started = Instant::now();
             if !recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
                 return Ok(());

@@ -1162,17 +1162,82 @@ impl GscPgo {
     fn adopt(&mut self, ready: bool) -> bool {
         self.new_closure = false;
         let moved = ready && self.apply_solve();
-        if self.solving.is_none() && self.committed_closures.len() > self.closures_dispatched {
+        if self.solving.is_none() && self.unsolved() {
             self.dispatch_solve();
         }
         moved
+    }
+    /// Whether a closure or a world position arrived after the newest solve started.
+    fn unsolved(&self) -> bool {
+        self.committed_closures.len() > self.closures_dispatched
+            || self.world_positions.len() > self.world_positions_dispatched
+    }
+    /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
+    /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
+    /// keyframe nearest in time (`solve_with_priors`).
+    pub fn add_world_position(
+        &mut self,
+        time: f64,
+        frame: u32,
+        lever: Vec3,
+        position: Vec3,
+        covariance: Mat3,
+    ) {
+        self.world_positions
+            .push((time, frame, lever, position, covariance));
+    }
+    /// The newest solve's map -> frame alignments (frame id, yaw about z, translation), one per world frame its
+    /// positions made observable.
+    pub fn world_alignment(&self) -> &[(u32, f64, Vec3)] {
+        &self.world_alignment
+    }
+    /// Each world position as a prior on the keyframe nearest its time, its covariance grown by how far the body moves in
+    /// that time gap (the keyframes' own speed there, squared, in each horizontal axis and up); fixes before the first or
+    /// after the last keyframe are left for later.
+    fn position_priors(&self) -> Vec<PositionPrior> {
+        let n = self.key_poses.len();
+        if n < 2 {
+            return Vec::new();
+        }
+        let times: Vec<f64> = self.key_poses.iter().map(|k| k.time).collect();
+        self.world_positions
+            .iter()
+            .filter_map(|&(time, frame, lever, world, covariance)| {
+                if time < times[0] || time > times[n - 1] {
+                    return None;
+                }
+                let after = times.partition_point(|&t| t < time).clamp(1, n - 1);
+                let keyframe = if time - times[after - 1] <= times[after] - time {
+                    after - 1
+                } else {
+                    after
+                };
+                let gap = (times[after] - times[after - 1]).max(f64::EPSILON);
+                let speed = mat3::norm(&mat3::sub(
+                    &self.key_poses[after].translation_local,
+                    &self.key_poses[after - 1].translation_local,
+                )) / gap;
+                let moved = (speed * (time - times[keyframe]).abs()).powi(2);
+                let mut grown = covariance;
+                for (axis, row) in grown.iter_mut().enumerate() {
+                    row[axis] += moved;
+                }
+                Some(PositionPrior {
+                    keyframe,
+                    frame,
+                    lever,
+                    world,
+                    covariance: grown,
+                })
+            })
+            .collect()
     }
     /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
         let mut moved = false;
         loop {
             moved |= self.apply_solve();
-            if self.committed_closures.len() == self.closures_dispatched {
+            if !self.unsolved() {
                 return moved;
             }
             self.dispatch_solve();
@@ -1207,6 +1272,7 @@ impl GscPgo {
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
         let odometry = odometry_edges(&self.key_poses, config);
+        let priors = self.position_priors();
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
@@ -1222,14 +1288,26 @@ impl GscPgo {
             .name("gsc-pose-graph".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let solution = solve(
-                    &rotations,
-                    &positions,
-                    &free,
-                    &odometry,
-                    &closures,
-                    &solve_config,
-                );
+                let solution = if priors.is_empty() {
+                    solve(
+                        &rotations,
+                        &positions,
+                        &free,
+                        &odometry,
+                        &closures,
+                        &solve_config,
+                    )
+                } else {
+                    solve_with_priors(
+                        &rotations,
+                        &positions,
+                        &free,
+                        &odometry,
+                        &closures,
+                        &priors,
+                        &solve_config,
+                    )
+                };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
@@ -1238,6 +1316,7 @@ impl GscPgo {
             })
             .expect("spawn pose graph thread");
         self.closures_dispatched = self.committed_closures.len();
+        self.world_positions_dispatched = self.world_positions.len();
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -1251,6 +1330,9 @@ impl GscPgo {
         };
         let (solution, seconds) = solving.handle.join().expect("pose graph solve panicked");
         self.timing.solve_s += seconds;
+        if !solution.world_alignment.is_empty() {
+            self.world_alignment = solution.world_alignment.clone();
+        }
         let n = solving.keyframes;
         self.solved_relative_covariance =
             Some((n - 1, solution.relative_position_covariance.clone()))
