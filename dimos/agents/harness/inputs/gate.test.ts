@@ -119,7 +119,7 @@ test("withdrawing the queue hands back every queued user text in one commit and 
 
   const publications: CommitPublication[] = [];
   const unsubscribe = harness.subscribeCommits((publication) => publications.push(publication));
-  const withdrawn = await inputs.withdrawUser(id, "withdraw", null, context);
+  const withdrawn = await inputs.withdrawUser(id, "withdraw", "keep", context);
   unsubscribe();
 
   assert.equal(long.length, 2_603, "longer than the 2,000 characters an input keeps");
@@ -152,16 +152,17 @@ test("withdrawing the queue hands back every queued user text in one commit and 
   );
   assert.equal((await inputs.submit(id, typed("queued since", "followUp"), context)).kind, "submitted");
   assert.deepEqual(
-    await inputs.withdrawUser(id, "withdraw", run.taskId, context),
+    await inputs.withdrawUser(id, "withdraw", "abort", context),
     withdrawn,
-    "a repeated request answers with its first withdrawal and names no run started since",
+    "a repeated request answers with its first withdrawal",
   );
-  assert.deepEqual((await inputs.withdrawUser(id, "withdraw again", null, context)).texts, [
-    { mode: "followUp", text: "queued since" },
-  ]);
+  assert.deepEqual(await inputs.withdrawUser(id, "abort", "abort", context), {
+    texts: [{ mode: "followUp", text: "queued since" }],
+    aborts: run.taskId,
+  });
   assert.deepEqual(
-    (await inputs.withdrawUser(id, "withdraw last", null, context)).texts,
-    [],
+    await inputs.withdrawUser(id, "withdraw last", "keep", context),
+    { texts: [], aborts: null },
     "nothing of the user's is left",
   );
 
