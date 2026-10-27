@@ -240,6 +240,13 @@ class ControlCoordinator(Module):
         # command ports by kind. Filled on start; guarded by _hardware_lock.
         self._connections: dict[str, ConnectionSource] = {}
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
+        # While set, robots behind connection modules are sent nothing.
+        # Guarded by _hardware_lock.
+        self._estopped = False
+        # While set, a task added is emergency-stopped too. Guarded by _task_lock.
+        self._tasks_estopped = False
+        # Held through each set_estop, so a stop and a clear never overlap.
+        self._estop_lock = threading.Lock()
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -448,6 +455,8 @@ class ControlCoordinator(Module):
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
         which holds ``_hardware_lock``."""
+        if self._estopped:
+            return
         ports = self._command_ports[robot]
         for out in self._connections[robot].command_messages(values, time.time()):
             ports[out.port].publish(out.message)
@@ -623,6 +632,10 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if self._tasks_estopped:
+                handler = getattr(task, "set_estop", None)
+                if callable(handler):
+                    handler(True)
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
@@ -844,17 +857,42 @@ class ControlCoordinator(Module):
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
-        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
-        inert so the tick loop stops commanding the hardware within one tick.
-        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
-        if estopped:
-            logger.warning("E-STOP latched at coordinator")
+        """Emergency-stop every task and robot this coordinator drives, or clear the stop.
+
+        Stopping makes tasks inert and sends nothing more to robots behind
+        connection modules; those robots are halted by their own deadman within
+        its timeout once commands stop. Hardware adapters keep the last value
+        they were given. Clearing makes tasks live and commands each robot once
+        it reports again, held where that reading has it. Calls run one at a time.
+
+        Args:
+            estopped: True to stop, False to clear.
+        """
+        with self._estop_lock:
+            if estopped:
+                logger.warning("E-STOP latched at coordinator")
+                # The tick loop sends while holding this lock, so a tick
+                # already sending finishes first, and none sends after.
+                with self._hardware_lock:
+                    self._estopped = True
+                self._set_tasks_estop(True)
+            else:
+                self._set_tasks_estop(False)
+                with self._hardware_lock:
+                    for connection in self._connections.values():
+                        connection.drop_holds()
+                    self._estopped = False
+                logger.warning("E-STOP cleared at coordinator")
+        return True
+
+    def _set_tasks_estop(self, estopped: bool) -> None:
+        """Call ``set_estop(estopped)`` on every task that has it, and on tasks added later."""
         with self._task_lock:
+            self._tasks_estopped = estopped
             for task in self._tasks.values():
                 handler = getattr(task, "set_estop", None)
                 if callable(handler):
                     handler(estopped)
-        return True
 
     @rpc
     def set_activated(self, engaged: bool) -> None:

@@ -268,6 +268,24 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
     assert source.command({}, None)[f"{J1}/position"] == 0.8
 
 
+def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
+    source = arm_at(0.3, 0.0)
+    source.command({J1: 0.5}, ControlMode.POSITION)
+    # Halted short of where it was told to go.
+    source.on_message("joint_state", reading(0.4, 0.0))
+
+    source.drop_holds()
+
+    # The last reading may predate the halt, so it waits for a whole new one.
+    assert not source.ready_for_control()
+    assert source.read_joints().joint_positions[J1] == 0.4
+    source.on_message("joint_state", reading(0.42))
+    assert not source.ready_for_control()
+    source.on_message("joint_state", reading(0.42, 0.0))
+    assert source.ready_for_control()
+    assert source.command({}, None)[f"{J1}/position"] == 0.42
+
+
 def test_a_robot_it_cannot_drive_is_refused() -> None:
     with pytest.raises(ValueError, match="reports nothing"):
         arm(readings=())

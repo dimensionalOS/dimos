@@ -264,9 +264,11 @@ class ConnectionSource:
         self._received_at = 0.0
         # When the last reading arrived, by time.monotonic().
         self._freshness = Freshness()
-        # Readings came back after stopping for longer than the timeout. The
-        # tick loop drops the holds when it sees this.
+        # Readings came back after stopping for longer than the timeout, or
+        # after drop_holds. The tick loop drops the holds when it sees this.
         self._resumed = False
+        # Set by drop_holds: the next reading starts afresh, as after a silence.
+        self._restart = False
         # Joint name -> the position it is held at. Only the tick loop touches it.
         self._holds: dict[str, float] = {}
         self._last_warned = float("-inf")
@@ -324,11 +326,12 @@ class ConnectionSource:
         with self._lock:
             latest, reported = self._latest, self._reported
             last = self._freshness.last_receipt
-            if last is not None and now - last > self._timeout:
-                # Back after a silence: wait for a whole new reading, and take
-                # the holds again from it.
+            if self._restart or (last is not None and now - last > self._timeout):
+                # Back after a silence, or holds dropped: wait for a whole new
+                # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._resumed = True
+                self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
             if port not in reported and all(
@@ -339,6 +342,13 @@ class ConnectionSource:
             self._latest, self._reported = latest, reported
             self._received_at = time.time()
             self._freshness.mark(now)
+
+    def drop_holds(self) -> None:
+        """Send nothing until the robot reports again, then hold each joint
+        where that new reading has it, not where it was last told to be."""
+        with self._lock:
+            self._reported = frozenset()
+            self._restart = True
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether a command can be sent: every reading port has reported (a

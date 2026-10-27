@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the coordinator driving robots through connection modules.
+"""Tests for the coordinator driving robots through connection modules, and
+emergency-stopping them.
 
 The first group runs in-process: readings are fed straight into the
-coordinator's per-robot ports, and the tick loop is stepped by hand, one
-tick at a time.
+coordinator's per-robot ports, or come from a ``FakeArm`` in the same
+process, and the tick loop is stepped by hand, one tick at a time.
 
-The last two run end to end, with ``FakeArm`` and ``FakeBase`` in real
+The last three run end to end, with ``FakeArm`` and ``FakeBase`` in real
 worker processes.
 """
 
@@ -233,6 +234,22 @@ class SendsPositions(BaseControlTask):
         pass
 
 
+class StopsOnEstop(SendsPositions):
+    """``SendsPositions`` that is inert while emergency-stopped. ``estops``
+    lists what each ``set_estop`` call was told, in order."""
+
+    def __init__(self, positions: dict[str, float]) -> None:
+        super().__init__(positions)
+        self._name = "stops_on_estop"
+        self.estops: list[bool] = []
+
+    def is_active(self) -> bool:
+        return not self.estops or not self.estops[-1]
+
+    def set_estop(self, estopped: bool) -> None:
+        self.estops.append(estopped)
+
+
 class Rig:
     """A started coordinator whose tick loop only moves when ``tick`` is called."""
 
@@ -244,15 +261,42 @@ class Rig:
                 self.readings[name] = LocalTransport()
                 coordinator.set_transport(name, self.readings[name])  # type: ignore[arg-type]
         self.sent: list[tuple[str, Any]] = []
+        self.commands: dict[str, Recorder] = {}
         for name in coordinator.outputs:
             if name.startswith(("mock_", "go2_")):
-                coordinator.set_transport(name, Recorder(name, self.sent))  # type: ignore[arg-type]
+                self.commands[name] = Recorder(name, self.sent)
+                coordinator.set_transport(name, self.commands[name])  # type: ignore[arg-type]
+        self.arms: list[FakeArm] = []
         coordinator.start()
         assert coordinator._tick_loop is not None
         self.tick = coordinator._tick_loop._tick
 
+    def attach_arm(self) -> FakeArm:
+        """Start a ``FakeArm`` in this process, on the coordinator's "mock" ports."""
+        arm = FakeArm()
+        arm.set_transport("position_command", self.commands["mock_position_command"])  # type: ignore[arg-type]
+        arm.set_transport("joint_state", self.readings["mock_joint_state"])  # type: ignore[arg-type]
+        arm.start()
+        self.arms.append(arm)
+        return arm
+
+    def tick_until(self, condition: Callable[[], bool], timeout_s: float = 2.0) -> bool:
+        """Tick every 10 ms, as the tick loop does, until ``condition`` holds."""
+        deadline = time.monotonic() + timeout_s
+        while not condition():
+            if time.monotonic() > deadline:
+                return False
+            self.tick()
+            time.sleep(0.01)
+        return True
+
     def report(self, port: str, msg: Any) -> None:
         self.readings[port].publish(msg)
+
+    def report_base(self) -> None:
+        """The fake base, standing at the origin."""
+        origin = {"go2/base/x": 0.0, "go2/base/y": 0.0, "go2/base/yaw": 0.0}
+        self.report("go2_odom", pose_from_values(origin, "go2/base", frame_id="odom"))
 
     def report_arm(self, *positions: float) -> None:
         """The fake arm's joint positions, joint1 first, standing still."""
@@ -273,12 +317,17 @@ class Rig:
 def rig(mocker: Any) -> Iterator[Callable[..., Rig]]:
     mocker.patch.object(TickLoop, "start")
     made: list[ControlCoordinator] = []
+    rigs: list[Rig] = []
 
     def build(cls: type[ControlCoordinator] = Robots, **config: Any) -> Rig:
         made.append(cls(**{"model": MOCK_MODEL, **config}))
-        return Rig(made[-1])
+        rigs.append(Rig(made[-1]))
+        return rigs[-1]
 
     yield build
+    for r in rigs:
+        for arm in r.arms:
+            arm.stop()
     for each in made:
         each.stop()
 
@@ -413,6 +462,113 @@ def test_a_robot_that_never_reports_is_logged_once_and_never_commanded(
     assert r.sent == []
 
 
+def test_an_estop_sends_nothing_more_and_the_deadman_halts_the_robot(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig()
+    arm = r.attach_arm()
+    assert r.tick_until(lambda: len(arm.writes) > 0)
+    r.report_base()
+    r.tick()
+    assert r.sent[-1][0] == "go2_cmd_vel"
+    halts, sent = arm.halts, len(r.sent)
+
+    assert r.coordinator.set_estop(True)
+
+    # Ticking on sends neither robot anything, so the arm's deadman halts it.
+    r.report_base()
+    assert r.tick_until(lambda: arm.halts > halts)
+    assert len(r.sent) == sent
+
+
+def test_a_task_added_during_an_estop_starts_stopped(rig: Callable[..., Rig]) -> None:
+    r = rig(ArmCoordinator)
+    r.coordinator.set_estop(True)
+
+    task = StopsOnEstop({"mock/joint1": 0.5})
+    r.coordinator.add_task(task)
+    r.report_arm(*AT_REST)
+    r.tick()
+
+    assert task.estops == [True]
+    assert r.sent == []
+    r.coordinator.set_estop(False)
+    r.report_arm(*AT_REST)
+    r.tick()
+    assert task.estops == [True, False]
+    assert r.positions_sent() == [[0.5, *AT_REST[1:]]]
+
+
+def test_clearing_an_estop_holds_each_joint_where_the_next_reading_has_it(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(ArmCoordinator)
+    task = SendsPositions({"mock/joint1": 0.5})
+    r.coordinator.add_task(task)
+    r.report_arm(0.3, *AT_REST[1:])
+    r.tick()
+    assert r.positions_sent() == [[0.5, *AT_REST[1:]]]
+
+    r.coordinator.set_estop(True)
+    # SendsPositions has no set_estop; take it away so nothing drives the arm.
+    r.coordinator.remove_task(task.name)
+    # Halted short of where it was told to go.
+    r.report_arm(0.4, *AT_REST[1:])
+    r.tick()
+    assert len(r.sent) == 1
+
+    assert r.coordinator.set_estop(False)
+    # The last reading may predate the halt: nothing is sent until the next.
+    r.tick()
+    assert len(r.sent) == 1
+    r.report_arm(0.41, *AT_REST[1:])
+    r.tick()
+
+    assert r.positions_sent()[-1] == [0.41, *AT_REST[1:]]
+
+
+def test_an_estop_waits_for_a_tick_already_sending_and_a_clear_waits_for_the_stop(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(ArmCoordinator)
+    task = StopsOnEstop({"mock/joint1": 0.5})
+    r.coordinator.add_task(task)
+    r.report_arm(*AT_REST)
+    sending, release = threading.Event(), threading.Event()
+
+    def held_up(msg: Any) -> None:
+        sending.set()
+        release.wait(5.0)
+
+    r.commands["mock_position_command"].subscribe(held_up)
+    results: dict[str, Any] = {}
+
+    def in_thread(name: str, call: Callable[[], Any]) -> threading.Thread:
+        thread = threading.Thread(target=lambda: results.update({name: call()}))
+        thread.start()
+        return thread
+
+    ticking = in_thread("tick", r.tick)
+    assert sending.wait(2.0)
+    stopping = in_thread("stop", lambda: r.coordinator.set_estop(True))
+    time.sleep(0.05)
+    clearing = in_thread("clear", lambda: r.coordinator.set_estop(False))
+    time.sleep(0.05)
+
+    # The stop waits for the tick to finish sending, and the clear for the stop.
+    assert results == {}
+    assert task.estops == []
+
+    release.set()
+    for thread in (ticking, stopping, clearing):
+        thread.join(2.0)
+    assert results == {"tick": None, "stop": True, "clear": True}
+    assert task.estops == [True, False]
+    r.report_arm(*AT_REST)
+    r.tick()
+    assert len(r.positions_sent()) == 2
+
+
 # End to end, in real worker processes.
 
 TARGET = [0.2, -0.1, 0.3, 0.0, 0.1, -0.2, 0.25]
@@ -497,3 +653,24 @@ def test_a_restarted_connection_module_is_held_where_it_now_is(system: ModuleCoo
     assert wait_until(lambda: arm.status().last_command_time is not None)
     time.sleep(0.3)
     assert positions(system) == AT_REST
+
+
+def test_an_estop_leaves_the_fake_robots_to_their_deadmen_and_a_clear_drives_them_again(
+    system: ModuleCoordinator,
+) -> None:
+    drive_to_target(system)
+    coordinator = system.get_instance(Robots)
+    arm = system.get_instance(FakeArm)
+    base = system.get_instance(FakeBase)
+
+    assert coordinator.set_estop(True)
+
+    assert wait_until(lambda: arm.status().deadman_fired and base.status().deadman_fired)
+    last_command = arm.status().last_command_time
+    time.sleep(0.3)
+    assert arm.status().last_command_time == last_command
+
+    assert coordinator.set_estop(False)
+
+    assert wait_until(lambda: not arm.status().deadman_fired and not base.status().deadman_fired)
+    assert positions(system) == pytest.approx(TARGET, abs=1e-6)
