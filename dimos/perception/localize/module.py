@@ -41,8 +41,10 @@ import threading
 import time
 from typing import Any, Literal
 
+import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -60,7 +62,7 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.localize.association import Groups
+from dimos.perception.localize.association import M_CX, M_CZ, M_KX, M_KZ, M_SCORE, M_TS, Groups
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
@@ -279,6 +281,8 @@ class PerceptionLocalize(Module):
             groups=self._groups,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        # The thresholds this call used, to report against a near-miss.
+        tuning = self.detector.shifted(self.config.params, overrides)
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
@@ -286,15 +290,75 @@ class PerceptionLocalize(Module):
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
-                lines.append(f"no verified detection of {query!r}")
+                line = f"no verified detection of {query!r}"
+                near = best_candidate(self._groups.get(query), lo, lo + duration)
+                if near is not None:
+                    score, views, (x, y, z) = near
+                    line += (
+                        f"; best candidate score={score:.2f} views={views} at "
+                        f"({x:.2f}, {y:.2f}, {z:.2f}), needs accept_score={tuning.accept_score:.2f} "
+                        f"min_views={tuning.min_views}"
+                    )
+                lines.append(line)
             for hit in hits:
                 x, y, z = hit.position_world_xyz
+                line = f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
+                box = footprint(hit.point_cloud.as_numpy()[0])
+                if box is not None:
+                    (cx, cy), (length, width), yaw, (bottom, top) = box
+                    line += (
+                        f"footprint {length:.3f} x {width:.3f} m centred ({cx:.3f}, {cy:.3f}) "
+                        f"long side yaw={yaw:.0f}deg, seen surface z {bottom:.3f} to {top:.3f} "
+                    )
                 lines.append(
-                    f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
-                    f"score={hit.semantic_score:.2f} views={hit.n_views} id={hit.instance_id} "
-                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
+                    line + f"score={hit.semantic_score:.2f} views={hit.n_views} "
+                    f"id={hit.instance_id} seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+
+def footprint(
+    points: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float], float, tuple[float, float]] | None:
+    """Grasp geometry of a lifted cloud: the smallest rectangle around its XY points (centre,
+    long and short side in metres, long side's yaw in degrees in [-90, 90)) and the z range of
+    the surfaces the camera saw. The outer 2% each way is trimmed as depth noise. Faces the
+    camera never saw are missing, so the bottom is only as low as what was in view."""
+    if len(points) < 3:
+        return None
+    lo, hi = np.quantile(points, [0.02, 0.98], axis=0)
+    kept = points[np.all((points >= lo) & (points <= hi), axis=1)]
+    if len(kept) < 3:
+        return None
+    rect = cv2.minAreaRect(kept[:, :2].astype(np.float32))
+    corners = cv2.boxPoints(rect)
+    edges = [corners[1] - corners[0], corners[2] - corners[1]]
+    lengths = [float(np.hypot(*e)) for e in edges]
+    long_edge = edges[int(np.argmax(lengths))]
+    yaw = (np.degrees(np.arctan2(long_edge[1], long_edge[0])) + 90.0) % 180.0 - 90.0
+    centre = (float(rect[0][0]), float(rect[0][1]))
+    return centre, (max(lengths), min(lengths)), float(yaw), (float(lo[2]), float(hi[2]))
+
+
+def best_candidate(
+    groups: Groups | None, t0: float, t1: float
+) -> tuple[float, int, tuple[float, float, float]] | None:
+    """The highest-scoring group a call left unverified, from its sightings in ``[t0, t1]``:
+    best score, distinct views and newest position. None when nothing was lifted there."""
+    if groups is None:
+        return None
+    best = None
+    for i in range(len(groups.centers)):
+        rows = groups.rows(i)
+        rows = rows[(rows[:, M_TS] >= t0) & (rows[:, M_TS] <= t1)]
+        if not len(rows):
+            continue
+        score = float(rows[:, M_SCORE].max())
+        if best is None or score > best[0]:
+            views = len(np.unique(np.round(rows[:, M_KX : M_KZ + 1], 2), axis=0))
+            newest = rows[rows[:, M_TS].argmax(), M_CX : M_CZ + 1]
+            best = (score, views, (float(newest[0]), float(newest[1]), float(newest[2])))
+    return best
 
 
 def as_detection_array(
