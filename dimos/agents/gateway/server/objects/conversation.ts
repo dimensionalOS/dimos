@@ -59,12 +59,12 @@ export const serveConversation: ServeObject = (host, deps) =>
           ),
           conversation,
         ),
-      withdraw: async (_args, call) => done(await agent.inputs.withdrawUser(conversation, call.context)),
-      abort: async (_args, call) => {
-        const texts = await agent.inputs.withdrawUser(conversation, call.context);
-        const { run } = room.live.value;
-        if (run !== undefined) await agent.harness.abortTask(run.taskId, call.context);
-        return done(texts);
+      withdraw: async ({ request }, call) =>
+        done((await agent.inputs.withdrawUser(conversation, request, "keep", call.context)).texts),
+      abort: async ({ request }, call) => {
+        const withdrawn = await agent.inputs.withdrawUser(conversation, request, "abort", call.context);
+        if (withdrawn.aborts !== null) await agent.harness.abortTask(withdrawn.aborts, call.context);
+        return done(withdrawn.texts);
       },
       configure: async ({ model, thinkingLevel }, call) => {
         const handle = await agent.harness.conversation(conversation, call.context);

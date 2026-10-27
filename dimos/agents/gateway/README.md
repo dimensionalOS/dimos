@@ -33,13 +33,16 @@ import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
 import { LifecycleContract } from "../shared/protocol/lifecycle/contract.ts";
 import { WebSocket } from "ws";
 import { agentPaths } from "./config/paths.ts";
+import { createConnection } from "node:net";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { describeLink } from "../shared/protocol/gateway/link.ts";
 import { newActionRequest, newUserRequest } from "../shared/protocol/actions/request.ts";
 import { randomUUID } from "node:crypto";
 import { until } from "../sdk/until.ts";
 
-const socket = new WebSocket(`ws+unix:${agentPaths(process.env).socket}:/?terminal=${randomUUID()}&label=example`);
+const socket = new WebSocket(`ws://localhost/?terminal=${randomUUID()}&label=example`, {
+    createConnection: () => createConnection(agentPaths(process.env).socket),
+});
 const opened = new Promise<void>((resolve) => socket.addEventListener("open", () => resolve()));
 const host = createHost({ name: "client", self: { kind: "gateway" }, kind: "client" });
 host.connect(webSocketLink(socket), { principal: { kind: "gateway" } });
@@ -91,12 +94,14 @@ await host.close();
 
 The gateway listens on `$XDG_RUNTIME_DIR/dimos-agent.sock`, or `dimos-agent.sock` in `~/.local/state/dimos/agent/`
 without that variable. The file is mode 0600, so every process that can open it is trusted and gets the `owner` grant.
-The WebSocket URL carries two query parameters: `terminal`, a UUID that stays the same for the life of a client process,
-and `label`, 1 to 32 of `[A-Za-z0-9_-]` naming the kind of client. The gateway keys objects by `terminal`, so a client
-that reconnects with the same UUID reaches the same objects. A missing or malformed parameter closes the link with the
-reason `unauthorized`. An upgrade before the objects are ready gets HTTP 503, so dial with backoff. Connect the host to
-the socket's link before the socket opens. The gateway's `hello` can arrive in the same read as the upgrade response,
-and a link made after `open` misses it, so the link closes with a protocol error at the first acknowledgement.
+Dial the path with `createConnection`, as the Quickstart does. A `ws+unix:` URL percent-encodes spaces and non-ASCII in
+the path, cuts it at the first `:` and rejects `#`. The WebSocket URL carries two query parameters: `terminal`, a UUID
+that stays the same for the life of a client process, and `label`, 1 to 32 of `[A-Za-z0-9_-]` naming the kind of client.
+The gateway keys objects by `terminal`, so a client that reconnects with the same UUID reaches the same objects. A
+missing or malformed parameter closes the link with the reason `unauthorized`. An upgrade before the objects are ready
+gets HTTP 503, so dial with backoff. Connect the host to the socket's link before the socket opens. The gateway's
+`hello` can arrive in the same read as the upgrade response, and a link made after `open` misses it, so the link closes
+with a protocol error at the first acknowledgement.
 
 ### The objects
 
@@ -118,9 +123,10 @@ to the terminal.
 - A method resolves to `{ ok: true, value }` or `{ ok: false, refusal }`. It rejects only when Chord itself fails, with
   a `ChordError` whose `code` names the failure.
 - An action whose catalog entry says `retry: "by_request_id"` takes a `request` id. Make the id once, before the first
-  try. If the link drops mid-call, send the same arguments again once the link is live, and the gateway answers with the
-  first call's outcome; it keeps each one for five minutes, and the dropped link does not abort the call. The other
-  actions run once per call.
+  try. If the link drops mid-call, send the same arguments again once the link is live. Within five minutes the gateway
+  answers with the first call's outcome. Later, or after a gateway restart, the executor finds the request it recorded
+  and does not act again; a job keeps the records of its last 20 runs. The dropped link does not abort the call. The
+  other actions run once per call.
 - A cell delivers its current value to a new subscriber at once, then every change. After a reconnect the gateway sends
   a fresh snapshot of each cell and replays nothing.
 - `LifecycleContract` stays at version 1 forever, so any client can read `process.build` and call `stop` on a gateway of
