@@ -13,11 +13,11 @@ import { runTui } from "./commands/tui.ts";
 import { runVersion } from "./commands/version.ts";
 import { ensureGateway } from "./process.ts";
 
-const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]   open a terminal (a new conversation without --conversation)
-dimos agent run [--conversation ID] [--cwd DIR] PROMPT   submit one input and print the answer
-dimos agent conversations                                list conversations, newest first
-dimos agent gateway [--daemon]                           run the gateway, in the background with --daemon
-dimos agent status [--json]                              the gateway, DimOS, conversations, modules, jobs, streams
+const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
+dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
+dimos agent conversations                                         list conversations, newest first
+dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
+dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams
 dimos agent stop | version`;
 
 const commands: ReadonlyMap<string, Command> = new Map([

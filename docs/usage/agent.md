@@ -110,7 +110,7 @@ loginctl enable-linger "$USER"
 | Command | What it does |
 |---|---|
 | `dimos agent [--conversation ID] [--view] [--cwd DIR]` | Opens a terminal. Without `--conversation`, it starts a new conversation. It starts the gateway if none runs. |
-| `dimos agent run [--conversation ID] [--cwd DIR] PROMPT` | Sends `PROMPT` to a new conversation, or to conversation `ID`, and prints the answer. |
+| `dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT` | Sends `PROMPT` to a new conversation, or to conversation `ID`, and prints the answer. With `--json`, it prints the new transcript items and then the outcome as JSON lines. |
 | `dimos agent conversations` | Lists the conversations, newest first. |
 | `dimos agent gateway` | Runs the gateway in the foreground. The service runs this command. |
 | `dimos agent status` | Shows whether the gateway runs. A socket file that nothing answers is reported as stale. |
