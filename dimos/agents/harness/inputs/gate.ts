@@ -1,5 +1,13 @@
 import type { Context } from "@earendil-works/chord/context";
-import type { ConversationId, Entry, EntryId, Harness, InboxItem, SubmissionId } from "@earendil-works/pi-durable";
+import type {
+  ConversationId,
+  Entry,
+  EntryId,
+  Harness,
+  InboxItem,
+  SubmissionId,
+  TaskId,
+} from "@earendil-works/pi-durable";
 import type { DimosInput, InputSource } from "../../shared/protocol/conversation/input.ts";
 import type { ImageContent, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord";
@@ -7,7 +15,7 @@ import type { OutputLimiter } from "../limit/limit.ts";
 import type { QueuedText } from "../../shared/protocol/conversation/queue.ts";
 import type { RenderDetails } from "../../shared/protocol/media.ts";
 import type { RuntimeObserver } from "../context/observer.ts";
-import { ConversationBusy, InboxDoc } from "@earendil-works/pi-durable";
+import { ConversationBusy, InboxDoc, defineDoc } from "@earendil-works/pi-durable";
 import { DimosInputEntry, requestIdFor } from "./source.ts";
 import { changeMessage } from "../context/messages.ts";
 import { readFile } from "node:fs/promises";
@@ -41,6 +49,23 @@ export type SubmitResult =
   | { readonly kind: "busy" }
   /** A runtime steer with no change to report. */
   | { readonly kind: "nothing_to_say" };
+
+/** A withdrawn input; `fullText` is the spill file with its whole text when the input was cut. */
+type Taken = { readonly mode: QueuedText["mode"]; readonly text: string; readonly fullText: string | null };
+
+/** What each withdraw request took and the run its caller aborts, written in the commit that withdraws. */
+const WithdrawnDoc = defineDoc<{ requests: { [request: string]: { taken: Taken[]; aborts: TaskId | null } } }>({
+  kind: "dimos.withdrawn",
+  version: 1,
+  scope: "session",
+  initial: () => ({ requests: {} }),
+});
+
+export type Withdrawn = {
+  readonly texts: readonly QueuedText[];
+  /** The run to abort, as the request's first call named it. */
+  readonly aborts: TaskId | null;
+};
 
 type InputGateOptions = {
   readonly harness: Harness;
@@ -97,20 +122,30 @@ export class InputGate {
 
   /**
    * The user's queued inputs, removed from `pi.inbox` and settled `unanswered/withdrawn` in one commit so no boundary
-   * places some of them meanwhile, with their whole texts in queue order. Queued notices and writes stay.
+   * places some of them meanwhile, with their whole texts in queue order. Queued notices and writes stay. The commit
+   * records what `request` took and `aborts`; a repeated `request` takes nothing and answers with that record, so a
+   * retry neither takes inputs queued since nor names a run started since.
    */
-  async withdrawUser(conversation: ConversationId, context: Context): Promise<readonly QueuedText[]> {
+  async withdrawUser(
+    conversation: ConversationId,
+    request: string,
+    aborts: TaskId | null,
+    context: Context,
+  ): Promise<Withdrawn> {
     const handle = await this.options.harness.conversation(conversation, context);
-    if (handle === undefined) return [];
-    const taken = await handle.commit(async (tx) => {
+    if (handle === undefined) return { texts: [], aborts: null };
+    const record = await handle.commit(async (tx) => {
+      const withdrawn = await tx.doc(WithdrawnDoc);
+      const kept = withdrawn.requests[request];
+      if (kept !== undefined)
+        return { taken: kept.taken.map(({ mode, text, fullText }) => ({ mode, text, fullText })), aborts: kept.aborts };
       const inbox = await tx.doc(InboxDoc, conversation);
-      const found: { readonly mode: QueuedText["mode"]; readonly text: string; readonly fullText: string | null }[] =
-        [];
+      const taken: Taken[] = [];
       for (let index = inbox.items.length - 1; index >= 0; index -= 1) {
         const item = inbox.items[index];
         const input = userInputOf(item);
         if (item.mode === "write" || input === null) continue;
-        found.unshift({
+        taken.unshift({
           mode: item.mode,
           text: input.text,
           fullText: input.limit === null ? null : input.limit.fullText,
@@ -118,14 +153,16 @@ export class InputGate {
         tx.settleSubmission(item.id, { status: "unanswered", reason: "withdrawn" });
         inbox.items.splice(index, 1);
       }
-      return found;
+      withdrawn.requests[request] = { taken, aborts };
+      return { taken, aborts };
     }, context);
-    return Promise.all(
-      taken.map(async ({ mode, text, fullText }) => ({
+    const texts = await Promise.all(
+      record.taken.map(async ({ mode, text, fullText }) => ({
         mode,
         text: fullText === null ? text : await readFile(fullText, "utf8"),
       })),
     );
+    return { texts, aborts: record.aborts };
   }
 
   /** Admits a write and waits for it to be placed; a repeated `requestId` answers with the first write's settlement. */

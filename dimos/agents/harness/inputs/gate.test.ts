@@ -100,7 +100,8 @@ test("withdrawing the queue hands back every queued user text in one commit and 
   );
 
   assert.equal((await inputs.submit(id, typed("start the patrol", "reject"), context)).kind, "submitted");
-  assert.notEqual((await harness.snapshot(LiveDoc, id, context))?.run, undefined, "the first answer holds the run");
+  const run = (await harness.snapshot(LiveDoc, id, context))?.run;
+  assert.ok(run !== undefined, "the first answer holds the run");
   const long = `${"the long one ".repeat(200)}end`;
   for (const draft of [
     typed("first queued", "followUp"),
@@ -118,15 +119,18 @@ test("withdrawing the queue hands back every queued user text in one commit and 
 
   const publications: CommitPublication[] = [];
   const unsubscribe = harness.subscribeCommits((publication) => publications.push(publication));
-  const texts = await inputs.withdrawUser(id, context);
+  const withdrawn = await inputs.withdrawUser(id, "withdraw", null, context);
   unsubscribe();
 
   assert.equal(long.length, 2_603, "longer than the 2,000 characters an input keeps");
-  assert.deepEqual(texts, [
-    { mode: "followUp", text: "first queued" },
-    { mode: "steer", text: "a steer" },
-    { mode: "followUp", text: long },
-  ]);
+  assert.deepEqual(withdrawn, {
+    texts: [
+      { mode: "followUp", text: "first queued" },
+      { mode: "steer", text: "a steer" },
+      { mode: "followUp", text: long },
+    ],
+    aborts: null,
+  });
   assert.deepEqual(
     publications.map((publication) =>
       publication.changes.flatMap((change) =>
@@ -146,7 +150,20 @@ test("withdrawing the queue hands back every queued user text in one commit and 
     ["followUp"],
     "the job notice stays queued",
   );
-  assert.deepEqual(await inputs.withdrawUser(id, context), [], "nothing of the user's is left");
+  assert.equal((await inputs.submit(id, typed("queued since", "followUp"), context)).kind, "submitted");
+  assert.deepEqual(
+    await inputs.withdrawUser(id, "withdraw", run.taskId, context),
+    withdrawn,
+    "a repeated request answers with its first withdrawal and names no run started since",
+  );
+  assert.deepEqual((await inputs.withdrawUser(id, "withdraw again", null, context)).texts, [
+    { mode: "followUp", text: "queued since" },
+  ]);
+  assert.deepEqual(
+    (await inputs.withdrawUser(id, "withdraw last", null, context)).texts,
+    [],
+    "nothing of the user's is left",
+  );
 
   answerFirst();
   await (await harness.conversation(id, context))?.waitForIdle(context);
