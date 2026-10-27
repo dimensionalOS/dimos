@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 from typing import Annotated, ClassVar, Literal
 from urllib.parse import urlsplit
@@ -32,7 +33,6 @@ from pydantic.alias_generators import to_camel
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
 from dimos.evals.environments.base import Environment
-from dimos.evals.environments.sim import _free_port
 from dimos.evals.types import RunningEnvironment
 
 
@@ -75,6 +75,13 @@ class OutcomeLine(BaseModel):
 
 
 _run_line: TypeAdapter[ItemLine | OutcomeLine] = TypeAdapter(ItemLine | OutcomeLine)
+
+
+def _unserved_port() -> int:
+    """A local TCP port that nothing listens on."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
 class DimosAgentAdapterConfig(PiAdapterConfig):
@@ -131,7 +138,7 @@ class DimosAgentAdapter(PiAdapter):
 
     def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
         # Without a robot, a port nothing serves keeps the gateway off any other DimOS on this host.
-        mcp = urlsplit(env.mcp_url or f"http://127.0.0.1:{_free_port()}/mcp")
+        mcp = urlsplit(env.mcp_url or f"http://127.0.0.1:{_unserved_port()}/mcp")
         self._mcp_env = {"MCPSERVER__HOST": str(mcp.hostname), "MCPSERVER__PORT": str(mcp.port)}
         provider: dict[str, JsonValue] = {"baseUrl": proxy_url, "apiKey": "$DIMOS_EVAL_API_KEY"}
         if self.config.max_output_tokens is not None:
