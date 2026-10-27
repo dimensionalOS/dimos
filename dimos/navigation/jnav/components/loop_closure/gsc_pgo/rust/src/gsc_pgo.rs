@@ -927,8 +927,9 @@ impl GscPgo {
     }
 
     /// After a solve: the odometry noise scale from the closures it kept (`odometry_noise_ln_scale_ml`), and a re-solve
-    /// when the scale moved by more than its own standard error since the solve began (sqrt(2 / 3k) in ln for k kept 3-D
-    /// innovations, the Fisher information of a variance scale), so the graph is solved at the scale its closures imply.
+    /// when the scale moved by more than its own standard error since the solve began (sqrt(2 / 3(k + 1)) in ln for k
+    /// kept 3-D innovations and the prior's one, the Fisher information of a variance scale), so the graph is solved at
+    /// the scale its closures imply.
     pub(crate) fn update_odometry_noise_scale(&mut self) {
         if !self.config.odometry_noise_from_closures {
             return;
@@ -948,7 +949,7 @@ impl GscPgo {
             return;
         };
         self.odometry_noise_ln_scale = ln_scale;
-        let standard_error = (2.0 / (3.0 * kept.len() as f64)).sqrt();
+        let standard_error = (2.0 / (3.0 * (kept.len() + 1) as f64)).sqrt();
         if (ln_scale - self.odometry_noise_ln_scale_dispatched).abs() > standard_error {
             self.odometry_noise_rescale = true;
         }
@@ -1485,11 +1486,13 @@ impl GscPgo {
     }
 }
 
-/// The ln of the odometry noise scale s that makes the kept closures' innovations most likely: each innovation v is
+/// The ln of the odometry noise scale s most probable given the kept closures' innovations: each innovation v is
 /// zero-mean Gaussian with covariance s P + c I (P the graph's covariance of it at the reported noise, c the closure's own
-/// translation variance), so this minimizes sum(ln det(s P + c I) + v^T (s P + c I)^-1 v) over ln s. P is taken as linear
-/// in s, which holds for the odometry chain and is approximate across earlier closures. A grid over ln s (numerical
-/// range only) finds the basin, golden-section search refines it. None without an innovation.
+/// translation variance), and the reported noise is a unit-information prior (Kass & Wasserman 1995: it weighs as much
+/// as one 3-D innovation, ln s ~ N(0, 2/3)), so a few closures barely move it and many outweigh it. This minimizes
+/// sum(ln det(s P + c I) + v^T (s P + c I)^-1 v) + 1.5 (ln s)^2 over ln s. P is taken as linear in s, which holds for
+/// the odometry chain and is approximate across earlier closures. A grid over ln s (numerical range only) finds the
+/// basin, golden-section search refines it. None without an innovation.
 pub fn odometry_noise_ln_scale_ml(innovations: &[(Vec3, Mat3, f64)]) -> Option<f64> {
     if innovations.is_empty() {
         return None;
@@ -1508,7 +1511,8 @@ pub fn odometry_noise_ln_scale_ml(innovations: &[(Vec3, Mat3, f64)]) -> Option<f
                 let iv = mat3::mat_vec(&inverse, v);
                 mat3::det(&covariance).ln() + v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]
             })
-            .sum()
+            .sum::<f64>()
+            + 1.5 * ln_scale * ln_scale
     };
     let (mut best, mut best_cost) = (0.0, cost(0.0));
     for step in -60..=60 {
