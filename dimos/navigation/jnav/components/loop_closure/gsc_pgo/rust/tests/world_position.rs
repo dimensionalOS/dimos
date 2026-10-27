@@ -96,6 +96,7 @@ fn fixes(
             PositionPrior {
                 keyframe: k,
                 frame,
+                lever: [0.0; 3],
                 world: mat3::add(
                     &mat3::add(&mat3::mat_vec(&mat3::rot_z(yaw), &truth[k].1), &shift),
                     &wobble,
@@ -240,5 +241,55 @@ fn two_world_frames_each_get_their_own_alignment() {
     assert!(
         solution.prior_weights.iter().all(|&w| w == 1.0),
         "no fix is an outlier here"
+    );
+}
+
+#[test]
+fn an_off_center_antenna_is_placed_through_its_lever_arm() {
+    let truth = truth();
+    let (edges, rotations, positions) = odometry(&truth);
+    let drifted_end = mat3::norm(&mat3::sub(&positions[N - 1], &truth[N - 1].1));
+    // the antenna sits 0.6 m forward and 0.3 m up: each fix is where the antenna was, not the body origin
+    let lever = [0.6, 0.0, 0.3];
+    let (world_yaw, world_shift) = (0.7, [100.0, 50.0, 3.0]);
+    let mut priors = fixes(&truth, (0..N).step_by(5), 0, world_yaw, world_shift, 0.1);
+    for p in priors.iter_mut() {
+        let body_yaw = truth[p.keyframe].0;
+        let offset = mat3::mat_vec(&mat3::rot_z(world_yaw + body_yaw), &lever);
+        p.world = mat3::add(&p.world, &offset);
+        p.lever = lever;
+    }
+    let free: Vec<bool> = (0..N).map(|k| k > 0).collect();
+    let solution = solve_with_priors(
+        &rotations,
+        &positions,
+        &free,
+        &edges,
+        &[],
+        &priors,
+        &config(),
+    );
+    let &(_, yaw, shift) = solution
+        .world_alignment
+        .first()
+        .expect("the priors pin the heading");
+    assert!(
+        solution.prior_weights.iter().all(|&w| w == 1.0),
+        "no fix is an outlier"
+    );
+    let to_world = |p: &Vec3| mat3::add(&mat3::mat_vec(&mat3::rot_z(world_yaw), p), &world_shift);
+    let worst = (0..N)
+        .map(|k| {
+            let placed = mat3::add(
+                &mat3::mat_vec(&mat3::rot_z(yaw), &solution.positions[k]),
+                &shift,
+            );
+            mat3::norm(&mat3::sub(&to_world(&truth[k].1), &placed))
+        })
+        .fold(0.0, f64::max);
+    eprintln!("antenna lever arm: dead-reckoned end off {drifted_end:.1} m, worst body origin off {worst:.2} m");
+    assert!(
+        worst < drifted_end / 2.0,
+        "body origins much closer to the truth than the odometry (worst {worst} m)"
     );
 }

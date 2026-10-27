@@ -84,21 +84,24 @@ pub fn solve(
     solve_core(rotations, positions, free, odometry, closures, &[], config)
 }
 
-/// A measured position of keyframe `keyframe` in fixed world frame `frame` (GPS after projection to a local
-/// east-north-up frame, a total station, motion capture, ...; one id per coordinate system), with its covariance (m²).
+/// A measured position, in fixed world frame `frame` (GPS after projection to a local east-north-up frame, a total
+/// station, motion capture, ...; one id per coordinate system), of a sensor mounted at `lever` in keyframe `keyframe`'s
+/// body frame (an antenna's offset from the body origin, from tf), with its covariance (m²).
 #[derive(Clone, Copy, Debug)]
 pub struct PositionPrior {
     pub keyframe: usize,
     pub frame: u32,
+    pub lever: Vec3,
     pub world: Vec3,
     pub covariance: Mat3,
 }
 
-/// A position prior placed in the map frame: keyframe `keyframe`'s position should be `position`, with information
-/// (inverse covariance) `information`.
+/// A position prior placed in the solve frame: keyframe `keyframe`'s sensor at `lever` (body frame) should be at
+/// `position`, with information (inverse covariance) `information`.
 #[derive(Clone, Copy, Debug)]
 struct Unary {
     keyframe: usize,
+    lever: Vec3,
     position: Vec3,
     information: Mat3,
 }
@@ -130,16 +133,26 @@ pub fn solve_with_priors(
             .filter(|&i| priors[i].frame == frame)
             .collect()
     };
-    let fit = |positions: &[Vec3], ids: &[usize], weights: &[f64]| {
+    // the sensors' positions in a solution, so a mount offset from the body origin is fitted where it was measured
+    let fit = |solution: &Solution, ids: &[usize], weights: &[f64]| {
         let chosen: Vec<PositionPrior> = ids.iter().map(|&i| priors[i]).collect();
         let w: Vec<f64> = ids.iter().map(|&i| weights[i]).collect();
-        align_priors(positions, &chosen, &w)
+        let sensors: Vec<Vec3> = chosen
+            .iter()
+            .map(|p| {
+                mat3::add(
+                    &solution.positions[p.keyframe],
+                    &mat3::mat_vec(&solution.rotations[p.keyframe], &p.lever),
+                )
+            })
+            .collect();
+        align_priors(&sensors, &chosen, &w)
     };
     let ones = vec![1.0; priors.len()];
     // map -> frame, for every frame its priors make observable
     let first: Vec<(u32, (f64, Vec3))> = frames
         .iter()
-        .filter_map(|&f| Some((f, fit(&solution.positions, &of(f), &ones)?)))
+        .filter_map(|&f| Some((f, fit(&solution, &of(f), &ones)?)))
         .collect();
     let Some(&(primary, (yaw, translation))) = first.iter().max_by_key(|(f, _)| of(*f).len())
     else {
@@ -200,6 +213,7 @@ pub fn solve_with_priors(
             used.push(i);
             unary.push(Unary {
                 keyframe: p.keyframe,
+                lever: p.lever,
                 position,
                 information: mat3::inverse(&covariance).unwrap_or([[0.0; 3]; 3]),
             });
@@ -224,7 +238,7 @@ pub fn solve_with_priors(
     }
     for (f, alignment) in relative.iter_mut() {
         let ids = of(*f);
-        if let Some(refit) = fit(&primary_only.positions, &ids, &ones) {
+        if let Some(refit) = fit(&primary_only, &ids, &ones) {
             *alignment = refit;
         }
     }
@@ -278,17 +292,16 @@ pub fn solve_with_priors(
 /// The map -> world alignment (yaw about z, translation) that best puts the kept priors' keyframes on their world
 /// positions, each weighted by its inverse horizontal variance; None until their horizontal spread exceeds twice their
 /// typical noise (heading unobservable).
-fn align_priors(
-    positions: &[Vec3],
-    priors: &[PositionPrior],
-    weights: &[f64],
-) -> Option<(f64, Vec3)> {
-    let used: Vec<(&PositionPrior, f64)> = priors
+fn align_priors(points: &[Vec3], priors: &[PositionPrior], weights: &[f64]) -> Option<(f64, Vec3)> {
+    // `points[i]` is where the current solution has prior i's sensor
+    let used: Vec<(Vec3, &PositionPrior, f64)> = priors
         .iter()
+        .zip(points)
         .zip(weights)
-        .filter(|(p, &w)| w >= 0.5 && p.keyframe < positions.len())
-        .map(|(p, _)| {
+        .filter(|(_, &w)| w >= 0.5)
+        .map(|((p, &point), _)| {
             (
+                point,
                 p,
                 2.0 / (p.covariance[0][0] + p.covariance[1][1]).max(f64::EPSILON),
             )
@@ -297,10 +310,10 @@ fn align_priors(
     if used.len() < 2 {
         return None;
     }
-    let total: f64 = used.iter().map(|(_, w)| w).sum();
-    let mean = |f: &dyn Fn(&PositionPrior) -> Vec3| {
-        used.iter().fold([0.0; 3], |m, (p, w)| {
-            let v = f(p);
+    let total: f64 = used.iter().map(|(_, _, w)| w).sum();
+    let mean = |f: &dyn Fn(&Vec3, &PositionPrior) -> Vec3| {
+        used.iter().fold([0.0; 3], |m, (point, p, w)| {
+            let v = f(point, p);
             [
                 m[0] + w * v[0] / total,
                 m[1] + w * v[1] / total,
@@ -308,11 +321,11 @@ fn align_priors(
             ]
         })
     };
-    let map_mean = mean(&|p| positions[p.keyframe]);
-    let world_mean = mean(&|p| p.world);
+    let map_mean = mean(&|point, _| *point);
+    let world_mean = mean(&|_, p| p.world);
     let (mut sxx, mut sxy, mut spread, mut noise) = (0.0, 0.0, 0.0, 0.0);
-    for (p, w) in &used {
-        let m = mat3::sub(&positions[p.keyframe], &map_mean);
+    for (point, p, w) in &used {
+        let m = mat3::sub(point, &map_mean);
         let g = mat3::sub(&p.world, &world_mean);
         sxx += w * (m[0] * g[0] + m[1] * g[1]);
         sxy += w * (m[0] * g[1] - m[1] * g[0]);
@@ -328,7 +341,11 @@ fn align_priors(
 }
 
 fn unary_residual(u: &Unary, state: &State) -> Vec3 {
-    mat3::sub(&state.position[u.keyframe], &u.position)
+    let sensor = mat3::add(
+        &state.position[u.keyframe],
+        &mat3::mat_vec(&state.rotation[u.keyframe], &u.lever),
+    );
+    mat3::sub(&sensor, &u.position)
 }
 
 fn unary_whitened(u: &Unary, state: &State) -> f64 {
@@ -1018,26 +1035,43 @@ fn normal_equations(
             }
         }
     }
-    // position priors: residual p_k - z, Jacobian identity on the keyframe's position (perturbation entries 3..6)
+    // position priors: residual p_k + R_k lever - z; Jacobian -R_k [lever]x on the rotation perturbation (entries 0..3),
+    // identity on the position (entries 3..6)
     for (u, w) in unary.iter().zip(unary_weights) {
         let Some(slot) = pattern.slot[u.keyframe] else {
             continue;
         };
         let r = unary_residual(u, state);
+        let lever_skew = mat3::mat_mul(&state.rotation[u.keyframe], &mat3::skew(&u.lever));
+        // jacobian[row][col], 3 x 6
+        let mut jacobian = [[0.0; 6]; 3];
+        for row in 0..3 {
+            for col in 0..3 {
+                jacobian[row][col] = -lever_skew[row][col];
+            }
+            jacobian[row][3 + row] = 1.0;
+        }
+        let info_j: Vec<[f64; 6]> = (0..3)
+            .map(|row| {
+                let mut out = [0.0; 6];
+                for (col, o) in out.iter_mut().enumerate() {
+                    *o = (0..3)
+                        .map(|m| u.information[row][m] * jacobian[m][col])
+                        .sum();
+                }
+                out
+            })
+            .collect();
         for (i, j, row, col) in block_entries(slot, slot) {
-            let v = if i >= 3 && j >= 3 {
-                w * u.information[i - 3][j - 3]
-            } else {
-                0.0
-            };
+            let v = w * (0..3).map(|m| jacobian[m][i] * info_j[m][j]).sum::<f64>();
             if row == col {
                 diagonal[row] += v;
             }
             values.push(v);
         }
         let ir = mat3::mat_vec(&u.information, &r);
-        for i in 0..3 {
-            gradient[6 * slot + 3 + i] -= w * ir[i];
+        for i in 0..6 {
+            gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
         }
     }
     (values, gradient, diagonal)
