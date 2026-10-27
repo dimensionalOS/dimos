@@ -615,6 +615,8 @@ def relaunch(dimos_dir: Path) -> dict[str, Any]:
         raise ApiError(409, "nothing running, and the gateway hasn't launched anything to relaunch")
     if entry is not None:
         stop()
+        # stop() returns once the process is a zombie; start()'s idle check sees it until it is reaped
+        wait_for_exit(entry.pid)
     elif (launch := current_launch()) is not None and launch["phase"] == "starting":
         # a stuck or slow startup: start()'s idle check would refuse while it lives
         kill_starting(launch)
