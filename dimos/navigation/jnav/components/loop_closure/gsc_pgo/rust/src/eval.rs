@@ -166,6 +166,43 @@ struct Args {
     /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
     /// (x, y, z). Lockstep replay only.
     world_positions: Option<PathBuf>,
+    /// Landmark sightings to feed the same way (`GscPgo::add_landmark_sighting`), a CSV with one per line: time,
+    /// landmark id, x, y, z in the body frame, the 3x3 covariance row-major (m²). Lockstep replay only.
+    landmark_sightings: Option<PathBuf>,
+}
+
+/// The sightings of a `--landmark-sightings` file, in time order.
+fn read_landmark_sightings(
+    path: &PathBuf,
+) -> Result<Vec<(f64, u64, [f64; 3], [[f64; 3]; 3])>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut sightings = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        let v: Vec<f64> = line
+            .split(',')
+            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
+            .collect::<Result<_, _>>()?;
+        if v.len() != 14 {
+            return Err(format!(
+                "{line}: needs 14 values (time, landmark id, xyz, 3x3 covariance)"
+            ));
+        }
+        sightings.push((
+            v[0],
+            v[1] as u64,
+            [v[2], v[3], v[4]],
+            [
+                [v[5], v[6], v[7]],
+                [v[8], v[9], v[10]],
+                [v[11], v[12], v[13]],
+            ],
+        ));
+    }
+    sightings.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(sightings)
 }
 
 /// The fixes of a `--world-positions` file, in time order.
@@ -226,6 +263,7 @@ fn parse_args() -> Result<Args, String> {
     let mut odom_scale = 1.0;
     let mut live = false;
     let mut world_positions = None;
+    let mut landmark_sightings = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -243,6 +281,7 @@ fn parse_args() -> Result<Args, String> {
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
+            "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -260,6 +299,7 @@ fn parse_args() -> Result<Args, String> {
         odom_scale,
         live,
         world_positions,
+        landmark_sightings,
     })
 }
 
@@ -533,6 +573,11 @@ fn run() -> Result<(), String> {
             None => Vec::new(),
         };
         let mut next_fix = 0;
+        let sightings = match &args.landmark_sightings {
+            Some(path) => read_landmark_sightings(path)?,
+            None => Vec::new(),
+        };
+        let mut next_sighting = 0;
         for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
             let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                 return Ok(());
@@ -542,6 +587,11 @@ fn run() -> Result<(), String> {
                 let (time, frame, lever, position, covariance) = fixes[next_fix];
                 pgo.add_world_position(time, frame, lever, position, covariance);
                 next_fix += 1;
+            }
+            while next_sighting < sightings.len() && sightings[next_sighting].0 <= ts {
+                let (time, landmark, position, covariance) = sightings[next_sighting];
+                pgo.add_landmark_sighting(time, landmark, position, covariance);
+                next_sighting += 1;
             }
             let step_started = Instant::now();
             if !recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
