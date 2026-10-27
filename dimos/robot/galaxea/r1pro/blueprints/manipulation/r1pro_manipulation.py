@@ -15,7 +15,8 @@
 """R1 Pro upper-body manipulation (EXPERIMENTAL).
 
 The hardware-backed planner exposes the arms and torso. The chassis remains
-driven separately by the velocity task; grippers are not driven yet.
+driven separately by the velocity task. Each gripper is a coordinator hardware
+component with its own ordinary gripper task.
 
 Usage:
     dimos run r1pro-manipulation
@@ -23,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import make_twist_base_joints
+from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
@@ -49,9 +50,30 @@ _manipulation_tasks = [
     ),
 ]
 
+_gripper_hardware = [
+    HardwareComponent(
+        hardware_id=f"r1pro_{side}",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=[f"r1pro_{side}/gripper"],
+        adapter_type="r1pro_gripper",
+        adapter_kwargs={"side": side},
+    )
+    for side in ("left", "right")
+]
+_manipulation_tasks.extend(
+    TaskConfig(
+        name=f"r1pro_{side}_gripper",
+        type="gripper",
+        joint_names=[f"r1pro_{side}/gripper"],
+        priority=20,
+        params={"require_feedback": True, "accept_broadcast": False},
+    )
+    for side in ("left", "right")
+)
+
 r1pro_manipulation = autoconnect(
     r1pro_visualization(),
-    r1pro_control(tasks=_manipulation_tasks),
+    r1pro_control(tasks=_manipulation_tasks, additional_hardware=_gripper_hardware),
     ManipulationModule.blueprint(
         model=make_r1pro_model_config(),
         planning_timeout=10.0,

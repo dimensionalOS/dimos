@@ -1114,6 +1114,7 @@ class ControlCoordinator(Module):
                 unsub()
             self._stream_unsubs.clear()
 
+        self.set_estop(True)
         if self._tick_loop:
             self._tick_loop.stop()
 

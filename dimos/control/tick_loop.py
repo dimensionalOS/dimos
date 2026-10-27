@@ -266,6 +266,11 @@ class TickLoop:
         with self._hardware_lock:
             for hw in self._hardware.values():
                 if not hw.ready_for_control():
+                    # Stateful adapters retain invalidation until a read tick
+                    # actually omits their joints, so tasks can drop old intent.
+                    acknowledge = getattr(hw.adapter, "acknowledge_unavailable", None)
+                    if callable(acknowledge):
+                        acknowledge()
                     continue
                 try:
                     state = hw.read_state()

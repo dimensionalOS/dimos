@@ -176,6 +176,7 @@ def _head_cameras() -> list[Blueprint]:
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    additional_hardware: Sequence[HardwareComponent] = (),
     **connection: Any,
 ) -> Blueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
@@ -205,6 +206,7 @@ def r1pro_control(
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
+                    *additional_hardware,
                     HardwareComponent(
                         hardware_id="r1pro",
                         hardware_type=HardwareType.WHOLE_BODY,

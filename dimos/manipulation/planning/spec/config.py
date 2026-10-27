@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from pydantic import Field, field_validator
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
@@ -58,6 +59,7 @@ class RobotModelConfig(ModuleConfig):
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     gripper_hardware_id: str | None = None
+    gripper_hardware_ids: dict[str, str] = Field(default_factory=dict)
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
@@ -76,8 +78,36 @@ class RobotModelConfig(ModuleConfig):
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""
+        if self.gripper_hardware_id is not None and self.gripper_hardware_ids:
+            raise ValueError("Use either gripper_hardware_id or gripper_hardware_ids, not both")
+        if any(not group or not hardware for group, hardware in self.gripper_hardware_ids.items()):
+            raise ValueError("Gripper group and hardware ids must be non-empty")
+        if len(set(self.gripper_hardware_ids.values())) != len(self.gripper_hardware_ids):
+            raise ValueError("Each planning group requires a distinct gripper hardware id")
+        if self.planning_groups:
+            self.resolve_gripper_hardware_ids(self.planning_groups)
         assert_valid_joint_names(self.joint_names)
         if any(not name for name in self.joint_names):
             raise ValueError("RobotModelConfig.joint_names must contain non-empty names")
         if len(self.joint_names) != len(set(self.joint_names)):
             raise ValueError("RobotModelConfig contains duplicate canonical joint names")
+
+    def resolve_gripper_hardware_ids(
+        self, groups: Sequence[PlanningGroup | PlanningGroupDefinition]
+    ) -> dict[str, str]:
+        """Resolve explicit group bindings or an unambiguous legacy scalar binding."""
+        pose_groups = {
+            str(group.name if isinstance(group, PlanningGroupDefinition) else group.id)
+            for group in groups
+            if group.has_pose_target
+        }
+        if self.gripper_hardware_id is not None:
+            if len(pose_groups) != 1:
+                raise ValueError(
+                    "gripper_hardware_id requires exactly one pose-capable planning group"
+                )
+            return {next(iter(pose_groups)): self.gripper_hardware_id}
+        invalid = set(self.gripper_hardware_ids) - pose_groups
+        if invalid:
+            raise ValueError(f"Gripper bindings require pose-capable groups: {sorted(invalid)}")
+        return dict(self.gripper_hardware_ids)
