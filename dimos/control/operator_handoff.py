@@ -178,7 +178,7 @@ class OperatorHandoff(Module):
 
     @rpc
     def record_operator_event(
-        self, action: str, object_id: str = "", reason: str = ""
+        self, action: str, object_id: str = "", detail: str = ""
     ) -> dict[str, Any]:
         """Log one operator action the page saw: "target", "pick", "pick_done" or "takeover".
 
@@ -186,7 +186,7 @@ class OperatorHandoff(Module):
             action: What the operator did. "takeover" also turns the mode to takeover
                 until autonomy restarts.
             object_id: The object it concerns; "" keeps the last one.
-            reason: Free text, e.g. a pick's result for "pick_done".
+            detail: Free text, e.g. a pick's result for "pick_done".
 
         Returns the event as logged. Request, acknowledge and e-stop are logged from the
         hold and e-stop streams, not here.
@@ -198,7 +198,7 @@ class OperatorHandoff(Module):
                 self._object_id = object_id
             if action == "takeover":
                 self._mode = "takeover"
-            event = self._event_locked(action, detail=reason)
+            event = self._event_locked(action, detail=detail)
         return event
 
     @rpc
