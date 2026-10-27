@@ -257,7 +257,10 @@ pub fn solve_with_priors(
         weights[i] = w;
     }
     // map -> primary: keyframe 0's map pose (held in the map) onto its solved pose in the primary frame
-    let align_rotation = mat3::mat_mul(&world.rotations[0], &mat3::transpose(&rotations[0]));
+    // a turn about the vertical (the frames are gravity-aligned), so it stays exactly a rotation however many solves it
+    // passes through
+    let turned = mat3::mat_mul(&world.rotations[0], &mat3::transpose(&rotations[0]));
+    let align_rotation = mat3::rot_z(turned[1][0].atan2(turned[0][0]));
     let align_translation = mat3::sub(
         &world.positions[0],
         &mat3::mat_vec(&align_rotation, &positions[0]),
