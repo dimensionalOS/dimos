@@ -24,14 +24,23 @@ a whole-body plan's base segment is a motion from where the robot stands, tracke
 FlowBase's own wheel odometry (``WheelOdometryRelay`` puts it on ``/flowbase/odom`` and tf).
 The D455 feeds the planner's obstacle map and, with a GPU, the perception stack's localize
 (``localize_boxes``): the Manipulation app's scan.
+
+An operator can hold the robot: the coordinator runs the operator hold (every joint frozen,
+priority 100) and takes an e-stop; ``OperatorHandoff`` gives an agent ``request_operator`` and
+keeps the operator event log. McpServer serves every skill on :9990 to any MCP agent; the stack's
+own agent (McpClient, Alfred's prompt) joins when ``OPENAI_API_KEY`` is set.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.components import HardwareComponent
+from dimos.control.operator_handoff import OperatorHandoff
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     BASE_FRAME,
@@ -46,6 +55,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
 )
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
+from dimos.robot.diy.alfred.system_prompt import ALFRED_SYSTEM_PROMPT
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 
 
@@ -81,8 +91,13 @@ def alfred_bench_modules(
         # is what grew to 6.4 GB and got this stack OOM-killed (2026-10-25).
         *alfred_arm_modules(pillar_device_path=hardware.pillar_device_path),
         alfred_coordinator(
-            arms=True, follower=False, arm_hardware=hardware.arms, base_hardware=hardware.base
+            arms=True,
+            follower=False,
+            arm_hardware=hardware.arms,
+            base_hardware=hardware.base,
+            operator_hold=True,
         ),
+        *alfred_operator_modules(),
         # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and
         # its frame memory pushed the Orin into swap beside it.
         *(
@@ -91,6 +106,17 @@ def alfred_bench_modules(
             else hardware.perception
         ),
     )
+
+
+def alfred_operator_modules() -> tuple[Any, ...]:
+    """The handoff around the coordinator's operator hold, and the agent side of it: every skill
+    on MCP, and an LLM agent with Alfred's prompt when there is a key for it."""
+    agent = (
+        (McpClient.blueprint(system_prompt=ALFRED_SYSTEM_PROMPT),)
+        if os.environ.get("OPENAI_API_KEY")
+        else ()
+    )
+    return (OperatorHandoff.blueprint(), McpServer.blueprint(), *agent)
 
 
 # The registry scans for module-level autoconnect(...) chains: each stack is spelled out.

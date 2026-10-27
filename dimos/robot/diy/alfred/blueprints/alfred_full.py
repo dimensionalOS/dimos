@@ -40,8 +40,10 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
+from dimos.control.operator_hold_coordinator import OperatorHoldCoordinator
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.tasks.joint_hold_task.joint_hold_task import joint_hold_task
+from dimos.control.tasks.operator_hold_task.operator_hold_task import operator_hold_task
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
     joint_trajectory_task,
@@ -174,10 +176,17 @@ class AlfredNavCoordinator(PathFollowingCoordinator):
     """Carries the ``path`` and ``speed`` ports the follower binds to."""
 
 
-def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> list[TaskConfig]:
+class AlfredOperatorCoordinator(OperatorHoldCoordinator, AlfredNavCoordinator):
+    """AlfredNavCoordinator an operator can hold and e-stop (``OperatorHoldCoordinator``)."""
+
+
+def alfred_coordinator_tasks(
+    *, arms: bool = True, follower: bool = True, operator_hold: bool = False
+) -> list[TaskConfig]:
     """The coordinator's claims for one stack: with ``arms``, the arms and lift on one trajectory
     task with a hold on the arms under it; always teleop and a plan's base segment on the base's
-    three joints; with ``follower``, navigation's follower under them.
+    three joints; with ``follower``, navigation's follower under them; with ``operator_hold``,
+    the operator hold over every joint (priority 100, above all of them).
 
     The lift is left out of the hold: it is a leadscrew under its own brake.
     """
@@ -258,6 +267,8 @@ def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> lis
                 },
             )
         )
+    if operator_hold:
+        tasks.append(operator_hold_task())
     return tasks
 
 
@@ -392,10 +403,13 @@ def alfred_coordinator(
     follower: bool = True,
     arm_hardware: HardwareComponent | None = None,
     base_hardware: HardwareComponent | None = None,
+    operator_hold: bool = False,
 ) -> Any:
     """One coordinator for the stack: the pillar, the arms (with ``arms``) and the FlowBase's
     virtual joints. Teleop arrives as a Twist onto the base's joints; navigation (with
     ``follower``) as a Path on the follower's port. Both are ordinary joint claims from here.
+    With ``operator_hold`` it is an ``AlfredOperatorCoordinator`` running the operator hold:
+    an operator (or the agent) can freeze every joint, and the operator can e-stop.
 
     ``arm_hardware`` and ``base_hardware`` stand in for the arms the env names and for the
     FlowBase's transport adapter (a simulation's mocks); the base keeps its joints' names."""
@@ -405,11 +419,12 @@ def alfred_coordinator(
     hardware = [pillar_hardware(), base]
     if arms:
         hardware.insert(1, _openarm_hardware_from_env() if arm_hardware is None else arm_hardware)
-    return AlfredNavCoordinator.blueprint(
+    cls = AlfredOperatorCoordinator if operator_hold else AlfredNavCoordinator
+    return cls.blueprint(
         instance_name="ControlCoordinator",
         hardware=hardware,
-        tasks=alfred_coordinator_tasks(arms=arms, follower=follower),
-    ).remappings([(AlfredNavCoordinator, "twist_command", "tele_cmd_vel")])
+        tasks=alfred_coordinator_tasks(arms=arms, follower=follower, operator_hold=operator_hold),
+    ).remappings([(cls, "twist_command", "tele_cmd_vel")])
 
 
 def alfred_base_transports() -> dict[tuple[str, type], Any]:

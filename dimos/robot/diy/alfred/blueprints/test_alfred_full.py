@@ -28,8 +28,12 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.operator_handoff import OperatorHandoff
+from dimos.control.tasks.operator_hold_task.operator_hold_task import OPERATOR_HOLD_TASK_NAME
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
@@ -99,6 +103,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     OPENARM_LEFT_CAN_ENV,
     OPENARM_RIGHT_CAN_ENV,
     AlfredNavCoordinator,
+    AlfredOperatorCoordinator,
     _openarm_hardware_from_env,
     alfred_coordinator_tasks,
     alfred_full,
@@ -126,6 +131,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
     alfred_manipulation,
     alfred_manipulation_heuristic,
+    alfred_operator_modules,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation_sim import (
     SIM_SCENE_DETECTOR_CONFIDENCE,
@@ -640,7 +646,7 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
         WheelOdometryRelay,
         PillarConnection,
         ManipulationModule,
-        AlfredNavCoordinator,
+        AlfredOperatorCoordinator,
         RealSenseCamera,
         RoboPlanPointCloudSelfFilter,
     } <= modules
@@ -657,6 +663,34 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
     (voxel_map,) = _atoms(alfred_manipulation, RayTracingVoxelMap)
     (planner,) = _atoms(alfred_manipulation, ManipulationModule)
     assert planner.kwargs["voxel_map_resolution"] == voxel_map.kwargs["voxel_size"]
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        pytest.param(alfred_manipulation, id="alfred-manipulation"),
+        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
+    ],
+)
+def test_an_operator_can_hold_the_bench_stacks(blueprint: Blueprint) -> None:
+    """The operator hold outranks every claim, so it freezes arms, grippers, lift and base."""
+    tasks = _tasks(blueprint)
+    hold = tasks[OPERATOR_HOLD_TASK_NAME]
+    assert hold.type == "operator_hold" and not hold.joint_names, "it claims every joint"
+    assert all(task.priority < hold.priority for task in tasks.values() if task is not hold)
+    modules = {atom.module for atom in blueprint.blueprints}
+    assert {AlfredOperatorCoordinator, OperatorHandoff, McpServer} <= modules
+    assert AlfredNavCoordinator in AlfredOperatorCoordinator.__mro__, "the follower's ports stay"
+
+
+def test_the_agent_joins_the_bench_stacks_only_with_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    def modules() -> set[Any]:
+        return {atom.module for part in alfred_operator_modules() for atom in part.blueprints}
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert McpClient not in modules()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert McpClient in modules()
 
 
 def test_the_driving_stack_runs_without_the_arms() -> None:
