@@ -2,6 +2,7 @@ import type { ObjectDeps, ServeObject } from "./objects/base.ts";
 import type { Host, Link } from "@earendil-works/chord";
 import type { Principal } from "../auth/principal.ts";
 import type { Server } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createHost, webSocketLink } from "@earendil-works/chord";
@@ -42,6 +43,21 @@ export class GatewayRunning extends Error {
   }
 }
 
+const SQLITE_BUSY = 5;
+
+/** An exclusive SQLite lock on `path`, which the OS releases when this process dies; null while another holds it. */
+function takeLock(path: string): DatabaseSync | null {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE");
+    return db;
+  } catch (error) {
+    db.close();
+    if (error instanceof Error && "errcode" in error && error.errcode === SQLITE_BUSY) return null;
+    throw error;
+  }
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const failed = (error: Error) => {
@@ -60,43 +76,54 @@ function listen(server: Server, socketPath: string): Promise<void> {
 
 /**
  * The socket clients connect to and the Chord host behind it. Binding is still the first thing the gateway does (a
- * second gateway finds the first answering and exits before it opens the store); an upgrade before `serve` is refused
- * with 503, so a client retries with its backoff.
+ * second gateway finds the lock held or the first answering and exits before it opens the store); an upgrade before
+ * `serve` is refused with 503, so a client retries with its backoff.
  */
 export class GatewayServer {
   private readonly http: Server;
   private readonly socketPath: string;
+  /** `<socket>.lock`, held from bind until the socket file is removed, so one gateway at a time owns the path. */
+  private readonly lock: DatabaseSync;
   private serving: Serving | null = null;
   private closing = false;
 
-  private constructor(http: Server, socketPath: string) {
+  private constructor(http: Server, socketPath: string, lock: DatabaseSync) {
     this.http = http;
     this.socketPath = socketPath;
+    this.lock = lock;
   }
 
-  /** Binds before anything else opens: directory 0700, socket 0600. A socket file nobody answers on is removed; one that answers throws GatewayRunning. */
+  /**
+   * Takes the lock, then binds, before anything else opens: directory 0700, socket 0600. A held lock or a socket that
+   * answers throws GatewayRunning; a socket file nobody answers on is removed.
+   */
   static async bind(socketPath: string): Promise<GatewayServer> {
     await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+    const lock = takeLock(`${socketPath}.lock`);
+    if (lock === null) throw new GatewayRunning(socketPath);
     const http = createServer((_request, response) => {
       response.writeHead(404, { "content-type": "text/plain" });
       response.end("This socket speaks WebSocket only.\n");
     });
-    const gateway = new GatewayServer(http, socketPath);
+    const gateway = new GatewayServer(http, socketPath, lock);
     http.on("upgrade", (_request, socket) => {
       if (gateway.serving !== null) return;
       socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       socket.destroy();
     });
     try {
-      await listen(http, socketPath);
+      await listen(http, socketPath).catch(async (error: unknown) => {
+        if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
+        if (!(await lstat(socketPath)).isSocket()) throw error;
+        if (await reachable(socketPath, 500)) throw new GatewayRunning(socketPath);
+        await unlink(socketPath);
+        await listen(http, socketPath);
+      });
+      await chmod(socketPath, 0o600);
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
-      if (!(await lstat(socketPath)).isSocket()) throw error;
-      if (await reachable(socketPath, 500)) throw new GatewayRunning(socketPath);
-      await unlink(socketPath);
-      await listen(http, socketPath);
+      lock.close();
+      throw error;
     }
-    await chmod(socketPath, 0o600);
     return gateway;
   }
 
@@ -133,7 +160,10 @@ export class GatewayServer {
     this.serving = { host, sockets, links };
   }
 
-  /** Stops accepting, tells every client `stopping`, disposes every object and its resources, removes the socket file. */
+  /**
+   * Stops accepting, tells every client `stopping`, disposes every object and its resources, removes the socket file,
+   * then releases the lock.
+   */
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
@@ -148,5 +178,6 @@ export class GatewayServer {
     this.http.closeAllConnections();
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
     await unlink(this.socketPath).catch(() => {});
+    this.lock.close();
   }
 }
