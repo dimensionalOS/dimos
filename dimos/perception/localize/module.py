@@ -45,7 +45,6 @@ import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
-from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -280,7 +279,7 @@ class PerceptionLocalize(Module):
         objects: str | list[str],
         start: float = -10.0,
         duration: float = 10.0,
-        policy: str = "",
+        params: str = "",
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
@@ -293,30 +292,24 @@ class PerceptionLocalize(Module):
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``policy`` is optional: a JSON object of LocalizePolicy field overrides,
-        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'. Leave it empty for the defaults.
+        ``params`` is a JSON object of LocalizeParams field overrides for this
+        call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.
+        The next call without ``params`` is back on the module's params.
+
+        Usage guide: dimos/perception/localize/SKILL.md.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         labels = objects.split(",") if isinstance(objects, str) else objects
         queries = [q.strip() for q in labels if q.strip()]
-        try:
-            overrides = json.loads(policy) if policy else {}
-            if not isinstance(overrides, dict):
-                raise ValueError
-            tuning = self.detector.policy({**self.config.policy, **overrides})
-        except (ValueError, TypeError):
-            return (
-                f"policy {policy!r} is not a JSON object of LocalizePolicy fields; "
-                "pass e.g. '{\"min_views\": 1}', or leave it empty for the defaults."
-            )
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
+        overrides = json.loads(params) if params.strip() else None
         results = self.detector.localize(
             queries,
             index=index,
@@ -339,8 +332,8 @@ class PerceptionLocalize(Module):
                     score, views, (x, y, z) = near
                     line += (
                         f"; best candidate score={score:.2f} views={views} at "
-                        f"({x:.2f}, {y:.2f}, {z:.2f}), needs accept_score={tuning.accept_score:.2f} "
-                        f"min_views={tuning.min_views}"
+                        f"({x:.2f}, {y:.2f}, {z:.2f}), needs accept_score={call_params.accept_score:.2f} "
+                        f"min_views={call_params.min_views}"
                     )
                 lines.append(line)
             for hit in hits:

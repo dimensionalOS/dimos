@@ -211,6 +211,36 @@ def test_peek_stream_hidden_stream_reads_as_absent(app, monkeypatch):
         app.peek_stream("tick", timeout=2.0)
 
 
+@pytest.mark.parametrize("transport", ["lcm", "zenoh"])
+@pytest.mark.parametrize("remote", [False, True])
+def test_peek_stream_receives_external_odometry(app, transport, remote):
+    global_config.update(transport=transport, n_workers=1, viewer="none")
+    app.run(RecordingSource)
+    expected = PoseStamped(ts=123.0, frame_id="world", position=(1.0, 2.0, 3.0))
+
+    with ExitStack() as stack:
+        client = app
+        if remote:
+            app._coordinator.start_rpc_service()
+            client = Dimos.connect()
+            stack.callback(client.stop)
+        publisher = stack.enter_context(make_transport("/odom", PoseStamped))
+        executor = stack.enter_context(ThreadPoolExecutor())
+        result = executor.submit(client.peek_stream, "odom", timeout=3.0)
+
+        def publish_until_done():
+            publisher.publish(expected)
+            return result.done()
+
+        wait_until(publish_until_done, timeout=5.0, interval=0.02)
+        pose = result.result()
+
+    assert isinstance(pose, PoseStamped)
+    assert pose.ts == expected.ts
+    assert pose.frame_id == expected.frame_id
+    assert (pose.x, pose.y, pose.z) == (1.0, 2.0, 3.0)
+
+
 def test_restart_before_run(app):
     with pytest.raises(RuntimeError, match="No modules are running"):
         app.restart(StressTestModule)

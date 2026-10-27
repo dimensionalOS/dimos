@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 
 import cv2
@@ -46,14 +47,46 @@ _WALL_GRIP = 0.03
 _OPEN_DROP = 0.03
 _WALL_MARGIN = 0.01
 _MIN_WALL_POINTS = 5
+# Least gap (metres) kept between the fingertips and what the object stands on,
+# and between the palm and the object's top.
+_CLEARANCE = 0.005
 
 
-class HeuristicGraspConfig(ModuleConfig):
+@dataclass(frozen=True)
+class GripperAim:
+    """Where the gripper's parts sit along its approach, measured from the tool tip, metres.
+    Left at the defaults, the tool tip itself goes where the closed pads should be."""
+
+    # The closed finger pads' centre, behind the tool tip.
+    pad_behind_tcp: float = 0.0
+    # The farthest the fingertips reach past the tool tip while closing.
+    fingertip_reach: float | None = None
+    # The nearest part other than the fingers (the palm), behind the tool tip.
+    palm_behind_tcp: float | None = None
+
+    def tip_height(self, pad_z: float, low_z: float, high_z: float) -> float:
+        """Tool tip height (metres) that puts the closed pads at ``pad_z``, raised if needed
+        so the fingertips stay above ``low_z`` (what the object stands on) and the palm
+        above ``high_z`` (the top of what goes between the jaws)."""
+        # Straight down: the pads and palm sit above the tool tip, the fingertips below.
+        heights = [float(pad_z) - self.pad_behind_tcp]
+        if self.fingertip_reach is not None:
+            heights.append(float(low_z) + _CLEARANCE + self.fingertip_reach)
+        if self.palm_behind_tcp is not None:
+            heights.append(float(high_z) + _CLEARANCE - self.palm_behind_tcp)
+        return max(heights)
+
+
+class HeuristicGraspModuleConfig(ModuleConfig):
     # Widest object the open jaws close on, metres; the xArm gripper opens to 88.9 mm.
     max_jaw_span: float = 0.085
     # Least depth below the object's top the grasp goes, metres, when little more than the
     # top was seen.
     grasp_depth: float = 0.02
+    # Where the gripper's parts sit along its approach (see GripperAim), metres.
+    pad_behind_tcp: float = 0.0
+    fingertip_reach: float | None = None
+    palm_behind_tcp: float | None = None
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -62,15 +95,20 @@ class HeuristicGraspModule(Module, GraspGenSpec):
     The input frame's XY plane must be horizontal and its -Z axis must point down.
     """
 
-    config: HeuristicGraspConfig
+    config: HeuristicGraspModuleConfig
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
-        return top_down_grasps(object_pointcloud, self.config.max_jaw_span, self.config.grasp_depth)
+        config = self.config
+        aim = GripperAim(config.pad_behind_tcp, config.fingertip_reach, config.palm_behind_tcp)
+        return top_down_grasps(object_pointcloud, config.max_jaw_span, config.grasp_depth, aim)
 
 
 def top_down_grasps(
-    object_pointcloud: PointCloud2, max_jaw_span: float, grasp_depth: float = 0.02
+    object_pointcloud: PointCloud2,
+    max_jaw_span: float,
+    grasp_depth: float = 0.02,
+    aim: GripperAim = GripperAim(),
 ) -> GraspCandidateArray:
     """Grasps straight down at the centre of the cloud's footprint, half way up the surfaces
     seen and at least ``grasp_depth`` below the top: a camera above an object may see only its
@@ -80,7 +118,9 @@ def top_down_grasps(
 
     An object wider than the jaws on both sides is grasped on a wall when it is an open
     container (its inside seen well below its rim): jaws across the wall, a little below the
-    rim, the long walls ahead of the short ones. A solid object that wide gets no grasp."""
+    rim, the long walls ahead of the short ones. A solid object that wide gets no grasp.
+
+    ``aim`` places the tool tip so the closed finger pads, not the tip, are at those heights."""
     if object_pointcloud.ts is None or not math.isfinite(float(object_pointcloud.ts)):
         raise ValueError("object pointcloud must have a finite timestamp")
     if not object_pointcloud.frame_id:
@@ -100,9 +140,10 @@ def top_down_grasps(
     ] > max_jaw_span:
         return GraspCandidateArray(
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-            _wall_grasps(points, (cx, cy), sides, short_yaw, float(high_z)),
+            _wall_grasps(points, (cx, cy), sides, short_yaw, float(high_z), aim),
         )
-    position = Vector3(cx, cy, float(min((low_z + high_z) / 2.0, high_z - grasp_depth)))
+    pad_z = min((low_z + high_z) / 2.0, high_z - grasp_depth)
+    position = Vector3(cx, cy, aim.tip_height(pad_z, low_z, high_z))
     candidates = [
         GraspCandidate(
             _top_down(position, short_yaw),
@@ -129,6 +170,7 @@ def _wall_grasps(
     sides: tuple[float, float],
     short_yaw: float,
     high_z: float,
+    aim: GripperAim = GripperAim(),
 ) -> list[GraspCandidate]:
     """Top-down grasps on the walls of an open container, jaws across each wall at its middle,
     ``_WALL_GRIP`` above the floor seen inside (lower when the wall's seen top is lower). From
@@ -174,7 +216,8 @@ def _wall_grasps(
             if grip < floor + 0.015:
                 continue
             xy_w = np.asarray(centre) + n_axis * (sign * n)
-            position = Vector3(float(xy_w[0]), float(xy_w[1]), grip)
+            top = float(np.quantile(z[wall], 0.98)) if wall.sum() >= _MIN_WALL_POINTS else high_z
+            position = Vector3(float(xy_w[0]), float(xy_w[1]), aim.tip_height(grip, floor, top))
             candidates.append(GraspCandidate(_top_down(position, jaw_yaw), score=score, note=note))
     return candidates
 

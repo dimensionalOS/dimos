@@ -50,6 +50,7 @@ class MujocoEnvironmentConfig(SimConfig):
     # Ground truth the agent must not read through peek_stream: exact object poses and the
     # scene's overview camera (recorded for grading and review only).
     peek_hidden: tuple[str, ...] = ("body_poses", "overview_image", "overview_camera_info")
+    # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
     scene: Path | None = None
     base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 

@@ -16,6 +16,7 @@
 
 from dataclasses import asdict, replace
 import json
+from typing import Literal
 
 from dimos.perception.localize.types import LocalizeParams
 
@@ -24,6 +25,17 @@ PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
     "google": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
+}
+
+# Pi's --thinking level as a Gemini thinkingLevel ("off" leaves the model's default).
+GOOGLE_THINKING_LEVELS: dict[str, Literal["LOW", "MEDIUM", "HIGH"] | None] = {
+    "off": None,
+    "minimal": "LOW",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "xhigh": "HIGH",
+    "max": "HIGH",
 }
 
 # Host variables a Pi process may inherit; the provider key is added by name.
@@ -83,7 +95,7 @@ XARM7_GRIPPER_NOTES = (
 )
 
 # Localize in MuJoCo: the wrist camera starts parked, so confirm objects from one view, and
-# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the xarm preset's 0.40.
+# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the desk defaults' 0.40.
 SIM_LOCALIZE_PARAMS = replace(LocalizeParams(), min_views=1, candidate_floor=0.2, accept_score=0.25)
 SIM_LOCALIZE_ENV = {"PERCEPTIONLOCALIZE__PARAMS": json.dumps(asdict(SIM_LOCALIZE_PARAMS))}
 

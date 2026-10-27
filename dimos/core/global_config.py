@@ -80,14 +80,9 @@ class GlobalConfig(BaseSettings):
     # Isolates this run's zenoh streams under dimos-domains/<name>/; a hosted run pins its run id.
     zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
     viewer: ViewerBackend = "rerun"
-    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
-    rerun_web: bool = RERUN_ENABLE_WEB
-    rerun_save: bool = False  # also write the stream to recordings/<run-id>/rerun.rrd
     # comma-separated stream names peek_stream refuses: an eval hides the scene's ground truth
     # (exact object poses) from the agent while modules still subscribe to it
     peek_hidden_streams: str = ""
-    rerun_host: str | None = None
-    rerun_websocket_server_port: int = 3030
     n_workers: int = 2
     scene_package: str | None = None
     robot_model: str | None = None

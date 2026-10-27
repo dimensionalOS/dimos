@@ -236,7 +236,7 @@ xarm_grasp_graspgenx = autoconnect(
         # Return every sample: the pick's contact check chooses among them.
         max_candidates=500,
     ),
-).remappings(_REMAPPINGS)
+)
 
 # GraspGenX alone, sized for the xArm gripper, for a stack that already drives the arm (e.g.
 # xarm-perception-sim with grasp-proposals). Its first start installs its environment and
@@ -244,5 +244,7 @@ xarm_grasp_graspgenx = autoconnect(
 xarm_graspgenx = GraspGenXModule.blueprint(
     gripper=XARM_GRIPPER_SWEEP_VOLUME,
     grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+    # Return every sample: grasp-proposals checks them all.
+    max_candidates=500,
     startup_timeout=300.0,
 )

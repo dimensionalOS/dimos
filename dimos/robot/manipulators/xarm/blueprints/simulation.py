@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.grasping.grasp_proposals import GraspProposals
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule

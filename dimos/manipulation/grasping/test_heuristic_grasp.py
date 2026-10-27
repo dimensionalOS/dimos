@@ -305,3 +305,30 @@ def test_held_out_small_solids_are_grasped_at_their_centre(module: HeuristicGras
         c = module.propose_grasps(_cloud(_block(0.4, size=size))).candidates[0]
         assert (c.pose.position.x, c.pose.position.y) == pytest.approx((0.5, 0.1), abs=3e-3)
         assert c.note.startswith("footprint centre")
+
+
+@pytest.mark.parametrize(
+    "height, tip_z",
+    [
+        (0.052, 0.126 - 0.0167),  # the closed pads at mid-height
+        (0.020, 0.10 + 0.005 + 0.0031),  # raised: fingertips 5 mm above the low end
+        (0.100, 0.20 + 0.005 - 0.0499),  # raised: palm 5 mm above the top
+    ],
+)
+def test_heuristic_grasp_aims_the_finger_pads(height: float, tip_z: float) -> None:
+    module = HeuristicGraspModule(
+        pad_behind_tcp=0.0167, fingertip_reach=0.0031, palm_behind_tcp=0.0499
+    )
+    points = np.asarray(
+        [
+            [-0.1, -0.02, 0.1],
+            [-0.1, 0.02, 0.1],
+            [0.1, -0.02, 0.1 + height],
+            [0.1, 0.02, 0.1 + height],
+        ]
+    )
+
+    proposals = module.propose_grasps(_cloud(points))
+
+    assert proposals.candidates[0].pose.position.z == pytest.approx(tip_z)
+    module.stop()
