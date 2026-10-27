@@ -135,7 +135,7 @@ def test_relaunch_waits_for_the_stopped_run_to_be_reaped(
     reap = launches._wait_then_tell
 
     def slow_reap(child: subprocess.Popen[bytes]) -> None:
-        os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
         time.sleep(0.5)
         reap(child)
 
