@@ -40,11 +40,10 @@ impl ClosureSearch {
             .sqrt();
         diag.yank_drift_scale = drift;
         let predicted = self.config.closure_yank_gate_principled.then(|| {
-            let (s, k) = (diag.odometry_noise_scale, diag.closure_noise_scale);
             let p = &diag.innovation_covariance;
-            let c = k * diag.icp_fitness.max(1e-6);
+            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
             let covariance: Mat3 = std::array::from_fn(|i| {
-                std::array::from_fn(|j| s * p[i][j] + if i == j { c } else { 0.0 })
+                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
             });
             covariance
         });

@@ -83,11 +83,11 @@ fn erfc(x: f64) -> f64 {
 pub(crate) fn odometry_noise_sums(
     key_poses: &[KeyPoseWithCloud],
     config: &Config,
-    scale: f64,
+    noise: [f64; 4],
 ) -> Vec<Sums> {
     let zero = [[0.0; 3]; 3];
     let mut sums = vec![[zero; 4]];
-    for edge in odometry_edges(key_poses, config, scale) {
+    for edge in odometry_edges(key_poses, config, noise) {
         let (from, to) = (&key_poses[edge.from], &key_poses[edge.to]);
         let world = |rotation: &Mat3, variances: [f64; 3]| -> Mat3 {
             let scaled: Mat3 =
@@ -195,7 +195,7 @@ impl GscPgo {
             return None;
         }
         let newest = self.key_poses[reference].translation_global;
-        let sums = odometry_noise_sums(&self.key_poses, &self.config, self.odometry_noise_scale());
+        let sums = odometry_noise_sums(&self.key_poses, &self.config, self.odometry_noise());
         let (solved_tip, solved) = match &self.solved_relative_covariance {
             Some((tip, covariance)) if *tip <= reference => (*tip, covariance.as_slice()),
             _ => (0, &[] as &[Mat3]),

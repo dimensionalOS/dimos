@@ -30,6 +30,7 @@ pub mod connection_fit;
 pub mod gsc_pgo;
 pub mod loop_overlap;
 pub mod mat3;
+pub mod odometry_noise;
 pub mod pointcloud;
 pub mod proportional_confidence;
 #[cfg(feature = "native")]

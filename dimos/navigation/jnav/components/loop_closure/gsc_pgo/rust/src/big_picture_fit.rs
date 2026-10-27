@@ -1607,7 +1607,7 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise_scale());
+        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise());
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
         let solve_config = SolveConfig {
@@ -1615,7 +1615,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             pcm_odometry_translation_variance: if config.closure_pcm {
-                config.odom_trans_xy_var * self.odometry_noise_scale()
+                config.odom_trans_xy_var * self.odometry_noise()[0]
             } else {
                 0.0
             },
@@ -1656,7 +1656,7 @@ impl GscPgo {
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
-        self.odometry_noise_ln_scale_dispatched = self.odometry_noise_ln_scale;
+        self.odometry_noise_ln_dispatched = self.odometry_noise_ln;
         self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
         self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
@@ -1752,19 +1752,19 @@ impl GscPgo {
 }
 
 /// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-/// The odometry as pose-graph edges, its reported variances times `scale`.
+/// The odometry as pose-graph edges, its reported variances times `noise` (xy, z, yaw, roll/pitch ratios).
 pub(crate) fn odometry_edges(
     key_poses: &[KeyPoseWithCloud],
     config: &Config,
-    scale: f64,
+    noise: [f64; 4],
 ) -> Vec<Edge> {
     let (tilt, yaw) = (
-        config.odom_rot_roll_pitch_var * scale,
-        config.odom_rot_yaw_var * scale,
+        config.odom_rot_roll_pitch_var * noise[3],
+        config.odom_rot_yaw_var * noise[2],
     );
     let (xy, z) = (
-        config.odom_trans_xy_var * scale,
-        config.odom_trans_z_var * scale,
+        config.odom_trans_xy_var * noise[0],
+        config.odom_trans_z_var * noise[1],
     );
     key_poses
         .windows(2)
