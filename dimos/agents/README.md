@@ -96,7 +96,7 @@ Each component has one entry file, and each may import only the components above
 | [gateway/](gateway/README.md)                       | Hosts the harness and serves it to clients.                           | [main.ts](gateway/main.ts)           | harness, protocol, `shared/socket.ts`           |
 | [frontends/tui/](frontends/tui/README.md)           | The terminal.                                                         | [main.ts](frontends/tui/main.ts)     | sdk, protocol, view-models, render              |
 | [cli/](cli/README.md)                               | The `dimos agent` commands and the gateway process.                   | [main.ts](cli/main.ts)               | gateway config and main, sdk, frontends, shared |
-| [test/](test/README.md)                             | The runner, the boundary test and the shared helpers.                 | [run.mjs](test/run.mjs)              |                                                 |
+| test/                                               | The runner, the boundary test and the shared helpers.                 | [run.mjs](test/run.mjs)              |                                                 |
 
 Three rules shape the table. The protocol depends on nothing, so a browser and the gateway can share it. The harness
 does not know the gateway exists, so it can be tested without a socket. A renderer reaches the gateway only through the
@@ -157,7 +157,6 @@ composed one.
    it.
 6. [frontends/tui/](frontends/tui/README.md), [shared/view-models/](shared/view-models/README.md) and
    [shared/render/](shared/render/README.md): how state becomes a screen.
-7. [test/](test/README.md): how to run and write tests, and the helpers that script a model or start a DimOS system.
 
 ## Python in this directory
 

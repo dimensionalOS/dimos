@@ -160,4 +160,4 @@ Only the gateway opens the conversation database. Clients read and act through g
 
 TypeScript tests cover live notice IDs, delivery ordering, attachment rendering, SDK channel mapping, stream reads, and terminal presenters. Python tests cover runtime and relay behavior. The real relay SDK test runs automatically when the checkout has a `.venv`; `DIMOS_RELAY_TEST_PYTHON` can select another Python executable. Its fixture is `dimos/agents/sdk/streams/demo_relay.py`.
 
-See [the test README](/dimos/agents/test/README.md) for commands and fixtures. Passing local tests does not establish behavior on every robot or relay configuration.
+`npm test` in `dimos/agents` runs the TypeScript tests. Passing local tests does not establish behavior on every robot or relay configuration.

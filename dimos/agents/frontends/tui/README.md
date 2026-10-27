@@ -461,6 +461,5 @@ shared/render/.
 - The [protocol](../../shared/protocol/README.md) defines the contracts and actions the terminal calls.
 - [Media rendering](../../shared/render/README.md) prepares every preview the panels show.
 - The [CLI](../../cli/README.md) explains how `dimos agent` reaches `runTerminal`.
-- The [test README](../../test/README.md) explains how to run these tests and the boundaries test.
 - [Renderable output is shown automatically](../../../../docs/development/agent-design.md#renderable-output-is-shown-automatically)
   in docs/development/agent-design.md explains where renderings come from.
