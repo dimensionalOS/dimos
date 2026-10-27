@@ -336,6 +336,15 @@ class ControlTask(Protocol):
         """
         ...
 
+    def set_estop(self, estopped: bool) -> None:
+        """Stop the task on an emergency stop, or let it run again when cleared.
+
+        The coordinator sends robots nothing while stopped, so a task only
+        needs to drop what it should not resume on clear, e.g. a half-done
+        trajectory.
+        """
+        ...
+
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
         """World poses of the frames this task controls, from this tick's measured joints.
 
@@ -383,6 +392,9 @@ class BaseControlTask(ControlTask):
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         """No-op default."""
         return False
+
+    def set_estop(self, estopped: bool) -> None:
+        """No-op default: the task resumes as it was when the stop is cleared."""
 
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
         """No-op default."""

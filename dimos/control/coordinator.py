@@ -633,9 +633,7 @@ class ControlCoordinator(Module):
                 logger.warning(f"Task {task.name} already registered")
                 return False
             if self._tasks_estopped:
-                handler = getattr(task, "set_estop", None)
-                if callable(handler):
-                    handler(True)
+                task.set_estop(True)
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
@@ -886,13 +884,11 @@ class ControlCoordinator(Module):
         return True
 
     def _set_tasks_estop(self, estopped: bool) -> None:
-        """Call ``set_estop(estopped)`` on every task that has it, and on tasks added later."""
+        """Call ``set_estop(estopped)`` on every task, and on tasks added later."""
         with self._task_lock:
             self._tasks_estopped = estopped
             for task in self._tasks.values():
-                handler = getattr(task, "set_estop", None)
-                if callable(handler):
-                    handler(estopped)
+                task.set_estop(estopped)
 
     @rpc
     def set_activated(self, engaged: bool) -> None:

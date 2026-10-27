@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Collection
 from pathlib import Path
 import tempfile
-import time
 
 import pytest
 
@@ -31,6 +30,7 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.testing.waiting import wait_until
 
 J1 = "arm/joint1"
 J2 = "arm/joint2"
@@ -255,8 +255,7 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
     source = arm_at(0.3, 0.0, timeout=0.05)
     source.command({J1: 0.5}, ControlMode.POSITION)
 
-    time.sleep(0.08)
-    assert not source.ready_for_control()
+    wait_until(lambda: not source.ready_for_control(), timeout=2.0)
     # Its joints stay in what tasks see.
     assert source.read_joints().joint_positions[J1] == 0.3
 

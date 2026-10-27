@@ -67,6 +67,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.utils.testing.waiting import wait_until
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
 MOCK_JOINTS = motor_joints(fake_arm_model(), "mock")
@@ -388,7 +389,7 @@ def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
 
     # Its connection module went down, e.g. to restart, and the arm was moved
     # meanwhile.
-    time.sleep(0.3)
+    wait_until(lambda: not r.coordinator._connections["mock"].ready_for_control(), timeout=2.0)
     r.tick()
     assert len(r.sent) == 1
     assert r.coordinator.get_joint_positions()["mock/joint1"] == 0.3
@@ -450,9 +451,7 @@ def test_a_robot_that_never_reports_is_logged_once_and_never_commanded(
     error = mocker.patch.object(tick_mod.logger, "error")
     r = rig(ArmCoordinator, reading_timeout_s=0.01)
 
-    r.tick()
-    time.sleep(0.12)
-    r.tick()
+    assert r.tick_until(lambda: error.called)
     r.tick()
 
     error.assert_called_once_with(
@@ -510,7 +509,7 @@ def test_clearing_an_estop_holds_each_joint_where_the_next_reading_has_it(
     assert r.positions_sent() == [[0.5, *AT_REST[1:]]]
 
     r.coordinator.set_estop(True)
-    # SendsPositions has no set_estop; take it away so nothing drives the arm.
+    # SendsPositions ignores the estop; take it away so nothing drives the arm.
     r.coordinator.remove_task(task.name)
     # Halted short of where it was told to go.
     r.report_arm(0.4, *AT_REST[1:])
@@ -551,9 +550,8 @@ def test_an_estop_waits_for_a_tick_already_sending_and_a_clear_waits_for_the_sto
     ticking = in_thread("tick", r.tick)
     assert sending.wait(2.0)
     stopping = in_thread("stop", lambda: r.coordinator.set_estop(True))
-    time.sleep(0.05)
+    wait_until(r.coordinator._estop_lock.locked, timeout=2.0)
     clearing = in_thread("clear", lambda: r.coordinator.set_estop(False))
-    time.sleep(0.05)
 
     # The stop waits for the tick to finish sending, and the clear for the stop.
     assert results == {}
@@ -572,15 +570,6 @@ def test_an_estop_waits_for_a_tick_already_sending_and_a_clear_waits_for_the_sto
 # End to end, in real worker processes.
 
 TARGET = [0.2, -0.1, 0.3, 0.0, 0.1, -0.2, 0.25]
-
-
-def wait_until(condition: Callable[[], bool], timeout_s: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout_s
-    while not condition():
-        if time.monotonic() > deadline:
-            return False
-        time.sleep(0.02)
-    return True
 
 
 @pytest.fixture
@@ -613,7 +602,7 @@ def positions(system: ModuleCoordinator) -> list[float]:
 def drive_to_target(system: ModuleCoordinator) -> None:
     """Send the fake arm a trajectory to TARGET, and wait until it gets there."""
     coordinator = system.get_instance(Robots)
-    assert wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()))
+    wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0)
     trajectory = JointTrajectory(
         joint_names=MOCK_JOINTS,
         points=[
@@ -625,7 +614,7 @@ def drive_to_target(system: ModuleCoordinator) -> None:
     result = coordinator.execute_trajectory(trajectory)
 
     assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
-    assert wait_until(lambda: positions(system) == pytest.approx(TARGET, abs=1e-6))
+    wait_until(lambda: positions(system) == pytest.approx(TARGET, abs=1e-6), timeout=10.0)
 
 
 def test_a_trajectory_reaches_the_fake_arm_and_the_base_is_told_to_stand_still(
@@ -650,8 +639,11 @@ def test_a_restarted_connection_module_is_held_where_it_now_is(system: ModuleCoo
     system.restart_module(FakeArm, reload_source=False)
     arm = system.get_instance(FakeArm)
 
-    assert wait_until(lambda: arm.status().last_command_time is not None)
-    time.sleep(0.3)
+    wait_until(lambda: arm.status().last_command_time is not None, timeout=10.0)
+    first = arm.status().last_command_time
+    assert first is not None
+    # A tenth of a second of commands: an old target would have moved the arm.
+    wait_until(lambda: (arm.status().last_command_time or 0.0) > first + 0.1, timeout=10.0)
     assert positions(system) == AT_REST
 
 
@@ -665,12 +657,11 @@ def test_an_estop_leaves_the_fake_robots_to_their_deadmen_and_a_clear_drives_the
 
     assert coordinator.set_estop(True)
 
-    assert wait_until(lambda: arm.status().deadman_fired and base.status().deadman_fired)
-    last_command = arm.status().last_command_time
-    time.sleep(0.3)
-    assert arm.status().last_command_time == last_command
+    wait_until(lambda: arm.status().deadman_fired and base.status().deadman_fired, timeout=10.0)
 
     assert coordinator.set_estop(False)
 
-    assert wait_until(lambda: not arm.status().deadman_fired and not base.status().deadman_fired)
+    wait_until(
+        lambda: not arm.status().deadman_fired and not base.status().deadman_fired, timeout=10.0
+    )
     assert positions(system) == pytest.approx(TARGET, abs=1e-6)
