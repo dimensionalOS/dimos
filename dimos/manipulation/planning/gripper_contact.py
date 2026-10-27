@@ -32,6 +32,9 @@ obstacles: each point fills the grid cell it falls in, so a cell one margin
 wide reaches between 0 and one margin past its points. The object's points
 also make a second octree of 1 mm cells, which a link touches only when it
 reaches a point.
+
+When no grasp passes where it is, ``keep_clear`` can slide every grasp along its
+approach and keep those that pass at the nearest depth where any does.
 """
 
 from __future__ import annotations
@@ -49,14 +52,16 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # How far (metres) beyond the object's points scene points are kept: farther
@@ -73,6 +78,8 @@ _TARGET_EDGE = 0.01
 _IK_ITERATIONS = 80
 # Edge (metres) of the cells that stand for the object's own points.
 _SURFACE_CELL = 0.001
+# Spacing (metres) of the depths ``keep_clear`` tries when it slides grasps.
+_DEPTH_STEP = 0.005
 _TARGET = "grasp-contact/target"
 _SURFACE = "grasp-contact/surface"
 _SCENE = "grasp-contact/scene"
@@ -127,6 +134,7 @@ class GraspContactChecker:
         contact_margin: float,
         obstacle_margin: float,
         seed: JointState | None = None,
+        depth_search: float = 0.0,
     ) -> GraspCandidateArray:
         """The grasps whose gripper touches the object only with its pads and clears the scene.
 
@@ -142,17 +150,31 @@ class GraspContactChecker:
                 of a scene point.
             seed: The robot's joint positions now (radians, metres for a sliding
                 joint), where the IK starts; joints left out start at home.
+            depth_search: When no grasp passes where it is, slide every grasp up
+                to this far (metres) along its approach, deeper and back, 5 mm
+                at a time, and return those that pass at the nearest depth
+                where any does. Each depth tried is one more full check. 0
+                checks each grasp only where it is.
         """
-        clear = self.check(
-            [candidate.pose for candidate in candidates.candidates],
-            _xyz(target),
-            scene_obstacles(scene, target, tips),
-            candidates.header.frame_id,
-            contact_margin,
-            obstacle_margin,
-            seed,
-        )
-        kept = [c for c, ok in zip(candidates.candidates, clear, strict=True) if ok]
+        points = _xyz(target)
+        obstacles = scene_obstacles(scene, target, tips)
+        steps = round(depth_search / _DEPTH_STEP)
+        # Nearest first: 0, +1, -1, +2, -2 ... steps; positive is deeper.
+        shifts = [0.0, *(sign * k * _DEPTH_STEP for k in range(1, steps + 1) for sign in (1, -1))]
+        for shift in shifts:
+            moved = [_slid(candidate, shift) for candidate in candidates.candidates]
+            clear = self.check(
+                [candidate.pose for candidate in moved],
+                points,
+                obstacles,
+                candidates.header.frame_id,
+                contact_margin,
+                obstacle_margin,
+                seed,
+            )
+            if any(clear):
+                break
+        kept = [c for c, ok in zip(moved, clear, strict=True) if ok]
         return GraspCandidateArray(candidates.header, kept)
 
     def check(
@@ -273,6 +295,15 @@ def scene_obstacles(
         distance, _ = cKDTree(own).query(points)
         points = points[distance > _TARGET_EDGE]
     return points
+
+
+def _slid(candidate: GraspCandidate, shift: float) -> GraspCandidate:
+    """The grasp moved ``shift`` metres along its tool tip's z axis (its approach)."""
+    if shift == 0.0:
+        return candidate
+    pose = candidate.pose
+    position = pose.position.to_numpy() + shift * pose_to_matrix(pose)[:3, 2]
+    return GraspCandidate(Pose(Vector3(*position), pose.orientation), candidate.score)
 
 
 def _octree(
