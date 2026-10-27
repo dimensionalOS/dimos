@@ -374,6 +374,8 @@ pub struct Config {
     /// (m²), z translation (m²), yaw (rad²) and roll/pitch (rad²), so it does not depend on how far apart keyframes are
     /// (the per-keyframe variances above are then unused).
     pub odom_noise_per_motion: bool,
+    /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
+    /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
     pub odom_xy_var_per_rad: f64,
     pub odom_z_var_per_m: f64,
@@ -384,7 +386,8 @@ pub struct Config {
     pub odom_tilt_var_per_rad: f64,
     /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
     /// the next (xy, z, yaw, roll/pitch): the prior that `odometry_noise_from_closures` holds its estimate to. 0 = one
-    /// closure's worth of information (a unit-information prior).
+    /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
+    /// the fit (their held-out error at 32-keyframe spans).
     pub odom_noise_prior_ln_sd_xy: f64,
     pub odom_noise_prior_ln_sd_z: f64,
     pub odom_noise_prior_ln_sd_yaw: f64,
@@ -497,18 +500,18 @@ impl Default for Config {
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-4,
             odom_noise_per_motion: false,
-            odom_xy_var_per_m: 2.5e-5,
-            odom_xy_var_per_rad: 0.0,
-            odom_z_var_per_m: 4.9e-5,
-            odom_z_var_per_rad: 0.0,
-            odom_yaw_var_per_m: 1.2e-7,
-            odom_yaw_var_per_rad: 0.0,
-            odom_tilt_var_per_m: 7.6e-9,
-            odom_tilt_var_per_rad: 0.0,
-            odom_noise_prior_ln_sd_xy: 0.0,
-            odom_noise_prior_ln_sd_z: 0.0,
-            odom_noise_prior_ln_sd_yaw: 0.0,
-            odom_noise_prior_ln_sd_tilt: 0.0,
+            odom_xy_var_per_m: 1.53e-7,
+            odom_xy_var_per_rad: 4.03e-5,
+            odom_z_var_per_m: 4.12e-7,
+            odom_z_var_per_rad: 1.49e-5,
+            odom_yaw_var_per_m: 1e-12,
+            odom_yaw_var_per_rad: 7.5e-5,
+            odom_tilt_var_per_m: 4.78e-7,
+            odom_tilt_var_per_rad: 1.09e-5,
+            odom_noise_prior_ln_sd_xy: 2.4,
+            odom_noise_prior_ln_sd_z: 1.6,
+            odom_noise_prior_ln_sd_yaw: 2.4,
+            odom_noise_prior_ln_sd_tilt: 1.6,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
             scan_context_max_range_m: 0.0,
