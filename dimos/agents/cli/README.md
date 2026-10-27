@@ -23,9 +23,9 @@ until a gateway answers, so a command first checks for one with `gatewayState` o
 | `stop`                                       | Stops the gateway                                                                                                           |
 | `version`                                    | Prints this build                                                                                                           |
 
-`dimos agent` with no command runs [tui.ts](commands/tui.ts). `dimos agent`, `run` and `conversations` start the
-gateway in the background when none runs. Python runs `load` and `service` itself and hands every other command line
-to Node unparsed.
+`dimos agent` with no command starts the gateway in the background when none runs, then opens the terminal through
+[tui.ts](commands/tui.ts), which only draws it. `run` and `conversations` also start the gateway when none runs. Python
+runs `load` and `service` itself and hands every other command line to Node unparsed.
 
 ## Quickstart
 

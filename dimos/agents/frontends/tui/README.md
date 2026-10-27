@@ -1,8 +1,8 @@
 # Terminal application
 
 This folder is the terminal, the pi-tui application that `dimos agent` opens on one conversation.
-[cli/commands/tui.ts](../../cli/commands/tui.ts) starts the gateway when none runs and calls `runTerminal` from
-[main.ts](main.ts). The terminal reaches the gateway only through the [SDK](../../sdk/README.md). It turns served state
+`dimos agent` starts the gateway when none runs, then [cli/commands/tui.ts](../../cli/commands/tui.ts) calls
+`runTerminal` from [main.ts](main.ts). The terminal reaches the gateway only through the [SDK](../../sdk/README.md). It turns served state
 into rows with [view models](../../shared/view-models/README.md) and previews media with
 [shared/render/](../../shared/render/README.md). [The terminal](../../../../docs/usage/agent.md#the-terminal) in
 docs/usage/agent.md describes what a user sees and lists every key.

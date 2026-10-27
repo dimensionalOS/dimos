@@ -27,7 +27,6 @@ const commands: ReadonlyMap<string, Command> = new Map([
   ["version", runVersion],
   ["conversations", runConversations],
   ["run", printRun],
-  ["tui", runTui],
 ]);
 
 function conversationId(value: string | undefined): ConversationId | null {
@@ -55,7 +54,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
       help: { type: "boolean", default: false },
     },
   });
-  const [command = "tui", ...args] = positionals;
+  const [command, ...args] = positionals;
   if (values.help || command === "help") {
     process.stdout.write(`${USAGE}\n`);
     return 0;
@@ -79,6 +78,14 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
         env,
       ),
   };
+  if (command === undefined) {
+    if (context.view && context.conversation === null) {
+      process.stderr.write("--view needs --conversation ID.\n");
+      return 2;
+    }
+    await context.startGateway();
+    return runTui(context);
+  }
   const run = commands.get(command);
   if (run === undefined) {
     process.stderr.write(`Unknown command: ${command}\n${USAGE}\n`);
