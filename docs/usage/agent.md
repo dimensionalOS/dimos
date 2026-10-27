@@ -81,7 +81,7 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B backgroun
 | Ctrl+B | Send the running tool call to the background |
 | Esc | While running, stop the run. With an empty editor, select a message (then ↑/↓, `e`, `u`, `f`) |
 | Up | With an empty editor, bring your queued messages back for editing |
-| Ctrl-C | Detach; the conversation keeps running |
+| Ctrl-C | Clear the editor. With an empty editor, detach; the conversation keeps running |
 
 ## Run the gateway as a service
 

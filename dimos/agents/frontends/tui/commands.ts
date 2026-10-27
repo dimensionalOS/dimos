@@ -141,7 +141,7 @@ const KEYS: readonly string[] = [
   "Ctrl+B  send the running tool call to the background",
   "Esc     while running, stop the run; with an empty editor, select a message (↑/↓, then e edit, u summarize up to, f summarize from)",
   "Up      with an empty editor, bring queued user messages back for editing",
-  "Ctrl-C  detach; the conversation keeps running",
+  "Ctrl-C  clear the editor; with an empty editor, detach (the conversation keeps running)",
 ];
 
 /** Sends typed text: a steer while a run is in progress, so it joins the run; otherwise placed at once. */

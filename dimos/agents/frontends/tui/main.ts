@@ -711,7 +711,11 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   tui.addInputListener((data) => {
     // The kitty keyboard protocol and modifyOtherKeys send Ctrl-C as an escape sequence, not \x03.
     if (matchesKey(data, "ctrl+c") && !isKeyRelease(data)) {
-      resolveExit(0);
+      const editing = overlay === null && closeFullScreen === null && (mode.kind === "chat" || mode.kind === "edit");
+      if (editing && editor.getValue() !== "") {
+        editor.setValue("");
+        requestRender();
+      } else resolveExit(0);
       return { consume: true };
     }
     if (overlay !== null) return undefined;

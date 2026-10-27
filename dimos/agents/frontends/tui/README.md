@@ -68,9 +68,9 @@ when the user detaches. Its options type, `TerminalOptions`, is not exported, so
 | `cwd`            | `string \| null`         | Where a new conversation works. `null` uses the gateway's workspace setting.        |
 | `renderCacheDir` | `string`                 | The render cache the terminal shares with the gateway, for `/inspect` and `/image`. |
 
-The exit code is 0 after Ctrl-C or `/exit`, 1 when the gateway refuses the connection or goes away, 129 after SIGHUP,
-143 after SIGTERM, and 130 when the user cancels first-run setup. A signal or an uncaught error still restores the
-terminal.
+The exit code is 0 after Ctrl-C on an empty editor or `/exit`, 1 when the gateway refuses the connection or goes
+away, 129 after SIGHUP, 143 after SIGTERM, and 130 when the user cancels first-run setup. A signal or an uncaught error
+still restores the terminal.
 
 `runTerminal` runs these steps:
 
