@@ -113,6 +113,8 @@ class PGOConfig(NativeModuleConfig):
     closure_rank_by_information: bool = False
     # True: measure the yank scale from closures the solve kept instead of every ICP-scored candidate
     closure_yank_scale_from_kept: bool = False
+    # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
+    odometry_noise_from_closures: bool = False
     closure_overlap_score: bool = False
     closure_overlap_sigma_m: float = 0.03
     closure_overlap_reach_m: float = 0.5

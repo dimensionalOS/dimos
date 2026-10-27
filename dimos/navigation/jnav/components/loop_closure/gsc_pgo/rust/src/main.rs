@@ -110,6 +110,7 @@ config! {
     closure_likelihood_beam: bool,
     closure_rank_by_information: bool,
     closure_yank_scale_from_kept: bool,
+    odometry_noise_from_closures: bool,
     closure_overlap_score: bool,
     closure_overlap_sigma_m: f64,
     closure_overlap_reach_m: f64,

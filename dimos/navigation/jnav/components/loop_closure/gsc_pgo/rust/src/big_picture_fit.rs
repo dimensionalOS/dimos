@@ -1456,6 +1456,7 @@ impl GscPgo {
         self.committed_closures.len() > self.closures_dispatched
             || self.world_positions.len() > self.world_positions_dispatched
             || self.landmark_sightings.len() > self.landmark_sightings_dispatched
+            || self.odometry_noise_rescale
     }
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
@@ -1606,7 +1607,7 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let odometry = odometry_edges(&self.key_poses, config);
+        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise_scale());
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
         let solve_config = SolveConfig {
@@ -1614,7 +1615,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             pcm_odometry_translation_variance: if config.closure_pcm {
-                config.odom_trans_xy_var
+                config.odom_trans_xy_var * self.odometry_noise_scale()
             } else {
                 0.0
             },
@@ -1655,6 +1656,8 @@ impl GscPgo {
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
+        self.odometry_noise_ln_scale_dispatched = self.odometry_noise_ln_scale;
+        self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -1742,14 +1745,26 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
+        self.update_odometry_noise_scale();
         true
     }
 }
 
 /// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) -> Vec<Edge> {
-    let (tilt, yaw) = (config.odom_rot_roll_pitch_var, config.odom_rot_yaw_var);
-    let (xy, z) = (config.odom_trans_xy_var, config.odom_trans_z_var);
+/// The odometry as pose-graph edges, its reported variances times `scale`.
+pub(crate) fn odometry_edges(
+    key_poses: &[KeyPoseWithCloud],
+    config: &Config,
+    scale: f64,
+) -> Vec<Edge> {
+    let (tilt, yaw) = (
+        config.odom_rot_roll_pitch_var * scale,
+        config.odom_rot_yaw_var * scale,
+    );
+    let (xy, z) = (
+        config.odom_trans_xy_var * scale,
+        config.odom_trans_z_var * scale,
+    );
     key_poses
         .windows(2)
         .enumerate()

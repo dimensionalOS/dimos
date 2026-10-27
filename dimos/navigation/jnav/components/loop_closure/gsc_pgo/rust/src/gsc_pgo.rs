@@ -115,6 +115,12 @@ pub struct ClosureCandidateDiag {
     /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
     /// this target, counted only as far as the decision needed (0 when it was never counted).
     pub pressure: f64,
+    /// The odometry noise scale when the search started (`GscPgo::odometry_noise_scale`).
+    pub odometry_noise_scale: f64,
+    /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
+    /// world axes (m), and the graph's covariance of that offset at the reported odometry noise (m²); NaN before ICP.
+    pub innovation: Vec3,
+    pub innovation_covariance: Mat3,
     /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
     /// scales with.
     pub target_overlap: f64,
@@ -198,6 +204,9 @@ impl ClosureCandidateDiag {
             scan_context_second: f32::NAN,
             lowe_ratio: f32::NAN,
             pressure: 0.0,
+            odometry_noise_scale: 1.0,
+            innovation: [f64::NAN; 3],
+            innovation_covariance: [[f64::NAN; 3]; 3],
             target_overlap: 0.0,
             keep_rate: f64::NAN,
             extension_budget: 0,
@@ -414,6 +423,10 @@ pub struct Config {
     /// When true, the yank scale (`sigma_*` in the diagnostics) comes from the closures the solve kept rather than from
     /// every ICP-scored candidate, so a run of large wrong yanks does not make the next large yank look ordinary.
     pub closure_yank_scale_from_kept: bool,
+    /// When true, the odometry's reported noise is scaled by the factor that best explains how far the kept closures
+    /// disagreed with the odometry (maximum likelihood over their innovations, `GscPgo::odometry_noise_scale`), and every
+    /// solve and the loop-overlap pressure use the scaled noise (1, the reported noise, until a closure is kept).
+    pub odometry_noise_from_closures: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -471,6 +484,7 @@ impl Default for Config {
             closure_likelihood_beam: false,
             closure_rank_by_information: false,
             closure_yank_scale_from_kept: false,
+            odometry_noise_from_closures: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -493,6 +507,14 @@ pub struct GscPgo {
     pub(crate) committed_closures: Vec<CommittedClosure>,
     /// Per committed closure: its yank_z and gate confidence, for its closure-edge events.
     pub(crate) closure_yank_z: Vec<f64>,
+    /// Per committed closure: its innovation, the graph's covariance of it at the reported odometry noise, and the
+    /// closure's own translation variance (m²), for `odometry_noise_from_closures`.
+    pub(crate) closure_innovations: Vec<(Vec3, Mat3, f64)>,
+    /// ln of the odometry noise scale (0: the reported noise), set from the kept closures after each solve.
+    pub(crate) odometry_noise_ln_scale: f64,
+    /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
+    pub(crate) odometry_noise_ln_scale_dispatched: f64,
+    pub(crate) odometry_noise_rescale: bool,
     /// Per committed closure: its yank per sqrt keyframe gap (rotation deg, translation m), for `closure_yank_scale_from_kept`.
     pub(crate) closure_yanks: Vec<(f64, f64)>,
     pub(crate) closure_fit_confidence: Vec<f64>,
@@ -712,7 +734,8 @@ impl ClosureSearch {
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
         // ends' relative position than that (along the odometry, or across one kept closure), the closure adds only
         // ICP's noise, and repeats of a closure already kept would count the same evidence twice
-        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * self.config.odom_trans_xy_var;
+        let odometry_step = self.config.odom_trans_xy_var * diag.odometry_noise_scale;
+        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
         let known = self
             .kept_closures
             .iter()
@@ -778,6 +801,10 @@ impl ClosureSearch {
         ));
         diag.yank_rotation_deg =
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
+        diag.innovation = mat3::mat_vec(
+            &target.rotation_global,
+            &mat3::sub(&translation_offset, &current_relative_translation),
+        );
 
         scored_yank = Some(self.score_candidate(&mut diag));
         // the solve's record on closures that pulled about as hard as this one (within about one yank unit): rejected
@@ -809,7 +836,11 @@ impl ClosureSearch {
                 return base;
             }
             let sums = noise_sums.get_or_insert_with(|| {
-                crate::loop_overlap::odometry_noise_sums(&self.key_poses, &self.config)
+                crate::loop_overlap::odometry_noise_sums(
+                    &self.key_poses,
+                    &self.config,
+                    diag.odometry_noise_scale,
+                )
             });
             let places = look_alikes.count_past(
                 (evidence - base).exp(),
@@ -890,6 +921,39 @@ impl GscPgo {
         }
     }
 
+    /// The factor on the odometry's reported noise (`odometry_noise_from_closures`); 1 when off or before a kept closure.
+    pub fn odometry_noise_scale(&self) -> f64 {
+        self.odometry_noise_ln_scale.exp()
+    }
+
+    /// After a solve: the odometry noise scale from the closures it kept (`odometry_noise_ln_scale_ml`), and a re-solve
+    /// when the scale moved by more than its own standard error since the solve began (sqrt(2 / 3k) in ln for k kept 3-D
+    /// innovations, the Fisher information of a variance scale), so the graph is solved at the scale its closures imply.
+    pub(crate) fn update_odometry_noise_scale(&mut self) {
+        if !self.config.odometry_noise_from_closures {
+            return;
+        }
+        let kept: Vec<(Vec3, Mat3, f64)> = self
+            .committed_closures
+            .iter()
+            .zip(&self.closure_innovations)
+            .filter(|(c, (v, p, var))| {
+                c.gnc_weight > 0.5
+                    && var.is_finite()
+                    && v.iter().chain(p.iter().flatten()).all(|x| x.is_finite())
+            })
+            .map(|(_, &innovation)| innovation)
+            .collect();
+        let Some(ln_scale) = odometry_noise_ln_scale_ml(&kept) else {
+            return;
+        };
+        self.odometry_noise_ln_scale = ln_scale;
+        let standard_error = (2.0 / (3.0 * kept.len() as f64)).sqrt();
+        if (ln_scale - self.odometry_noise_ln_scale_dispatched).abs() > standard_error {
+            self.odometry_noise_rescale = true;
+        }
+    }
+
     /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, pose-graph solves.
     pub fn stage_seconds(&self) -> [(&'static str, f64); 6] {
         let t = &self.timing;
@@ -959,6 +1023,11 @@ impl GscPgo {
             if outcome == ClosureEdgeState::Committed {
                 self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
                 self.closure_yank_z.push(diag.yank_z);
+                self.closure_innovations.push((
+                    diag.innovation,
+                    diag.innovation_covariance,
+                    f64::NAN,
+                ));
                 let drift = diag.yank_drift_scale.max(f64::EPSILON);
                 self.closure_yanks.push((
                     diag.yank_rotation_deg / drift,
@@ -1146,7 +1215,8 @@ impl GscPgo {
     /// How sure the graph already is of keyframes `a` and `b`'s relative position (variance, m²): along the odometry,
     /// or across one kept (or not yet judged) closure, as `ClosureSearch::run`'s uninformative gate measures it.
     fn known_variance(&self, a: usize, b: usize) -> f64 {
-        let step = |x: usize, y: usize| x.abs_diff(y) as f64 * self.config.odom_trans_xy_var;
+        let odometry_step = self.config.odom_trans_xy_var * self.odometry_noise_scale();
+        let step = |x: usize, y: usize| x.abs_diff(y) as f64 * odometry_step;
         self.committed_closures
             .iter()
             .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5)
@@ -1188,11 +1258,19 @@ impl GscPgo {
         diag.pressure = self
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
+        diag.odometry_noise_scale = self.odometry_noise_scale();
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
         // the doubling step that covers max keyframes x that chance
-        diag.target_overlap = self
-            .overlap_model(diag.source_id)
+        let model = self.overlap_model(diag.source_id);
+        diag.target_overlap = model
+            .as_ref()
             .map_or(0.0, |model| model.overlap(target_idx).0);
+        // the graph's covariance of the source's offset from this target, at the reported odometry noise
+        if let Some(model) = &model {
+            let scale = diag.odometry_noise_scale;
+            diag.innovation_covariance =
+                model.relative(target_idx).map(|row| row.map(|v| v / scale));
+        }
         // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
         // overlaps this target
         let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
@@ -1399,6 +1477,56 @@ impl GscPgo {
             score,
             gnc_weight: f64::NAN,
         });
+        // the closure's translation variance, as the pose graph takes it (`closure_edges`)
+        if let Some(innovation) = self.closure_innovations.last_mut() {
+            innovation.2 = score.max(1e-6);
+        }
         self.new_closure = true;
     }
+}
+
+/// The ln of the odometry noise scale s that makes the kept closures' innovations most likely: each innovation v is
+/// zero-mean Gaussian with covariance s P + c I (P the graph's covariance of it at the reported noise, c the closure's own
+/// translation variance), so this minimizes sum(ln det(s P + c I) + v^T (s P + c I)^-1 v) over ln s. P is taken as linear
+/// in s, which holds for the odometry chain and is approximate across earlier closures. A grid over ln s (numerical
+/// range only) finds the basin, golden-section search refines it. None without an innovation.
+pub fn odometry_noise_ln_scale_ml(innovations: &[(Vec3, Mat3, f64)]) -> Option<f64> {
+    if innovations.is_empty() {
+        return None;
+    }
+    let cost = |ln_scale: f64| -> f64 {
+        let s = ln_scale.exp();
+        innovations
+            .iter()
+            .map(|(v, p, c)| {
+                let covariance: Mat3 = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| s * p[i][j] + if i == j { *c } else { 0.0 })
+                });
+                let Some(inverse) = mat3::inverse(&covariance) else {
+                    return f64::INFINITY;
+                };
+                let iv = mat3::mat_vec(&inverse, v);
+                mat3::det(&covariance).ln() + v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]
+            })
+            .sum()
+    };
+    let (mut best, mut best_cost) = (0.0, cost(0.0));
+    for step in -60..=60 {
+        let t = step as f64 * 0.5;
+        let c = cost(t);
+        if c < best_cost {
+            (best, best_cost) = (t, c);
+        }
+    }
+    let (mut low, mut high) = (best - 0.5, best + 0.5);
+    let golden = (5f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..60 {
+        let (a, b) = (high - golden * (high - low), low + golden * (high - low));
+        if cost(a) < cost(b) {
+            high = b;
+        } else {
+            low = a;
+        }
+    }
+    Some((low + high) / 2.0)
 }
