@@ -1,6 +1,6 @@
 import { owner } from "../../../sdk/failures.ts";
 import type { ModuleRow } from "../../../shared/protocol/runtime/module.ts";
-import type { RuntimeTab } from "./base.ts";
+import type { MenuTab } from "./base.ts";
 
 /** "follower  #2  r12 running  ✖ ImportError: …" */
 function moduleText(module: ModuleRow): string {
@@ -12,7 +12,7 @@ function moduleText(module: ModuleRow): string {
 }
 
 /** Tab 3: every agent module with the conversation that owns it; r restarts, u unloads, d deletes. */
-export const modulesTab: RuntimeTab = {
+export const modulesTab: MenuTab = {
   title: "Agent modules",
   rows: (context) => {
     const { ui } = context;

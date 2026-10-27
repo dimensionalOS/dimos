@@ -2,7 +2,7 @@ import { refusalOfFailure } from "../../../sdk/failures.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { RuntimeDetail, RuntimeRow, RuntimeTab, TabContext } from "./base.ts";
+import type { MenuDetail, MenuRow, MenuTab, TabContext } from "./base.ts";
 import type { Ui } from "../session.ts";
 import { accent, levelColor, muted } from "../style.ts";
 import { actionLine } from "../../../shared/view-models/actions.ts";
@@ -17,7 +17,7 @@ import { overviewTab } from "./overview.ts";
 import { streamsTab } from "./streams.ts";
 
 /** The family's one list, in key order 1 to 9. */
-const TABS: readonly RuntimeTab[] = [
+const TABS: readonly MenuTab[] = [
   overviewTab,
   conversationsTab,
   modulesTab,
@@ -31,29 +31,29 @@ const TABS: readonly RuntimeTab[] = [
 
 const TAB_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
-type RuntimeViewOptions = {
+type MenuViewOptions = {
   readonly ui: Ui;
   readonly inventory: TabContext["inventory"];
   /** The conversation the chat shows. */
   readonly current: ConversationId | null;
-  /** Shows a conversation in the chat; /runtime closes first. */
+  /** Shows a conversation in the chat; /menu closes first. */
   readonly attach: (conversation: ConversationId) => void;
   readonly close: () => void;
   readonly requestRender: () => void;
 };
 
 /**
- * Full-screen /runtime: tabs 1 to 9, a selected row with its keys, Enter for its detail, Esc back then out. Draws from
+ * Full-screen /menu: tabs 1 to 9, a selected row with its keys, Enter for its detail, Esc back then out. Draws from
  * the gateway members when it renders and reads the inventory held by the terminal.
  */
-export class RuntimeView implements Component {
-  private readonly options: RuntimeViewOptions;
+export class MenuView implements Component {
+  private readonly options: MenuViewOptions;
   private tab = 0;
   private selected = 0;
-  private detail: RuntimeDetail | null = null;
+  private detail: MenuDetail | null = null;
   private readonly stop: () => void;
 
-  constructor(options: RuntimeViewOptions) {
+  constructor(options: MenuViewOptions) {
     this.options = options;
     const { ui } = options;
     this.stop = listen(
@@ -133,13 +133,13 @@ export class RuntimeView implements Component {
     this.closeDetail();
   }
 
-  private hints(row: RuntimeRow | undefined): string {
+  private hints(row: MenuRow | undefined): string {
     const keys = (row?.keys ?? []).map((key) => `${key.key} ${key.label}`);
     if (row?.open !== null && row?.open !== undefined) keys.push("Enter open");
     return ["1–9 tab", "↑/↓ select", ...keys, "Esc chat"].join(" · ");
   }
 
-  private rows(): readonly RuntimeRow[] {
+  private rows(): readonly MenuRow[] {
     const tab = TABS[this.tab];
     if (tab === undefined) return [];
     const context: TabContext = {

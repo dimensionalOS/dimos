@@ -118,8 +118,8 @@ const FAMILIES: {
     consumer: "frontends/tui/views/gallery.ts",
     notMembers: [],
   },
-  "frontends/tui/runtime": {
-    consumer: "frontends/tui/runtime/view.ts",
+  "frontends/tui/menu": {
+    consumer: "frontends/tui/menu/view.ts",
     notMembers: [],
   },
   "sdk/streams": { consumer: null, notMembers: [] },

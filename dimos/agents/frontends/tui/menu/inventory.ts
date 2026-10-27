@@ -1,5 +1,5 @@
 import type { Inventory } from "../../../shared/protocol/runtime/inventory.ts";
-import type { RuntimeDetail, RuntimeRow, RuntimeTab, TabContext } from "./base.ts";
+import type { MenuDetail, MenuRow, MenuTab, TabContext } from "./base.ts";
 import { plain } from "./lib/rows.ts";
 
 /** A nullable inventory field as shown: "-" when DimOS did not report it. */
@@ -19,15 +19,15 @@ function inventoryOf(context: TabContext): Inventory | null {
 }
 
 function withInventory(
-  rows: (inventory: Inventory) => readonly RuntimeRow[],
-): (context: TabContext) => readonly RuntimeRow[] {
+  rows: (inventory: Inventory) => readonly MenuRow[],
+): (context: TabContext) => readonly MenuRow[] {
   return (context) => {
     const inventory = inventoryOf(context);
     return inventory === null ? [plain("Waiting for the inventory…")] : rows(inventory);
   };
 }
 
-function moduleDetail(inventory: Inventory, instance: string): RuntimeDetail {
+function moduleDetail(inventory: Inventory, instance: string): MenuDetail {
   const module = inventory.runtime.modules.find((candidate) => candidate.instance === instance);
   const streams = inventory.runtime.streams.filter((stream) => stream.module === instance);
   return {
@@ -43,7 +43,7 @@ function moduleDetail(inventory: Inventory, instance: string): RuntimeDetail {
 }
 
 /** Tab 6: the DimOS checkout, Python, transport and system size. */
-export const environmentTab: RuntimeTab = {
+export const environmentTab: MenuTab = {
   title: "Env",
   rows: withInventory((inventory) => {
     const env = inventory.environment;
@@ -63,7 +63,7 @@ export const environmentTab: RuntimeTab = {
 };
 
 /** Tab 7: every module instance of the running system; Enter lists its streams and RPCs. */
-export const inventoryModulesTab: RuntimeTab = {
+export const inventoryModulesTab: MenuTab = {
   title: "Modules",
   rows: withInventory((inventory) =>
     inventory.runtime.modules.map((module) => {
@@ -79,7 +79,7 @@ export const inventoryModulesTab: RuntimeTab = {
 };
 
 /** Tab 8: every RPC with its signature and the first line of its docstring. */
-export const rpcsTab: RuntimeTab = {
+export const rpcsTab: MenuTab = {
   title: "RPCs",
   rows: withInventory((inventory) =>
     inventory.runtime.modules.flatMap((module) =>
@@ -89,7 +89,7 @@ export const rpcsTab: RuntimeTab = {
 };
 
 /** Tab 9: every stream with its direction, message type and channel. */
-export const inventoryStreamsTab: RuntimeTab = {
+export const inventoryStreamsTab: MenuTab = {
   title: "Stream types",
   rows: withInventory((inventory) =>
     inventory.runtime.streams.map((stream) =>

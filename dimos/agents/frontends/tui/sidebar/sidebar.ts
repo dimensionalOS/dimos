@@ -215,7 +215,7 @@ export class Sidebar implements Component {
         add(line(`${accent("◉")} system`));
         this.showGroups(system.groups, "system", now, width, content, rows, shown, wanted, occurrences);
       }
-      if (system.others > 0) add(line(muted(`  + ${system.others} more streams in /runtime`)));
+      if (system.others > 0) add(line(muted(`  + ${system.others} more streams in /menu`)));
     }
     const valid = new Set(rows.map((row) => row.key));
     for (const key of this.collapsed) if (!valid.has(key)) this.collapsed.delete(key);

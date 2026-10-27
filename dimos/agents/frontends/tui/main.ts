@@ -31,7 +31,7 @@ import { FileRenderer } from "../../shared/render/render.ts";
 import { LoginPanel } from "./dialogs.ts";
 import { MessageSelection } from "./conversation/selection.ts";
 import { PromptEditor } from "./conversation/input.ts";
-import { RuntimeView } from "./runtime/view.ts";
+import { MenuView } from "./menu/view.ts";
 import { SIDEBAR_COLUMNS, Sidebar } from "./sidebar/sidebar.ts";
 import { StatusLine, accent, amber, levelColor, muted } from "./style.ts";
 import { RemoteFrames } from "../../sdk/streams/remote.ts";
@@ -594,7 +594,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     if (target !== null) reveal(target);
   };
 
-  let runtimeView = null as RuntimeView | null;
+  let menuView = null as MenuView | null;
   const app: TerminalApp = {
     ui,
     tui,
@@ -614,9 +614,9 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       if (panel !== null) progressSlot.addChild(panel);
       requestRender();
     },
-    openRuntime: () => {
+    openMenu: () => {
       closeSwitcher();
-      const view = new RuntimeView({
+      const view = new MenuView({
         inventory,
         ui,
         current: showing?.id ?? null,
@@ -627,10 +627,10 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         close: () => closeFullScreen?.(),
         requestRender,
       });
-      runtimeView = view;
-      fullScreen("runtime", view, false, () => {
+      menuView = view;
+      fullScreen("menu", view, false, () => {
         view.dispose();
-        runtimeView = null;
+        menuView = null;
       });
     },
     openSwitcher,
@@ -824,7 +824,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   } finally {
     for (const stop of stops) stop();
     closeSwitcher();
-    runtimeView?.dispose();
+    menuView?.dispose();
     login.dispose();
     transcript.dispose();
     sidebar.dispose();

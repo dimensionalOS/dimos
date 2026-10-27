@@ -68,7 +68,7 @@ With nothing running and an empty editor, Esc selects a message. The arrows move
 
 A long-running tool call that allows it, such as `bash`, shows `Ctrl+B background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
 
-`/runtime` opens the running system full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
+`/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
 
 | Key | What it does |
 |---|---|

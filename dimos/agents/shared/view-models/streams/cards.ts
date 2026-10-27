@@ -85,7 +85,7 @@ export function allStreamGroups(
 
 /**
  * Picture channels the conversation does not already show, grouped by annotated module or under Relay.
- * Streams without a picture are counted in `others`, which `/runtime` lists.
+ * Streams without a picture are counted in `others`, which `/menu` lists.
  */
 export function systemGroups(
   streams: readonly StreamRef[],

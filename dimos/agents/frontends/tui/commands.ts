@@ -42,8 +42,8 @@ export type TerminalApp = {
   restore(text: string): void;
   /** Shows a component above the editor while it works, or nothing. */
   showProgress(panel: ProgressPanel | null): void;
-  /** Full-screen `/runtime`. */
-  openRuntime(): void;
+  /** Full-screen `/menu`. */
+  openMenu(): void;
   /** The conversation switcher overlay, as Ctrl+O opens it. */
   openSwitcher(): void;
   /** Selects view `index` of the newest rendering and gives it the keys when it takes any. */
@@ -319,7 +319,7 @@ export function slashCommands(): readonly SlashCommand[] {
         );
       },
     },
-    { name: "runtime", usage: "/runtime  the running DimOS system", run: async (_args, app) => app.openRuntime() },
+    { name: "menu", usage: "/menu  the main menu", run: async (_args, app) => app.openMenu() },
     {
       name: "module",
       usage: "/module create NAME PATH | restart NAME | unload NAME | delete NAME",

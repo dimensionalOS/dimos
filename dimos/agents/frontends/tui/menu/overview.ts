@@ -1,4 +1,4 @@
-import type { RuntimeRow, RuntimeTab } from "./base.ts";
+import type { MenuRow, MenuTab } from "./base.ts";
 import { actionLine } from "../../../shared/view-models/actions.ts";
 import { connectionSegment } from "../../../shared/view-models/connection.ts";
 import { linkSegments, runSegment } from "../../../shared/view-models/gateway/link.ts";
@@ -9,7 +9,7 @@ import { worst } from "../../../shared/view-models/levels.ts";
 const REFUSED_SHOWN = 5;
 
 /** Tab 1: this terminal's gateway link, the DimOS link, load and run, the newest refused actions. */
-export const overviewTab: RuntimeTab = {
+export const overviewTab: MenuTab = {
   title: "Overview",
   rows: ({ ui, now }) => {
     const gateway = ui.gateway;
@@ -17,7 +17,7 @@ export const overviewTab: RuntimeTab = {
     const link = linkSegments(gateway.link.value, gateway.load.value, runs, now);
     const run = runSegment(runs);
     const connection = connectionSegment(ui.connection.value);
-    const rows: RuntimeRow[] = [
+    const rows: MenuRow[] = [
       plain(connection.text, connection.level),
       plain(link.map((segment) => segment.text).join(" · "), worst(link.map((segment) => segment.level))),
       run === null ? plain("No DimOS run file") : plain(run.text, run.level),

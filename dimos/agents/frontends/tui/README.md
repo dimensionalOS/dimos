@@ -26,7 +26,7 @@ entry, a queue change or a new stream reaches the screen on the next frame, and 
 state.
 
 `VStack` and `HStack` split the screen into rows and columns, and `ScrollView` scrolls one region. `tui.setLayoutRoot`
-replaces the whole screen, which is how `/runtime` and an interactive `/panel` go full screen. `tui.setFocus(component)`
+replaces the whole screen, which is how `/menu` and an interactive `/panel` go full screen. `tui.setFocus(component)`
 picks the component that gets keys. A component that wraps a text input implements `Focusable` and passes its `focused`
 flag down, as `LoginPanel` does. `tui.addInputListener` sees every key before the focused component and can consume it.
 main.ts handles the global keys there. `tui.showOverlay` draws a component over the screen and returns an
@@ -51,7 +51,7 @@ harness does not run on it. The terminal imports it for these components:
   `/theme`. The colours in [style.ts](style.ts) are fixed truecolor values and do not.
 
 This folder adds the layout, the wiring from SDK state to rows, the tool cards and media panels, the stream sidebar, the
-`/runtime` browser and pictures drawn in text cells.
+main menu and pictures drawn in text cells.
 
 ## The API
 
@@ -94,7 +94,7 @@ with `/` runs the slash command of that name.
 The terminal holds a reference only while its view shows. `LifecycleContract` and `GatewayContract` live for the whole
 run. One `ConversationContract` lives while its conversation shows, and `switchTo` releases it before it gets the next
 one. The terminal holds `InventoryContract` for its lifetime, configures `RemoteFrames` from its current relay endpoint,
-and shares the same reference with `RuntimeView`.
+and shares the same reference with `MenuView`.
 
 ### Ui and Feedback
 
@@ -114,7 +114,7 @@ never calls or retries an RPC.
   viewer.
 
 The action line shows the newest record with `actionLine`. `pendingSends` keeps a sent message in the chat as `sending`
-until the transcript or the queue holds its request id. The Overview tab of `/runtime` lists the newest refused records.
+until the transcript or the queue holds its request id. The Overview tab of `/menu` lists the newest refused records.
 
 ### runSetup and LoginPanel
 
@@ -147,7 +147,7 @@ to that array. When `run` throws, main.ts shows a `RefusalError` on the action l
 | `switchTo(conversation, role)`    | Shows another conversation, or a new one for `null`.                                            |
 | `restore(text)`                   | Puts withdrawn text into the editor after what is typed there.                                  |
 | `showProgress(panel)`             | Shows a `ProgressPanel` above the editor, or removes it for `null`.                             |
-| `openRuntime()`, `openSwitcher()` | Opens `/runtime` or the switcher.                                                               |
+| `openMenu()`, `openSwitcher()` | Opens `/menu` or the switcher.                                                               |
 | `openPanel(index)`                | Selects view `index` of the newest rendering. 0 is the overview.                                |
 | `exit(code)`                      | Ends `runTerminal` with `code`.                                                                 |
 
@@ -161,7 +161,7 @@ the consumer does not import.
 | -------- | -------------- | ----------------------- | ----------------------------------------- |
 | cards/   | `ToolCard`     | `cardFor` in choose.ts  | `BashCard`, `PiToolCard`                  |
 | views/   | `ViewPanel<K>` | `Gallery` in gallery.ts | `ImagePanel`, `SpatialPanel`, `ClipPanel` |
-| runtime/ | `RuntimeTab`   | `TABS` in view.ts       | Ten tabs, one per key from 1 to 0         |
+| menu/    | `MenuTab`   | `TABS` in view.ts       | Ten tabs, one per key from 1 to 0         |
 
 `ToolCard` is a `Component` for one tool call. It has the `call`, `output(text)` for the output so far, `end(result)`
 for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, which stops timers.
@@ -171,10 +171,10 @@ for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, wh
 `handleInput` when it takes keys. A panel reads its own files and calls the `changed` callback it was built with when it
 needs a frame.
 
-`RuntimeTab` has a `title`, an `inventory` flag, and `rows(context)`, which returns the tab's `RuntimeRow` list each
-time the view renders. A `RuntimeRow` has `text`, a `Level`, its `RuntimeKey` list, and `open`, which Enter calls.
-`open` returns a `RuntimeDetail` pane with a `title`, `lines()` and `close()`, or `null` after an action that leaves
-`/runtime`. `TabContext` carries the `Ui`, `now`, the held inventory or `null`, the `current` conversation,
+`MenuTab` has a `title`, an `inventory` flag, and `rows(context)`, which returns the tab's `MenuRow` list each
+time the view renders. A `MenuRow` has `text`, a `Level`, its `MenuKey` list, and `open`, which Enter calls.
+`open` returns a `MenuDetail` pane with a `title`, `lines()` and `close()`, or `null` after an action that leaves
+`/menu`. `TabContext` carries the `Ui`, `now`, the held inventory or `null`, the `current` conversation,
 `attach(conversation)` and `requestRender()`. `TAB_KEYS` has ten keys, 1 to 0, and every one has a tab.
 
 ### What the terminal may import
@@ -320,26 +320,26 @@ export class StreamGetCard implements ToolCard {
 }
 ```
 
-### A /runtime tab
+### A /menu tab
 
 `busyTab` lists every conversation with a run in progress, the oldest run first, and Enter shows the selected one in the
 chat. It reads `ui.gateway.conversations` each time the view renders, as `conversationsTab` in
-[runtime/conversations.ts](runtime/conversations.ts) does. To show it, move it into runtime/ and add it to `TABS` in
-[runtime/view.ts](runtime/view.ts). Add a matching key to `TAB_KEYS`.
+[menu/conversations.ts](menu/conversations.ts) does. To show it, move it into menu/ and add it to `TABS` in
+[menu/view.ts](menu/view.ts). Add a matching key to `TAB_KEYS`.
 
 ```ts
-import type { RuntimeRow, RuntimeTab } from "./runtime/base.ts";
+import type { MenuRow, MenuTab } from "./menu/base.ts";
 import { duration } from "../../shared/view-models/time.ts";
 
 const LONG_RUN_MS = 10 * 60 * 1000;
 
-export const busyTab: RuntimeTab = {
+export const busyTab: MenuTab = {
     title: "Busy",
     rows: (context) =>
         context.ui.gateway.conversations.value
             .flatMap((row) => (row.running === null ? [] : [{ row, running: row.running }]))
             .sort((a, b) => a.running.since - b.running.since)
-            .map(({ row, running }): RuntimeRow => {
+            .map(({ row, running }): MenuRow => {
                 const elapsed = context.now - running.since;
                 const what = running.kind === "tool" ? running.name : running.kind;
                 const mark = row.id === context.current ? "*" : " ";
@@ -422,26 +422,26 @@ Preview types come from encodings; channels without module annotations appear un
 Any other `FrameSource` can replace it.
 sidebar.test.ts drives a `Sidebar` through a real `TuiAltScreen` with an in-memory terminal and frame source.
 
-[runtime/](runtime/) is the `/runtime` browser, the `RuntimeTab` family in [base.ts](runtime/base.ts). `RuntimeView` in
+[menu/](menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](menu/base.ts). `MenuView` in
 view.ts is the full-screen view main.ts opens. Keys 1 to 9 pick a tab, Up and Down pick a row, Enter opens the row's
 detail, a row's own keys run its actions, and Esc closes the detail and then the view. A failed key action lands in
 `Feedback` as a refusal.
 
 | Key | Tab           | File                                         | Rows                                                                                                  |
 | --- | ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1   | Overview      | [overview.ts](runtime/overview.ts)           | This terminal's link, the DimOS link, load and run, the five newest refused actions. |
+| 1   | Overview      | [overview.ts](menu/overview.ts)           | This terminal's link, the DimOS link, load and run, the five newest refused actions. |
 | 2   | Conversations | conversations.ts                             | Every conversation in switcher order. Enter shows it in the chat.                                     |
-| 3   | Agent modules | [modules.ts](runtime/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
-| 4   | Jobs          | [jobs.ts](runtime/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
-| 5   | Streams       | [streams.ts](runtime/streams.ts)             | Every DimOS stream, grouped by module instance.                                                       |
-| 6   | Env           | [inventory.ts](runtime/inventory.ts)         | The DimOS checkout, Python, transport and system size.                                                |
+| 3   | Agent modules | [modules.ts](menu/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
+| 4   | Jobs          | [jobs.ts](menu/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
+| 5   | Streams       | [streams.ts](menu/streams.ts)             | Every DimOS stream, grouped by module instance.                                                       |
+| 6   | Env           | [inventory.ts](menu/inventory.ts)         | The DimOS checkout, Python, transport and system size.                                                |
 | 7   | Modules       | inventory.ts                                 | Every module instance. Enter lists its streams and RPCs.                                              |
 | 8   | RPCs          | inventory.ts                                 | Every RPC with its signature and doc.                                                                 |
 | 9   | Stream types  | inventory.ts                                 | Every stream with its direction, type and channel.                                                    |
 
-Tabs 6 to 9 read the inventory held by the terminal. [runtime/lib/](runtime/lib/) is private to runtime/.
-`plain(text, level)` in [rows.ts](runtime/lib/rows.ts) is a row with no keys and no Enter.
-[lane.ts](runtime/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
+Tabs 6 to 9 read the inventory held by the terminal. [menu/lib/](menu/lib/) is private to menu/.
+`plain(text, level)` in [rows.ts](menu/lib/rows.ts) is a row with no keys and no Enter.
+[lane.ts](menu/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
 of cells, and `axisText`, the clock labels above it. The Jobs tab uses 48 cells, one per 30 minutes. lane.test.ts checks
 both strings.
 

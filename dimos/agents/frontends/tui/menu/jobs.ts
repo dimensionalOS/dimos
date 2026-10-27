@@ -2,7 +2,7 @@ import { owner } from "../../../sdk/failures.ts";
 import { retryByRequestId } from "../../../sdk/retry.ts";
 import type { EpochMs } from "../../../shared/protocol/time.ts";
 import type { JobMark } from "../../../shared/view-models/jobs/timeline.ts";
-import type { RuntimeRow, RuntimeTab } from "./base.ts";
+import type { MenuRow, MenuTab } from "./base.ts";
 import type { Ui } from "../session.ts";
 import { axisText, laneText } from "./lib/lane.ts";
 import { clock } from "../../../shared/view-models/time.ts";
@@ -39,13 +39,13 @@ function lanesAt(ui: Ui, now: EpochMs) {
  * Tab 4 (requirement 11): every job as a lane over the last and next 12 hours, its runs by outcome and its due times
  * on a shared clock axis; r runs it now, d deletes it, Enter lists its runs.
  */
-export const jobsTab: RuntimeTab = {
+export const jobsTab: MenuTab = {
   title: "Jobs",
   rows: ({ ui, now }) => {
     const from = (now - WINDOW_MS) as EpochMs;
     const to = (now + WINDOW_MS) as EpochMs;
     const head = `${"".padEnd(NAME_COLUMNS)}  ${"".padEnd(5)}  ${"".padEnd(CRON_COLUMNS)}  `;
-    const rows: RuntimeRow[] = [plain(`${head}${axisText(from, to, LANE_COLUMNS, AXIS_EVERY_HOURS)}`)];
+    const rows: MenuRow[] = [plain(`${head}${axisText(from, to, LANE_COLUMNS, AXIS_EVERY_HOURS)}`)];
     for (const lane of lanesAt(ui, now)) {
       const newest = lane.marks.filter((mark) => mark.kind === "run").at(-1);
       const name = lane.row.name.padEnd(NAME_COLUMNS).slice(0, NAME_COLUMNS);
