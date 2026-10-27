@@ -65,8 +65,8 @@ a view count and when it was first and last seen; an empty answer is an answer.
 ## Reading the answer
 
     window 0.0s to 30.0s of 28.3s of feed, 76 frames
-    'chair' at (-0.97, 7.31, 0.40) in world score=0.49 views=6 id=ed6e5cde seen 24s ago, first 28s ago
-    no verified detection of 'bag'
+    'chair' at (-0.97, 7.31, 0.40) in world footprint 0.520 x 0.480 m centred (-0.970, 7.310) long side yaw=12deg, seen surface z 0.020 to 0.910 score=0.49 views=6 id=ed6e5cde seen 24s ago, first 28s ago
+    no verified detection of 'bag'; best candidate score=0.31 views=1 at (1.20, 6.80, 0.30), needs accept_score=0.40 min_views=2
 
 - One line per verified object, newest sighting first. The position is the
   centroid of the object's newest sighting in the window, in the frame the
@@ -84,8 +84,12 @@ a view count and when it was first and last seen; an empty answer is an answer.
   An object needs 2, and a camera that does not move adds none. A camera that
   never moves, such as a fixed top view, stays silent until `min_views` is 1:
   pass `'{"min_views": 1}'`, which reads no frame again.
+- `footprint` is the smallest top-down rectangle round the object's cloud: its
+  sides, centre and the long side's yaw. `seen surface z` is the height range of
+  what the camera saw; a face it never saw is missing, so the bottom can be high.
 - `no verified detection` means nothing passed the gates at these params. It is
-  not proof that the object is absent.
+  not proof that the object is absent. `best candidate` is the strongest group the
+  gates turned down, against the `accept_score` and `min_views` this call used.
 - Labels are not compared: one object can be answered under two labels.
 
 ## Watching labels on a schedule
