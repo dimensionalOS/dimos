@@ -1,9 +1,10 @@
 # Chord objects the gateway serves
 
 This folder holds every Chord object a client can hold: the gateway's shared state, one conversation, the gateway
-process, a module's log and the inventory. `GatewayServer.serve` in [host.ts](../host.ts) calls each `serve…` function
-in its `OBJECTS` list once, on the gateway's one Chord host. Each function registers a factory with `host.serve` for a
-contract from [shared/protocol](../../../shared/protocol/README.md). The factories read the harness and the gateway's
+process and the inventory. `GatewayServer.serve` in [host.ts](../host.ts) calls each `serve…` function in its `OBJECTS`
+list once, on the gateway's one Chord host. Each function registers a factory with `host.serve`. The four served
+objects implement contracts from [shared/protocol](../../../shared/protocol/README.md), and store.ts and room.ts declare
+local types of their own. The factories read the harness and the gateway's
 stores through `ObjectDeps` and turn catalog actions into methods with `bind`. [base.ts](base.ts) defines `ServeObject`,
 the type every file here implements.
 
@@ -67,8 +68,8 @@ closes. `host.ready()` waits until that object is live.
 
 `local()` declares a type that only code inside the host can reach. A local type has no variants. Code inside an object
 acts as the host, so when the objects of two clients call `self.get(GatewayStore, {})`, both reach one instance. This
-folder shares state that way. Each served object is a view for one principal. The state it shows lives in a local object
-that every view holds.
+folder shares state that way. Each served object is a view for one principal. State that every principal shares lives in
+a local object that every view holds.
 
 ### Who is calling
 
@@ -91,7 +92,7 @@ methods may use. `runGateway` in [gateway/main.ts](../../main.ts) builds it once
 
 | Field      | Type                                                     | What the objects use it for                                                                                                                               |
 | ---------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`    | `Agent` from [harness/main.ts](../../../harness/main.ts) | The harness, with pi-durable's `Harness`, the input gate, conversations, history, the DimOS link, the runtime client, jobs, and the detacher. |
+| `agent`    | `Agent` from [harness/main.ts](../../../harness/main.ts) | The harness, with pi-durable's `Harness`, the input gate, conversations, history, the runtime client, jobs, the detacher, the DimOS link, the loader, the run watcher and the state directory. |
 | `models`   | pi-ai `Models`                                           | `updateSettings` refuses a model that `getModel` does not know.                                                                                           |
 | `catalog`  | `ModelCatalog`                                           | The `accounts` cell and `logout`.                                                                                                                         |
 | `logins`   | `LoginFlows`                                             | The `loginFlow` cell of each principal, `login` and `answerLogin`.                                                                                        |
@@ -241,7 +242,9 @@ These files are private to this folder. The boundaries test refuses an import of
 - [outcomes.ts](lib/outcomes.ts) converts harness results into an `Outcome` with `fromModuleOutcome`, `fromJobChange`,
   `fromSubmit` and `fromBranch`. Each maps every result kind to `done` or one refusal.
 - [runtime.ts](lib/runtime.ts) exports `runtimeView(self, link, options)`, which declares one cell with the store's
-  DimOS rows, parsed once from HarnessRuntime's inventory. It reads the inventory when the link changes, when
+  DimOS rows. Modules and the inventory are parsed from HarnessRuntime's inventory, and streams follow
+  `RuntimeClient.streams`. Each read also connects the relay, or drops it when the inventory names none. It reads the
+  inventory when the link changes, when
   HarnessRuntime reports a status change, and every `pollMs` while the link is up. The store passes 30 s. A read that is
   asked for while one runs makes one more read after it. While the link is down, it lists the agent modules from their
   records on disk with state `unknown` and marks the last inventory `current: false`.

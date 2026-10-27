@@ -1,10 +1,10 @@
 # Gateway
 
-The gateway is the agent daemon and the server every client talks to. It is one Node process that holds every
-conversation, runs the model turns, tool calls, cron jobs and event-driven turns, and keeps going when every terminal
-has closed and when DimOS restarts. A client connects to its Unix socket and holds Chord objects: the gateway's shared
-state, one conversation, the process itself, a module's log, a stream preview and the inventory. This README is what you need to write
-such a client. The entry for running the daemon is `runGateway` in [main.ts](main.ts).
+The gateway is the background Node process that runs the agent. Every terminal talks to the same gateway. It holds
+every conversation and runs the model turns, tool calls, cron jobs and event-driven turns. It keeps going after every
+terminal closes and while DimOS restarts. A client connects to its Unix socket and holds Chord objects: the gateway's
+state, one conversation, the process itself, and the inventory. This README is what you need to write a client. The
+entry for running the gateway is `runGateway` in [main.ts](main.ts).
 
 ## Built on Chord
 
@@ -23,21 +23,23 @@ The contracts and the actions behind the methods are declared in [shared/protoco
 
 ## Quickstart
 
-This connects to a running gateway with Chord and the `ws` package. It prints the gateway's pid and its link to DimOS,
-sends one message to conversation `process.argv[2]` as owner, waits for its outcome, and disconnects.
+This connects to a running gateway with Chord and the `ws` package. It prints the gateway's pid, waits for the link to
+DimOS, and starts a conversation on `gpt-5.6-luna`, which needs `OPENAI_API_KEY` in the gateway's environment. Then it
+asks what is running, prints the answer, and disconnects.
 
 ```ts
-import type { ConversationId } from "@earendil-works/pi-durable";
 import { ConversationContract } from "../shared/protocol/conversation/contract.ts";
 import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
 import { LifecycleContract } from "../shared/protocol/lifecycle/contract.ts";
 import { WebSocket } from "ws";
+import { agentPaths } from "./config/paths.ts";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { describeLink } from "../shared/protocol/gateway/link.ts";
-import { newUserRequest } from "../shared/protocol/actions/request.ts";
+import { newActionRequest, newUserRequest } from "../shared/protocol/actions/request.ts";
 import { randomUUID } from "node:crypto";
+import { until } from "../sdk/until.ts";
 
-const socket = new WebSocket(`ws+unix:/run/user/1000/dimos-agent.sock:/?terminal=${randomUUID()}&label=example`);
+const socket = new WebSocket(`ws+unix:${agentPaths(process.env).socket}:/?terminal=${randomUUID()}&label=example`);
 await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve()));
 const host = createHost({ name: "client", self: { kind: "gateway" }, kind: "client" });
 host.connect(webSocketLink(socket), { principal: { kind: "gateway" } });
@@ -46,23 +48,35 @@ const lifecycle = await host.get(LifecycleContract, {});
 console.log(`gateway pid ${lifecycle.process.value.pid}`);
 
 const gateway = await host.get(GatewayContract, {});
-console.log(describeLink(gateway.link.value));
+if (gateway.variant !== "owner") throw new Error("attached as a viewer");
+console.log(describeLink(await until(gateway.link, (link) => (link.state === "up" ? link : undefined))));
 
-const id = Number(process.argv[2]) as ConversationId;
-const conversation = await host.get(ConversationContract, { conversation: id, role: "owner" });
+const created = await gateway.createConversation({ request: newActionRequest(), cwd: null });
+if (!created.ok) throw new Error(created.refusal.code);
+const conversation = await host.get(ConversationContract, { conversation: created.value.conversation, role: "owner" });
 if (conversation.variant !== "owner") throw new Error("attached as a viewer");
+const configured = await conversation.configure({
+    model: { provider: "openai", modelId: "gpt-5.6-luna" },
+    thinkingLevel: null,
+});
+if (!configured.ok) throw new Error(configured.refusal.code);
 const sent = await conversation.send({
     request: newUserRequest(),
-    text: "Where is the robot?",
+    text: "what is running?",
     images: [],
     whenBusy: "followUp",
 });
 if (!sent.ok) throw new Error(sent.refusal.code);
-await new Promise<void>((resolve) =>
-    conversation.outcomes.subscribe((rows) => {
-        if (rows.some((row) => row.submission === sent.value.submission)) resolve();
-    }),
+const outcome = await until(conversation.outcomes, (rows) =>
+    rows.find((row) => row.submission === sent.value.submission),
 );
+if (outcome.status !== "done") throw new Error(`unanswered: ${outcome.reason}`);
+const answer = await until(conversation.transcript, (transcript) =>
+    transcript.items.find((item) => item.entry === outcome.answer),
+);
+if (answer.kind === "assistant") {
+    for (const part of answer.message.content) if (part.type === "text") console.log(part.text);
+}
 
 conversation.release();
 gateway.release();
@@ -113,8 +127,40 @@ to the terminal.
 
 ### Running it
 
-`dimos agent gateway` runs `runGateway(launch)` from [main.ts](main.ts) in the foreground, and the systemd user service
-runs that command on a robot. It exits 1 when serving fails or the process crashes, after writing the error to
+This runs the gateway in the foreground from a checkout. Like the harness Quickstart, it finds DimOS in the checkout's
+`.venv` and on McpServer's default port, and it loads the checkout's `.env`.
+
+```ts
+import { agentPaths } from "./config/paths.ts";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { runGateway } from "./main.ts";
+
+const root = fileURLToPath(new URL("../../../", import.meta.url));
+if (existsSync(join(root, ".env"))) process.loadEnvFile(join(root, ".env"));
+const state = join(process.env["XDG_STATE_HOME"] ?? join(homedir(), ".local", "state"), "dimos");
+
+await runGateway({
+    paths: agentPaths(process.env),
+    install: {
+        root,
+        python: join(root, ".venv", "bin", "python"),
+        cli: join(root, ".venv", "bin", "dimos"),
+        mcpUrl: new URL("http://127.0.0.1:9990/mcp"),
+        runsDir: join(state, "runs"),
+        stateDir: state,
+    },
+    bundledSkillsDir: fileURLToPath(new URL("../harness/skills/", import.meta.url)),
+    env: process.env,
+    providers: [],
+});
+```
+
+`dimos agent gateway` runs the same `runGateway(launch)` from [main.ts](main.ts), with the install that
+`parseDimosInstall` in [config/environment.ts](config/environment.ts) reads from the variables it sets, and the systemd
+user service runs that command on a robot. It exits 1 when serving fails or the process crashes, after writing the error to
 `gateway.log`, so the service restarts it. `dimos agent`, `run` and `conversations` spawn it detached when nothing
 answers the socket. `agentPaths(env)` in [config/paths.ts](config/paths.ts) gives the socket path and every other file
 the gateway owns. `buildInfo()` in [config/build.ts](config/build.ts) is the build a client compares against. The rest
