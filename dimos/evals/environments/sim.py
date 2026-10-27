@@ -25,7 +25,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
@@ -36,6 +35,7 @@ from dimos.evals.environments.lib.launch import (
     validate_blueprints,
 )
 from dimos.evals.types import RunningEnvironment
+from dimos.utils.shared_config import recordings_dir
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
@@ -174,7 +174,7 @@ class Sim(Environment):
         while True:
             runs = [run for run in list_runs(alive_only=True) if pid is None or run.pid == pid]
             if runs:
-                path = RECORDINGS_DIR / runs[-1].run_id / "memory.db"
+                path = recordings_dir() / runs[-1].run_id / "memory.db"
                 if path.exists():
                     return path
             if time.monotonic() > deadline:

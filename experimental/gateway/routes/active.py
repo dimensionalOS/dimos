@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import launches, responses
+from experimental.gateway import catalog, launches, responses
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.live import NothingRunningError
 from experimental.gateway.routes.history import read_log
@@ -46,7 +47,38 @@ class CallRequest(BaseModel):
     kwargs: dict[str, JsonValue] = {}
 
 
+def known_names(state: State) -> set[str] | None:
+    """Every name `dimos run` would accept, or None until the gateway has listed its checkout and finished a full scan.
+
+    Blueprints come from the listing, modules (registry name and class) from the scan; a module whose scan
+    failed is still a name, so it is kept. A single blueprint's scan is not enough: the modules it did not
+    visit would look unknown. Nothing is introspected here: a launch must stay fast."""
+    if state.listed is None:
+        return None
+    cache = state.scanner.cache()
+    if cache is None or not cache.get("finished_at"):
+        return None
+    names = {str(entry["name"]) for entry in state.listed}
+    for record in catalog.modules(cache):
+        names.update((str(record["name"]), str(record["class"])))
+    for error in catalog.errors(cache):
+        if error.startswith("module "):
+            names.add(error[len("module ") :].split(":", 1)[0].strip())
+    return names
+
+
+def check_known(state: State, name: str) -> None:
+    """404 before anything is spawned when the checkout is known not to have `name`."""
+    names = known_names(state)
+    if names is None or name in names:
+        return
+    close = difflib.get_close_matches(name, sorted(names), n=3)
+    hint = f"; did you mean {', '.join(close)}?" if close else ""
+    raise ApiError(404, f"no blueprint or module {name}{hint}")
+
+
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
+    check_known(state, name)
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
     state.bus.launch(launch)
     return launch

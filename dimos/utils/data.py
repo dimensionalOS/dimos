@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from datetime import datetime
 from functools import cache
 import os
@@ -117,11 +118,20 @@ def get_data_dir(extra_path: str | None = None) -> Path:
     return get_project_root() / "data"
 
 
-def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:
-    """A path, a stem in the working directory or project root, or an LFS name to pull.
+def resolve_named_path(
+    name: str | Path,
+    suffix: str = "",
+    must_exist: bool = True,
+    roots: Sequence[Path] = (DIMOS_PROJECT_ROOT,),
+) -> Path:
+    """A path, a stem in the working directory or one of *roots*, or an LFS name to pull.
+
+    *roots* are tried in order after the working directory; the first is also where a new file
+    goes. A caller whose files are not necessarily in the checkout any more (a recording, whose
+    directory is configurable) names its own directory alongside the project root.
 
     Without ``must_exist`` a name found nowhere is where it would be created: a
-    bare name in the project root, a path as given; nothing is pulled.
+    bare name in the first root, a path as given; nothing is pulled.
     """
     s = str(name)
     names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
@@ -129,11 +139,12 @@ def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = Tr
         p = Path(candidate)
         if p.exists():
             return p
-        if (DIMOS_PROJECT_ROOT / p).exists():
-            return DIMOS_PROJECT_ROOT / p
+        for root in roots:
+            if (root / p).exists():
+                return root / p
     p = Path(names[-1])
     if not must_exist:
-        return p if p.is_absolute() or p.parent != Path() else DIMOS_PROJECT_ROOT / p
+        return p if p.is_absolute() or p.parent != Path() else roots[0] / p
     if p.is_absolute():
         return p
     try:

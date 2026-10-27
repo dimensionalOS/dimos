@@ -57,6 +57,8 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
+- `GET /history/recordings` is the one answer to where recordings live ([recording](/docs/usage/recording.md#where-recordings-go)),
+  and every launch is started with `--record-dir` set to it, so a run writes where the answer says.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

@@ -25,7 +25,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.data import resolve_named_path
+from dimos.utils.shared_config import recordings_dir
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -46,8 +48,17 @@ def open_store(path: str | Path) -> Store:
 
 
 def resolve_dataset(dataset: str | Path) -> Path:
-    """Resolve a dataset name/path to a file (bare names -> ``.db``, cwd / data/)."""
-    return resolve_named_path(dataset, Path(dataset).suffix or ".db")
+    """Resolve a dataset name/path to a file (bare names -> ``.db``, cwd / data/ / recordings).
+
+    The recordings directory is searched as well as the checkout because that is where runs
+    write and it need not be inside the checkout: ``--replay-db <run-id>/memory.db`` has to
+    find a recording made before the directory was configured and one made after.
+    """
+    return resolve_named_path(
+        dataset,
+        Path(dataset).suffix or ".db",
+        roots=(DIMOS_PROJECT_ROOT, recordings_dir()),
+    )
 
 
 def open_dataset(dataset: str | Path) -> Store:

@@ -147,7 +147,7 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
 def test_recording_fails_loudly_when_no_stream_matches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
-    monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(tap, "recordings_dir", lambda: tmp_path)
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_topics", "color_image2")
     coordinator = mocker.Mock(

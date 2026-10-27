@@ -138,7 +138,7 @@ def recording(dir_: Path, age_s: float = 3600) -> Path:
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, FakeTransport, Path]:
     t = FakeTransport()
-    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "recordings_dir", lambda: tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
@@ -162,7 +162,7 @@ def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport,
 
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     t = FakeTransport()
-    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "recordings_dir", lambda: tmp_path)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=0))
     db = recording(tmp_path)
     t.fail_at = 2
@@ -284,7 +284,7 @@ def test_pull_with_cross_filesystem_staging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     t = FakeTransport()
-    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "recordings_dir", lambda: tmp_path)
     staging = tmp_path / "otherfs"
     staging.mkdir()
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", staging, retries=0))
@@ -310,7 +310,7 @@ def test_pull_with_cross_filesystem_staging(
 @pytest.mark.parametrize("algo", ["lz4", "gzip", "bz2", "xz"])
 def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, algo: str) -> None:
     t = FakeTransport()
-    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "recordings_dir", lambda: tmp_path)
     cloud = CloudData(MultipartBackend(DataApi(t), algo, None, retries=0))
     db = recording(tmp_path)
     r = cloud.upload(db)
@@ -377,7 +377,7 @@ def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
 def test_recordings_discovery_recurses_run_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "recordings_dir", lambda: tmp_path)
     run = tmp_path / "20260828-181256-unitree-go2"
     run.mkdir()
     db = recording(run)  # recordings/<run>/session_go2_1.db

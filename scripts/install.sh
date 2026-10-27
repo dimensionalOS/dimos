@@ -804,6 +804,11 @@ do_install_dev() {
     dim "will run: uv sync ${sync_args[*]}"
     if ! prompt_confirm "Install dependencies now?" yes; then INSTALL_DEPS=0; return; fi
     project_cmd uv sync "${sync_args[@]}"
+    # lcm-dimos-fork and lcm ship the same lcm/ folder: a sync that drops the fork (left by an older install) deletes the
+    # files lcm had just put there, so `import lcm` fails until lcm is put back
+    if ! project_cmd .venv/bin/python -c "import lcm" >/dev/null 2>&1; then
+        project_cmd uv sync "${sync_args[@]}" --reinstall-package lcm
+    fi
     ok "developer environment ready in $dir"
 }
 

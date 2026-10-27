@@ -26,8 +26,10 @@ from fastapi.testclient import TestClient
 import psutil
 import pytest
 
+from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches
+from experimental.gateway.state import State
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -260,12 +262,75 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
 def test_recordings_is_the_standard_directory(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    assert client.get("/history/recordings").json() == {"path": str(launches.store.RECORDINGS_DIR)}
+    assert client.get("/history/recordings").json() == {"path": str(RECORDINGS_DIR)}
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
+
+
+# `dimos run --record`, as far as this test needs it: the real root flags, and the real path the
+# recorder picks from them. Its own checkout's dimos, not whichever one is installed.
+RECORDING_DIMOS = """#!{python}
+import sys
+
+sys.path.insert(0, {root!r})
+import typer
+
+from dimos.cli.commands.global_options import create_dynamic_callback
+
+app = typer.Typer()
+app.callback()(create_dynamic_callback())
+
+
+@app.command()
+def run(blueprint: str) -> None:
+    from dimos.memory.tap import recording_dir
+
+    path = recording_dir() / "memory.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    print("recorded", path, flush=True)
+
+
+app()
+"""
+
+
+def test_a_launch_records_where_the_recordings_endpoint_says_recordings_live(
+    client: TestClient, checkout: Path, home: Path
+) -> None:
+    """The one answer and the one place a run writes, end to end."""
+    (home / "dimos_home").mkdir(exist_ok=True)
+    (home / "dimos_home" / "config.yaml").write_text(f"recordings:\n  dir: {home / 'recs'}\n")
+    answered = Path(client.get("/history/recordings").json()["path"])
+    assert answered == home / "recs"
+    program = checkout / ".venv" / "bin" / "dimos"
+    program.write_text(RECORDING_DIMOS.format(python=sys.executable, root=str(DIMOS_PROJECT_ROOT)))
+    program.chmod(0o755)
+
+    launched = client.post(
+        "/active/launch",
+        json={"blueprint": "demo", "config": {"global": {"record": "sqlite"}}},
+    )
+    assert launched.status_code == 200, launched.text
+    until(output_has(client, "recorded "))
+    (recorded,) = answered.rglob("memory.db")
+    # <answered>/<run-id>/memory.db, and not the checkout the run resolved it from before
+    assert recorded.parent.parent == answered
+    assert RECORDINGS_DIR not in recorded.parents
+    assert f"--record-dir={answered}" in launch_of(client)["output"]
+
+
+def test_a_launch_that_names_its_own_recordings_directory_keeps_it(home: Path) -> None:
+    """Both ways of asking for one: in the config, and among the raw args of /active/exec."""
+    assert launches.recordings_flag(launches.LaunchConfig()) == [
+        f"--record-dir={launches.store.recordings_dir()}"
+    ]
+    assert launches.recordings_flag(launches.LaunchConfig({"record_dir": "/tmp/mine"})) == []
+    assert launches.recordings_flag(launches.LaunchConfig(args=["--record-dir=/tmp/mine"])) == []
+    assert launches.recordings_flag(launches.LaunchConfig(args=["--record-dir", "/tmp/mine"])) == []
 
 
 def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,3 +365,87 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
     client.post("/active/launch", json={"blueprint": "demo"})
     until(output_has(client, "gossip false"))
+
+
+SCANNED = {
+    "format": 1,
+    "finished_at": "2026-01-01T12:00:00Z",
+    "results": {},
+    "modules": {
+        "cam": {"name": "cam", "class": "Cam", "rpcs": [], "doc": "", "inputs": [], "outputs": []}
+    },
+    "errors": ["module broken-scan: ImportError: no such thing"],
+}
+
+
+def listed_and_scanned(state: State, monkeypatch: pytest.MonkeyPatch) -> None:
+    state.listed = [{"name": "demo", "kind": "builtin"}, {"name": "acme-other", "kind": "external"}]
+    monkeypatch.setattr(state.scanner, "cache", lambda: SCANNED)
+
+
+def never_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*args: Any) -> int:
+        pytest.fail(f"spawned {args[1]}")
+
+    monkeypatch.setattr(launches, "_spawn", refuse)
+
+
+def test_an_unknown_name_is_refused_before_anything_is_spawned(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listed_and_scanned(state, monkeypatch)
+    never_spawns(monkeypatch)
+    refused = client.post("/active/launch", json={"blueprint": "does-not-exist-xyz"})
+    assert refused.status_code == 404, refused.text
+    assert "does-not-exist-xyz" in refused.json()["error"]
+    refused = client.post("/active/launch", json={"module": "cams"})
+    assert refused.status_code == 404, refused.text
+    assert "did you mean cam" in refused.json()["error"]
+    refused = client.post("/active/exec", json={"args": ["dmeo", "--n-workers=2"]})
+    assert refused.status_code == 404, refused.text
+    assert client.get("/active").json()["launch"] is None
+
+
+def test_every_listed_or_scanned_name_still_launches(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listed_and_scanned(state, monkeypatch)
+    # a blueprint from the listing, an external one, a module by registry name or class, a module whose scan failed
+    for request in (
+        {"blueprint": "demo"},
+        {"blueprint": "acme-other"},
+        {"module": "cam"},
+        {"blueprint": "Cam"},
+        {"module": "broken-scan"},
+    ):
+        started = client.post("/active/launch", json=request)
+        assert started.status_code == 200, (request, started.text)
+        until(running(client))
+        client.post("/active/stop")
+        until(stopped(client))
+
+
+def test_without_a_listing_or_scan_the_name_is_left_to_dimos(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert state.listed is None and state.scanner.cache() is None
+    started = client.post("/active/launch", json={"blueprint": "does-not-exist-xyz"})
+    assert started.status_code == 200, started.text
+    until(output_has(client, "run does-not-exist-xyz"))
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+    # a listing alone isn't enough either: the name could be a module the gateway hasn't scanned yet
+    state.listed = [{"name": "demo", "kind": "builtin"}]
+    started = client.post("/active/launch", json={"module": "unscanned"})
+    assert started.status_code == 200, started.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+    # nor a listing plus one blueprint's scan (no finished_at): the other blueprints' modules were never visited
+    monkeypatch.setattr(state.scanner, "cache", lambda: {**SCANNED, "finished_at": None})
+    started = client.post("/active/launch", json={"module": "unscanned"})
+    assert started.status_code == 200, started.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))

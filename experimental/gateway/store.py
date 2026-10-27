@@ -22,9 +22,8 @@ import sys
 import tempfile
 from typing import Any
 
-import yaml
-
-from dimos.constants import RECORDINGS_DIR, STATE_DIR
+from dimos.constants import STATE_DIR
+from dimos.utils import shared_config
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -42,18 +41,17 @@ def logs_dir() -> Path:
 
 def setting(section: str, key: str) -> Any:
     """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
-    home = Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
-    try:
-        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
-    return None if value == "" else value
+    return shared_config.setting(section, key)
 
 
 def recordings_dir() -> Path:
-    configured = setting("recordings", "dir")
-    return Path(configured).expanduser() if configured else RECORDINGS_DIR
+    """Where recordings go, which `GET /history/recordings` is the one answer to.
+
+    dimos resolves it the same way (`dimos.utils.shared_config`) so a run started in a terminal
+    agrees with one Desktop launched; `launches.start` hands the launch this very directory, so
+    the endpoint's answer and the path a run writes to cannot drift apart.
+    """
+    return shared_config.recordings_dir()
 
 
 def write_atomic(path: Path, text: str) -> None:

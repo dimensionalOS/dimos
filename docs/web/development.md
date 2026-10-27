@@ -1,6 +1,6 @@
 # Development
 
-The web code is one Deno workspace under `web/` with four packages, plus the Python side under `dimos/web/`. Everything runs on Deno 2.6.10, pinned in [`dimos/utils/deno.py`](/dimos/utils/deno.py) (CI reads the pin from there). There is no node and no npm: vite, vitest and tsc run as npm packages under Deno (`nodeModulesDir: auto`), and `dimos run --local-relay` downloads Deno by itself when none is on `PATH`.
+The web code is one Deno workspace under `web/` with four packages, plus the Python side under `dimos/web/`. Everything runs on Deno 2.6.10, pinned in [`dimos/utils/deno.py`](/dimos/utils/deno.py#L75) (CI reads the pin from there). There is no node and no npm: vite, vitest and tsc run as npm packages under Deno (`nodeModulesDir: auto`), and `dimos run --local-relay` downloads Deno by itself when none is on `PATH`.
 
 | Directory | What it is |
 |---|---|

@@ -15,6 +15,7 @@
 """Locate or auto-install the pinned Deno runtime (used by DimSim and the web relay)."""
 
 import json
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -42,7 +43,7 @@ def ensure_deno() -> str:
     deno_dir = _DENO_CACHE_DIR / DENO_VERSION
     deno_path = deno_dir / exe_name
     if deno_path.exists():
-        return str(deno_path)
+        return _on_path(deno_path)
 
     triple = _deno_triple()
     url = f"https://github.com/denoland/deno/releases/download/{DENO_VERSION}/deno-{triple}.zip"
@@ -67,6 +68,15 @@ def ensure_deno() -> str:
             f"deno is required. Auto-download failed: {e}. Install manually from https://deno.com/"
         ) from e
 
+    return _on_path(deno_path)
+
+
+def _on_path(deno_path: Path) -> str:
+    """Puts the downloaded deno's folder on this process's PATH, so what its children run finds `deno` too (the
+    blueprint view's vite build calls `deno info` through @deno/vite-plugin, which looks it up on PATH)."""
+    folder = str(deno_path.parent)
+    if folder not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = os.pathsep.join(filter(None, [folder, os.environ.get("PATH", "")]))
     return str(deno_path)
 
 

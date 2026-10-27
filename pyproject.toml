@@ -124,6 +124,7 @@ dependencies = [
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
     "python-dotenv",
     "packaging>=24.0",
+    "pyyaml>=6.0", # config.yaml (dimos/utils/shared_config.py); only transitive before, and not on Linux arm
     "requests>=2.32",
     "attrs>=25.4", # control/tasks
     "filelock>=3.20,<4",

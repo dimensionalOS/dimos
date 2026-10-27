@@ -33,11 +33,11 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shared_config import recordings_dir
 
 if TYPE_CHECKING:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -48,9 +48,13 @@ logger = setup_logger()
 
 
 def recording_dir() -> Path:
-    """``recordings/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
+    """``<recordings>/<run-id>`` for this ``dimos run``; a timestamp when run outside it.
+
+    The recordings directory is the one :func:`recordings_dir` resolves, so a run Desktop
+    launched writes where the dimos gateway's ``GET /history/recordings`` says recordings live.
+    """
     run_id = os.environ.get("DIMOS_RUN_ID") or time.strftime("%Y%m%d-%H%M%S")
-    return RECORDINGS_DIR / run_id
+    return recordings_dir() / run_id
 
 
 def _globs(topics: str) -> list[str]:

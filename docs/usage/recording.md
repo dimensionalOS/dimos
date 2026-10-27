@@ -10,10 +10,41 @@ dimos --record --robot-ip 192.168.123.161 run unitree-go2
 ```
 
 Bare `--record` means `--record sqlite`. SQLite lands at
-`recordings/<run-id>/memory.db`; MCAP lands at
-`recordings/<run-id>/memory.mcap`. The root is under the checkout, or
-`~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
+`<recordings>/<run-id>/memory.db`; MCAP lands at
+`<recordings>/<run-id>/memory.mcap`. `<run-id>` is the
 same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
+
+## Where recordings go
+
+`<recordings>` is one directory for the whole machine, resolved by
+`dimos.utils.shared_config.recordings_dir()`:
+
+1. `--record-dir`, when a run is given it;
+2. else `recordings.dir` in the shared `~/.dimos/config.yaml` (`$DIMOS_HOME/config.yaml`),
+   which Desktop's Settings app writes;
+3. else `recordings/` under the checkout, or `~/.local/state/dimos/recordings/` for an
+   installed package.
+
+So a developer who has configured nothing keeps the checkout's `recordings/`, and a machine
+with Desktop on it has every recording in the one folder its apps read.
+
+Ask the dimos gateway where that is rather than assuming:
+
+```bash
+# the socket is `dimos-gateway.socket` from the shared config.yaml, else this default
+curl -s --unix-socket ~/.local/state/dimos/gateway/dimos-gateway.sock \
+  http://localhost/history/recordings
+```
+
+`GET /history/recordings` is the single answer to "where do recordings live" (a page inside
+Desktop asks it as `../../dimos-gateway/history/recordings`), and the gateway passes that very
+directory to each launch it starts as `--record-dir`, so the answer and the path a run writes
+to cannot drift apart. The run's Rerun stream
+(`rerun.rrd`) and `dimos cloud upload`'s list of what to upload follow the same directory.
+
+Everything that resolves a recording to read it looks in the recordings directory as well as
+the checkout, so `--replay-db <run-id>/memory.db` finds a run recorded before the directory
+was configured and one recorded after. An absolute path always works.
 
 ## Experimental Rust engine
 

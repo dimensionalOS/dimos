@@ -213,9 +213,11 @@ robots:
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
+          recommended_config: []
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+          recommended_config: []
         go2-localize:
           title: 'Go2 with object localization'
           description: 'The Go2 plus perception that places what its camera detects in 3D, using the lidar.'

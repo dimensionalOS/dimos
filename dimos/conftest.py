@@ -69,6 +69,13 @@ else:
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
     os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
 
+# Nor the shared `~/.dimos/config.yaml` of the machine running the tests: `recordings.dir` in it
+# would move where a recording test writes, out of the temp directory and into the developer's
+# own recordings. Like the bus settings above it has to be an env var, because tests that spawn a
+# `dimos` of their own inherit the environment and not a fixture. A test that wants a setting
+# writes a config.yaml in here (see dimos/utils/test_shared_config.py).
+os.environ["DIMOS_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-home-{_worker or 'main'}-")
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with

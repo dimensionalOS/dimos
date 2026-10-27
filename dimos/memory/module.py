@@ -27,7 +27,7 @@ from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -38,6 +38,7 @@ from dimos.memory.type.recording import OnExisting
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shared_config import recordings_dir
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
@@ -57,7 +58,13 @@ TOut = TypeVar("TOut")
 
 
 def default_recording_dir() -> Path:
-    """Timestamped folder under RECORDINGS_DIR, local time with the machine's zone abbreviation."""
+    """Timestamped folder under the recordings directory, local time with the machine's zone
+    abbreviation.
+
+    A recorder module picks its own folder because it is not tied to a ``dimos run`` id, but it
+    picks it under the same root as everything else: :func:`recordings_dir`, so a module recording
+    outside a Desktop launch still lands where the apps look.
+    """
     now = datetime.now().astimezone()
     stamp = (
         now.strftime("%Y-%m-%d")
@@ -66,7 +73,7 @@ def default_recording_dir() -> Path:
         + "-"
         + now.strftime("%Z")
     )
-    return RECORDINGS_DIR / stamp
+    return recordings_dir() / stamp
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
