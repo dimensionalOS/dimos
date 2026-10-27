@@ -28,7 +28,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
@@ -36,7 +35,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -47,8 +45,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-
-__all__ = ["MESH_ENTITY", "MeshColours", "RgbdMesh", "RgbdMeshConfig"]
+    import open3d as o3d  # type: ignore[import-untyped]
 
 logger = setup_logger()
 
@@ -154,6 +151,8 @@ class RgbdMesh(Module):
         super().stop()
 
     def _on_camera_info(self, msg: CameraInfo) -> None:
+        import open3d as o3d  # type: ignore[import-untyped]
+
         with self._info_lock:
             if (
                 self._info is None
@@ -244,6 +243,8 @@ class RgbdMesh(Module):
                 logger.error("RgbdMesh failed to integrate frame", exc_info=True)
 
     def _integrate_pair(self, color: Image, depth: Image) -> None:
+        import open3d as o3d  # type: ignore[import-untyped]
+
         with self._info_lock:
             info = self._info
             intrinsic = self._intrinsic
