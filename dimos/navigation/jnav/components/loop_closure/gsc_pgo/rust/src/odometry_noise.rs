@@ -20,10 +20,11 @@
 //! yaw and roll/pitch, each step's heading noise swinging the rest of the stretch by its lever arm (the model of
 //! `loop_overlap`). Their variances are separate components (Helmert / Förstner variance component estimation), since
 //! translation and heading noise grow differently with a stretch's length (linearly, and about cubically) and are
-//! misreported by different factors; a single scale on the reported noise cannot fit both. The reported variances are
-//! unit-information priors (Kass & Wasserman 1995), so a few closures barely move them and many outweigh them.
+//! misreported by different factors; a single scale on the reported noise cannot fit both. The reported noise is the
+//! prior: held to by its measured spread across recordings (`odom_noise_prior_ln_sd_*`), or else by one closure's worth
+//! of information (a unit-information prior, Kass & Wasserman 1995), so a few closures barely move it.
 
-use crate::gsc_pgo::KeyPoseWithCloud;
+use crate::gsc_pgo::{Config, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};
 
 /// The noise components in order: xy translation, z translation, yaw, roll/pitch (per keyframe step, m² or rad²).
@@ -37,7 +38,8 @@ const AXES: [f64; COMPONENTS] = [2.0, 1.0, 2.0, 1.0];
 pub struct Innovation {
     /// The closure's measurement minus the raw odometry: the source's position in the target's frame (m).
     pub v: Vec3,
-    /// The innovation's covariance per unit variance of each component, in the target's frame.
+    /// The innovation's covariance at the reported noise of each component (each step's `step_variances`), in the
+    /// target's frame: the component's ratio to the reported noise scales it.
     pub pieces: [Mat3; COMPONENTS],
     /// The closure's ICP fitness: its modelled translation variance per axis (m²) before the closure scale.
     pub fitness: f64,
@@ -47,6 +49,7 @@ pub struct Innovation {
 /// position in the target's frame.
 pub fn innovation(
     key_poses: &[KeyPoseWithCloud],
+    config: &Config,
     target: usize,
     source: usize,
     measured: &Vec3,
@@ -71,16 +74,21 @@ pub fn innovation(
             &mat3::sub(&position(far), &position(k)),
         ));
         let swing = mat3::mat_mul(&lever, &mat3::mat_mul(&to_target, &rotation(k)));
-        let add = |piece: &mut Mat3, m: Mat3| *piece = mat3::add_mat(piece, &m);
+        let step = crate::big_picture_fit::step_variances(config, &key_poses[k - 1], &key_poses[k]);
+        let add = |piece: &mut Mat3, m: Mat3, variance: f64| {
+            *piece = mat3::add_mat(piece, &m.map(|row| row.map(|v| v * variance)))
+        };
         add(
             &mut pieces[0],
             mat3::add_mat(&outer(&along, 0), &outer(&along, 1)),
+            step[0],
         );
-        add(&mut pieces[1], outer(&along, 2));
-        add(&mut pieces[2], outer(&swing, 2));
+        add(&mut pieces[1], outer(&along, 2), step[1]);
+        add(&mut pieces[2], outer(&swing, 2), step[2]);
         add(
             &mut pieces[3],
             mat3::add_mat(&outer(&swing, 0), &outer(&swing, 1)),
+            step[3],
         );
     }
     Innovation {
@@ -92,16 +100,16 @@ pub fn innovation(
 
 /// The ln ratios to the reported values of the four odometry variances, the ln closure scale (each 0 unless fitted)
 /// and the share of the closures that are right, most probable given the innovations. A right closure's innovation is
-/// zero-mean Gaussian with covariance S = sum_c reported_c e^(r_c) pieces_c + e^(k) fitness I; a wrong one (a look-alike
+/// zero-mean Gaussian with covariance S = sum_c e^(r_c) pieces_c + e^(k) fitness I; a wrong one (a look-alike
 /// place) points anywhere a scan could have been matched to, uniform with density `outlier_density`. Every committed
 /// closure counts, weighed by that mixture rather than by the solve's verdict, which was itself reached with the noise
 /// being estimated (low noise rejects the right closures that would raise it). This minimizes
-/// -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c (axes_c / 2) r_c^2 + 1.5 k^2 over the lns and the share w
+/// -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c r_c^2 / sd_c^2 + 1.5 k^2 over the lns and the share w
 /// (uniform prior). One at a time: a grid (numerical range only) finds its basin and golden-section search refines it,
 /// alternated until they settle. None without an innovation.
 pub fn fit(
     innovations: &[Innovation],
-    reported: [f64; COMPONENTS],
+    prior_sd: [f64; COMPONENTS],
     fit_odometry: bool,
     fit_closure: bool,
     outlier_density: f64,
@@ -113,7 +121,7 @@ pub fn fit(
     let ln_two_pi = (2.0 * std::f64::consts::PI).ln();
     // the share of right closures as a logit
     let cost = |odometry: &[f64; COMPONENTS], closure: f64, logit: f64| -> f64 {
-        let variances: [f64; COMPONENTS] = std::array::from_fn(|c| reported[c] * odometry[c].exp());
+        let variances: [f64; COMPONENTS] = std::array::from_fn(|c| odometry[c].exp());
         let k = closure.exp();
         let share = 1.0 / (1.0 + (-logit).exp());
         let (ln_right, ln_wrong) = (share.ln(), (1.0 - share).ln());
@@ -141,7 +149,7 @@ pub fn fit(
             })
             .sum::<f64>()
             + (0..COMPONENTS)
-                .map(|c| AXES[c] / 2.0 * odometry[c] * odometry[c])
+                .map(|c| odometry[c] * odometry[c] * prior_weight(c, prior_sd[c]))
                 .sum::<f64>()
             + 1.5 * closure * closure
     };
@@ -196,6 +204,16 @@ pub fn fit(
         }
     }
     Some((odometry, closure, 1.0 / (1.0 + (-logit).exp())))
+}
+
+/// A component's prior weight on its ln ratio squared, in -2 ln units: 1 / sd^2 for a measured spread across
+/// recordings, else one innovation's information (axes / 2, a unit-information prior).
+fn prior_weight(component: usize, sd: f64) -> f64 {
+    if sd > 0.0 {
+        1.0 / (sd * sd)
+    } else {
+        AXES[component] / 2.0
+    }
 }
 
 /// The standard error of a component's fitted ln variance after `count` innovations (and the prior's one).

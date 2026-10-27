@@ -148,6 +148,21 @@ class PGOConfig(NativeModuleConfig):
     odom_rot_yaw_var: float = 3e-6
     odom_trans_xy_var: float = 1e-4
     odom_trans_z_var: float = 1e-4
+    # True: odometry noise per unit of motion (rate per metre travelled + rate per radian turned, per source) instead of per keyframe
+    odom_noise_per_motion: bool = False
+    odom_xy_var_per_m: float = 2.5e-5
+    odom_xy_var_per_rad: float = 0.0
+    odom_z_var_per_m: float = 4.9e-5
+    odom_z_var_per_rad: float = 0.0
+    odom_yaw_var_per_m: float = 1.2e-7
+    odom_yaw_var_per_rad: float = 0.0
+    odom_tilt_var_per_m: float = 7.6e-9
+    odom_tilt_var_per_rad: float = 0.0
+    # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
+    odom_noise_prior_ln_sd_xy: float = 0.0
+    odom_noise_prior_ln_sd_z: float = 0.0
+    odom_noise_prior_ln_sd_yaw: float = 0.0
+    odom_noise_prior_ln_sd_tilt: float = 0.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

@@ -1615,7 +1615,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             pcm_odometry_translation_variance: if config.closure_pcm {
-                config.odom_trans_xy_var * self.odometry_noise()[0]
+                mean_step_variances(&self.key_poses, config)[0] * self.odometry_noise()[0]
             } else {
                 0.0
             },
@@ -1752,25 +1752,66 @@ impl GscPgo {
 }
 
 /// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-/// The odometry as pose-graph edges, its reported variances times `noise` (xy, z, yaw, roll/pitch ratios).
+/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): the per-keyframe
+/// constants, or with `odom_noise_per_motion` the per-metre rates times the distance travelled plus the per-radian rates
+/// times the angle turned.
+pub(crate) fn step_variances(
+    config: &Config,
+    from: &KeyPoseWithCloud,
+    to: &KeyPoseWithCloud,
+) -> [f64; 4] {
+    if !config.odom_noise_per_motion {
+        return [
+            config.odom_trans_xy_var,
+            config.odom_trans_z_var,
+            config.odom_rot_yaw_var,
+            config.odom_rot_roll_pitch_var,
+        ];
+    }
+    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
+    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
+    [
+        config.odom_xy_var_per_m * distance + config.odom_xy_var_per_rad * turn,
+        config.odom_z_var_per_m * distance + config.odom_z_var_per_rad * turn,
+        config.odom_yaw_var_per_m * distance + config.odom_yaw_var_per_rad * turn,
+        config.odom_tilt_var_per_m * distance + config.odom_tilt_var_per_rad * turn,
+    ]
+}
+
+/// The mean of `step_variances` over the odometry so far (the per-keyframe constants before two keyframes).
+pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Config) -> [f64; 4] {
+    if !config.odom_noise_per_motion || key_poses.len() < 2 {
+        return [
+            config.odom_trans_xy_var,
+            config.odom_trans_z_var,
+            config.odom_rot_yaw_var,
+            config.odom_rot_roll_pitch_var,
+        ];
+    }
+    let mut sum = [0.0; 4];
+    for pair in key_poses.windows(2) {
+        let step = step_variances(config, &pair[0], &pair[1]);
+        for c in 0..4 {
+            sum[c] += step[c];
+        }
+    }
+    sum.map(|s| s / (key_poses.len() - 1) as f64)
+}
+
+/// The odometry as pose-graph edges, each step's reported variances (`step_variances`) times `noise` (xy, z, yaw,
+/// roll/pitch ratios).
 pub(crate) fn odometry_edges(
     key_poses: &[KeyPoseWithCloud],
     config: &Config,
     noise: [f64; 4],
 ) -> Vec<Edge> {
-    let (tilt, yaw) = (
-        config.odom_rot_roll_pitch_var * noise[3],
-        config.odom_rot_yaw_var * noise[2],
-    );
-    let (xy, z) = (
-        config.odom_trans_xy_var * noise[0],
-        config.odom_trans_z_var * noise[1],
-    );
     key_poses
         .windows(2)
         .enumerate()
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
+            let step = step_variances(config, &pair[0], &pair[1]);
+            let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,
                 to: i + 1,

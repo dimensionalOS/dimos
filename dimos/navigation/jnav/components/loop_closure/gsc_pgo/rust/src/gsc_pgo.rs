@@ -369,6 +369,26 @@ pub struct Config {
     pub odom_rot_yaw_var: f64,
     pub odom_trans_xy_var: f64,
     pub odom_trans_z_var: f64,
+    /// When true, the odometry's noise is per unit of motion instead of per keyframe: each keyframe step's variance is
+    /// a per-metre rate times the distance travelled plus a per-radian rate times the angle turned, for xy translation
+    /// (m²), z translation (m²), yaw (rad²) and roll/pitch (rad²), so it does not depend on how far apart keyframes are
+    /// (the per-keyframe variances above are then unused).
+    pub odom_noise_per_motion: bool,
+    pub odom_xy_var_per_m: f64,
+    pub odom_xy_var_per_rad: f64,
+    pub odom_z_var_per_m: f64,
+    pub odom_z_var_per_rad: f64,
+    pub odom_yaw_var_per_m: f64,
+    pub odom_yaw_var_per_rad: f64,
+    pub odom_tilt_var_per_m: f64,
+    pub odom_tilt_var_per_rad: f64,
+    /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
+    /// the next (xy, z, yaw, roll/pitch): the prior that `odometry_noise_from_closures` holds its estimate to. 0 = one
+    /// closure's worth of information (a unit-information prior).
+    pub odom_noise_prior_ln_sd_xy: f64,
+    pub odom_noise_prior_ln_sd_z: f64,
+    pub odom_noise_prior_ln_sd_yaw: f64,
+    pub odom_noise_prior_ln_sd_tilt: f64,
     pub scan_context_num_rings: i32,
     pub scan_context_num_sectors: i32,
     pub scan_context_max_range_m: f64,
@@ -476,6 +496,19 @@ impl Default for Config {
             odom_rot_yaw_var: 3e-6,
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-4,
+            odom_noise_per_motion: false,
+            odom_xy_var_per_m: 2.5e-5,
+            odom_xy_var_per_rad: 0.0,
+            odom_z_var_per_m: 4.9e-5,
+            odom_z_var_per_rad: 0.0,
+            odom_yaw_var_per_m: 1.2e-7,
+            odom_yaw_var_per_rad: 0.0,
+            odom_tilt_var_per_m: 7.6e-9,
+            odom_tilt_var_per_rad: 0.0,
+            odom_noise_prior_ln_sd_xy: 0.0,
+            odom_noise_prior_ln_sd_z: 0.0,
+            odom_noise_prior_ln_sd_yaw: 0.0,
+            odom_noise_prior_ln_sd_tilt: 0.0,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
             scan_context_max_range_m: 0.0,
@@ -608,6 +641,8 @@ pub struct ClosureSearch {
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) config: Config,
     pub(crate) scored_yanks: Vec<(f64, f64)>,
+    /// The odometry's mean xy variance per keyframe step at the reported noise (`big_picture_fit::mean_step_variances`).
+    pub(crate) mean_step_xy_variance: f64,
     /// The closures the newest solve kept.
     pub(crate) kept_closures: Vec<Edge>,
     pub(crate) diag: ClosureCandidateDiag,
@@ -750,7 +785,7 @@ impl ClosureSearch {
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
         // ends' relative position than that (along the odometry, or across one kept closure), the closure adds only
         // ICP's noise, and repeats of a closure already kept would count the same evidence twice
-        let odometry_step = self.config.odom_trans_xy_var * diag.odometry_noise[0];
+        let odometry_step = self.mean_step_xy_variance * diag.odometry_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
         let known = self
             .kept_closures
@@ -943,14 +978,14 @@ impl GscPgo {
         self.odometry_noise_ln.map(f64::exp)
     }
 
-    /// The reported odometry variances per keyframe (xy, z, yaw, roll/pitch).
-    pub(crate) fn reported_odometry_noise(&self) -> [f64; 4] {
+    /// The prior spread of each noise source's ln (`odom_noise_prior_ln_sd_*`).
+    pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
         let c = &self.config;
         [
-            c.odom_trans_xy_var,
-            c.odom_trans_z_var,
-            c.odom_rot_yaw_var,
-            c.odom_rot_roll_pitch_var,
+            c.odom_noise_prior_ln_sd_xy,
+            c.odom_noise_prior_ln_sd_z,
+            c.odom_noise_prior_ln_sd_yaw,
+            c.odom_noise_prior_ln_sd_tilt,
         ]
     }
 
@@ -995,7 +1030,7 @@ impl GscPgo {
             .product();
         let Some((ln_odometry, ln_closure, _)) = crate::odometry_noise::fit(
             &innovations,
-            self.reported_odometry_noise(),
+            self.odometry_noise_prior(),
             fit_odometry,
             fit_closure,
             1.0 / volume.max(f64::MIN_POSITIVE),
@@ -1274,7 +1309,9 @@ impl GscPgo {
     /// How sure the graph already is of keyframes `a` and `b`'s relative position (variance, m²): along the odometry,
     /// or across one kept (or not yet judged) closure, as `ClosureSearch::run`'s uninformative gate measures it.
     fn known_variance(&self, a: usize, b: usize) -> f64 {
-        let odometry_step = self.config.odom_trans_xy_var * self.odometry_noise()[0];
+        let odometry_step =
+            crate::big_picture_fit::mean_step_variances(&self.key_poses, &self.config)[0]
+                * self.odometry_noise()[0];
         let step = |x: usize, y: usize| x.abs_diff(y) as f64 * odometry_step;
         self.committed_closures
             .iter()
@@ -1355,6 +1392,10 @@ impl GscPgo {
             key_poses: self.key_poses.clone(),
             config: self.config.clone(),
             scored_yanks: self.yank_scale_sample(),
+            mean_step_xy_variance: crate::big_picture_fit::mean_step_variances(
+                &self.key_poses,
+                &self.config,
+            )[0],
             // kept, or not judged yet
             kept_closures: closure_edges(
                 self.committed_closures
@@ -1539,6 +1580,7 @@ impl GscPgo {
         self.closure_innovations
             .push(crate::odometry_noise::innovation(
                 &self.key_poses,
+                &self.config,
                 target_id,
                 source_id,
                 &translation_offset,

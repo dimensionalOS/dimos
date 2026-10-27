@@ -15,7 +15,7 @@
 //! The odometry noise from closure innovations (`odometry_noise`): an odometry whose translation and heading noise are
 //! misreported by different factors, and closures over stretches of many lengths, recover both.
 
-use dimos_gsc_pgo::gsc_pgo::KeyPoseWithCloud;
+use dimos_gsc_pgo::gsc_pgo::{Config, KeyPoseWithCloud};
 use dimos_gsc_pgo::mat3::{self, Vec3};
 use dimos_gsc_pgo::odometry_noise::{fit, innovation};
 
@@ -83,6 +83,8 @@ fn translation_and_heading_noise_are_measured_apart() {
         high[1] - low[1] + 2.0 * reach,
         2.0 * reach,
     ];
+    // per-keyframe reported noise (the defaults: xy 1e-4, z 1e-4, yaw 3e-6, roll/pitch 1e-6)
+    let config = Config::default();
     let innovations: Vec<_> = (0..250)
         .map(|c| {
             let span = 5 + (c * 37) % 600;
@@ -101,13 +103,13 @@ fn translation_and_heading_noise_are_measured_apart() {
             for (axis, m) in measured.iter_mut().enumerate() {
                 *m += fitness.sqrt() * normal(c * 3 + axis, 4.0);
             }
-            innovation(&key_poses, target, source, &measured, fitness)
+            innovation(&key_poses, &config, target, source, &measured, fitness)
         })
         .collect();
     let outlier_density = 1.0 / extent.iter().product::<f64>();
     let reported = [1e-4, 1e-4, 3e-6, 1e-6];
     let (ln, _, share) =
-        fit(&innovations, reported, true, false, outlier_density).expect("innovations given");
+        fit(&innovations, [0.0; 4], true, false, outlier_density).expect("innovations given");
     eprintln!("share of right closures {share:.2} (true 0.8)");
     let (xy, yaw) = (reported[0] * ln[0].exp(), reported[2] * ln[2].exp());
     eprintln!("xy {xy:.2e} (true {true_xy:.0e}), yaw {yaw:.2e} (true {true_yaw:.0e})");
@@ -123,5 +125,5 @@ fn translation_and_heading_noise_are_measured_apart() {
 
 #[test]
 fn no_closures_no_estimate() {
-    assert!(fit(&[], [1e-4, 1e-4, 3e-6, 1e-6], true, false, 1e-6).is_none());
+    assert!(fit(&[], [0.0; 4], true, false, 1e-6).is_none());
 }
