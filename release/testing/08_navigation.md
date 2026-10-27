@@ -24,8 +24,8 @@ uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2-map --map-
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2
 ```
 
-* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office.pc2.lcm` (the point-cloud export) to the current directory. `--export` alone only writes the `.map.db` file; `--export-pc2` produces the `.pc2.lcm` file and enables PGO.
-* The premap replay logs `relocalize: fix` and `PGO premap: attached`; `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
+* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office.pc2.lcm` (the point-cloud export) to the current directory.
+* The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
 * The PGO replay grows `world/pgo_keyframes` and publishes loop edges to `world/pgo_loops` when the walk revisits an area.
 
 Expected result: the premap exports, relocalization finds a fix, and PGO closes loops, without tracebacks.

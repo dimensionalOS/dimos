@@ -10,9 +10,7 @@ Run each foreground blueprint separately. Use another terminal for commands that
 uv run dimos run unitree-go2 keyboard-teleop
 ```
 
-You should get the Keyboard Teleop window and be able to control the robot from there.
-
-When you Ctrl+C `dimos`, the robot should lay down.
+Expected result: the Keyboard Teleop window drives the robot, and after Ctrl+C on `dimos` the robot lies down.
 
 ## 9.2 Commanding the robot from rerun
 
@@ -23,14 +21,17 @@ uv run dimos run unitree-go2
 * Click on a point on the 3D view in the Rerun window. The robot should travel there.
 * Control the robot with WASD. (This is a bit finicky.)
 
+Expected result: the robot walks to the clicked point, and WASD drives it.
+
 ## 9.3 Agentic movement skills
 
 ```bash
 uv run dimos run unitree-go2-agentic
+# In another terminal:
 uv run humancli
 ```
 
-And tell it to "move forward 2 meters" and then "move back 3 meters"
+Type "move forward 2 meters" in `humancli`, then "move back 3 meters".
 
 Expected result: the robot performs each requested movement.
 
@@ -38,14 +39,12 @@ Expected result: the robot performs each requested movement.
 
 ```bash
 uv run dimos run unitree-go2-agentic
-# Should show up in humancli too
+# In another terminal:
 uv run dimos agent-send "move forward 4 meters"
-
-# You should hear it speak in the computer's speakers.
 uv run dimos agent-send "say hello"
 ```
 
-Expected result: the robot moves forward, the command appears in `humancli` when it is running, and the greeting plays through the speakers.
+Expected result: the robot moves forward, both commands appear in `humancli` when it is running, and the greeting plays through the speakers.
 
 ## 9.5 Audio commands
 
@@ -53,25 +52,29 @@ Expected result: the robot moves forward, the command appears in `humancli` when
 uv run dimos run unitree-go2-agentic
 ```
 
-* Go to http://localhost:5555/
-* Click on the microphone and say "please rotate 180 degrees" and watch it turn back. You should also see the command displayed in `humancli`.
+* Open http://localhost:5555/, click the microphone and say "please rotate 180 degrees".
+
+Expected result: the robot turns about 180 degrees, and the command shows in `humancli` when it is running.
 
 ## 9.6 Follow person
 
-Needs a person in the camera view and `ALIBABA_API_KEY` with access to the
-`qwen-vl-max` model used by `follow_person` for its initial detection.
+Needs a person in the camera view and `ALIBABA_API_KEY` with access to the `qwen-vl-max` model used by `follow_person` for its initial detection.
 
 ```bash
 uv run dimos run unitree-go2-agentic
-sleep 10; uv run dimos agent-send "follow the person wearing ..."
+# In another terminal, once the agent is up:
+uv run dimos agent-send "follow the person wearing ..."
 ```
 
-Replace `...` with a description of the person present. Expected result: the robot follows that person.
+Replace `...` with a description of the person present.
+
+Expected result: the robot follows that person.
 
 ## 9.7 Sport commands
 
 ```bash
 uv run dimos run unitree-go2-agentic
+# In another terminal:
 uv run dimos agent-send "show the heart symbol"
 ```
 
@@ -83,7 +86,7 @@ Expected result: the robot performs the requested gesture.
 uv run dimos run demo-camera
 ```
 
-* Webcam feed appears in rerun.
+Expected result: the webcam feed appears in Rerun.
 
 ## 9.9 Go2 discovery and connection
 

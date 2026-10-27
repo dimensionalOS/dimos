@@ -4,7 +4,7 @@ Agent checks need the configured LLM credentials. Most run on replay data or in 
 
 ## 7.1 Local LLM backends and request tracing
 
-Needs Ollama running (`ollama serve`). Run each stage below separately: `agent-send` returns when the message is sent, before the model has finished responding.
+Needs Ollama running (`ollama serve`) and `OPENAI_API_KEY`, since `SpeakSkill` speaks through OpenAI TTS. Run each stage below separately: `agent-send` returns when the message is sent, before the model has finished responding.
 
 ```bash
 ollama pull qwen3:8b
@@ -88,10 +88,8 @@ The first run pulls the YOLO weights.
 ```bash
 uv run dimos --replay run unitree-go2-detection
 # In another terminal, as soon as Rerun opens. The recording plays once and lasts 60 s.
-uv run dimos --transport lcm topic echo /detector3d/image/0
+uv run dimos topic echo /detected_image_0
 ```
-
-The detection blueprint explicitly publishes this output on LCM, so the echo needs `--transport lcm` even when the rest of the stack uses Zenoh. The host needs the [LCM multicast setup](05_cli-and-api.md#56-transports-and-topics) for a separate echo process to receive it.
 
 Expected result: the echo prints one `Image(shape=...)` line for each camera frame with a detection. In Rerun, `world/detected_pointcloud_0` highlights the detected object's points on the map.
 
@@ -121,7 +119,7 @@ uv run dimos run desk-marker-tf rerun-bridge-module --marker-length-m 0.1
 * Calibration: `<square-m>` is the measured edge of one printed square in meters. Press Space on about 20 sharp views of the board.
 * Markers: hold the tag in front of the webcam.
 
-The stock `desk-marker-tf` blueprint loads its bundled `fixtures/camera_info.yaml` for both webcam setup and marker pose estimation; it does not read the `camera_info.yaml` produced by the preceding command. To check metric marker poses on a different webcam, configure both `create_desk_webcam` and `MarkerDetectionStreamModule` with that camera's calibrated `CameraInfo` in a custom blueprint. The stock command still checks marker detection and display.
+`desk-marker-tf` uses its bundled `fixtures/camera_info.yaml`, not the file the calibration wrote.
 
 Expected result: calibration prints an RMS line and writes both files, and Rerun shows the webcam feed with a box labelled with the tag id.
 
@@ -161,13 +159,11 @@ uv run python -c "from dimos.utils.data import get_data; print(get_data('xarm6_w
 uv run dimos --replay run world-belief-module mcp-server --daemon --worldbeliefmodule.db-path <printed-path>
 # Wait for "WorldBelief scan models warmed up" in uv run dimos log -f.
 uv run dimos mcp call scan -j '{"prompt": ["book", "pen"]}' --timeout 300
-uv run dimos mcp call recall -a text="book" --timeout 300
-# If scan found pen but no book, also check the confirmed object:
 uv run dimos mcp call recall -a text="pen" --timeout 300
 uv run dimos stop
 ```
 
-Expected result: `scan` prints `Scan complete: <n> object(s) present` with n of at least 1, and `recall` returns the best match with `when_ts`, `where_camera` and `where_object` fields. If there is no detector-confirmed book, `recall book` may have `where_object: None`; recalling a confirmed scanned object checks the grounded object position.
+Expected result: `scan` prints `Scan complete: <n> object(s) present` with a confirmed `pen` among the objects, and `recall` returns the pen with `when_ts`, `where_camera` and a `where_object` position.
 
 ## 7.11 Depth2DepthCloud
 

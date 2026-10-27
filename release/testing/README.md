@@ -8,13 +8,12 @@ With the release branch checked out and a clean working tree, capture the candid
 
 ```bash
 export RELEASE_BRANCH="$(git branch --show-current)"
-export RELEASE_VERSION="${RELEASE_BRANCH#release/}"
 export RELEASE_COMMIT="$(git rev-parse HEAD)"
 git log -1 --format='%H %s'
 ```
 
-- Record the version, branch, full commit SHA, OS and selected checks alongside the results. Mark each selected check passed, failed or not run, with a reason for failures and missing prerequisites.
-- Copy the values of `RELEASE_VERSION`, `RELEASE_BRANCH` and `RELEASE_COMMIT` into terminals on fresh test machines. Installation checks use these values to fetch the candidate installer and verify the resulting checkout.
+- Record the version, branch, full commit SHA and OS alongside the results. Mark each check passed, failed or not run, with a reason for failures and missing prerequisites.
+- Copy the values of `RELEASE_BRANCH` and `RELEASE_COMMIT` into terminals on fresh test machines. Installation checks use these values to fetch the candidate installer and verify the resulting checkout.
 - Run commands from the repository root. Set up dependencies using the [installation guide](../../docs/installation/index.md) in developer mode.
 - Configure the robot connection and credentials required by the selected blueprints. See [configuration](../../docs/usage/configuration.md).
 - Run foreground blueprints separately. Use another terminal for commands that interact with them, and stop each blueprint before moving to the next check.

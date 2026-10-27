@@ -46,7 +46,7 @@ uv run dimos hardware g1 disable    # after the headset check
 ```
 
 * Nav: click a point on the floor in the viewer. The robot walks there.
-* Teleop: open https://<g1-ip>:8443/teleop in the Quest browser, accept the certificate, hold X + A and move your hands. Both arms follow until you release.
+* Teleop: open https://<g1-ip>:8443/teleop in the Quest browser, accept the certificate, hold both grips and move your hands. Both arms follow until you release.
 
 Expected result: the G1 reaches the clicked point, `ready` moves both arms to the ready pose, the arms follow the headset, and `disable` disarms the robot.
 

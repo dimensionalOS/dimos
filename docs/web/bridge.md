@@ -26,7 +26,7 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 | `--local-relay` | off | Spawn a relay on this machine and connect to it. |
 | `--relay-url URL` | none | Connect to a relay started elsewhere, given its HTTP address (`http://localhost:7780`, `https://relay.example.com`). The bridge fetches `/api/info` there on every connect, so a relay restart (new port, new certificate) is transparent. |
 | `--relay-ca PEM` | none | CA bundle that signed the relay's certificate (mkcert, a private CA). Replaces the default trust store for that relay. |
-| `--relay-key KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. It shows in the process list; the default bridge can take it from `RELAYBRIDGEMODULE__RELAY_KEY` in the environment or `.env` instead. |
+| `--relay-key KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. It shows in the process list. The default bridge can also take it from `RELAYBRIDGEMODULE__RELAY_KEY` in the environment or `.env`. |
 | `--rtc <bool>` | true | Deliver `jpeg.v1` channels as WebRTC tracks when the relay offers it and aiortc is installed. `--rtc false` keeps JPEG frames through the relay. |
 | `--rtc-file PATH` | none | Cloudflare configuration for the local relay (its `--rtc-file`). A relay started elsewhere carries its own. |
 | `--robot-id ID` | the hostname | How the relay and the cockpit name this robot. Two robots on one relay need different ids: `dimos run unitree-go2 --local-relay --robot-id go2-lab`. |

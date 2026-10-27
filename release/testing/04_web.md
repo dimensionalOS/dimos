@@ -6,7 +6,7 @@ These checks need the `web` extra and Chromium or Firefox. They run in simulatio
 
 ```bash
 # The first run downloads Deno and builds the web bundles.
-uv run dimos --simulation run --local-relay unitree-go2-cockpit
+uv run dimos --simulation run unitree-go2-cockpit
 ```
 
 * Open http://127.0.0.1:7780/ and inspect the video, 3D map and 2D map together. The robot pose and visible obstacles should agree with the simulated scene.
@@ -21,7 +21,7 @@ Expected result: the views agree with the robot's motion, and navigation, keyboa
 Needs the agent credentials, ffmpeg and a microphone.
 
 ```bash
-uv run dimos --simulation run --local-relay unitree-go2-agentic-cockpit
+uv run dimos --simulation run unitree-go2-agentic-cockpit
 # In another terminal, once the page is open:
 uv run dimos agent-send "say hello"
 ```

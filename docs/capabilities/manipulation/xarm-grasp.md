@@ -117,7 +117,7 @@ arm, with its work surface at `z=0.13 m`. Six household targets sit on it:
 | Brown box | `(0.36, -0.21, 0.13)` | 10.0 cm | 14.0 × 10.0 × 7.5 cm |
 
 The canonical positions and geometry live in `data/xarm_grasp_sim/scene.xml`.
-The visual meshes were cooked from the `dimos_office` scene package; primitive
+The visual meshes were cooked from the `dimos_office` scene package. Primitive
 geometry is used for contact. The table lists those contact dimensions, with
 the smaller horizontal dimension as the closing width for box shapes. Some
 targets exceed the gripper's 88.9 mm opening, so use the gray can as the
@@ -164,7 +164,7 @@ for obj in scan.metadata["objects"]:
     cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
     print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
 
-# the can sits at roughly (0.57, 0.00); pick whichever id landed there
+# the can sits at roughly (0.57, 0.00). Pick whichever id landed there
 pick = app.PickAndPlaceModule.pick_object("<object_id>")
 print(pick)
 

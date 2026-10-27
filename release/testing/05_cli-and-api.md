@@ -92,11 +92,7 @@ Expected result: `dimos mcp modules` reaches the server on port 9992 and lists n
 
 ## 5.6 Transports and topics
 
-Run the replay blueprint, then use another terminal for the other commands.
-The LCM run also needs the host multicast and socket-buffer setup described in
-[2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). If it was skipped
-during installation, startup prompts to apply it with `sudo`; arrange
-administrator access before starting the LCM run.
+Run the replay blueprint, then use another terminal for the other commands. The LCM run also needs the host multicast and socket-buffer setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
 
 ```bash
 uv run dimos --replay run unitree-go2
@@ -114,7 +110,8 @@ Expected result: the spy lists the replay topics on zenoh with live rates, the s
 ## 5.7 dtop
 
 ```bash
-uv run dimos --dtop run unitree-go2
+uv run dimos --dtop --replay run unitree-go2
+# In another terminal:
 uv run dtop
 ```
 
@@ -148,22 +145,20 @@ Expected result: `graph` writes an SVG with the modules grouped by package, thei
 ## 5.10 Host daemon
 
 ```bash
-uv run dimos host doctor
-uv run dimos host serve --name lab --tag gpu
+HOST__NAME=lab HOST__TAGS=release-test uv run dimos host start --foreground
 # In another terminal:
-uv run dimos host list
+uv run dimos host doctor
+uv run dimos host ls
 uv run dimos host describe lab
+# After Ctrl+C on start:
+uv run dimos host ls
 ```
 
-Expected result: `doctor` prints PASS for each check. `list` shows `lab` with tag `gpu` and state `available`, and `describe` prints its details. After Ctrl+C on `serve`, `uv run dimos host list` prints "No online Hosts found".
+Expected result: `doctor` passes every check but two. Reachability warns because the Host listens only on loopback, and the systemd unit check fails because only `dimos host install` sets it up. `ls` shows `lab` with the `release-test` tag next to the detected ones such as `arch` and `ram_gb`. `describe lab` prints its Host ID, name, tags, revision and runs. After Ctrl+C on `start`, `ls` prints "No dimos Hosts answered".
 
 ## 5.11 Native module examples
 
-Needs nix with flakes. The first run of each example builds its binaries. Run the examples separately, stopping each with Ctrl+C before starting the next.
-The C++ command below uses LCM, so it also needs the privileged multicast
-setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation).
-Arrange administrator access before running that command if setup was skipped
-during installation.
+Needs nix with flakes. The first run of each example builds its binaries. Run the examples separately, stopping each with Ctrl+C before starting the next. The C++ command below uses LCM, so it also needs the privileged multicast setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). Arrange administrator access before running that command if setup was skipped during installation.
 
 ```bash
 uv run python examples/native-modules/rust_ping_pong.py --transport zenoh

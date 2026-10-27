@@ -16,7 +16,7 @@ bin/dimsim-prepare
 ./bin/pytest-all
 ```
 
-Expected result: the full suite passes without skips, as required by the [release procedure](../../docs/development/releasing.md#2-creating-the-release). Record the result against the tested SHA.
+Expected result: the full suite passes without skips. Record the result against the tested SHA.
 
 For iteration, `./bin/pytest-slow` includes the default, browser and native tests but excludes `self_hosted_large`. Plain `uv run pytest` also excludes browser and native end-to-end tests. Neither reduced run completes this release check.
 

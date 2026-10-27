@@ -13,9 +13,7 @@ Expected result: each blueprint starts, processes the replay data, and displays 
 
 ## 2.2 MuJoCo simulation
 
-The first runs pull the MuJoCo scenes and models from LFS and download the
-MuJoCo Menagerie robot descriptions from GitHub. Allow the initial asset
-downloads to finish before checking the viewers.
+The first runs pull the MuJoCo scenes and models from LFS and download the MuJoCo Menagerie robot descriptions from GitHub. Allow the initial asset downloads to finish before checking the viewers.
 
 ```bash
 uv run dimos --simulation run unitree-go2
@@ -31,10 +29,7 @@ Expected result: each blueprint starts its simulated robot in the office scene w
 
 Needs network access on the first run, which fetches Deno and a headless Chromium and builds the frontend. See [DimSim getting started](../../misc/DimSim/docs/getting-started.md).
 
-LCM also needs the host's multicast and socket-buffer setup. If it was skipped
-during installation, the launch command prompts to apply the required changes
-with `sudo`; arrange administrator access first. Declining required setup exits
-before the simulation starts.
+LCM also needs the host's multicast and socket-buffer setup. If it was skipped during installation, the launch command prompts to apply the required changes with `sudo`. Arrange administrator access first. Declining required setup exits before the simulation starts.
 
 ```bash
 git lfs pull --include="misc/DimSim/**"
