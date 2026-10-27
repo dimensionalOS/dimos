@@ -10,17 +10,23 @@ import { done, refused } from "../../shared/protocol/outcome.ts";
 /**
  * Every built-in pi-ai provider, then `extra` (the faux provider in tests), with credentials in `authFile` through
  * pi-coding-agent's AuthStorage, the store that wrote dimcode's auth.json. `modelsFile`, when it exists, overrides
- * providers in pi's models.json format; a malformed one is an error naming it. No catalog download, and the catalog
- * stays in memory.
+ * providers in pi's models.json format. A malformed one leaves the providers as built in and goes to `report`. No
+ * catalog download, and the catalog stays in memory.
  */
-export async function openModels(authFile: string, modelsFile: string, extra: readonly Provider[]): Promise<Models> {
+export async function openModels(
+  authFile: string,
+  modelsFile: string,
+  extra: readonly Provider[],
+  report: (error: unknown) => void,
+): Promise<Models> {
   const models = await ModelRuntime.create({
     authPath: authFile,
     modelsPath: modelsFile,
     modelsStore: new InMemoryModelsStore(),
   });
+  // pi folds a malformed models.json in with credential and catalog failures, so none of them stops the gateway.
   const error = models.getError();
-  if (error !== undefined) throw new Error(error);
+  if (error !== undefined) report(new Error(error));
   for (const provider of extra) models.registerNativeProvider(provider);
   return models;
 }

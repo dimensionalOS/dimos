@@ -351,8 +351,9 @@ which starts a gateway of its own. That gateway keeps its config under
 `CONFIG_DIR / "evals"`, its `agent.sqlite` and `gateway.log` under `agent-state/` in the
 case directory, and its socket in a temporary directory, so it never attaches to your
 gateway. When the case has a robot, the gateway links to the case's `McpServer`, and
-`dimos agent load` adds `HarnessRuntime` to that system. Without a robot, it dials a local
-port that nothing serves. A `models.json` in its config sends every model request through
+`dimos agent load` adds `HarnessRuntime`, plus a relay bridge when there is none, to the
+system it reaches on the transport bus. Without a robot, it dials a local port that nothing
+serves. A `models.json` in its config sends every model request through
 the trace proxy, so `raw/` holds each request and response, and it carries
 `max_output_tokens` as the model's output cap. The agent keeps its own system prompt,
 tools and skills, and the case guidance travels in the user message. It rejects
