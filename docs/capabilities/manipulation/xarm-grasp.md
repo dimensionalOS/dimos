@@ -105,26 +105,29 @@ actually do with one, watch the plan preview.
 The scene is an enclosed 2.6 m by 3.0 m room. The xArm is bolted to the world
 origin. Unlike `data/xarm7`, this scene has no 12 cm pedestal, so the planning
 model overrides `base_pose` to match. The 38 cm by 60 cm desk is in front of the
-arm, with its work surface at `z=0.13 m`. Six scaled household targets sit on it:
+arm, with its work surface at `z=0.13 m`. Six household targets sit on it:
 
-| Object | Body position `(x, y, z)` m | Maximum grasp width | Approximate size |
+| Object | Body position `(x, y, z)` m | Collision width across jaws | Collision size |
 |---|---:|---:|---:|
-| Dark blue bottle | `(0.58, 0.19, 0.13)` | 6.0 cm | 6.0 × 6.0 × 17.6 cm |
-| Gray can | `(0.545, -0.02, 0.13)` | 6.6 cm | 6.6 × 6.6 × 12.2 cm |
-| Red cup | `(0.56, -0.22, 0.13)` | 6.8 cm | 6.8 × 6.8 × 6.1 cm |
-| Green tape roll | `(0.38, 0.24, 0.13)` | 6.2 cm | 6.2 × 6.2 × 2.3 cm |
-| Blue marker | `(0.35, 0.03, 0.13)` | 3.2 cm | 14.0 × 3.2 × 3.2 cm |
-| Brown box | `(0.40, -0.19, 0.13)` | 6.0 cm | 8.4 × 6.0 × 4.5 cm |
+| Dark blue bottle | `(0.57, 0.21, 0.13)` | 7.5 cm | 7.5 × 7.5 × 22.0 cm |
+| Gray can | `(0.57, 0.00, 0.13)` | 6.6 cm | 6.6 × 6.6 × 12.2 cm |
+| Red cup | `(0.57, -0.21, 0.13)` | 9.2 cm | 9.2 × 9.2 × 10.0 cm |
+| Green tape roll | `(0.36, 0.21, 0.13)` | 9.5 cm | 9.5 × 9.5 × 3.5 cm |
+| Blue marker | `(0.36, 0.00, 0.13)` | 3.2 cm | 14.0 × 3.2 × 3.2 cm |
+| Brown box | `(0.36, -0.21, 0.13)` | 10.0 cm | 14.0 × 10.0 × 7.5 cm |
 
 The canonical positions and geometry live in `data/xarm_grasp_sim/scene.xml`.
-The visual meshes were cooked from the `dimos_office` scene package and scaled
-for the xArm gripper; primitive geometry is used only for contact. Every target
-has a grasp axis below 7 cm, and the gray can is the designated pick smoke
-target. The blueprint starts the arm at an elevated, collision-free top-down
-scan pose so all six visual meshes fit in the wrist-camera frame.
+The visual meshes were cooked from the `dimos_office` scene package. Primitive
+geometry is used for contact. The table lists those contact dimensions, with
+the smaller horizontal dimension as the closing width for box shapes. Some
+targets exceed the gripper's 88.9 mm opening, so use the gray can as the
+designated pick smoke target. The blueprint starts the arm at an elevated,
+collision-free top-down scan pose so all six visual meshes fit in the
+wrist-camera frame.
 
-OWL-ViT labels these synthetic renders unreliably. A scan routinely returns the
-right six positions under swapped names, so match objects by position, not label.
+OWL-ViT labels these synthetic renders unreliably, so match objects by position,
+not label. A visible point-cloud centroid can differ from the body origin in the
+table, particularly in height.
 
 ## Driving it
 
@@ -161,7 +164,7 @@ for obj in scan.metadata["objects"]:
     cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
     print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
 
-# the bottle sits at roughly (0.58, 0.19); pick whichever id landed there
+# the can sits at roughly (0.57, 0.00). Pick whichever id landed there
 pick = app.PickAndPlaceModule.pick_object("<object_id>")
 print(pick)
 
