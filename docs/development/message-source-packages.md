@@ -1,11 +1,20 @@
-# CDR generation in dimOS
+# Generate and package dimOS messages
 
-**WIP:** Built-in messages work in standalone examples. CDR transport and application
-support are incomplete. Existing code continues to use `dimos.msgs`.
+dimOS uses generated message classes in `dimos.messages` for typed streams and
+recordings. Numerical operations and image or point cloud conversions live in
+`dimos.message_utils`. Third-party projects can own `.msg` definitions and
+register generated providers through the same registry. See the
+[external message project guide](/docs/development/messages-external-project.md).
 
 `setup.py` reads the definitions in `packages/dimos-generated` and calls
 `dimos-cdrgen==0.1.2`. The wheel contains `dimos.messages`, schemas, and native
 source code. The examples use these installed files.
+
+`schema-sources.json` pins upstream archives and individual file hashes. Source
+preparation verifies those hashes and copies every local custom package,
+including its `.msg` files and license. Edit the source inputs, regenerate, and
+restart processes after a schema change. The registry rejects conflicting
+providers and does not accept schema changes after initialization.
 
 The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs and
 supported schemas. `dimos.message_codegen.native_build.write_cmake_toolchain`
@@ -34,7 +43,6 @@ Expected output includes:
 ```text
 Generated Python messages: <venv>/lib/python3.12/site-packages/dimos/messages
 Packaged schemas and native sources: <venv>/lib/python3.12/site-packages/dimos/messages_schemas/package
-Messages: 73 types
 PASS: sensor_msgs/msg/Image pixels, encoding and source stamp
 PASS: dimos_msgs/msg/LineSegments3D geometry, weight and nested type identity
 PASS: packaged definitions and C++/Rust build inputs; no compiled message libraries
@@ -69,15 +77,14 @@ retain Rust build artifacts. Cold builds download pinned dependencies;
 
 ### What installation does
 
-Definitions → setuptools calls cdrgen → Python/schema/native-source
-artifacts in the dimOS wheel → installed consumers. Source installation prepares
-verified definitions and generates artifacts. Wheel installation only installs
-those artifacts. The sdist includes definitions needed to rebuild the wheel.
+Source installation prepares verified definitions and calls cdrgen through
+setuptools. The wheel contains the generated Python classes, schemas, and native
+source code. Wheel installation installs those artifacts. The sdist includes the
+definitions needed to rebuild the wheel.
 
 Installation does not compile or test the C++/Rust message consumers. Running
 `demo_native.py` performs that verification explicitly. These examples use files,
-with no robot connection, transport or SDK pub/sub. No dedicated native-message
-CI is required to install or run them.
+with no robot connection, transport or SDK pub/sub. Run each native module's own tests to validate its transport and application behavior.
 
 ## Verify the integration
 
@@ -89,7 +96,6 @@ python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integr
 ```
 
 These checks cover SDK path discovery and an installed Python message consumer.
-Native message generation/compilation is not run by CI. To manually verify the
-installed built-in messages across Python, C++ and Rust, run the
+To verify the installed built-in messages across Python, C++ and Rust, run the
 [built-in example above](#run-c-and-rust).
 Generic generator regression tests belong to the cdrgen repository.
