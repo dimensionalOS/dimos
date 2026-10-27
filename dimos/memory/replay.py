@@ -93,7 +93,8 @@ class Replay(Configurable):
         for name in self.store.list_streams():
             try:
                 candidates.append(float(self.store.stream(name).first().ts))
-            except (LookupError, ImportError, AttributeError):
+            # ValueError: a stream whose name is not a safe identifier (e.g. "map/pipeline") cannot be opened
+            except (LookupError, ImportError, AttributeError, ValueError):
                 continue
         return min(candidates) if candidates else None
 

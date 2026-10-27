@@ -14,7 +14,7 @@
 
 //! The odometry noise scale from closure innovations (`odometry_noise_ln_scale_ml`).
 
-use dimos_gsc_pgo::gsc_pgo::odometry_noise_ln_scale_ml;
+use dimos_gsc_pgo::gsc_pgo::{noise_ln_scales_ml, odometry_noise_ln_scale_ml};
 use dimos_gsc_pgo::mat3::{Mat3, Vec3};
 
 /// Deterministic uniform on (0, 1).
@@ -67,4 +67,33 @@ fn the_scale_that_explains_the_closures_is_found() {
 #[test]
 fn no_closures_no_scale() {
     assert!(odometry_noise_ln_scale_ml(&[]).is_none());
+}
+
+#[test]
+fn odometry_and_closure_noise_are_told_apart_by_loop_length() {
+    // short loops are mostly closure noise, long ones mostly odometry: both scales come out
+    let (true_odometry, true_closure): (f64, f64) = (3.0, 0.3);
+    let innovations: Vec<(Vec3, Mat3, f64)> = (0..120)
+        .map(|k| {
+            let length = if k % 2 == 0 { 2.0 } else { 200.0 };
+            let p = [
+                [1e-3 * length, 0.0, 0.0],
+                [0.0, 1e-3 * length, 0.0],
+                [0.0, 0.0, 1e-4 * length],
+            ];
+            let c: f64 = 0.01;
+            let v = std::array::from_fn(|i| {
+                (true_odometry * p[i][i] + true_closure * c).sqrt() * normal(k * 3 + i, 2.0)
+            });
+            (v, p, c)
+        })
+        .collect();
+    let (odometry, closure) =
+        noise_ln_scales_ml(&innovations, true, true).expect("innovations given");
+    let (odometry, closure) = (odometry.exp(), closure.exp());
+    eprintln!(
+        "odometry {odometry:.3} (true {true_odometry}), closure {closure:.3} (true {true_closure})"
+    );
+    assert!((odometry / true_odometry).ln().abs() < 0.35);
+    assert!((closure / true_closure).ln().abs() < 0.35);
 }

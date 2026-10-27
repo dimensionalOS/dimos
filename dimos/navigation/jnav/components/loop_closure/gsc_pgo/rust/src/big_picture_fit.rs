@@ -1584,7 +1584,7 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let closures = closure_edges(self.committed_closures.iter());
+        let closures = closure_edges(self.committed_closures.iter(), self.closure_noise_scale());
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let pinned = &self.key_poses[0];
@@ -1657,6 +1657,7 @@ impl GscPgo {
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         self.odometry_noise_ln_scale_dispatched = self.odometry_noise_ln_scale;
+        self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
         self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
@@ -1784,15 +1785,19 @@ pub(crate) fn odometry_edges(
         .collect()
 }
 
-/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness.
-pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
+/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness times `scale`
+/// (`GscPgo::closure_noise_scale`).
+pub(crate) fn closure_edges<'a>(
+    closures: impl Iterator<Item = &'a CommittedClosure>,
+    scale: f64,
+) -> Vec<Edge> {
     closures
         .map(|l| Edge {
             from: l.target_id,
             to: l.source_id,
             rotation: l.rotation_offset,
             translation: l.translation_offset,
-            variances: [l.score.max(1e-6); 6],
+            variances: [l.score.max(1e-6) * scale; 6],
         })
         .collect()
 }
