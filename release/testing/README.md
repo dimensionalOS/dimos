@@ -56,7 +56,6 @@ git log -1 --format='%H %s'
 - [ ] [6.1 New Ubuntu install](06_installation.md#61-new-ubuntu-install)
 - [ ] [6.2 New macOS install](06_installation.md#62-new-macos-install)
 - [ ] [6.3 Native modules built with Nix](06_installation.md#63-native-modules-built-with-nix)
-- [ ] [6.4 Published release](06_installation.md#64-published-release)
 - [ ] [7.1 Local LLM backends and request tracing](07_agents.md#71-local-llm-backends-and-request-tracing)
 - [ ] [7.2 Tool streams and capability conflicts](07_agents.md#72-tool-streams-and-capability-conflicts)
 - [ ] [7.3 Point navigation skill](07_agents.md#73-point-navigation-skill)
@@ -75,7 +74,6 @@ git log -1 --format='%H %s'
 - [ ] [8.5 Mid-360 driver and Point-LIO](08_navigation.md#85-mid-360-driver-and-point-lio)
 - [ ] [8.6 Go2 path following controllers](08_navigation.md#86-go2-path-following-controllers)
 - [ ] [8.7 Habitat simulation](08_navigation.md#87-habitat-simulation)
-- [ ] [8.8 dimSLAM visual odometry](08_navigation.md#88-dimslam-visual-odometry)
 - [ ] [9.1 Test launching multiple blueprints](09_hardware.md#91-test-launching-multiple-blueprints)
 - [ ] [9.2 Commanding the robot from rerun](09_hardware.md#92-commanding-the-robot-from-rerun)
 - [ ] [9.3 Agentic movement skills](09_hardware.md#93-agentic-movement-skills)
@@ -93,10 +91,7 @@ git log -1 --format='%H %s'
 - [ ] [10.3 G1 navigation and arm teleop on hardware](10_robots.md#103-g1-navigation-and-arm-teleop-on-hardware)
 - [ ] [10.4 Multiple Go2s](10_robots.md#104-multiple-go2s)
 - [ ] [10.5 Go2 over DDS on the Jetson](10_robots.md#105-go2-over-dds-on-the-jetson)
-- [ ] [10.6 Boston Dynamics Spot](10_robots.md#106-boston-dynamics-spot)
-- [ ] [10.7 Galaxea R1 Pro](10_robots.md#107-galaxea-r1-pro)
-- [ ] [10.8 DeepRobotics M20](10_robots.md#108-deeprobotics-m20)
-- [ ] [10.9 FlowBase holonomic base](10_robots.md#109-flowbase-holonomic-base)
+- [ ] [10.6 FlowBase holonomic base](10_robots.md#106-flowbase-holonomic-base)
 
 ## Coverage gaps
 

@@ -1,6 +1,6 @@
 # 10. Other robots
 
-Go2 hardware checks are in [hardware](09_hardware.md). This checklist covers the G1, several Go2s at once, the Go2 over DDS, Spot, the R1 Pro, the M20 and the FlowBase. Simulation and replay checks need no robot. Hardware checks name what they need.
+Go2 hardware checks are in [hardware](09_hardware.md). This checklist covers the G1, several Go2s at once, the Go2 over DDS and the FlowBase. Simulation and replay checks need no robot. Hardware checks name what they need.
 
 ## 10.1 G1 agent in simulation
 
@@ -82,61 +82,7 @@ uv run dimos mem rerun go2_dds_stairs.mcap --seconds 60
 
 Expected result: the robot reaches the clicked goal, and the recording plays its point cloud, odometry and camera in Rerun.
 
-## 10.6 Boston Dynamics Spot
-
-The live run needs a Spot on its WiFi access point or rear Ethernet port and its credentials, see [Spot](../../docs/platforms/quadruped/spot/index.md).
-
-```bash
-# No robot. The first run pulls a 4.4 GB recording from LFS.
-uv run dimos run spot-replay --db-path=spot_small_loop.db
-# Live robot:
-uv sync --extra spot --inexact
-uv run dimos run spot-record --spothighlevel.username=<user> --spothighlevel.password=<password> --spotrecorder.db-path=spot_test.db
-uv run dimos run spot-replay --db-path=spot_test.db
-```
-
-* Replay: Rerun shows Spot's body, its camera frustums, the walked trail and the camera feeds.
-* Live: Spot stands up, WASD in Rerun drives it, and Ctrl+C makes it lie down and power off.
-
-Expected result: the recordings play back without tracebacks, and the live run drives Spot and records the drive into `spot_test.db`.
-
-## 10.7 Galaxea R1 Pro
-
-Run on the robot's onboard computer, in the environment from the [R1 Pro README](../../dimos/robot/galaxea/r1pro/README.md), after the power-on steps in [R1 Pro safety](../../docs/platforms/safety/r1pro.md).
-
-```bash
-# On the robot, over ssh. --no-sync keeps the README's Python 3.10 venv.
-export LCM_DEFAULT_URL='udpm://239.255.76.67:7767?ttl=0'
-uv run --no-sync dimos --transport lcm --listen-host 0.0.0.0 run r1pro-nav --rerunbridgemodule.rerun-open none
-# On the workstation. The robot's log prints this line with its IP.
-uv run dimos-viewer --connect rerun+http://<robot-ip>:9877/proxy --ws-url ws://<robot-ip>:3030/ws
-```
-
-* Drive the chassis with WASD in the viewer.
-* Click a point on the floor in the 3D view. The robot drives there.
-
-Expected result: the viewer shows both head cameras, WASD drives the chassis, and the robot reaches the clicked point.
-
-## 10.8 DeepRobotics M20
-
-Needs an M20 whose GOS computer has a DimOS checkout prepared with the setup script in the [deploy README](../../dimos/robot/deeprobotics/m20/deploy/README.md).
-
-```bash
-# On GOS:
-uv sync --extra all
-uv run dimos --build-native --robot-ip 10.21.31.106 run deeprobotics-m20-kronknav-control --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0 --daemon
-uv run dimos shell
-# On the desktop:
-uv run dimos-viewer --connect rerun+http://10.21.31.104:9877/proxy --ws-url ws://10.21.31.104:3030/ws
-```
-
-* In the shell run `app.M20Connection.standup()`. The robot stands up.
-* Click a point on the floor in the viewer. The robot walks there.
-* Run `app.M20Connection.liedown()`, then `uv run dimos stop` on GOS.
-
-Expected result: the viewer shows the front and rear cameras and the map, and the robot stands, walks to the clicked point and lies down.
-
-## 10.9 FlowBase holonomic base
+## 10.6 FlowBase holonomic base
 
 Needs the lab FlowBase powered on, with its controller reachable from the laptop at `172.6.2.20:11323`. There is no mock or simulated FlowBase.
 

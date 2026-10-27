@@ -102,15 +102,3 @@ uv run dimos run habitat-nav
 * Click on the blue planner surface to set a goal.
 
 Expected result: the camera panels show a house interior, and after the click the robot drives along a path to the clicked point.
-
-## 8.8 dimSLAM visual odometry
-
-Needs a RealSense D455 and an NVIDIA GPU, or `--use-gpu false` on a machine without one.
-
-```bash
-uv run dimos run demo-dim-slam-realsense
-```
-
-* Walk a loop around the room with the camera and come back to the start.
-
-Expected result: the infrared feed shows in the cameras view, and `world/odom_hist` traces the walk and ends near the start.

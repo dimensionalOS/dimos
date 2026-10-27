@@ -50,26 +50,3 @@ uv run dimos --build-native run go2-sim-nav
 ```
 
 Expected result: the dry run ends with "Would build: nothing" when the cache has every module. The build prints a DONE line per module and no FAIL. The forced rebuild logs "Build command completed" for each native module before the simulated Go2 appears in Rerun.
-
-## 6.4 Published release
-
-Run this after the release workflow has finished, from the repository root. Use the version and tested release-branch SHA from the release test record.
-
-```bash
-gpg --import docs/release-signing-key.asc
-# Fetch only the release tag, into FETCH_HEAD. No local tag is created or changed.
-git fetch --no-tags origin "refs/tags/v${RELEASE_VERSION:?}"
-git verify-tag -v FETCH_HEAD
-test "$(git rev-parse "FETCH_HEAD^{commit}")" = "${RELEASE_COMMIT:?}"
-# Install the published wheel in an empty directory outside the checkout.
-cd "$(mktemp -d)" && uv venv --python 3.12 && source .venv/bin/activate
-uv pip install --torch-backend cpu "dimos[base,unitree,sim]==$RELEASE_VERSION"
-uv run dimos --replay run unitree-go2
-```
-
-* https://github.com/dimensionalOS/dimos/releases shows the release version with the sdist and wheels attached. GitHub marks the tag "Unverified", which is expected.
-* https://pypi.org/project/dimos/ shows the release version.
-
-The check always reads the tag from origin. A local tag with the same name is not used and stays as it is, even if it points somewhere else. Delete it with `git tag -d` if you no longer want it.
-
-Expected result: `git verify-tag` prints `tag vX.Y.Z` and reports a good signature from `dimos-release-bot`, the tag points to the tested release-branch commit, the wheel installs, and the replay shows in Rerun without tracebacks.
