@@ -18,12 +18,13 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
+from pathlib import Path
 from typing import Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.constants import DEFAULT_BUILD_NATIVE
+from dimos.constants import DEFAULT_BUILD_NATIVE, RECORDINGS_DIR
 from dimos.visualization.rerun.constants import ViewerBackend
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
@@ -49,6 +50,10 @@ class GlobalConfig(BaseSettings):
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
+    # Where a run's recordings go (``<dir>/<run-id>/...``); empty is the checkout's
+    # ``recordings/`` or the installed package's state directory. DimOS Desktop's gateway
+    # passes the directory its own recordings endpoint answers with on every launch.
+    record_dir: str = ""
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
@@ -143,3 +148,11 @@ class GlobalConfig(BaseSettings):
 
 
 global_config = GlobalConfig()
+
+
+def recordings_dir() -> Path:
+    """Where this run's recordings go: ``--record-dir`` when given (DimOS Desktop's gateway
+    passes the directory its recordings endpoint answers with), else :data:`RECORDINGS_DIR`."""
+    if global_config.record_dir:
+        return Path(global_config.record_dir).expanduser()
+    return RECORDINGS_DIR

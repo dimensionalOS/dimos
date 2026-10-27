@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 
@@ -43,14 +44,14 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
-from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.models import Obstacle, PlanningResult
 from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS, prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -132,6 +133,7 @@ class FakeCartesianPathPlanner:
         self.scene = scene
         self.options = options
         self.paths: list[FakeCartesianPath] = []
+        self.starts: list[FakeJointConfiguration] = []
         type(self).instances.append(self)
 
     def plan(
@@ -139,14 +141,18 @@ class FakeCartesianPathPlanner:
         path: FakeCartesianPath,
         q_start: FakeJointConfiguration,
     ) -> FakeJointTrajectory:
+        # Like the real planner: seeded with the full configuration, it moves and returns
+        # its group's joints alone.
         self.paths.append(path)
-        start = np.asarray(q_start.positions, dtype=np.float64)
+        self.starts.append(q_start)
+        group_name = self.options.group_name
+        start = self.scene.group_positions(group_name, q_start.positions)
         midpoint = start + 0.05
         goal = start + 0.1
         positions = [start, midpoint, goal]
         velocities = [np.zeros_like(start), np.ones_like(start) * 0.5, np.zeros_like(start)]
         return FakeJointTrajectory(
-            q_start.joint_names,
+            list(self.scene.groups[group_name]),
             positions,
             velocities,
             [0.0, self.options.dt, 2.0 * self.options.dt],
@@ -204,8 +210,16 @@ class FakeScene:
         self.geometry_shapes: dict[str, object] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
         self.groups: dict[str, list[str]] = {}
-        self.native_joint_names = self._read_joint_names(urdf)
-        self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
+        joints = self._read_joints(urdf)
+        self.native_joint_names = [name for name, _ in joints]
+        # A continuous joint takes two positions, cos and sin, as in Pinocchio.
+        self.position_slices: dict[str, slice] = {}
+        offset = 0
+        for name, joint_type in joints:
+            width = 2 if joint_type == "continuous" else 1
+            self.position_slices[name] = slice(offset, offset + width)
+            offset += width
+        self.current_positions = np.zeros(offset, dtype=np.float64)
 
     def importSrdf(self, srdf: str) -> None:
         self.constructor_kwargs["srdf"] = srdf
@@ -227,13 +241,35 @@ class FakeScene:
         }
 
     @staticmethod
-    def _read_joint_names(urdf: str) -> list[str]:
+    def _read_joints(urdf: str) -> list[tuple[str, str]]:
         root = ET.fromstring(urdf)
         return [
-            joint.get("name", "")
+            (joint.get("name", ""), joint.get("type", ""))
             for joint in root.findall("joint")
             if joint.get("type") != "fixed" and joint.find("mimic") is None
         ]
+
+    def fill_group_positions(
+        self, full: NDArray[np.float64], group_name: str, q: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """Write a group's (expanded) positions into a full configuration, in place."""
+        values = np.asarray(q, dtype=np.float64)
+        offset = 0
+        for name in self.groups[group_name]:
+            positions = self.position_slices[name]
+            width = positions.stop - positions.start
+            full[positions] = values[offset : offset + width]
+            offset += width
+        if offset != len(values):
+            raise ValueError(f"Group '{group_name}' takes {offset} positions, got {len(values)}")
+        return full
+
+    def group_positions(self, group_name: str, full: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Read a group's (expanded) positions out of a full configuration."""
+        values = np.asarray(full, dtype=np.float64)
+        return np.concatenate(
+            [values[self.position_slices[name]] for name in self.groups[group_name]]
+        )
 
     def addRobotModel(self, path: str, name: str, package_paths: dict[str, str]) -> str:
         self.models.append((path, name, package_paths))
@@ -256,10 +292,7 @@ class FakeScene:
         return FakeJointGroupInfo(list(names))
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
-        full = self.current_positions.copy()
-        for name, value in zip(self.groups[group_name], q, strict=True):
-            full[self.native_joint_names.index(name)] = value
-        return full
+        return self.fill_group_positions(self.current_positions.copy(), group_name, q)
 
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
@@ -410,10 +443,7 @@ class FakeSceneContext:
         return True
 
     def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
-        full = self.current_positions.copy()
-        for name, value in zip(self.scene.groups[group_name], q, strict=True):
-            full[self.scene.native_joint_names.index(name)] = value
-        return full
+        return self.scene.fill_group_positions(self.current_positions.copy(), group_name, q)
 
     def forwardKinematics(self, q: np.ndarray, frame_name: str, base_frame: str = "") -> np.ndarray:
         return self.scene.forwardKinematics(q, frame_name, base_frame)
@@ -525,6 +555,31 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
                 tip_link="tcp",
             )
         ],
+    )
+
+
+@pytest.fixture
+def planar_robot_config(robot_config: RobotModelConfig) -> RobotModelConfig:
+    """The two-joint arm riding on a synthetic planar base: two lines and a circle ahead
+    of the arm's two intervals, so the model as a whole is not interval-only."""
+    planar = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 1.0),
+        acceleration_limits=(2.0, 2.0, 2.0),
+    )
+    return robot_config.model_copy(
+        update={
+            "model": robot_config.model.with_planar_base(planar),
+            "joint_names": [*planar.joint_names, *robot_config.joint_names],
+            "base_link": planar.root_link,
+            "planning_groups": [
+                *robot_config.planning_groups,
+                PlanningGroupDefinition(
+                    name="moving_base",
+                    joint_names=planar.joint_names,
+                    base_link=planar.root_link,
+                ),
+            ],
+        }
     )
 
 
@@ -1750,6 +1805,33 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
     assert result.path[-1].position == pytest.approx([0.1, 0.1])
 
 
+def test_native_selected_planner_routes_a_planar_base_model_to_the_shared_rrt(
+    fake_roboplan: None,
+    planar_robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    """RoboPlan's RRT validates a start against the whole model's limits, and a planar
+    base's lines reach its scene as [0, 0]: even an arm-only selection goes to the shared
+    planner, which bounds the base itself."""
+    world = _make_world(fake_roboplan, planar_robot_config)
+    planner = _planner_for(world)
+    selection = _selection(planar_robot_config, "manipulator")
+    shared = mocker.patch.object(
+        planner._shared_rrt,
+        "plan_selected_joint_path",
+        return_value=PlanningResult(status=PlanningStatus.SUCCESS, message="shared"),
+    )
+    native = mocker.spy(FakeRRT, "plan")
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+    goal = JointState(name=list(selection.joint_names), position=[0.4, 0.2])
+
+    result = planner.plan_selected_joint_path(world, selection, start, goal, timeout=1.0)
+
+    assert result.message == "shared"
+    shared.assert_called_once_with(world, selection, start, goal, 1.0, 5000)
+    native.assert_not_called()
+
+
 def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -1866,6 +1948,104 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
     assert result.path[0].position == pytest.approx(start.position)
     start_pose = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0][0]
     assert start_pose[0, 3] == pytest.approx(sum(start.position))
+
+
+def test_cartesian_path_leaves_from_the_tcp_whatever_the_first_waypoint_says(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    """A target that starts a hair off the TCP (a UI's copy of a live, jittering pose) is
+    snapped onto it; one that starts elsewhere gets the TCP put in front of it."""
+    world = _make_world(fake_roboplan, robot_config)
+    selection = _selection(robot_config, "manipulator")
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+
+    def pose(x: float) -> PoseStamped:
+        return PoseStamped(
+            frame_id="world", position=Vector3(x, 0.0, 0.0), orientation=Quaternion()
+        )
+
+    for target in ((pose(0.1004), pose(0.3)), (pose(0.3),)):
+        result = _planner_for(world).plan_cartesian_path(
+            world, selection, start, {"manipulator": target}, RoboPlanCartesianPathConfig()
+        )
+        assert result.status == PlanningStatus.SUCCESS, result.message
+        waypoints = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0]
+        assert [tform[0, 3] for tform in waypoints] == pytest.approx([0.1, 0.3])
+
+
+def test_cartesian_plans_an_interval_only_selection_on_a_planar_base_model(
+    fake_roboplan: None,
+    planar_robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    """Alfred's model is whole-body, a planar base ahead of the arms, but a pick's descent
+    is a Cartesian plan for one arm. Its joints are interval-only, so it plans, with the
+    base held where the live state reads it: in the planner's seed and in every collision
+    post-validation sample."""
+    world = _make_world(fake_roboplan, planar_robot_config)
+    selection = _selection(planar_robot_config, "manipulator")
+    world.sync_from_joint_state(
+        JointState(
+            name=list(planar_robot_config.joint_names),
+            position=[0.25, -0.1, 0.4, 0.3, 0.2],
+        )
+    )
+    checked: list[NDArray[np.float64]] = []
+
+    def record_collision_query(scene: FakeScene, q: NDArray[np.float64]) -> bool:
+        checked.append(np.asarray(q, dtype=np.float64))
+        return False
+
+    mocker.patch.object(
+        FakeScene, "hasCollisions", autospec=True, side_effect=record_collision_query
+    )
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        start,
+        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS, result.message
+    assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
+    assert result.path[0].position == pytest.approx(start.position)
+    assert result.path[-1].position == pytest.approx([0.2, 0.1])
+    # The fake scene orders joints as the URDF lists them (the synthetic base after the
+    # arm), and the seed comes in that order, so read both back through the groups.
+    scene = world._scene
+    expanded_base = [0.25, -0.1, np.cos(0.4), np.sin(0.4)]
+    seed = FakeCartesianPathPlanner.instances[-1].starts[0]
+    assert seed.joint_names == list(scene.getJointNames())
+    seed_positions = scene.group_positions(world.all_planning_group().name, seed.positions)
+    assert seed_positions.tolist() == pytest.approx([*expanded_base, 0.1, 0.0])
+    assert checked
+    for q in checked:
+        assert scene.group_positions("moving_base", q).tolist() == pytest.approx(expanded_base)
+
+
+def test_cartesian_is_unsupported_for_a_selection_with_a_base_coordinate(
+    fake_roboplan: None, planar_robot_config: RobotModelConfig
+) -> None:
+    """A planar base's lines and circle have no interval for the Cartesian planner to work
+    in, so a selection that includes the base stays unsupported."""
+    world = _make_world(fake_roboplan, planar_robot_config)
+    selection = _selection(planar_robot_config, "manipulator", "moving_base")
+
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        JointState(name=list(selection.joint_names), position=[0.0] * 5),
+        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(),
+        auxiliary_groups=("moving_base",),
+    )
+
+    assert result.status == PlanningStatus.UNSUPPORTED
+    assert "interval-only" in result.message
+    assert not FakeCartesianPathPlanner.instances
 
 
 def test_cartesian_rejects_official_planner_failure(

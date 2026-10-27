@@ -909,7 +909,11 @@ class TestPlanningGroupApis:
             "joint3",
         ]
         _, planner_kwargs = module._planner.plan_selected_joint_path.call_args
-        assert planner_kwargs["goal"] is ik_goal
+        # The IK solution reaches the planner as a copy snapped inside the joint limits;
+        # well inside them, as here, its values are the solution's own.
+        goal = planner_kwargs["goal"]
+        assert list(goal.name) == list(ik_goal.name)
+        assert list(goal.position) == list(ik_goal.position)
 
     def test_failed_plan_materialization_clears_generated_plan(self, robot_config, module_factory):
         module = module_factory()

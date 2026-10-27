@@ -20,6 +20,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
+import hashlib
 import math
 import threading
 import time
@@ -27,6 +28,7 @@ import traceback
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -59,6 +61,7 @@ from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
 )
+from dimos.manipulation.planning.limits import snap_to_limits
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
@@ -114,6 +117,27 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 # One stable id for the mapped workspace: every map message is complete, so it
 # replaces this obstacle rather than adding another.
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
+
+
+def _scaled_cartesian_config(
+    config: CartesianPathConfig, speed_scale: float
+) -> CartesianPathConfig:
+    """``config`` with its velocity and acceleration scales multiplied by ``speed_scale``."""
+    return config.model_copy(
+        update={
+            "velocity_scale": config.velocity_scale * speed_scale,
+            "acceleration_scale": config.acceleration_scale * speed_scale,
+        }
+    )
+
+
+def _voxel_map_digest(points: NDArray[np.float32]) -> bytes:
+    """A digest of a map's point buffer: cheap next to building its octree."""
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(np.asarray(points.shape, dtype=np.int64).tobytes())
+    digest.update(np.ascontiguousarray(points, dtype=np.float32).tobytes())
+    return digest.digest()
+
 
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
@@ -171,9 +195,18 @@ class ManipulationModuleConfig(ModuleConfig):
     # Coordinator joint name -> model joint name, so a twist base's odometry
     # joints (chassis/vx, ...) can feed the model's planar base joints.
     joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+    # Model joints the driver never reports, held at these positions: a planar
+    # base planned relative to where the robot stands (always zero at plan time,
+    # the base task executes the motion from wherever it is) rather than fed
+    # from odometry.
+    joint_state_defaults: dict[str, float] = Field(default_factory=dict)
     # Trajectory task -> the joints it drives. Empty means the joint trajectory
     # task drives every model joint; joints no task is bound to are preview-only.
     trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
+    # Planning group -> the coordinator gripper task that opens and closes its hand,
+    # for a robot with a hand per arm. A group left out falls back to the model's one
+    # "<gripper_hardware_id>_gripper" task, or has no gripper.
+    gripper_tasks: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_trajectory_tasks(self) -> ManipulationModuleConfig:
@@ -193,6 +226,13 @@ class ManipulationModuleConfig(ModuleConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_gripper_tasks(self) -> ManipulationModuleConfig:
+        groups = {group.name for group in self.model.planning_groups}
+        if unknown := sorted(set(self.gripper_tasks) - groups):
+            raise ValueError(f"gripper_tasks groups are not planning groups: {unknown}")
+        return self
+
+    @model_validator(mode="after")
     def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
         model_joints = set(self.model.joint_names)
         if unknown := sorted(set(self.joint_state_aliases.values()) - model_joints):
@@ -204,6 +244,19 @@ class ManipulationModuleConfig(ModuleConfig):
         targets = Counter(self.joint_state_aliases.values())
         if collided := sorted(name for name, count in targets.items() if count > 1):
             raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_joint_state_defaults(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        if unknown := sorted(set(self.joint_state_defaults) - model_joints):
+            raise ValueError(f"joint_state_defaults are not model joints: {unknown}")
+        if aliased := sorted(
+            set(self.joint_state_defaults) & set(self.joint_state_aliases.values())
+        ):
+            raise ValueError(f"joint_state_defaults are also alias targets: {aliased}")
+        if bad := sorted(k for k, v in self.joint_state_defaults.items() if not math.isfinite(v)):
+            raise ValueError(f"joint_state_defaults are not finite: {bad}")
         return self
 
 
@@ -236,6 +289,9 @@ class ManipulationModule(Module):
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
         self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
+        # The point buffer of the voxel map the world holds, so a republished copy
+        # of it is not rebuilt.
+        self._voxel_map_digest: bytes | None = None
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._last_plan: GeneratedPlan | None = None
@@ -288,6 +344,7 @@ class ManipulationModule(Module):
             trajectory_parametrization=self.config.trajectory_parametrization,
         )
         self._world_monitor = planning_specs.world_monitor
+        self._voxel_map_digest = None
         self._planner = planning_specs.planner
         self._kinematics = planning_specs.kinematics
         self._trajectory_parametrizer = planning_specs.trajectory_parametrizer
@@ -359,17 +416,24 @@ class ManipulationModule(Module):
             ):
                 logger.warning("Skipping malformed model state")
                 return
-            missing = [name for name in names if name not in name_to_idx]
+            defaults = self.config.joint_state_defaults
+            missing = [name for name in names if name not in name_to_idx and name not in defaults]
             if missing:
                 logger.warning("Skipping incomplete model state", missing_joints=missing)
                 return
-            indices = [name_to_idx[name] for name in names]
+            has_velocity = len(msg.velocity) == len(msg.name)
             state = JointState(
                 ts=msg.ts,
                 name=list(names),
-                position=[msg.position[index] for index in indices],
-                velocity=[msg.velocity[index] for index in indices]
-                if len(msg.velocity) == len(msg.name)
+                position=[
+                    msg.position[name_to_idx[name]] if name in name_to_idx else defaults[name]
+                    for name in names
+                ],
+                velocity=[
+                    msg.velocity[name_to_idx[name]] if name in name_to_idx else 0.0
+                    for name in names
+                ]
+                if has_velocity
                 else [],
             )
             self._world_monitor.on_joint_state(state)
@@ -397,7 +461,7 @@ class ManipulationModule(Module):
                     ee_pose = self._world_monitor.get_group_ee_pose(group.id, state)
                     if ee_pose is not None and group.tip_link is not None:
                         ee_tf = Transform.from_pose(group.tip_link, ee_pose)
-                        ee_tf.frame_id = "world"
+                        ee_tf.frame_id = self.config.world_frame
                         transforms.append(ee_tf)
                 for link_name in config.tf_extra_links:
                     if not state.name:
@@ -405,7 +469,7 @@ class ManipulationModule(Module):
                     link_pose = self._world_monitor.get_link_pose(link_name, state)
                     if link_pose is not None:
                         link_tf = Transform.from_pose(link_name, link_pose)
-                        link_tf.frame_id = "world"
+                        link_tf.frame_id = self.config.world_frame
                         transforms.append(link_tf)
 
                 # Fixed mounts are valid at the same measurement time as their parent.
@@ -442,7 +506,7 @@ class ManipulationModule(Module):
                 groups[group.id] = PlanningGroupState(
                     joints=joints,
                     end_effector_pose=pose,
-                    gripper_position=self._get_group_gripper_position(),
+                    gripper_position=self._get_group_gripper_position(group.id),
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
@@ -471,6 +535,9 @@ class ManipulationModule(Module):
 
     def _refresh_execution_status(self) -> None:
         """Poll active nonblocking execution once, without waiting for motion."""
+        if getattr(self, "_execution_manager", None) is None:
+            # An RPC can land before start() has built the executor.
+            return
         if self._execution_manager.status in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.EXECUTING,
@@ -669,6 +736,23 @@ class ManipulationModule(Module):
         logger.info("Path generated", waypoint_count=len(result.path), group_ids=group_ids)
         return self._store_generated_plan(group_ids, result, planning_epoch, speed_scale)
 
+    def _snapped_to_limits(self, state: JointState) -> JointState:
+        """``state`` with a position on or a rounding error past a joint limit a hair inside.
+
+        Pink IK accepts a solution within 1e-8 of a limit, and the planner's joint space
+        refuses a goal any distance past one: joint1 = 3.490700004829506 against a limit
+        of 3.4907 was "IK solved" and then INVALID_GOAL. A real violation is left for the
+        planner to refuse as before.
+        """
+        assert self._world_monitor is not None
+        if not state.name:
+            return state
+        joint_space = self._world_monitor.world.get_prepared_model().joint_space
+        lower, upper = joint_space.select(state.name).position_limits()
+        return JointState(
+            name=list(state.name), position=snap_to_limits(state.position, lower, upper)
+        )
+
     def _record_error(self, message: str) -> bool:
         """Record an error without changing the manipulation state."""
         logger.warning(message)
@@ -774,12 +858,19 @@ class ManipulationModule(Module):
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanResult:
-        """Plan one synchronized pose target set without moving hardware."""
+        """Plan one synchronized pose target set without moving hardware.
+
+        ``auxiliary_groups`` have no pose target of their own but may move so the
+        targets are reached, e.g. a mobile base alongside an arm.
+        """
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_pose_targets(
+            targets, auxiliary_groups, speed_scale=speed_scale
+        )
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -839,7 +930,7 @@ class ManipulationModule(Module):
             return None
         stamped_targets = {
             group_id: PoseStamped(
-                frame_id="world",
+                frame_id=self.config.world_frame,
                 position=pose.position,
                 orientation=pose.orientation,
             )
@@ -865,8 +956,9 @@ class ManipulationModule(Module):
             self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
             return None
         logger.info("IK solved", position_error=ik.position_error)
+        goal = self._snapped_to_limits(ik.joint_state)
         return self._plan_selected_path(
-            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+            group_ids, start, goal, planning_epoch, resolved_speed_scale
         )
 
     def generate_cartesian_plan(
@@ -893,18 +985,12 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         selection, start = resolved
-        scaled_config = config.model_copy(
-            update={
-                "velocity_scale": config.velocity_scale * resolved_speed_scale,
-                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
-            }
-        )
         result = self._planner.plan_cartesian_path(
             world=self._world_monitor.world,
             selection=selection,
             start=start,
             targets=targets,
-            config=scaled_config,
+            config=_scaled_cartesian_config(config, resolved_speed_scale),
             auxiliary_groups=auxiliary_ids,
             check_collision=check_collision,
         )
@@ -915,6 +1001,113 @@ class ManipulationModule(Module):
             )
             return None
         return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+
+    def _plan_cartesian_from(
+        self,
+        start_joints: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
+        speed_scale: float,
+        check_collision: bool,
+    ) -> PlanResult:
+        """Plan a Cartesian path from ``start_joints`` as a check: nothing is stored.
+
+        The path leaves from the FK of ``start_joints`` (joints outside the targets'
+        groups hold where the live state has them), so the result says whether it is
+        plannable from there, not from where the arm is. The pending plan and the
+        module's state are left alone: a plan from somewhere the arm is not must never
+        be the one ``execute`` runs.
+        """
+        if (
+            self._world_monitor is None
+            or self._planner is None
+            or self._trajectory_parametrizer is None
+        ):
+            return PlanResult(PlanStatus.FAILED, "Planning not initialized")
+        if not math.isfinite(speed_scale) or not 0.0 < speed_scale <= 1.0:
+            return PlanResult(
+                PlanStatus.INVALID_TARGET, "speed_scale must be finite, > 0, and <= 1"
+            )
+        group_ids = tuple(targets)
+        try:
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            start = filter_joint_state_to_selected_joints(start_joints, selection.joint_names)
+        except Exception as exc:
+            return PlanResult(
+                PlanStatus.INVALID_TARGET, f"Invalid start for groups {list(group_ids)}: {exc}"
+            )
+        result = self._planner.plan_cartesian_path(
+            world=self._world_monitor.world,
+            selection=selection,
+            start=start,
+            targets=targets,
+            config=_scaled_cartesian_config(config, speed_scale),
+            check_collision=check_collision,
+        )
+        if not result.is_success():
+            detail = f": {result.message}" if result.message else ""
+            return PlanResult(
+                PlanStatus.FAILED, f"Cartesian planning failed: {result.status.name}{detail}"
+            )
+        try:
+            plan = self._trajectory_parametrizer.materialize_plan(
+                world=self._world_monitor.world,
+                selection=selection,
+                result=result,
+                speed_scale=speed_scale,
+            )
+        except Exception as exc:
+            return PlanResult(PlanStatus.FAILED, f"Failed to materialize plan: {exc}")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    @rpc
+    def plan_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        start_joints: JointState | None = None,
+    ) -> PlanResult:
+        """Plan a world-frame translation of one end effector without moving hardware.
+
+        From the current state, the plan becomes the pending one for ``execute``. With
+        ``start_joints`` it is a check: the path leaves from that joint state (a plan's
+        goal, say, so a caller knows before executing the plan whether the leg after it
+        is plannable), it is returned and not kept, and the pending plan stays as it was.
+        Joints the state does not name hold where the live state has them.
+        """
+        if start_joints is None:
+            self._clear_pending_plan()
+        delta = (float(dx), float(dy), float(dz))
+        if not all(math.isfinite(value) for value in delta):
+            return PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+        if delta == (0.0, 0.0, 0.0):
+            return PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            return PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        relative = Transform(
+            translation=Vector3(*delta),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+        targets = {group.id: (Transform.identity(), relative)}
+        if start_joints is not None:
+            return self._plan_cartesian_from(
+                start_joints, targets, CartesianPathConfig(), resolved_speed, check_collision
+            )
+        plan = self.generate_cartesian_plan(
+            targets,
+            CartesianPathConfig(),
+            speed_scale=resolved_speed,
+            check_collision=check_collision,
+        )
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
     @rpc
     def move_linear(
@@ -930,33 +1123,12 @@ class ManipulationModule(Module):
     ) -> MoveResult:
         """Move one end effector by a world-frame translation."""
         delta = (float(dx), float(dy), float(dz))
-        self._clear_pending_plan()
-        if not all(math.isfinite(value) for value in delta):
-            plan_result = PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+        plan_result = self.plan_linear(dx, dy, dz, planning_group, check_collision, speed_scale)
+        if not plan_result.succeeded or plan_result.plan is None:
             return MoveResult(plan_result, None, delta, check_collision)
-        if delta == (0.0, 0.0, 0.0):
-            plan_result = PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
-            return MoveResult(plan_result, None, delta, check_collision)
-        group = self._resolve_pose_group(planning_group)
-        if isinstance(group, CommandResult):
-            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
-            return MoveResult(plan_result, None, delta, check_collision)
-        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
-        relative = Transform(
-            translation=Vector3(*delta),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        execution = self.execute(
+            blocking=blocking, timeout=timeout, plan_id=plan_result.plan.plan_id
         )
-        plan = self.generate_cartesian_plan(
-            {group.id: (Transform.identity(), relative)},
-            CartesianPathConfig(),
-            speed_scale=resolved_speed,
-            check_collision=check_collision,
-        )
-        if plan is None:
-            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
-            return MoveResult(plan_result, None, delta, check_collision)
-        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
-        execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
         return MoveResult(plan_result, execution, delta, check_collision)
 
     @rpc
@@ -1011,14 +1183,13 @@ class ManipulationModule(Module):
         """Return public planning-group capabilities."""
         if self._world_monitor is None:
             return ()
-        has_gripper = self.config.model.gripper_hardware_id is not None
         return tuple(
             PlanningGroupInfo(
                 id=group.id,
                 joint_names=group.joint_names,
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
-                has_gripper=has_gripper,
+                has_gripper=self._gripper_task(group.id) is not None,
             )
             for group in self._world_monitor.planning_groups.list()
         )
@@ -1042,13 +1213,19 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _get_group_gripper_position(self) -> float | None:
+    def _gripper_task(self, group_id: PlanningGroupID) -> str | None:
+        """The coordinator gripper task of a planning group: its own, else the model's one."""
+        task = self.config.gripper_tasks.get(group_id)
+        if task is not None:
+            return task
         hardware_id = self.config.model.gripper_hardware_id
-        if hardware_id is None:
+        return None if hardware_id is None else f"{hardware_id}_gripper"
+
+    def _get_group_gripper_position(self, group_id: PlanningGroupID) -> float | None:
+        task = self._gripper_task(group_id)
+        if task is None:
             return None
-        values = self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper", "get_normalized", {}
-        )
+        values = self._control_coordinator.task_invoke(task, "get_normalized", {})
         return float(values[0]) if values else None
 
     def get_current_joint_state(self) -> JointState | None:
@@ -1210,7 +1387,8 @@ class ManipulationModule(Module):
     @rpc
     def get_obstacles(self) -> dict[str, PoseStamped]:
         """Return planning-world obstacle poses keyed by obstacle name."""
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
+            # Asked before start() finished building the world: nothing is in it yet.
             return {}
         return {
             obstacle.name: obstacle.pose for obstacle in self._world_monitor.world.get_obstacles()
@@ -1295,7 +1473,9 @@ class ManipulationModule(Module):
         await asyncio.to_thread(self._apply_voxel_map, cloud)
 
     def _apply_voxel_map(self, cloud: PointCloud2) -> None:
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
+            # A mapper publishes continuously, so a map that lands while the world is
+            # still being built is not lost: the next one arrives after finalize.
             return
         frame = self.config.world_frame
         if cloud.frame_id != frame:
@@ -1312,6 +1492,14 @@ class ManipulationModule(Module):
         if not len(points):
             # An empty map is how a mapper says the space it owns is now clear.
             self._world_monitor.remove_obstacle(VOXEL_MAP_OBSTACLE_ID)
+            self._voxel_map_digest = None
+            return
+        digest = _voxel_map_digest(points)
+        if digest == self._voxel_map_digest:
+            # A mapper republishes an unchanged map at its own rate. Rebuilding the
+            # octree for each copy (deepcopy, validate, remove, add: 62-70 ms for 7k
+            # voxels on an Orin, at 5 Hz) held the world lock a third of the time,
+            # against the planner's collision checks.
             return
         if not np.isfinite(points).all():
             logger.warning("Voxel map contains non-finite points; dropped a map.")
@@ -1337,6 +1525,8 @@ class ManipulationModule(Module):
             logger.warning(
                 "Planning world refused the voxel map; planning continues on the previous one"
             )
+            return
+        self._voxel_map_digest = digest
 
     @rpc
     def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
@@ -1353,6 +1543,9 @@ class ManipulationModule(Module):
         """Remove an obstacle from the planning world."""
         if self._world_monitor is None:
             return False
+        if obstacle_id == VOXEL_MAP_OBSTACLE_ID:
+            # The next map must land, even one identical to the map removed here.
+            self._voxel_map_digest = None
         return self._world_monitor.remove_obstacle(obstacle_id)
 
     @rpc
@@ -1370,10 +1563,10 @@ class ManipulationModule(Module):
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
-        hardware_id = self.config.model.gripper_hardware_id
-        assert hardware_id is not None
+        task = self._gripper_task(group.id)
+        assert task is not None
         if self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper",
+            task,
             "set_normalized",
             {"values": [float(position)]},
         ):
@@ -1402,7 +1595,7 @@ class ManipulationModule(Module):
         def is_capable(group: PlanningGroup) -> bool:
             if capability == "pose":
                 return group.has_pose_target
-            return self.config.model.gripper_hardware_id is not None
+            return self._gripper_task(group.id) is not None
 
         if planning_group is not None:
             try:

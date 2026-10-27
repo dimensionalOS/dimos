@@ -240,6 +240,31 @@ class PerceptionLocalize(Module):
             return f"ready: {self.index.count()} frames embedded, localize will answer"
         return f"not ready: {self._stage}"
 
+    def _localize_window(
+        self, objects: str, start: float, duration: float, params: str
+    ) -> tuple[list[str], list[list[Localization]], Any, Rig, tuple[float, float, float]]:
+        """The call behind ``localize`` and ``localize_boxes``: the window resolved, the
+        detector run, the result published; returns the queries, their hits, the index
+        window, the rig, and (first, head, lo) of the feed."""
+        queries = [q.strip() for q in objects.split(",") if q.strip()]
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        index = self.index.time_range(lo, lo + duration)
+        rig = self.rig
+        if rig.lidar is not None:
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
+        overrides = json.loads(params) if params.strip() else None
+        results = self.detector.localize(
+            queries,
+            index=index,
+            rig=rig,
+            params=self.config.params,
+            fields=overrides,
+            groups=self._groups,
+        )
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        return queries, results, index, rig, (first, head, lo)
+
     @skill
     def localize(
         self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
@@ -262,24 +287,9 @@ class PerceptionLocalize(Module):
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
-        queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        index = self.index.time_range(lo, lo + duration)
-        rig = self.rig
-        if rig.lidar is not None:
-            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        overrides = json.loads(params) if params.strip() else None
-        results = self.detector.localize(
-            queries,
-            index=index,
-            rig=rig,
-            params=self.config.params,
-            fields=overrides,
-            groups=self._groups,
+        queries, results, index, _rig, (first, head, lo) = self._localize_window(
+            objects, start, duration, params
         )
-        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
-
         lines: list[str] = [
             f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
             f"{head - first:.1f}s of feed, {index.count()} frames"
@@ -295,6 +305,42 @@ class PerceptionLocalize(Module):
                     f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def localize_boxes(
+        self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
+    ) -> list[dict[str, Any]]:
+        """``localize`` for a UI: one JSON box per verified instance instead of prose.
+
+        Same arguments. Each box: ``id``, ``label`` (the query it answered), ``score``,
+        ``views``, ``center`` and ``size`` (the instance's cloud extents, metres in
+        ``frame``), ``position`` (the latest sighting), ``seen_s_ago``. Raises while the
+        module is not ready, with its stage.
+        """
+        if not self._ready.is_set():
+            raise RuntimeError(f"localize cannot answer yet: {self._stage}")
+        queries, results, _index, _rig, (_first, head, _lo) = self._localize_window(
+            objects, start, duration, params
+        )
+        boxes: list[dict[str, Any]] = []
+        for query, hits in zip(queries, results, strict=True):
+            for hit in hits:
+                points = hit.point_cloud.as_numpy()[0]
+                low, high = points.min(axis=0), points.max(axis=0)
+                boxes.append(
+                    {
+                        "id": hit.instance_id,
+                        "label": query,
+                        "score": float(hit.semantic_score),
+                        "views": int(hit.n_views),
+                        "center": [float(v) for v in (low + high) / 2],
+                        "size": [max(float(v), 1e-3) for v in high - low],
+                        "position": [float(v) for v in hit.position_world_xyz],
+                        "frame": hit.frame_id,
+                        "seen_s_ago": float(max(0.0, head - hit.last_seen_timestamp)),
+                    }
+                )
+        return boxes
 
 
 def as_detection_array(

@@ -37,11 +37,12 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
 import reactivex as rx
+from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -267,7 +268,15 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
+    # Every n-th pixel (each way) goes into the camera's cloud, and points further than
+    # depth_trunc_m are dropped: RealSenseCamera's pointcloud_decimation and depth_trunc_m.
+    pointcloud_decimation: int = Field(default=1, ge=1)
+    depth_trunc_m: float = Field(default=5.0, gt=0.0)
     camera_info_fps: float = 1.0
+    # A mocap body (mocap="true") that the ``mocap_pose`` input places in the world: a
+    # robot's base fed its odometry, with the world as the odometry frame, carries a camera
+    # mounted under it along. None: the input is not read.
+    mocap_body: str | None = None
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -323,6 +332,8 @@ class MujocoSimModule(
     """
 
     config: MujocoSimModuleConfig
+    # Where ``mocap_body`` is, in the world frame (see the config).
+    mocap_pose: In[PoseStamped]
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
@@ -361,6 +372,11 @@ class MujocoSimModule(
         self._imu_base_qpos_slice: slice | None = None
         self._root_base_qpos_adr: int | None = None
         self._root_spawn_clearance_z: float | None = None
+        # The mocap body's index and its latest pose, (xyz, wxyz), set from mocap_pose.
+        self._mocap_id: int | None = None
+        self._mocap_target: (
+            tuple[tuple[float, float, float], tuple[float, float, float, float]] | None
+        ) = None
 
     @property
     def _camera_link(self) -> str:
@@ -566,8 +582,11 @@ class MujocoSimModule(
             gripper_ctrl_range=self._gripper_ctrl_range,
             gripper_joint_range=self._gripper_joint_range,
         )
+        self._mocap_id = self._resolve_mocap_id(self._engine.model)
+        if self._mocap_id is not None:
+            self.register_disposable(Disposable(self.mocap_pose.subscribe(self._on_mocap_pose)))
         self._engine.set_step_hooks(
-            before=self._sim_hooks.pre_step,
+            before=self._pre_step,
             after=self._publish_shm_and_lcm,
         )
 
@@ -616,6 +635,35 @@ class MujocoSimModule(
             camera=self.config.camera_name,
             shm_key=shm_key,
         )
+
+    def _resolve_mocap_id(self, model: mujoco.MjModel) -> int | None:
+        name = self.config.mocap_body
+        if name is None:
+            return None
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)  # type: ignore[attr-defined]
+        if body_id < 0:
+            raise ValueError(f"MujocoSimModule: mocap_body {name!r} is not a body of the scene")
+        mocap_id = int(model.body_mocapid[body_id])
+        if mocap_id < 0:
+            raise ValueError(f'MujocoSimModule: body {name!r} is not a mocap body (mocap="true")')
+        return mocap_id
+
+    def _on_mocap_pose(self, pose: PoseStamped) -> None:
+        # One tuple, assigned whole: the sim thread reads it without a lock.
+        self._mocap_target = (
+            (pose.position.x, pose.position.y, pose.position.z),
+            (pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z),
+        )
+
+    def _pre_step(self, engine: MujocoEngine) -> None:
+        """Pre-step hook: SHM commands in, and the mocap body to its latest pose."""
+        if self._sim_hooks is not None:
+            self._sim_hooks.pre_step(engine)
+        target = self._mocap_target
+        if target is not None and self._mocap_id is not None:
+            position, quaternion = target
+            engine.data.mocap_pos[self._mocap_id] = position
+            engine.data.mocap_quat[self._mocap_id] = quaternion
 
     def _compose_model(self) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + scene-package entities."""
@@ -987,29 +1035,32 @@ class MujocoSimModule(
             camera_transform = inv_base_transform @ camera_transform
             optical_transform = inv_base_transform @ optical_transform
 
-        self.tf.publish(
-            TFMessage(
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._color_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._depth_optical_frame,
-                    ts=ts,
-                ),
+        transforms = [
+            _transform_from_matrix(
+                optical_transform,
+                frame_id=parent_frame,
+                child_frame_id=self._color_optical_frame,
+                ts=ts,
+            ),
+            _transform_from_matrix(
+                optical_transform,
+                frame_id=parent_frame,
+                child_frame_id=self._depth_optical_frame,
+                ts=ts,
+            ),
+        ]
+        # A camera mounted on a body named for its own link (a robot's mount tree owns that
+        # link's parent edge) has no edge to publish to itself.
+        if parent_frame != self._camera_link:
+            transforms.append(
                 _transform_from_matrix(
                     camera_transform,
                     frame_id=parent_frame,
                     child_frame_id=self._camera_link,
                     ts=ts,
-                ),
-                *self._body_transforms(),
+                )
             )
-        )
+        self.tf.publish(TFMessage(*transforms, *self._body_transforms()))
 
     def _body_transforms(self) -> list[Transform]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
@@ -1052,14 +1103,28 @@ class MujocoSimModule(
         if frame is None:
             return
         try:
+            rgb, depth = frame.rgb, frame.depth
+            step = self.config.pointcloud_decimation
+            if step > 1:
+                # Pixel (u, v) here is (step*u, step*v) there: the intrinsics scale exactly.
+                rgb, depth = rgb[::step, ::step], depth[::step, ::step]
+                camera_info = CameraInfo.from_intrinsics(
+                    fx=camera_info.K[0] / step,
+                    fy=camera_info.K[4] / step,
+                    cx=camera_info.K[2] / step,
+                    cy=camera_info.K[5] / step,
+                    width=depth.shape[1],
+                    height=depth.shape[0],
+                    frame_id=camera_info.frame_id,
+                )
             color_img = Image(
-                data=frame.rgb,
+                data=rgb,
                 format=ImageFormat.RGB,
                 frame_id=self._color_optical_frame,
                 ts=frame.timestamp,
             )
             depth_img = Image(
-                data=frame.depth,
+                data=depth,
                 format=ImageFormat.DEPTH,
                 frame_id=self._color_optical_frame,
                 ts=frame.timestamp,
@@ -1069,6 +1134,7 @@ class MujocoSimModule(
                 depth_image=depth_img,
                 camera_info=camera_info,
                 depth_scale=1.0,
+                depth_trunc=self.config.depth_trunc_m,
             )
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)

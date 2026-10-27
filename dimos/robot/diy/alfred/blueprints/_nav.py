@@ -86,6 +86,12 @@ def _alfred_rerun_config() -> dict[str, Any]:
     return {
         "blueprint": _rerun_blueprint,
         "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
+        # The bridge's server keeps what it logged for a viewer that connects late, up to this
+        # much; its default is a quarter of RAM, which on the Orin NX is 4 GB the perception
+        # models and the planner also want. That worker grew to 6.4 GB and the kernel killed
+        # it, with the box thrashing on swap first (2026-10-25). A late viewer gets the last
+        # few minutes; the live view loses nothing.
+        "memory_limit": "256MB",
         # Keyed by topic entity path, before visual_override renames it. Capped at 1 Hz
         # so the viewer keeps up over wifi.
         "max_hz": {

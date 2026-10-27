@@ -47,10 +47,9 @@ from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
-from dimos.core.global_config import global_config
+from dimos.core.global_config import global_config, recordings_dir
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -804,7 +803,7 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
         logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
         return None
     run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
-    path = RECORDINGS_DIR / run_id / "rerun.rrd"
+    path = recordings_dir() / run_id / "rerun.rrd"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving the Rerun stream", path=str(path))
     # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.

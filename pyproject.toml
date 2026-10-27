@@ -201,6 +201,10 @@ misc = [
     "portal",
 ]
 
+alfred = [
+    "pyserial>=3.5,<4",
+]
+
 spot = [
     "bosdyn-client>=4.0.0",
     "bosdyn-api>=4.0.0",
@@ -344,15 +348,10 @@ mapping = [
     "gtsam-extended>=4.3a1.post1; python_full_version >= '3.11' or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 
-# NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
-# The pypi.jetson-ai-lab.io URLs are currently unavailable. Update with working URLs when available.
-# jetson-jp6-cuda126 = [
-#     # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels (aarch64 Linux only)
-#     "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torch-2.8.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torchvision-0.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-#     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../xformers-0.0.33-cp39-abi3-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
-# ]
+# Jetson (JetPack 6, CUDA 12.6): NVIDIA's torch wheels for the Orin are Python 3.10 only, so on
+# aarch64 Linux a 3.10 interpreter gets them from the jetson-cu126 index (tool.uv.sources and
+# the torch lines of override-dependencies); 3.11+ there stays on the CPU wheel from PyPI.
+# Upstream's aarch64 CUDA wheels are SBSA builds without sm_87 and do not run on a Tegra.
 
 drone = [
     "pymavlink"
@@ -508,6 +507,7 @@ lint = [
 
     "pandas-stubs>=2.3.2.250926,<3",
     "types-pyaudio",
+    "types-pyserial",
     "types-PyYAML>=6.0.12.20250915,<7",
     "types-reportlab>=4.5.0",
     "types-requests>=2.32.4.20260107,<3",
@@ -548,7 +548,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { torch = false, torchvision = false, dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -574,9 +574,17 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
-    # Force the torch 2.7 line even if a transitive dep asks for newer.
-    "torch>=2.1,<2.8",
-    "torchvision>=0.16,<0.23",
+    # Force the torch 2.7 line even if a transitive dep asks for newer; a Jetson on
+    # Python 3.10 takes JetPack's 2.8 / 0.23 instead (see the jetson-cu126 index).
+    "torch>=2.1,<2.8; sys_platform != 'linux' or platform_machine != 'aarch64' or python_full_version >= '3.11'",
+    "torch==2.8.0; sys_platform == 'linux' and platform_machine == 'aarch64' and python_full_version < '3.11'",
+    "torchvision>=0.16,<0.23; sys_platform != 'linux' or platform_machine != 'aarch64' or python_full_version >= '3.11'",
+    "torchvision==0.23.0; sys_platform == 'linux' and platform_machine == 'aarch64' and python_full_version < '3.11'",
+    # JetPack's torch is built against NumPy 1.x: its numpy interop (and so every
+    # transformers image processor) fails on NumPy 2. The complement keeps everyone
+    # else on NumPy 2, so the lock forks instead of collapsing to one version.
+    "numpy<2; sys_platform == 'linux' and platform_machine == 'aarch64' and python_full_version < '3.11'",
+    "numpy>=2; sys_platform != 'linux' or platform_machine != 'aarch64' or python_full_version >= '3.11'",
 ]
 
 [tool.uv.sources]
@@ -584,14 +592,21 @@ override-dependencies = [
 # fall back to PyPI.
 torch = [
     { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+    { index = "jetson-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64' and python_full_version < '3.11'" },
 ]
 torchvision = [
     { index = "pytorch-cu128", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'" },
+    { index = "jetson-cu126", marker = "sys_platform == 'linux' and platform_machine == 'aarch64' and python_full_version < '3.11'" },
 ]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "jetson-cu126"
+url = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple"
 explicit = true
 
 [tool.deptry]
@@ -759,6 +774,8 @@ module = [
     "a750_control.*",
     "bosdyn",
     "bosdyn.*",
+    "serial",
+    "serial.*",
     "builtin_interfaces.*",
     "cyclonedds",
     "cyclonedds.*",

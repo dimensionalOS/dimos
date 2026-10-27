@@ -416,6 +416,27 @@ robots:
         alfred-nav:
           title: Alfred navigation (Mid-360, saved map)
           description: Navigation off the Mid-360 alone, with Point-LIO odometry and relocalization in a saved map.
+        alfred-full:
+          title: Alfred, the whole robot
+          description: Mid-360 navigation on the coordinator's holonomic follower, with the pillar and both OpenArms planned on the same coordinator; drive and plan from the Controller.
+        alfred-full-perception:
+          title: Alfred, the whole robot + D455
+          description: alfred-full plus the mast D455, as an obstacle map for the arm planner and, with a GPU, the perception stack's localize for the Manipulation app's scan.
+        alfred-manipulation:
+          title: Alfred at the bench
+          description: Arms, lift, whole-body planner and the mast D455 (obstacle map, localize); teleop and wheel odometry, no lidar or navigation. One of the Orin's two stacks.
+        alfred-navigation:
+          title: Alfred on the move
+          description: Mid-360 navigation on the coordinator's holonomic follower with Controller teleop and "Go here"; the lift parked, no arms or planner. The other of the Orin's two stacks.
+        alfred-full-agentic:
+          title: Alfred, agentic
+          description: alfred-full-perception plus an LLM agent (needs OPENAI_API_KEY) that drives, navigates, looks and plans the arms and lift from a sentence; MCP server on 9990.
+        alfred-pillar:
+          title: Alfred pillar bring-up
+          description: The lift alone on its serial link, for homing and bench tests.
+        alfred-sim:
+          title: Alfred whole-body sim
+          description: Mock base, lift and arms planned in viser; no robot needed.
     xarm:
       name: UFactory xArm
       description: UFactory xArm6, xArm7 and Lite6 arms.

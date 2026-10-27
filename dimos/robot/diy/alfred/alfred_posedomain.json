@@ -1,0 +1,63 @@
+{
+  "provenance": {
+    "robot_id": "alfred",
+    "surface": "",
+    "mode": "characterization",
+    "date": "",
+    "git_sha": "",
+    "sim_or_hw": "hw",
+    "characterization_session_dir": "",
+    "methodology_version": 2
+  },
+  "plant": {
+    "vx": {
+      "K": 0.7690576775754638,
+      "tau": 0.12499771727457896,
+      "L": 0.11723456162858352
+    },
+    "vy": {
+      "K": 0.7717164505949121,
+      "tau": 0.18063384515194705,
+      "L": 0.05
+    },
+    "wz": {
+      "K": 2.8505710184908484,
+      "tau": 0.18245793782215625,
+      "L": 0.3
+    }
+  },
+  "feedforward": {
+    "K_vx": 1.3002925907359855,
+    "output_min_vx": -0.5,
+    "output_max_vx": 0.5,
+    "K_vy": 1.2958127291819492,
+    "output_min_vy": -0.5,
+    "output_max_vy": 0.5,
+    "K_wz": 0.3508069062350254,
+    "output_min_wz": -1.0,
+    "output_max_wz": 1.0
+  },
+  "velocity_profile": {
+    "max_linear_speed": 0.5,
+    "max_angular_speed": 0.85,
+    "max_centripetal_accel": 1.0,
+    "max_linear_accel": 4.000073048547471,
+    "max_linear_decel": 8.000146097094943,
+    "min_speed": 0.05,
+    "lookahead_pts": 8
+  },
+  "recommended_controller": {
+    "name": "baseline",
+    "params": {
+      "k_angular": 0.5
+    },
+    "evidence": "lambda-tuned PI per axis from FOPDT fit"
+  },
+  "caveats": [],
+  "operating_point_map": null,
+  "velocity_envelope": null,
+  "dynamics_by_amplitude": null,
+  "floor_probe_results": null,
+  "valid_for_tuning": true,
+  "schema_version": 1
+}

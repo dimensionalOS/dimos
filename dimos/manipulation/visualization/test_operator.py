@@ -182,3 +182,14 @@ def test_cartesian_planning_uses_current_group_pose() -> None:
     assert result is module.generate_cartesian_plan.return_value
     targets = module.generate_cartesian_plan.call_args.args[0]
     assert targets["left_arm"] == (monitor.get_group_ee_pose.return_value, target)
+
+
+def test_pose_evaluation_puts_a_reordered_seed_into_canonical_order() -> None:
+    """A UI lists its groups its own way; the solver gets the groups' order."""
+    operator, module, _ = _operator()
+    pose = PoseStamped(frame_id="world")
+    seed = JointState(name=["left/j2", "left/j1"], position=[0.2, 0.1])
+    assert operator.evaluate_pose_target(PoseTargetRequest({"left_arm": pose}, seed=seed)).success
+    passed = module.inverse_kinematics.call_args.kwargs["seed"]
+    assert passed.name == ["left/j1", "left/j2"]
+    assert passed.position == [0.1, 0.2]

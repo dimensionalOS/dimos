@@ -50,6 +50,17 @@ class PinkKinematicsConfig(BaseConfig):
     lm_damping: float = 1e-6
     gain: float = 0.5
     safety_break: bool = True
+    # A solve with auxiliary groups (a base, a torso, the other arm free to help) adds one
+    # posture task pulling every selected coordinate toward the seed with these costs; a
+    # solve without them builds the stack it always did. Costs are per rad, or per m for a
+    # planar base's translation. The pose group's cost is low: it decides how the
+    # redundancy is spent, not where the hand ends up. A planar base's coordinates are its
+    # motion from where it stands, so pulling them to the seed is "drive only as far as
+    # needed", and yaw costs most: a turn swings the arm's whole workspace, and is what
+    # left a reach contorted that a short drive forward would have made easy.
+    whole_body_posture_cost: float = Field(default=5e-3, ge=0.0)
+    whole_body_base_translation_cost: float = Field(default=1e-2, ge=0.0)
+    whole_body_base_yaw_cost: float = Field(default=0.1, ge=0.0)
 
 
 ManipulationKinematicsConfig = Annotated[

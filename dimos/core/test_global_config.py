@@ -72,3 +72,10 @@ def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("ROBOT_IP", raising=False)
 
     assert GlobalConfig().robot_ip is None
+
+
+def test_record_dir_is_a_flag_desktop_passes_on_every_launch() -> None:
+    """DimOS Desktop's gateway starts a run with ``--record-dir=<its recordings dir>``; a
+    GlobalConfig without the field turns every launch into a CLI usage error."""
+    assert GlobalConfig.model_validate({}).record_dir == ""
+    assert GlobalConfig.model_validate({"record_dir": "/data/rec"}).record_dir == "/data/rec"

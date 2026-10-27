@@ -76,6 +76,10 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     depth_trunc_m: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
+    # For a camera mounted upside down: every image is turned by a half turn about its optical
+    # axis, with its intrinsics and its optical frame, so pictures come out upright while the
+    # cloud lands where the URDF's (physical) mount puts it. The IMU is left as it is.
+    rotate_180: bool = False
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()

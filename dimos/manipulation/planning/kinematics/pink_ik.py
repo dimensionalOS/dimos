@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -28,6 +29,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
     _get_frame_id,
+    _JointMapping,
     _PinkRobotContext,
     _PinkSolverCore,
     _seed_positions_for_mapping,
@@ -47,7 +49,61 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.spec.validation import PreparedRobotModel
+
 PinkIKConfig = PinkKinematicsConfig
+
+_WHOLE_BODY_POSTURE_TASK = "posture/whole_body"
+
+
+@dataclass(frozen=True)
+class _WholeBodyPosture:
+    """The pull back toward the seed for a solve that moves auxiliary groups too.
+
+    One Pink posture task with a cost per model tangent coordinate: zero for a joint
+    outside the selection (a hard constraint locks those), the configured costs for the
+    rest. The target is the solve's seed, also on a retry that restarts the arm from
+    somewhere else: the pull is toward where the robot is, not toward the restart.
+    """
+
+    cost: NDArray[np.float64]
+    target_q: NDArray[np.float64]
+
+    def task(self) -> pink.Task:
+        task = pink.tasks.PostureTask(cost=self.cost)
+        task.set_target(self.target_q)
+        return task
+
+
+def _whole_body_posture_costs(
+    config: PinkKinematicsConfig,
+    mapping: _JointMapping,
+    selected_indices: Sequence[int],
+    base_joint_names: Sequence[str],
+    nv: int,
+) -> NDArray[np.float64]:
+    """Per-tangent-coordinate posture costs for the selected joints.
+
+    Args:
+        config: The costs: a planar base's translation and yaw, and everything else.
+        mapping: DimOS joint to model coordinate mapping.
+        selected_indices: Mapping indices of the joints the solve may move.
+        base_joint_names: A planar base's ``x``, ``y``, ``yaw`` joint names, or empty.
+        nv: The model's tangent dimension.
+    """
+    translation_names = set(base_joint_names[:2])
+    yaw_names = set(base_joint_names[2:])
+    cost = np.zeros(nv, dtype=np.float64)
+    for index in selected_indices:
+        name = mapping.dimos_joint_names[index]
+        if name in translation_names:
+            value = config.whole_body_base_translation_cost
+        elif name in yaw_names:
+            value = config.whole_body_base_yaw_cost
+        else:
+            value = config.whole_body_posture_cost
+        cost[mapping.idx_v[index]] = value
+    return cost
 
 
 class PinkIK(_PinkSolverCore):
@@ -200,6 +256,23 @@ class PinkIK(_PinkSolverCore):
         except (FileNotFoundError, ImportError, ValueError) as exc:
             return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
+        # A retry restarts the joints that chase a pose from somewhere else. An auxiliary
+        # group (a torso, a base, the other arm) stays where it was seeded: it is free to
+        # help during the solve, but a restart that flings it to a random posture gives the
+        # caller a solution that moves it for no reason.
+        target_joint_names = {name for group in pose_targets for name in group.joint_names}
+        retry_indices = [
+            index for index in selected_indices if joint_names[index] in target_joint_names
+        ]
+        # Free to help, an auxiliary group also gets used for no reason: a base yaws to
+        # swing the arm at a target a short drive forward would have reached, and the arm
+        # ends up contorted against the yaw. The whole-body stack adds a pull toward the
+        # seed that leaves the base where it stands unless the arm cannot do it alone.
+        whole_body = (
+            self._whole_body_posture(targets[0][0], prepared, selected_indices, seed_positions)
+            if auxiliary_groups
+            else None
+        )
         fallback_result: IKResult | None = None
         for attempt in range(max_attempts):
             current_positions = seed_positions.copy()
@@ -209,11 +282,11 @@ class PinkIK(_PinkSolverCore):
                     seed_positions,
                     lower_limits,
                     upper_limits,
-                    selected_indices,
+                    retry_indices,
                     attempt,
                 )
-                current_positions[selected_indices] = np.random.uniform(
-                    retry_lower[selected_indices], retry_upper[selected_indices]
+                current_positions[retry_indices] = np.random.uniform(
+                    retry_lower[retry_indices], retry_upper[retry_indices]
                 )
             try:
                 q0 = self._q_from_dimos_positions(targets[0][0], current_positions)
@@ -225,6 +298,7 @@ class PinkIK(_PinkSolverCore):
                     position_tolerance=position_tolerance,
                     orientation_tolerance=orientation_tolerance,
                     locked_joint_positions=locked_positions,
+                    whole_body=whole_body,
                 )
             except ValueError as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
@@ -259,9 +333,10 @@ class PinkIK(_PinkSolverCore):
         position_tolerance: float,
         orientation_tolerance: float,
         locked_joint_positions: Mapping[int, float] | None = None,
+        whole_body: _WholeBodyPosture | None = None,
     ) -> IKResult:
         robot_context = targets[0][0]
-        configuration, tasks = self._configuration_and_tasks(targets, seed_q)
+        configuration, tasks = self._configuration_and_tasks(targets, seed_q, whole_body)
         constraints = self._locked_joint_constraints(
             robot_context,
             seed_q,
@@ -316,17 +391,43 @@ class PinkIK(_PinkSolverCore):
         self,
         targets: Sequence[tuple[_PinkRobotContext, NDArray[np.float64]]],
         seed_q: NDArray[np.float64],
+        whole_body: _WholeBodyPosture | None = None,
     ) -> tuple[pink.Configuration, Mapping[str, pink.Task]]:
         robot_context = targets[0][0]
         configuration = pink.Configuration(robot_context.model, robot_context.data, seed_q.copy())
         frame_names = tuple(context.frame_name for context, _target in targets)
         tasks = self._build_task_stack(configuration, frame_names)
+        if whole_body is not None:
+            tasks = MappingProxyType({**tasks, _WHOLE_BODY_POSTURE_TASK: whole_body.task()})
         self._update_frame_task_targets(
             tasks,
             {context.frame_name: target for context, target in targets},
         )
         self._update_current_posture_target(tasks, configuration)
         return configuration, tasks
+
+    def _whole_body_posture(
+        self,
+        context: _PinkRobotContext,
+        prepared: PreparedRobotModel,
+        selected_indices: Sequence[int],
+        seed_positions: NDArray[np.float64],
+    ) -> _WholeBodyPosture | None:
+        """The seed pull for a solve with auxiliary groups, or None when every cost is zero."""
+        planar_base = prepared.config.model.planar_base
+        cost = _whole_body_posture_costs(
+            self.config,
+            context.mapping,
+            selected_indices,
+            planar_base.joint_names if planar_base is not None else (),
+            int(context.model.nv),
+        )
+        if not np.any(cost > 0.0):
+            return None
+        return _WholeBodyPosture(
+            cost=cost,
+            target_q=self._q_from_dimos_positions(context, seed_positions),
+        )
 
     def _get_model_context(self, world: WorldSpec, frame_name: str) -> _PinkRobotContext:
         if self._model_context is None:

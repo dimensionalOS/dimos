@@ -30,6 +30,7 @@ import threading
 
 import numpy as np
 
+from dimos.hardware.drive_trains.flowbase import portal_compat
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -66,6 +67,9 @@ class FlowBaseAdapter:
         try:
             import portal
 
+            # Portal's socket thread otherwise spins a whole core once the odometry
+            # poll races its wake-up (see portal_compat).
+            portal_compat.install()
             self._client = portal.Client(self._address)
             self._connected = True
             logger.info(f"Connected to FlowBase at {self._address}")

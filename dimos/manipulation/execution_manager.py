@@ -41,6 +41,9 @@ logger = setup_logger()
 
 _TERMINAL = frozenset({ExecutionStatus.COMPLETED, ExecutionStatus.ABORTED, ExecutionStatus.FAULT})
 _FINISHED = _TERMINAL | {ExecutionStatus.UNCERTAIN}
+_TERMINAL_STATES = frozenset(
+    {TrajectoryState.COMPLETED, TrajectoryState.ABORTED, TrajectoryState.FAULT}
+)
 
 
 class _PlanRejectedError(Exception):
@@ -78,6 +81,8 @@ class PlanExecutionManager:
         self._latest_result: ExecutionResult | None = None
         self._running_tasks: tuple[str, ...] = tuple(task for task, _ in self._bindings)
         self._cancelled_tasks: set[str] = set()
+        # Parts whose end this run has logged; a status is polled many times after it.
+        self._reported_tasks: set[str] = set()
         self._run_id = 0
         self._run_done = threading.Event()
         self._task_watchdog: threading.Thread | None = None
@@ -108,6 +113,7 @@ class PlanExecutionManager:
                 return ExecutionResult(ExecutionStatus.REJECTED, str(exc))
             with self._state_lock:
                 self._cancelled_tasks = set()
+                self._reported_tasks = set()
 
             try:
                 current_positions = self._coordinator.get_joint_positions()
@@ -233,6 +239,7 @@ class PlanExecutionManager:
         status = self._get_status(task)
         if isinstance(status, ExecutionResult):
             return status
+        self._log_part_end(task, status)
         mapped = self._result_from_status(status)
         if mapped.status in {
             ExecutionStatus.COMPLETED,
@@ -288,6 +295,8 @@ class PlanExecutionManager:
             with self._state_lock:
                 if run_id != self._run_id or not self._active:
                     return self._latest_result or ExecutionResult(ExecutionStatus.IDLE)
+            for task, status in statuses.items():
+                self._log_part_end(task, status)
             result = self._combine(statuses)
             self._store(result, active=result.status not in _FINISHED, run_id=run_id)
             return result
@@ -335,6 +344,10 @@ class PlanExecutionManager:
         self, task: str, trajectory: JointTrajectory, current_positions: Mapping[str, float]
     ) -> TrajectoryExecutionResult | ExecutionResult:
         """Dispatch one part of a plan to the task that owns its joints."""
+        part = (
+            f"{task}: {trajectory.num_joints} joints, {len(trajectory.points)} points over "
+            f"{trajectory.duration:.2f}s"
+        )
         try:
             result = self._coordinator.task_invoke(
                 task, "execute", {"trajectory": trajectory, "current_positions": current_positions}
@@ -344,16 +357,30 @@ class PlanExecutionManager:
             self._cancel_task(task)
             return ExecutionResult(ExecutionStatus.UNCERTAIN, f"{task} execute RPC failed: {exc}")
         if not isinstance(result, TrajectoryExecutionResult):
+            logger.warning(f"Not dispatched, {part}: task '{task}' is not on the coordinator")
             return ExecutionResult(
                 ExecutionStatus.REJECTED, f"Task '{task}' is not on the coordinator"
             )
         if result.status is not TrajectoryExecutionStatus.ACCEPTED:
-            return ExecutionResult(
-                ExecutionStatus.REJECTED,
-                result.message or f"{task} rejected trajectory: {result.status.name}",
-                coordinator_result=result,
-            )
+            message = result.message or f"{task} rejected trajectory: {result.status.name}"
+            logger.warning(f"Rejected, {part}: {message}")
+            return ExecutionResult(ExecutionStatus.REJECTED, message, coordinator_result=result)
+        logger.info(f"Dispatched {part}")
         return result
+
+    def _log_part_end(self, task: str, status: TrajectoryStatus) -> None:
+        """Log a part's terminal state once per run, so a dropped base segment shows."""
+        if status.state not in _TERMINAL_STATES:
+            return
+        with self._state_lock:
+            if task in self._reported_tasks:
+                return
+            self._reported_tasks.add(task)
+        outcome = f"{task} {status.state.name.lower()} after {status.time_elapsed:.2f}s"
+        if status.state is TrajectoryState.COMPLETED:
+            logger.info(outcome)
+        else:
+            logger.warning(f"{outcome}: {status.error}")
 
     def _cancel_task(self, task: str) -> bool:
         """Cancel one task once; False when the outcome is unknown."""

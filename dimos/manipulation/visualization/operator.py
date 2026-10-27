@@ -132,7 +132,7 @@ class ManipulationOperator:
         ik = self._module.inverse_kinematics(
             pose_targets=dict(request.pose_targets),
             auxiliary_group_ids=request.auxiliary_group_ids,
-            seed=JointState(request.seed) if request.seed is not None else None,
+            seed=self._canonical_seed(request, group_ids),
             check_collision=True,
         )
         if not ik.is_success() or ik.joint_state is None:
@@ -275,13 +275,26 @@ class ManipulationOperator:
             ):
                 return group_ids, self._invalid(group_ids, "Malformed seed")
             expected = tuple(name for group in groups for name in group.joint_names)
-            if seed_names != expected:
+            if set(seed_names) != set(expected):
                 return group_ids, self._invalid(
-                    group_ids, "Seed must use exact selected canonical joints in order"
+                    group_ids, "Seed must use exactly the selected canonical joints"
                 )
             if any(not math.isfinite(float(value)) for value in request.seed.position):
                 return group_ids, self._invalid(group_ids, "Seed contains non-finite positions")
         return group_ids, None
+
+    def _canonical_seed(
+        self, request: PoseTargetRequest, group_ids: Sequence[PlanningGroupID]
+    ) -> JointState | None:
+        """The request's seed in the selected groups' joint order. A caller may list its groups
+        its own way (a UI, alphabetically); the solver wants the groups' order. The seed was
+        checked to be exactly those joints by ``_validate_pose_request``."""
+        if request.seed is None:
+            return None
+        groups = self._groups_for_ids(group_ids) or ()
+        expected = [str(name) for group in groups for name in group.joint_names]
+        by_name = dict(zip(request.seed.name, request.seed.position, strict=True))
+        return JointState(name=expected, position=[float(by_name[name]) for name in expected])
 
     def _groups_for_ids(
         self, group_ids: Sequence[PlanningGroupID]

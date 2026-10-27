@@ -1,0 +1,114 @@
+<!--
+  Alfred's bench, for alfred-manipulation-sim: what the mast D455 sees, nothing else.
+
+  The world is the run's odom frame: base_link starts at its origin facing +x, and the
+  base_link mocap body follows the mock base's odometry, carrying the camera along. The robot
+  itself is not here (the arms are kinematic mocks), so it neither occludes nor collides.
+
+  camera_front_link and camera_front are alfred_v1.urdf's chain (AlfredMountTf's
+  base_link -> camera_front_link, then the D455's colour optical frame turned a half turn about
+  its axis, as rotate_180 publishes it), in MuJoCo's camera axes (x right, y up, looking along
+  -z). fovy is the D455 colour imager's at 848x480 (fy 426.0 px). test_alfred_manipulation_sim
+  checks the chain against the URDF.
+
+  The bench: top at z 1.06, front edge at x 0.45, 1.0 m deep, 1.6 m wide, centred on y 0. The
+  picture's bottom row is 54 degrees below the horizon, so the camera sees the bench top from
+  0.61 m out: the four objects stand just beyond that (front faces at 0.62 m), along the
+  shoulders' lines. A top-down grasp reaches them once the base is ~15 cm closer (or with the
+  base helping); the bottle, 0.80 m out, stays out of reach even then.
+-->
+<mujoco model="alfred_bench">
+  <compiler angle="radian"/>
+  <!-- Nothing moves but the mocap base: a slow step keeps the sim thread cheap. -->
+  <option timestep="0.01" gravity="0 0 0"/>
+  <statistic center="0.8 0 0.8" extent="3"/>
+
+  <visual>
+    <global offwidth="1280" offheight="800"/>
+    <quality shadowsize="2048"/>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.45 0.45 0.45" specular="0.05 0.05 0.05"/>
+  </visual>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.86 0.88 0.9" rgb2="0.62 0.65 0.7"
+             width="256" height="256"/>
+    <texture name="concrete" type="2d" builtin="checker" rgb1="0.56 0.56 0.54"
+             rgb2="0.5 0.5 0.48" width="512" height="512"/>
+    <material name="floor" texture="concrete" texrepeat="16 16" reflectance="0.02"/>
+    <material name="wall" rgba="0.82 0.83 0.84 1"/>
+    <material name="bench_top" rgba="0.9 0.9 0.88 1" specular="0.2"/>
+    <material name="bench_leg" rgba="0.25 0.25 0.27 1"/>
+    <material name="can_red" rgba="0.75 0.05 0.07 1" specular="0.6" shininess="0.6"/>
+    <material name="aluminium" rgba="0.78 0.78 0.8 1" specular="0.8" shininess="0.8"/>
+    <material name="cardboard" rgba="0.66 0.49 0.3 1" specular="0.05"/>
+    <material name="tape" rgba="0.82 0.7 0.5 1" specular="0.3"/>
+    <material name="cucumber" rgba="0.12 0.4 0.1 1" specular="0.3"/>
+    <material name="felt" rgba="0.8 0.9 0.13 1" specular="0.02"/>
+    <material name="bottle_blue" rgba="0.18 0.4 0.85 1" specular="0.5"/>
+    <material name="cap_white" rgba="0.95 0.95 0.95 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="ceiling" directional="true" pos="0.5 0.3 3" dir="-0.2 -0.15 -1"
+           diffuse="0.55 0.55 0.55" specular="0.1 0.1 0.1" castshadow="true"/>
+    <geom name="floor" type="plane" size="6 6 0.05" material="floor"/>
+    <geom name="far_wall" type="box" pos="4 0 1.5" size="0.05 6 1.5" material="wall"/>
+
+    <!-- Alfred: base_link on the floor, moved by the base's odometry (mocap_pose). -->
+    <body name="base_link" mocap="true" pos="0 0 0">
+      <body name="camera_front_link" pos="0.254041 -0.047498 1.546791"
+            quat="0.000001360 0.976295825 0.000005407 -0.216440437">
+        <camera name="camera_front" pos="0 -0.059 0" quat="0.5 -0.5 -0.5 0.5" fovy="58.79"/>
+      </body>
+    </body>
+
+    <body name="bench" pos="0.95 0 0">
+      <geom name="bench_top" type="box" pos="0 0 1.0425" size="0.5 0.8 0.0175"
+            material="bench_top"/>
+      <geom name="bench_leg_fl" type="box" pos="-0.45 0.75 0.5125" size="0.025 0.025 0.5125"
+            material="bench_leg"/>
+      <geom name="bench_leg_fr" type="box" pos="-0.45 -0.75 0.5125" size="0.025 0.025 0.5125"
+            material="bench_leg"/>
+      <geom name="bench_leg_bl" type="box" pos="0.45 0.75 0.5125" size="0.025 0.025 0.5125"
+            material="bench_leg"/>
+      <geom name="bench_leg_br" type="box" pos="0.45 -0.75 0.5125" size="0.025 0.025 0.5125"
+            material="bench_leg"/>
+    </body>
+
+    <!-- A 330 ml can: 6.6 cm across, 12 cm tall, red with aluminium ends. -->
+    <body name="soda_can" pos="0.665 0.17 1.12">
+      <geom name="soda_can" type="cylinder" size="0.033 0.0585" material="can_red"/>
+      <geom name="soda_can_top" type="cylinder" pos="0 0 0.0592" size="0.031 0.0008"
+            material="aluminium"/>
+      <geom name="soda_can_bottom" type="cylinder" pos="0 0 -0.0592" size="0.031 0.0008"
+            material="aluminium"/>
+    </body>
+
+    <!-- A small shipping box, 12 x 9 x 8 cm, taped shut. -->
+    <body name="cardboard_box" pos="0.685 -0.2 1.10" euler="0 0 1.8">
+      <geom name="cardboard_box" type="box" size="0.06 0.045 0.04" material="cardboard"/>
+      <geom name="cardboard_box_tape" type="box" pos="0 0 0.0402" size="0.0605 0.012 0.0003"
+            material="tape"/>
+    </body>
+
+    <!-- A cucumber lying across the bench, 18 cm long and 4 cm thick. -->
+    <body name="cucumber" pos="0.655 0 1.08" euler="0 0 0.15">
+      <geom name="cucumber" type="capsule" fromto="0 -0.07 0 0 0.07 0" size="0.02"
+            material="cucumber"/>
+    </body>
+
+    <body name="tennis_ball" pos="0.665 0.33 1.0935">
+      <geom name="tennis_ball" type="sphere" size="0.0335" material="felt"/>
+    </body>
+
+    <!-- Out of reach: a 0.5 l bottle 0.80 m out. -->
+    <body name="water_bottle" pos="0.80 -0.05 1.06">
+      <geom name="water_bottle" type="cylinder" pos="0 0 0.085" size="0.035 0.085"
+            material="bottle_blue"/>
+      <geom name="water_bottle_neck" type="cylinder" pos="0 0 0.185" size="0.018 0.015"
+            material="bottle_blue"/>
+      <geom name="water_bottle_cap" type="cylinder" pos="0 0 0.21" size="0.017 0.01"
+            material="cap_white"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -20,3 +20,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Mid-360 mount pose on the FlowBase (position + orientation) in the base frame.
 FLOWBASE_MID360_MOUNT = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
+
+# The controller firmware caps the planar speed it will take; a larger command is clipped,
+# not scaled, so a diagonal loses its direction.
+FLOWBASE_MAX_LINEAR_CMD_M_S = 0.8

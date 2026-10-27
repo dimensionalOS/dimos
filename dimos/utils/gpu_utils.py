@@ -21,3 +21,14 @@ def is_cuda_available():  # type: ignore[no-untyped-def]
         return torch.cuda.is_available()
     except Exception:
         return False
+
+
+def is_mps_available() -> bool:
+    """Apple's Metal (MPS) for torch: an Apple Silicon Mac."""
+    try:
+        # Lazy: gpu_utils must stay importable in torch-less contexts.
+        import torch
+
+        return bool(torch.backends.mps.is_available())
+    except Exception:
+        return False

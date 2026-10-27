@@ -165,11 +165,15 @@ class Object(Detection3D):
         return msg
 
     def agent_encode(self) -> dict[str, Any]:
-        """Encode for agent consumption."""
+        """Encode for agent consumption: identity, and the box (metres, in ``frame_id``) a UI draws."""
         return {
             "object_id": self.object_id,
             "track_id": self.track_id,
             "name": self.name,
+            "confidence": float(self.confidence),
+            "center": [float(v) for v in self.center.to_list()],
+            "size": [float(v) for v in self.size.to_list()],
+            "frame_id": self.frame_id,
             "detections": self.detections_count,
             "identity_status": self.identity_status,
             "identity_basis": self.identity_basis,

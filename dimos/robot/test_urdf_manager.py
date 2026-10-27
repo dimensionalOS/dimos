@@ -253,6 +253,22 @@ def test_mesh_filter_removes_surfaces_without_classifying_solid_volume(make_filt
     np.testing.assert_allclose(result.points_f32(), [[0, 0, 0], [0.2, 0, 0]])
 
 
+def test_a_cloud_in_the_robot_root_frame_needs_no_tf(make_filter):
+    # A planner's map is in the robot's root frame already: carving the robot out of it waits
+    # on no transform, and the capture-time state alone places the robot.
+    module = make_filter(urdf_xml=_joint_robot("prismatic"))
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.5]))
+    cloud = PointCloud2.from_numpy(
+        np.array([[0.5, 0, 0], [0, 0, 0]], dtype=np.float32), frame_id="base", timestamp=1.0
+    )
+
+    result = module.filter_cloud(cloud)
+
+    assert result is not None
+    np.testing.assert_allclose(result.points_f32(), [[0, 0, 0]])
+    assert (result.frame_id, result.ts) == ("base", 1.0)
+
+
 def test_late_state_cannot_resurrect_expired_history(make_filter):
     module = make_filter(urdf_xml=_joint_robot("prismatic"), state_history_s=1.0)
     _place_arm(module, (0, 0, 0), 1.0)

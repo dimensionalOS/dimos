@@ -107,6 +107,7 @@ struct Config {
     #[validate(range(exclusive_min = 0.0))]
     camera_info_fps: f64,
     serial_number: Nullable<String>,
+    rotate_180: bool,
 }
 
 impl Config {
@@ -381,6 +382,7 @@ fn image<K>(
     bytes_per_pixel: usize,
     frame_id: &str,
     ts: f64,
+    rotate_180: bool,
 ) -> Image {
     let data = unsafe {
         std::slice::from_raw_parts(
@@ -395,11 +397,41 @@ fn image<K>(
         encoding: encoding.to_string(),
         is_bigendian: 0,
         step: (frame.width() * bytes_per_pixel) as i32,
-        data: data.to_vec(),
+        data: if rotate_180 {
+            rotate_180_pixels(data, bytes_per_pixel)
+        } else {
+            data.to_vec()
+        },
     }
 }
 
-fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str) -> CameraInfo {
+/// A row-major image turned by 180 degrees: the same bytes, pixel order reversed.
+fn rotate_180_pixels(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for pixel in data.chunks_exact(bytes_per_pixel).rev() {
+        out.extend_from_slice(pixel);
+    }
+    out
+}
+
+/// The intrinsics of an image turned by 180 degrees about its optical axis: the principal
+/// point mirrored through the image centre and the tangential distortion's sign flipped (the
+/// radial terms are even); the rest as it was.
+fn rotated_180(mut info: CameraInfo) -> CameraInfo {
+    let cx = (info.width - 1) as f64 - info.K[2];
+    let cy = (info.height - 1) as f64 - info.K[5];
+    info.K[2] = cx;
+    info.K[5] = cy;
+    info.P[2] = cx;
+    info.P[6] = cy;
+    if info.distortion_model == "plumb_bob" && info.D.len() >= 4 {
+        info.D[2] = -info.D[2];
+        info.D[3] = -info.D[3];
+    }
+    info
+}
+
+fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str, rotate_180: bool) -> CameraInfo {
     let (fx, fy) = (intrinsics.fx() as f64, intrinsics.fy() as f64);
     let (cx, cy) = (intrinsics.ppx() as f64, intrinsics.ppy() as f64);
     let model = match intrinsics.distortion().model {
@@ -409,7 +441,7 @@ fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str) -> CameraInfo {
         | Rs2DistortionModel::BrownConradyInverse => "plumb_bob",
         Rs2DistortionModel::FThetaFisheye | Rs2DistortionModel::KannalaBrandt => "equidistant",
     };
-    CameraInfo {
+    let info = CameraInfo {
         header: header(frame_id, 0.0),
         height: intrinsics.height() as i32,
         width: intrinsics.width() as i32,
@@ -427,6 +459,11 @@ fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str) -> CameraInfo {
             width: 0,
             do_rectify: false,
         },
+    };
+    if rotate_180 {
+        rotated_180(info)
+    } else {
+        info
     }
 }
 
@@ -648,14 +685,14 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
     };
     let color_info = color_intrinsics
         .as_ref()
-        .map(|i| camera_info(i, &cfg.color_optical_frame()));
+        .map(|i| camera_info(i, &cfg.color_optical_frame(), cfg.rotate_180));
     let depth_info = if cfg.stream_depth() {
         match (&cfg.align_depth_to_color, &color_intrinsics) {
             // Aligned to color, depth uses color intrinsics and frame.
-            (true, Some(i)) => Some(camera_info(i, &cfg.color_optical_frame())),
+            (true, Some(i)) => Some(camera_info(i, &cfg.color_optical_frame(), cfg.rotate_180)),
             _ => find_profile(streams, Rs2StreamKind::Depth, None)
                 .and_then(|p| p.intrinsics().ok())
-                .map(|i| camera_info(&i, &cfg.depth_optical_frame())),
+                .map(|i| camera_info(&i, &cfg.depth_optical_frame(), cfg.rotate_180)),
         }
     } else {
         None
@@ -668,11 +705,11 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             infra1_info = p1
                 .intrinsics()
                 .ok()
-                .map(|i| camera_info(&i, &cfg.infra1_optical_frame()));
+                .map(|i| camera_info(&i, &cfg.infra1_optical_frame(), cfg.rotate_180));
             infra2_info = p2
                 .intrinsics()
                 .ok()
-                .map(|i| camera_info(&i, &cfg.infra2_optical_frame()));
+                .map(|i| camera_info(&i, &cfg.infra2_optical_frame(), cfg.rotate_180));
             // P[3] is -fx * baseline; left at 0 a stereo consumer sees infinite depth.
             // The pair is rectified, so the whole of their offset is along x.
             if let (Some(info), Ok(ext)) = (infra2_info.as_mut(), p2.extrinsics(p1)) {
@@ -712,6 +749,11 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             if cfg.enable_imu {
                 wanted.push((cfg.imu_frame(), Rs2StreamKind::Accel, None));
             }
+            // rotate_180 turns every imager's pixels by a half turn about its optical axis, so
+            // its optical frame turns with them and the cloud lands where it did; the mount edges
+            // keep describing the physical housing, and the IMU's data are not turned.
+            let half_turn =
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::PI);
             for (frame_id, kind, index) in wanted {
                 let Some(profile) = find_profile(&device_profiles, kind, index) else {
                     tracing::warn!("RealSense has no stream for {frame_id}; not published on tf");
@@ -729,10 +771,16 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
                     extrinsics_to_body(&extrinsics),
                 ));
                 let optical = format!("{}_optical_frame", frame_id.trim_end_matches("_frame"));
+                let turned = cfg.rotate_180 && !matches!(kind, Rs2StreamKind::Accel);
+                let optical_axes = if turned {
+                    optical_rotation() * half_turn
+                } else {
+                    optical_rotation()
+                };
                 mount_edges.push((
                     frame_id,
                     optical,
-                    Isometry3::from_parts(Translation3::identity(), optical_rotation()),
+                    Isometry3::from_parts(Translation3::identity(), optical_axes),
                 ));
             }
         }
@@ -796,16 +844,28 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         let infra2_ts = fresh.check("infra2", infra2.as_ref(), shared);
 
         let color_img = match (&color, color_ts) {
-            (Some(frame), Some(ts)) => {
-                Some(image(frame, "rgb8", 3, &cfg.color_optical_frame(), ts))
-            }
+            (Some(frame), Some(ts)) => Some(image(
+                frame,
+                "rgb8",
+                3,
+                &cfg.color_optical_frame(),
+                ts,
+                cfg.rotate_180,
+            )),
             _ => None,
         };
         if let (Some(img), true) = (&color_img, cfg.enable_color) {
             let _ = handle.block_on(outs.color_image.publish(img));
         }
         let depth_img = match (&depth, depth_ts) {
-            (Some(frame), Some(ts)) => Some(image(frame, "16UC1", 2, &depth_frame_id, ts)),
+            (Some(frame), Some(ts)) => Some(image(
+                frame,
+                "16UC1",
+                2,
+                &depth_frame_id,
+                ts,
+                cfg.rotate_180,
+            )),
             _ => None,
         };
         if let (Some(img), true) = (&depth_img, cfg.enable_depth) {
@@ -818,6 +878,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
                 1,
                 &cfg.infra1_optical_frame(),
                 ts,
+                cfg.rotate_180,
             )));
         }
         if let (Some(frame), Some(ts)) = (&infra2, infra2_ts) {
@@ -827,6 +888,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
                 1,
                 &cfg.infra2_optical_frame(),
                 ts,
+                cfg.rotate_180,
             )));
         }
 
@@ -1394,6 +1456,42 @@ mod tests {
         let q = optical_rotation();
         assert!((q.i + 0.5).abs() < 1e-12 && (q.j - 0.5).abs() < 1e-12);
         assert!((q.k + 0.5).abs() < 1e-12 && (q.w - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rotate_180_reverses_pixels_and_recenters_the_principal_point() {
+        assert_eq!(
+            rotate_180_pixels(&[1, 2, 3, 4, 5, 6], 3),
+            vec![4, 5, 6, 1, 2, 3]
+        );
+        assert_eq!(rotate_180_pixels(&[1, 2, 3, 4], 2), vec![3, 4, 1, 2]);
+        let info = CameraInfo {
+            header: header("f", 0.0),
+            height: 480,
+            width: 848,
+            distortion_model: "plumb_bob".into(),
+            D: vec![0.1, 0.2, 0.3, 0.4, 0.5],
+            K: [430.0, 0.0, 400.0, 0.0, 430.0, 250.0, 0.0, 0.0, 1.0],
+            R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            P: [
+                430.0, 0.0, 400.0, 0.0, 0.0, 430.0, 250.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+            ],
+            binning_x: 0,
+            binning_y: 0,
+            roi: RegionOfInterest {
+                x_offset: 0,
+                y_offset: 0,
+                height: 0,
+                width: 0,
+                do_rectify: false,
+            },
+        };
+        let rotated = rotated_180(info.clone());
+        assert_eq!((rotated.K[2], rotated.K[5]), (447.0, 229.0));
+        assert_eq!((rotated.P[2], rotated.P[6]), (447.0, 229.0));
+        assert_eq!(rotated.D, vec![0.1, 0.2, -0.3, -0.4, 0.5]);
+        // Twice is the identity.
+        assert_eq!(rotated_180(rotated).K, info.K);
     }
 
     #[test]

@@ -24,6 +24,8 @@ from __future__ import annotations
 import importlib.util
 from unittest.mock import DEFAULT, MagicMock
 
+import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -34,16 +36,26 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import (
+    VOXEL_MAP_OBSTACLE_ID,
     ManipulationModule,
     ManipulationState,
 )
 from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.manipulation.planning.spec.models import IKResult, PlanningResult
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
@@ -114,6 +126,167 @@ def module(xarm7_config):
         yield mod
     finally:
         mod.stop()
+
+
+def test_plan_to_poses_hands_auxiliary_groups_to_the_pose_planner(xarm7_config):
+    """plan_to_poses is the spec's way in; a mobile base named there must reach the planner."""
+    module = ManipulationModule(model=xarm7_config, visualization={"backend": "none"})
+    module.generate_plan_to_pose_targets = MagicMock(return_value=None)
+    pose = PoseStamped(frame_id="world")
+    try:
+        result = module.plan_to_poses({"manipulator": pose}, auxiliary_groups=["moving_base"])
+    finally:
+        module.stop()
+
+    assert not result.succeeded
+    module.generate_plan_to_pose_targets.assert_called_once_with(
+        {"manipulator": pose}, ["moving_base"], speed_scale=None
+    )
+
+
+_JOINT1_UPPER = 3.4907
+
+
+def _interval_joint_space(names: list[str], upper: float) -> JointSpace:
+    return JointSpace(
+        tuple(
+            JointCoordinate(
+                name=name,
+                mechanism_type="revolute",
+                topology=CoordinateTopology.INTERVAL,
+                lower=-upper,
+                upper=upper,
+                max_velocity=1.0,
+                max_acceleration=1.0,
+            )
+            for name in names
+        )
+    )
+
+
+def _module_planning_in(
+    joint_space: JointSpace, model: RobotModelConfig, kinematics: MagicMock, planner: MagicMock
+) -> ManipulationModule:
+    """A module whose world moves in ``joint_space``, solving IK through ``kinematics`` and
+    planning through ``planner``, which validates the goal through that joint space the way
+    the real planners do."""
+    module = ManipulationModule(model=model, visualization={"backend": "none"})
+    names = list(joint_space.names)
+    world_monitor = MagicMock()
+    world_monitor.world.get_prepared_model.return_value.joint_space = joint_space
+    world_monitor.planning_groups.select.return_value = MagicMock(joint_names=tuple(names))
+    world_monitor.current_model_joint_state.return_value = JointState(
+        name=names, position=[0.0] * len(names)
+    )
+    module._world_monitor = world_monitor
+    module._kinematics = kinematics
+    module._trajectory_parametrizer = MagicMock()
+    module._planner = planner
+
+    def plan(*, start: JointState, goal: JointState, **_: object) -> PlanningResult:
+        try:
+            joint_space.from_joint_state(goal)
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
+        return PlanningResult(status=PlanningStatus.SUCCESS, path=[start, goal])
+
+    planner.plan_selected_joint_path.side_effect = plan
+    return module
+
+
+@pytest.mark.parametrize(
+    ("past_limit", "accepted"),
+    [(4.8e-9, True), (1e-3, False)],
+    ids=["a rounding error past the limit", "a real violation"],
+)
+def test_an_ik_solution_a_rounding_error_past_a_limit_is_planned_from_inside_it(
+    xarm7_config: RobotModelConfig, past_limit: float, accepted: bool
+) -> None:
+    """Pink IK tolerates a solution on a limit, and the planner's joint space refuses one any
+    distance past it: joint1 = 3.490700004829506 against 3.4907 was "IK solved" and then
+    INVALID_GOAL. A solution within 1e-6 past a limit now lands 1e-7 inside it; a real
+    violation is still refused."""
+    names = ["joint1", "joint2"]
+    kinematics = MagicMock()
+    kinematics.solve_pose_targets.return_value = IKResult(
+        status=IKStatus.SUCCESS,
+        joint_state=JointState(name=names, position=[_JOINT1_UPPER + past_limit, 0.5]),
+    )
+    planner = MagicMock()
+    module = _module_planning_in(
+        _interval_joint_space(names, _JOINT1_UPPER), xarm7_config, kinematics, planner
+    )
+    try:
+        plan = module.generate_plan_to_pose_targets(
+            {"manipulator": Pose()}, auxiliary_groups=["moving_base"]
+        )
+    finally:
+        module.stop()
+
+    goal = planner.plan_selected_joint_path.call_args.kwargs["goal"]
+    assert goal.name == names
+    if accepted:
+        assert plan is not None
+        assert goal.position == pytest.approx([_JOINT1_UPPER - 1e-7, 0.5], abs=1e-12)
+    else:
+        assert plan is None
+        assert "INVALID_GOAL" in module._error_message
+        assert goal.position == [_JOINT1_UPPER + past_limit, 0.5]
+
+
+def _module_mapping_into(world_monitor: MagicMock, model: RobotModelConfig) -> ManipulationModule:
+    module = ManipulationModule(model=model, visualization={"backend": "none"})
+    world_monitor.is_finalized = True
+    module._world_monitor = world_monitor
+    return module
+
+
+def _voxel_map(points: NDArray[np.float32]) -> PointCloud2:
+    return PointCloud2.from_numpy(points, frame_id="world")
+
+
+def test_a_voxel_map_identical_to_the_installed_one_is_not_rebuilt(
+    xarm7_config: RobotModelConfig,
+) -> None:
+    """A mapper republishes an unchanged map at its own rate, and rebuilding the octree for
+    each copy held the world lock the planner's collision checks wait on. A changed map, and
+    the earlier map after a clear, still install; an empty map still clears."""
+    world_monitor = MagicMock()
+    world_monitor.update_obstacle.return_value = True
+    module = _module_mapping_into(world_monitor, xarm7_config)
+    points = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32)
+    try:
+        module._apply_voxel_map(_voxel_map(points))
+        module._apply_voxel_map(_voxel_map(points.copy()))
+        assert world_monitor.update_obstacle.call_count == 1
+
+        module._apply_voxel_map(_voxel_map(points + 0.1))
+        assert world_monitor.update_obstacle.call_count == 2
+
+        module._apply_voxel_map(_voxel_map(np.zeros((0, 3), dtype=np.float32)))
+        world_monitor.remove_obstacle.assert_called_once_with(VOXEL_MAP_OBSTACLE_ID)
+        module._apply_voxel_map(_voxel_map(points + 0.1))
+        assert world_monitor.update_obstacle.call_count == 3
+    finally:
+        module.stop()
+    obstacle = world_monitor.update_obstacle.call_args.args[0]
+    assert obstacle.name == VOXEL_MAP_OBSTACLE_ID
+
+
+def test_a_voxel_map_the_world_refused_is_tried_again(xarm7_config: RobotModelConfig) -> None:
+    """Only an installed map is remembered: a refused one gets another chance."""
+    world_monitor = MagicMock()
+    world_monitor.update_obstacle.return_value = False
+    world_monitor.add_obstacle.return_value = ""
+    module = _module_mapping_into(world_monitor, xarm7_config)
+    points = np.array([[0.1, 0.2, 0.3]], dtype=np.float32)
+    try:
+        module._apply_voxel_map(_voxel_map(points))
+        module._apply_voxel_map(_voxel_map(points))
+    finally:
+        module.stop()
+
+    assert world_monitor.update_obstacle.call_count == 2
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")

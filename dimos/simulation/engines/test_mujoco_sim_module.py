@@ -20,9 +20,13 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
@@ -414,5 +418,138 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+def test_a_camera_on_its_own_link_publishes_no_edge_to_itself() -> None:
+    """A robot's mount tree owns camera_front_link's parent edge; the camera mounted on a body
+    of that name publishes only its optical frames under it, never a self-edge."""
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(
+            camera_name="camera_front", base_frame_id="camera_front_link"
+        )
+        messages: list[Any] = []
+        module.tf.subscribe(messages.append)
+        frame = CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=np.ones((1, 1), dtype=np.float32),
+            cam_pos=np.array([0.25, 0.01, 1.55]),
+            cam_mat=np.eye(3),
+            fovy=58.8,
+            timestamp=1.0,
+            base_pos=np.array([0.25, 0.07, 1.55]),
+            base_mat=np.eye(3),
+        )
+
+        module._publish_tf(1.0, frame)
+
+        edges = [(t.frame_id, t.child_frame_id) for t in messages[-1].transforms]
+        assert edges == [
+            ("camera_front_link", "camera_front_color_optical_frame"),
+            ("camera_front_link", "camera_front_depth_optical_frame"),
+        ]
+        assert np.allclose(messages[-1].transforms[0].translation.to_numpy(), [0.0, -0.06, 0.0])
+    finally:
+        module.stop()
+
+
+class _FixedFrameEngine:
+    def __init__(self, frame: CameraFrame) -> None:
+        self._frame = frame
+
+    def read_camera(self, camera_name: str) -> CameraFrame:
+        return self._frame
+
+    def disconnect(self) -> None:
+        pass
+
+
+def test_the_cloud_takes_every_nth_pixel_and_drops_what_is_too_far() -> None:
+    """RealSenseCamera's pointcloud_decimation and depth_trunc_m: an 8x6 image at decimation 2
+    keeps rows 0, 2, 4 and columns 0, 2, 4, 6, and the left half, 4 m away, is past 3 m."""
+    depth = np.ones((6, 8), dtype=np.float32)
+    depth[:, :4] = 4.0
+    frame = CameraFrame(
+        rgb=np.full((6, 8, 3), 200, dtype=np.uint8),
+        depth=depth,
+        cam_pos=np.zeros(3),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=5.0,
+    )
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(pointcloud_decimation=2, depth_trunc_m=3.0)
+        module._camera_info_base = CameraInfo.from_intrinsics(
+            fx=4.0, fy=4.0, cx=4.0, cy=3.0, width=8, height=6, frame_id="wrist_camera_color_frame"
+        )
+        module._engine = _FixedFrameEngine(frame)
+        clouds: list[Any] = []
+        module.pointcloud.subscribe(clouds.append)
+
+        module._generate_pointcloud()
+
+        (cloud,) = clouds
+        points = sorted(map(tuple, np.round(cloud.points_f32(), 6).tolist()))
+        # Full-resolution columns 4 and 6, rows 0, 2 and 4: x = (u - cx) z / fx, z = 1.
+        expected = sorted((x, y, 1.0) for x in (0.0, 0.5) for y in (-0.75, -0.25, 0.25))
+        assert points == pytest.approx(expected)
+        assert cloud.ts == 5.0
+    finally:
+        module.stop()
+
+
+_MOCAP_XML = """
+<mujoco model="mocap">
+  <worldbody>
+    <body name="base_link" mocap="true">
+      <body name="mast" pos="0.25 0 1.5">
+        <camera name="front" pos="0 0 0" xyaxes="0 -1 0 0 0 1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+class _ModelEngine:
+    def __init__(self) -> None:
+        self.model = mujoco.MjModel.from_xml_string(_MOCAP_XML)
+        self.data = mujoco.MjData(self.model)
+
+    def disconnect(self) -> None:
+        pass
+
+
+def test_the_mocap_body_takes_its_pose_from_the_input_and_carries_the_camera() -> None:
+    """The base fed its odometry (a quarter turn left, 1 m along x): the mast camera on it
+    goes along, so the picture follows the robot as tf does."""
+    engine = _ModelEngine()
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(mocap_body="base_link")
+        module._mocap_id = module._resolve_mocap_id(engine.model)
+        assert module._mocap_id == 0
+
+        module._pre_step(engine)  # nothing received yet: the body stays where the scene has it
+        module._on_mocap_pose(
+            PoseStamped(
+                frame_id="odom",
+                position=Vector3(1.0, 0.0, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2)),
+            )
+        )
+        module._pre_step(engine)
+        mujoco.mj_forward(engine.model, engine.data)
+
+        assert np.allclose(engine.data.cam_xpos[0], [1.0, 0.25, 1.5])
+        with pytest.raises(ValueError, match="not a body"):
+            module.config = MujocoSimModuleConfig(mocap_body="nowhere")
+            module._resolve_mocap_id(engine.model)
+        with pytest.raises(ValueError, match="not a mocap body"):
+            module.config = MujocoSimModuleConfig(mocap_body="mast")
+            module._resolve_mocap_id(engine.model)
     finally:
         module.stop()

@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -35,7 +36,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import GeneratedPlan
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -110,6 +111,103 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert generate.call_args.kwargs["check_collision"] is False
     assert generate.call_args.kwargs["speed_scale"] == pytest.approx(0.5)
     execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)
+
+
+def _checking_module(
+    module_factory,
+) -> tuple[ManipulationModule, MagicMock, MagicMock, GeneratedPlan]:
+    """A module with a pending plan, a mock planner and a mock parametrizer."""
+    module = module_factory()
+    _set_groups(module, _model())
+    pending = _plan()
+    module._last_plan = pending
+    planner, parametrizer = MagicMock(), MagicMock()
+    module._planner = planner
+    module._trajectory_parametrizer = parametrizer
+    return module, planner, parametrizer, pending
+
+
+def test_plan_linear_from_given_joints_leaves_from_them_and_keeps_the_pending_plan(
+    module_factory,
+) -> None:
+    """A pick plans its descent from the approach's goal before the approach runs: the
+    planner leaves from those joints, not the arm's, and the approach stays pending."""
+    module, planner, parametrizer, pending = _checking_module(module_factory)
+    world_monitor: MagicMock = module._world_monitor  # type: ignore[assignment]
+    planner.plan_cartesian_path.return_value = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[JointState(name=["j0"], position=[0.7]), JointState(name=["j0"], position=[0.9])],
+        timestamps=[0.0, 1.0],
+    )
+    checked = _plan()
+    parametrizer.materialize_plan.return_value = checked
+
+    result = module.plan_linear(
+        dz=-0.1,
+        planning_group="tool",
+        start_joints=JointState(name=["j0", "base/x"], position=[0.7, 0.2]),
+    )
+
+    assert result.succeeded
+    assert result.plan is checked
+    kwargs = planner.plan_cartesian_path.call_args.kwargs
+    assert kwargs["start"].name == ["j0"]
+    assert kwargs["start"].position == [0.7]
+    assert kwargs["check_collision"] is False
+    assert kwargs["config"].velocity_scale == pytest.approx(0.5)
+    start, relative = kwargs["targets"]["tool"]
+    assert start == Transform.identity()
+    assert relative.translation.z == pytest.approx(-0.1)
+    assert module._last_plan is pending
+    world_monitor.current_model_joint_state.assert_not_called()
+
+
+def test_plan_linear_from_given_joints_reports_the_planner_result(module_factory) -> None:
+    module, planner, parametrizer, pending = _checking_module(module_factory)
+    planner.plan_cartesian_path.return_value = PlanningResult(
+        status=PlanningStatus.NO_SOLUTION,
+        message="position error 0.007 m exceeds the path tolerance",
+    )
+
+    result = module.plan_linear(
+        dz=-0.1, planning_group="tool", start_joints=JointState(name=["j0"], position=[0.7])
+    )
+
+    assert result.status is PlanStatus.FAILED
+    assert result.message == (
+        "Cartesian planning failed: NO_SOLUTION: position error 0.007 m exceeds the path tolerance"
+    )
+    assert module._last_plan is pending
+    parametrizer.materialize_plan.assert_not_called()
+
+
+def test_plan_linear_rejects_a_start_without_the_group_joints(module_factory) -> None:
+    module, planner, _parametrizer, _pending = _checking_module(module_factory)
+
+    result = module.plan_linear(
+        dz=-0.1, planning_group="tool", start_joints=JointState(name=["base/x"], position=[0.2])
+    )
+
+    assert result.status is PlanStatus.INVALID_TARGET
+    assert "missing selected joints: ['j0']" in result.message
+    planner.plan_cartesian_path.assert_not_called()
+
+
+def test_plan_linear_from_the_current_state_is_the_pending_plan(
+    module_factory, mocker: MockerFixture
+) -> None:
+    module = module_factory()
+    _set_groups(module, _model())
+    generated = _plan()
+    generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=generated)
+
+    result = module.plan_linear(dx=0.02, planning_group="tool")
+
+    assert result.succeeded
+    assert result.plan is generated
+    targets, _config = generate.call_args.args
+    assert targets["tool"][1].translation.x == pytest.approx(0.02)
+    assert generate.call_args.kwargs == {"speed_scale": 0.5, "check_collision": False}
 
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:

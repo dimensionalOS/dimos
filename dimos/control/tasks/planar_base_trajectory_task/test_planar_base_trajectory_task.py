@@ -33,11 +33,14 @@ ZERO = [0.0, 0.0, 0.0]
 
 
 class _TwistBase:
-    """Integrates body-frame velocity into world odometry, reporting yaw wrapped."""
+    """Integrates body-frame velocity into world odometry, reporting yaw wrapped.
+
+    ``gain`` is the plant's response per unit command, one value or (vx, vy, wz).
+    """
 
     def __init__(self, x=0.0, y=0.0, yaw=0.0, gain=1.0):
         self.x, self.y, self.yaw = x, y, yaw
-        self.gain = gain
+        self.gain = gain if isinstance(gain, tuple) else (gain, gain, gain)
         self.odometry = None
 
     def state(self, t):
@@ -49,7 +52,7 @@ class _TwistBase:
         )
 
     def step(self, command):
-        vx, vy, wz = (self.gain * v for v in command.velocities)
+        vx, vy, wz = (k * v for k, v in zip(self.gain, command.velocities, strict=True))
         self.x += (math.cos(self.yaw) * vx - math.sin(self.yaw) * vy) * DT
         self.y += (math.sin(self.yaw) * vx + math.cos(self.yaw) * vy) * DT
         self.yaw += wz * DT
@@ -237,3 +240,111 @@ def test_lost_odometry_aborts_and_stops_the_base(loss, goal):
 
     assert task.get_status().state == TrajectoryState.ABORTED
     assert [o for o in outputs if o is not None][-1].velocities == ZERO
+
+
+def test_a_relative_trajectory_runs_from_wherever_the_base_stands():
+    """Planned in the base's own frame (its first point is zero), the motion is laid down from
+    the odometry pose on its first tick: forward is the way the base faces."""
+    base = _TwistBase(x=3.0, y=-1.0, yaw=1.2)
+    task = _task(relative=True)
+    result = task.execute(
+        _line((0.0, 0.0, 0.0), (0.5, 0.2, 0.3), duration=2.0),
+        {"base/vx": 3.0, "base/vy": -1.0, "base/wz": 1.2},
+    )
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED
+
+    _run(task, base, seconds=3.0)
+
+    assert task.get_status().state == TrajectoryState.COMPLETED
+    cos_yaw, sin_yaw = math.cos(1.2), math.sin(1.2)
+    assert base.x == pytest.approx(3.0 + cos_yaw * 0.5 - sin_yaw * 0.2, abs=0.03)
+    assert base.y == pytest.approx(-1.0 + sin_yaw * 0.5 + cos_yaw * 0.2, abs=0.03)
+    assert angle_diff(base.yaw, 1.5) == pytest.approx(0.0, abs=0.05)
+
+
+def test_a_relative_trajectory_must_still_start_at_zero():
+    base = _TwistBase(x=3.0)
+    task = _task(relative=True)
+    result = task.execute(_line((1.0, 0.0, 0.0), (2.0, 0.0, 0.0), duration=2.0))
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED, "checked on the first tick"
+
+    _run(task, base, seconds=0.5)
+
+    assert task.get_status().state == TrajectoryState.ABORTED
+    assert "starts" in task.get_status().error
+    assert base.x == pytest.approx(3.0)
+
+
+# Alfred's FlowBase: it translates 0.77x and yaws 2.85x what it is told.
+_ALFRED_PLANT = (0.77, 0.77, 2.85)
+_ALFRED_COMMAND_GAINS = tuple(1.0 / k for k in _ALFRED_PLANT)
+
+
+def test_command_gains_scale_the_command_after_the_limits():
+    """The limits are physical, so they clamp before the gain: a base told to go at most
+    0.5 m/s through a 2x gain is told 1.0, not 1.1 when feedback adds to a saturated plan."""
+    plan = _line((0.0, 0.0, 0.0), (1.0, 0.0, 2.0), duration=2.0)  # 0.5 m/s, 1.0 rad/s: the limits
+    scaled = _task(max_linear=0.5, max_angular=1.0, command_gains=(2.0, 2.0, 0.5))
+    scaled.execute(plan)
+    on_plan = scaled.compute(_TwistBase().state(100.0))
+    assert on_plan.velocities == pytest.approx([1.0, 0.0, 0.5])
+
+    scaled = _task(max_linear=0.5, max_angular=1.0, command_gains=(2.0, 2.0, 0.5))
+    scaled.execute(plan)
+    vx, vy, wz = scaled.compute(_TwistBase(x=-0.05, yaw=-0.05).state(100.0)).velocities
+    assert (math.hypot(vx, vy), wz) == pytest.approx((1.0, 0.5))
+
+    unscaled = _task(max_linear=0.5, max_angular=1.0)
+    unscaled.execute(plan)
+    vx, vy, wz = unscaled.compute(_TwistBase(x=-0.05, yaw=-0.05).state(100.0)).velocities
+    assert (math.hypot(vx, vy), wz) == pytest.approx((0.5, 1.0))
+
+
+def test_command_gains_let_a_base_with_a_measured_plant_track_a_turn():
+    """Alfred's field failure: uncompensated, a yaw segment runs away from the plan 2.85x
+    faster than kp=1 feedback can hold it and aborts; through 1/K it completes."""
+    turn = _line((0.0, 0.0, 0.0), (0.0, 0.0, 1.2), duration=1.5)  # 0.8 rad/s
+
+    raw = _task(max_angular=1.0)
+    raw.execute(turn)
+    _run(raw, _TwistBase(gain=_ALFRED_PLANT), seconds=3.0)
+    assert raw.get_status().state == TrajectoryState.ABORTED
+    assert "off the trajectory" in raw.get_status().error
+
+    compensated = _task(max_angular=1.0, command_gains=_ALFRED_COMMAND_GAINS)
+    compensated.execute(turn)
+    base = _TwistBase(gain=_ALFRED_PLANT)
+    _run(compensated, base, seconds=3.0)
+    assert compensated.get_status().state == TrajectoryState.COMPLETED
+    assert angle_diff(base.yaw, 1.2) == pytest.approx(0.0, abs=0.05)
+
+
+def test_command_gains_default_to_unity():
+    from types import SimpleNamespace
+
+    from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
+        PlanarBaseTrajectoryTaskParams,
+        create_task,
+    )
+
+    assert PlanarBaseTrajectoryTaskConfig(joint_names=JOINTS).command_gains == (1.0, 1.0, 1.0)
+    assert PlanarBaseTrajectoryTaskParams().command_gains == (1.0, 1.0, 1.0)
+
+    def task_from(params):
+        return create_task(
+            SimpleNamespace(name="base", joint_names=JOINTS, priority=10, params=params), None
+        )
+
+    assert task_from({})._config.command_gains == (1.0, 1.0, 1.0)
+    assert task_from({"command_gains": [1.3, 1.3, 0.35]})._config.command_gains == (
+        1.3,
+        1.3,
+        0.35,
+    )
+    with pytest.raises(ValueError):
+        task_from({"command_gains": [1.0, 1.0, 0.0]})
+
+    plan = _line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), duration=2.0)
+    task = _task()
+    task.execute(plan)
+    assert task.compute(_TwistBase().state(100.0)).velocities == pytest.approx([0.5, 0.0, 0.0])

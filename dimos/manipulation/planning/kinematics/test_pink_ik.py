@@ -262,8 +262,11 @@ class _FakeFrameTask:
 
 
 class _FakePostureTask:
-    def __init__(self, cost: float) -> None:
+    def __init__(self, cost: float | np.ndarray) -> None:
         self.cost = cost
+
+    def set_target(self, target: np.ndarray) -> None:
+        self.target = target.copy()
 
     def set_target_from_configuration(self, configuration: _FakeConfiguration) -> None:
         self.target = configuration.q.copy()
@@ -1929,3 +1932,51 @@ def test_solve_pose_targets_mapping_value_error_fails_without_retrying(
     assert result.status == IKStatus.NO_SOLUTION
     assert "Pink IK mapping failed" in result.message
     assert world.joint_state_calls == 0
+
+
+def test_a_retry_restarts_only_the_joints_that_chase_a_pose(mocker: MockerFixture) -> None:
+    """An auxiliary group (a torso, the other arm) helps during a solve, but a restart that
+    flung it to a random posture would hand back a solution that moves it for no reason."""
+    ik = _pink_ik(mocker, converge=True)
+    context = _context()
+    mocker.patch.object(ik, "_get_model_context", return_value=context)
+    world = _FakeWorld()
+    seeds: list[np.ndarray] = []
+    outcomes: list[object] = [
+        _qp_infeasible(),
+        IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=_solved_joint_state(),
+            position_error=0.0,
+            orientation_error=0.0,
+            iterations=1,
+        ),
+    ]
+
+    def fake_solve_targets(**kwargs: Any) -> IKResult:
+        seeds.append(np.array(kwargs["seed_q"], dtype=float))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return cast("IKResult", outcome)
+
+    mocker.patch.object(ik, "_solve_targets", side_effect=fake_solve_targets)
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={
+            world.groups["manipulator"]: PoseStamped(
+                position=Vector3(0.1, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            )
+        },
+        auxiliary_groups=[world.groups["no_tip"]],
+        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}),
+        check_collision=False,
+        max_attempts=2,
+    )
+
+    assert result.status == IKStatus.SUCCESS
+    assert len(seeds) == 2
+    first, retry = (ik._q_to_dimos_positions(context, seed) for seed in seeds)
+    assert retry[2] == pytest.approx(0.3), "joint_c, the auxiliary, is where it was seeded"
+    assert not np.allclose(retry[:2], first[:2]), "the arm restarted somewhere else"

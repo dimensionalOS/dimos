@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -28,7 +30,10 @@ class Yolo2DDetector(Detector):
         model_path: str = "models_yolo",
         model_name: str = "yolo11n.pt",
         device: str | None = None,
+        imgsz: int | None = None,
     ) -> None:
+        # Inference size; None keeps ultralytics' default (640). Smaller is cheaper on a CPU.
+        self.imgsz = imgsz
         # ~0.5s: deferred to keep module import (test collection) light.
         from ultralytics import YOLO  # type: ignore[attr-defined]
 
@@ -58,14 +63,17 @@ class Yolo2DDetector(Detector):
         Returns:
             ImageDetections2D containing all detected objects
         """
-        results = self.model.track(
-            source=image.to_opencv(),
-            device=self.device,
-            conf=0.5,
-            iou=0.6,
-            persist=True,
-            verbose=False,
-        )
+        kwargs: dict[str, Any] = {
+            "source": image.to_opencv(),
+            "device": self.device,
+            "conf": 0.5,
+            "iou": 0.6,
+            "persist": True,
+            "verbose": False,
+        }
+        if self.imgsz:
+            kwargs["imgsz"] = self.imgsz
+        results = self.model.track(**kwargs)
 
         return ImageDetections2D.from_ultralytics_result(image, results)
 

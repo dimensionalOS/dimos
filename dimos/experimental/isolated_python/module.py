@@ -154,7 +154,20 @@ class IsolatedPythonModule(NativeModule):
         env.pop("UV_PYTHON", None)
         env.pop("UV_PROJECT_ENVIRONMENT", None)
         project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
-        env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
+        project_env = CACHE_DIR / "isolated-python" / project_key / ".venv"
+        env["UV_PROJECT_ENVIRONMENT"] = str(project_env)
+        # `uv run --with-editable` resolves dimOS's own dependency tree into an overlay that
+        # sits ahead of the project environment on sys.path, and resolves it without the
+        # project's override-dependencies: a package both have would come from dimOS's lock,
+        # not the project's (rerun-sdk's numpy>=2 over the numpy<2 JetPack's torch needs, say).
+        # The locked project environment is the runtime, so it goes first. It only exists
+        # once the prepare step has synced it.
+        site_packages = sorted(str(p) for p in project_env.glob("lib/python3.*/site-packages"))
+        if site_packages:
+            inherited = env.get("PYTHONPATH")
+            env["PYTHONPATH"] = os.pathsep.join(
+                [*site_packages, *([inherited] if inherited else [])]
+            )
         env.update(self.config.extra_env)
         return env
 

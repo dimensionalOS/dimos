@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 import subprocess
 
@@ -167,6 +168,25 @@ def test_runtime_environment_uses_project_specific_cache(project, tmp_path, monk
         monkeypatch.setattr(Contract, "project_dir", "native/python/other")
         assert module._runtime_env()["UV_PROJECT_ENVIRONMENT"] != env["UV_PROJECT_ENVIRONMENT"]
         assert env["EXAMPLE_SETTING"] == "configured"
+    finally:
+        module.stop()
+
+
+def test_runtime_environment_puts_the_project_environment_first(project, tmp_path, monkeypatch):
+    """The locked project environment outranks the dimOS overlay `uv run --with-editable`
+    builds without the project's override-dependencies; it exists only after the prepare step."""
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setenv("PYTHONPATH", "/elsewhere")
+    module = Contract()
+    try:
+        assert module._runtime_env()["PYTHONPATH"] == "/elsewhere", "nothing synced yet"
+        site = (
+            Path(module._runtime_env()["UV_PROJECT_ENVIRONMENT"]) / "lib/python3.10/site-packages"
+        )
+        site.mkdir(parents=True)
+        assert module._runtime_env()["PYTHONPATH"] == f"{site}{os.pathsep}/elsewhere"
+        monkeypatch.delenv("PYTHONPATH")
+        assert module._runtime_env()["PYTHONPATH"] == str(site)
     finally:
         module.stop()
 

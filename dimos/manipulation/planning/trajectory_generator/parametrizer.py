@@ -19,6 +19,7 @@ from collections.abc import Sequence
 import math
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.limits import snap_to_limits
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -26,6 +27,8 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
+# How long a plan to where the robot already is holds it there (s).
+STANDSTILL_S = 0.1
 
 
 class TrajectoryParametrizationError(ValueError):
@@ -51,10 +54,18 @@ class BaseTrajectoryParametrizer(ABC):
 
         path = [JointState(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
-        if result.timestamps is None:
-            trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
-        else:
+        self._snap_to_limits(world, selection, path)
+        if result.timestamps is not None:
             trajectory = self._timed_trajectory(selection, path, result.timestamps)
+        else:
+            # A planner asked for where the robot already is answers [start, start]; a
+            # sampling planner may repeat a waypoint. Time parametrization wants motion
+            # between its gridpoints, so repeats go, and no motion at all is a standstill.
+            distinct = self._collapse_repeats(path)
+            if len(distinct) == 1:
+                trajectory = self._standstill(selection, distinct[0])
+            else:
+                trajectory = self._parametrize_path(world, selection, tuple(distinct), speed_scale)
         self._validate_trajectory(
             trajectory,
             selection.joint_names,
@@ -117,6 +128,50 @@ class BaseTrajectoryParametrizer(ABC):
                 positions,
                 f"Waypoint {waypoint_index} positions",
             )
+
+    @classmethod
+    def _snap_to_limits(
+        cls,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        path: Sequence[JointState],
+    ) -> None:
+        """Move positions on or a rounding error past a joint's limits a hair inside, in place."""
+        # A goal on a limit comes back from the planner a few ulps past it (0.0 asked for,
+        # -2.7e-17 answered) and the native TOPP-RA refuses the whole path over it. It
+        # checks the sampled spline, so a waypoint exactly on the limit fails the same way:
+        # the samples beside it land a few ulps outside. Both go a hair inside instead. A
+        # real violation stays, and the backend reports it as before.
+        lower, upper = (
+            world.get_prepared_model().joint_space.select(selection.joint_names).position_limits()
+        )
+        for state in path:
+            state.position = snap_to_limits(state.position, lower, upper)
+
+    @classmethod
+    def _collapse_repeats(cls, path: Sequence[JointState]) -> list[JointState]:
+        """The path without consecutive waypoints that coincide."""
+        distinct = [path[0]]
+        for state in path[1:]:
+            if not cls._positions_close(state.position, distinct[-1].position):
+                distinct.append(state)
+        return distinct
+
+    @staticmethod
+    def _standstill(selection: PlanningGroupSelection, state: JointState) -> JointTrajectory:
+        """A trajectory that holds ``state`` for ``STANDSTILL_S``: the robot is already there."""
+        at_rest = [0.0] * len(selection.joint_names)
+        return JointTrajectory(
+            joint_names=list(selection.joint_names),
+            points=[
+                TrajectoryPoint(
+                    time_from_start=0.0, positions=list(state.position), velocities=at_rest
+                ),
+                TrajectoryPoint(
+                    time_from_start=STANDSTILL_S, positions=list(state.position), velocities=at_rest
+                ),
+            ],
+        )
 
     @classmethod
     def _timed_trajectory(

@@ -39,8 +39,11 @@ class MockTwistBaseAdapter:
     - Integration testing with predictable behavior
     - Development without a physical base
 
-    With ``integrate_odometry`` a 3-DOF base moves: each odometry read advances
-    the pose by the last commanded body-frame velocity, with yaw wrapped.
+    With ``integrate_odometry`` a 3-DOF base moves: each velocity write advances
+    the pose by ``step_dt`` of the commanded body-frame velocity, with yaw wrapped.
+    ``plant_gains`` scale what it does against what it is told, per axis: a real
+    base's measured plant (one that yaws 2.85x its command is ``(..., 2.85)``),
+    so a task that commands through the inverse gains moves it as planned.
     """
 
     def __init__(
@@ -48,6 +51,7 @@ class MockTwistBaseAdapter:
         dof: int = 3,
         integrate_odometry: bool = False,
         step_dt: float = 0.01,
+        plant_gains: tuple[float, float, float] = (1.0, 1.0, 1.0),
         **_: object,
     ) -> None:
         self._dof = dof
@@ -57,6 +61,7 @@ class MockTwistBaseAdapter:
         self._connected = False
         self._integrate_odometry = integrate_odometry and dof == 3
         self._step_dt = step_dt
+        self._plant_gains = tuple(plant_gains)
 
     def connect(self) -> bool:
         """Simulate connection."""
@@ -90,7 +95,7 @@ class MockTwistBaseAdapter:
         if self._odometry is None:
             return
         dt = self._step_dt
-        vx, vy, wz = self._velocities
+        vx, vy, wz = (v * k for v, k in zip(self._velocities, self._plant_gains, strict=True))
         x, y, yaw = self._odometry
         self._odometry = [
             x + (math.cos(yaw) * vx - math.sin(yaw) * vy) * dt,

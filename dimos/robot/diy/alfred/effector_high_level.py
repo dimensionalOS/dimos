@@ -44,6 +44,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.hardware.drive_trains.flowbase import portal_compat
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -51,6 +52,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.trigonometry import angle_diff
 
 if TYPE_CHECKING:
     import portal
@@ -68,6 +70,10 @@ class AlfredHighLevelConfig(ModuleConfig):
     wheel_odometry_hz: FiniteFloat = Field(50.0, gt=0.0)
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
+    # The controller's odometry counts from when its own driver started, not from when this
+    # stack did (36 m and two turns into a day): rebased, the run's first reading is the
+    # origin, like Point-LIO's. Off, the poses come through as the controller reports them.
+    rebase_odometry: bool = True
 
 
 class AlfredHighLevel(Module):
@@ -88,6 +94,9 @@ class AlfredHighLevel(Module):
         # every blueprint that composes Alfred unimportable without the misc extra.
         import portal
 
+        # Portal's socket thread otherwise spins a whole core once the 50 Hz odometry poll
+        # races its wake-up (see portal_compat).
+        portal_compat.install()
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
         client = portal.Client(self.config.address)
@@ -193,6 +202,7 @@ class AlfredHighLevel(Module):
     async def _poll_wheel_odometry(self, client: portal.Client) -> None:
         period = 1.0 / self.config.wheel_odometry_hz
         previous: tuple[float, float, float, float] | None = None
+        origin: tuple[float, float, float] | None = None
         last_error_log: float | None = None
         while not self._odometry_stop.is_set():
             start = asyncio.get_running_loop().time()
@@ -205,6 +215,14 @@ class AlfredHighLevel(Module):
 
                 # Odometry comes back in the inverted-Y frame move() sends into.
                 y, yaw = -y, -yaw
+                if self.config.rebase_odometry:
+                    if origin is None:
+                        origin = (x, y, yaw)
+                        logger.info(
+                            f"Wheel odometry origin is the controller's ({x:.3f}, {y:.3f}, "
+                            f"{yaw:.3f} rad); poses are relative to it from here"
+                        )
+                    x, y, yaw = _rebase(origin, x, y, yaw)
                 # The controller reports no velocity, so difference consecutive poses.
                 twist = Twist()
                 if previous is not None:
@@ -259,6 +277,21 @@ class AlfredHighLevel(Module):
 
 
 PORTAL_RPC_POLL_SECONDS = 0.002
+
+
+def _rebase(
+    origin: tuple[float, float, float], x: float, y: float, yaw: float
+) -> tuple[float, float, float]:
+    """The pose in the frame whose origin is ``origin``: the travel from it turned into its
+    heading, the yaw relative to it (an SE(2) change of origin, not a plain subtraction)."""
+    origin_x, origin_y, origin_yaw = origin
+    dx, dy = x - origin_x, y - origin_y
+    cos_yaw, sin_yaw = math.cos(origin_yaw), math.sin(origin_yaw)
+    return (
+        cos_yaw * dx + sin_yaw * dy,
+        -sin_yaw * dx + cos_yaw * dy,
+        angle_diff(yaw, origin_yaw),
+    )
 
 
 async def _rpc_result(future: portal.Future) -> Any:

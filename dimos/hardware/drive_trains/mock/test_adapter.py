@@ -34,3 +34,18 @@ def test_integrated_odometry_follows_body_velocity_in_the_world_frame():
     assert abs(x) < 1e-6
     assert abs(y - 2.0) < 1e-6
     assert abs(yaw - (math.pi / 2 + 2.0 - 2 * math.pi)) < 1e-9
+
+
+def test_plant_gains_scale_the_motion_not_the_command():
+    """A base that translates 0.77x and yaws 2.85x what it is told, as Alfred's FlowBase does;
+    told through the inverse gains, it moves at the planned rate."""
+    plant = (0.77, 0.77, 2.85)
+    adapter = MockTwistBaseAdapter(dof=3, integrate_odometry=True, step_dt=0.01, plant_gains=plant)
+
+    _drive(adapter, [1.0, 0.0, 0.0], seconds=1.0)
+    assert adapter.read_velocities() == [1.0, 0.0, 0.0], "it reports what it was told"
+    x, y, yaw = adapter.read_odometry()
+    assert abs(x - 0.77) < 1e-9 and abs(y) < 1e-12 and yaw == 0.0
+
+    _drive(adapter, [0.0, 0.0, 0.1 / 2.85], seconds=1.0)
+    assert abs(adapter.read_odometry()[2] - 0.1) < 1e-9
