@@ -49,7 +49,7 @@ export function toolsExtension(table: AgentToolTable, limiter: OutputLimiter, de
   return defineExtension({
     name: "dimos-tools",
     tools: Object.values(table).flatMap((tool) =>
-      tool === null ? [] : [tool.background === null ? tool.registration : detacher.wrap(tool.registration)],
+      tool === null ? [] : [tool.background === null ? tool.registration : detacher.wrap(tool)],
     ),
     hooks: [
       hook(ToolTask, {

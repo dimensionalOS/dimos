@@ -29,6 +29,8 @@ type TrajectorySenderOptions = {
   readonly runtime: RuntimeClient;
   /** Entries read from the conversation store at once. */
   readonly batch: number;
+  /** The longest wait before publishing again after a failure that leaves the link up, such as a timeout. */
+  readonly maxBackoffMs: number;
   readonly report: (error: unknown) => void;
 };
 
@@ -40,6 +42,8 @@ export class TrajectorySender {
   private context: Context | null = null;
   private readonly unsubscribers: (() => void)[] = [];
   private stopped = false;
+  private failures = 0;
+  private retryTimer: NodeJS.Timeout | null = null;
 
   constructor(options: TrajectorySenderOptions) {
     this.options = options;
@@ -75,17 +79,36 @@ export class TrajectorySender {
     this.stopped = true;
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     await this.draining;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
+  /** An unreachable DimOS is retried when the link comes up; any other failure after a backoff. */
   private async loop(context: Context): Promise<void> {
     while (this.wanted && !this.stopped) {
       this.wanted = false;
       try {
         await this.drain(context);
+        this.failures = 0;
       } catch (error) {
-        if (!(error instanceof DimosUnavailable)) this.options.report(error);
+        if (error instanceof DimosUnavailable) continue;
+        this.options.report(error);
+        this.retryLater();
       }
     }
+  }
+
+  private retryLater(): void {
+    this.failures += 1;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(
+      () => {
+        this.retryTimer = null;
+        this.wake();
+      },
+      Math.min(1_000 * 2 ** this.failures, this.options.maxBackoffMs),
+    );
+    this.retryTimer.unref();
   }
 
   private async drain(context: Context): Promise<void> {

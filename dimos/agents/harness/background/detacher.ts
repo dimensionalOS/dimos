@@ -1,9 +1,11 @@
-import type { Background } from "../../shared/protocol/tools/details.ts";
+import type { AgentTool } from "../tools/base.ts";
+import type { AgentToolName, Background } from "../../shared/protocol/tools/details.ts";
 import type { CallId, Detachable } from "../../shared/protocol/conversation/calls.ts";
 import type { Context } from "@earendil-works/chord/context";
 import type {
   ConversationId,
   Extension,
+  JsonObject,
   Task,
   TaskId,
   ToolDiagnostic,
@@ -14,18 +16,25 @@ import type {
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { InputGate } from "../inputs/gate.ts";
 import type { Live } from "../../shared/protocol/status.ts";
+import type { RenderDetails } from "../../shared/protocol/media.ts";
 import { MovedSchema } from "../../shared/protocol/tools/details.ts";
 import { Status } from "../../shared/protocol/status.ts";
 import { Type } from "typebox";
 import { awaitWithContext, withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import { defineExtension, defineTask } from "@earendil-works/pi-durable";
 import { epochMs } from "../../shared/protocol/time.ts";
+import { renderOf } from "../tools/details.ts";
 
 export type DetachResult = { readonly kind: "detached"; readonly task: TaskId } | { readonly kind: "not_running" };
 
 /** How background work ended, as its notice tells the model. */
 type Ended =
-  | { readonly end: "finished" | "failed"; readonly text: string; readonly images: readonly ImageContent[] }
+  | {
+      readonly end: "finished" | "failed";
+      readonly text: string;
+      readonly images: readonly ImageContent[];
+      readonly render: RenderDetails | null;
+    }
   /** The gateway restarted while the work ran, and the work died with it. */
   | { readonly end: "interrupted" };
 
@@ -75,7 +84,7 @@ export class Detacher {
                 source: { kind: "background", task: runtime.taskId, call, tool, end: ended.end },
                 text: noticeText(tool, call, ended),
                 images: ended.end === "interrupted" ? [] : ended.images,
-                render: null,
+                render: ended.end === "interrupted" ? null : ended.render,
                 whenBusy: "followUp",
               },
               context,
@@ -117,15 +126,16 @@ export class Detacher {
   }
 
   /**
-   * The registration with `execute` wrapped so a running call can move; `toolsExtension` applies it per tool policy. A
-   * moved call's structured output is its background handle, so a declared schema admits that too.
+   * The tool's registration with `execute` wrapped so a running call can move; `toolsExtension` applies it per tool
+   * policy. A moved call's structured output is its background handle, so a declared schema admits that too. Its work's
+   * result goes through the tool's settle step before the notice, as a call that stays does in the afterTool hook.
    */
-  wrap(registration: ToolRegistration): ToolRegistration {
-    const schema = registration.structuredOutputSchema;
+  wrap(tool: AgentTool<AgentToolName>): ToolRegistration {
+    const schema = tool.registration.structuredOutputSchema;
     return {
-      ...registration,
+      ...tool.registration,
       ...(schema === undefined ? {} : { structuredOutputSchema: Type.Union([schema, MovedSchema]) }),
-      execute: (args, api, context) => this.execute(registration, args, api, context),
+      execute: (args, api, context) => this.execute(tool, args, api, context),
     };
   }
 
@@ -135,18 +145,20 @@ export class Detacher {
   }
 
   private async execute(
-    registration: ToolRegistration,
+    tool: AgentTool<AgentToolName>,
     args: unknown,
     api: ToolExecutionApi,
     context: Context,
   ): Promise<ToolExecutionResult> {
+    const { registration, settle } = tool;
     const conversation = api.conversationId;
     const call = api.callId as CallId;
     const own = new AbortController();
     const abortWork = (): void => own.abort();
     context.abortSignal?.addEventListener("abort", abortWork, { once: true });
     const held = new HeldOutput(api);
-    const work = registration.execute(args, held.api, withAbortSignal(own.signal, withoutAbortSignal(context)));
+    const workContext = withAbortSignal(own.signal, withoutAbortSignal(context));
+    const work = registration.execute(args, held.api, workContext);
     let answer: (task: TaskId | null) => void = () => undefined;
     const asked = new Promise<void>((resolve) => {
       this.hold(conversation, call, {
@@ -172,10 +184,15 @@ export class Detacher {
       return work;
     }
     held.move();
-    const ended = work.then(
-      (result) => held.ended(result),
-      (error: unknown) => held.failed(error),
-    );
+    const hookCall = {
+      type: "toolCall" as const,
+      id: api.callId,
+      name: registration.name,
+      arguments: args as JsonObject,
+    };
+    const ended = work
+      .then((result) => (settle === null ? held.final(result) : settle(held.final(result), hookCall, workContext)))
+      .then(endedOf, (error: unknown) => held.failed(error));
     this.adopted.set(api.taskId, { ended, cancel: () => own.abort() });
     try {
       const task = await api.commit(
@@ -272,19 +289,18 @@ class HeldOutput {
     this.moved = true;
   }
 
-  ended(result: ToolExecutionResult): Ended {
-    const content = result.output ?? [{ type: "text", text: this.tail }];
-    const remarks = [...this.diagnostics, ...(result.diagnostics ?? [])].map((diagnostic) => diagnostic.message);
+  /** The result as the Harness gives it to settle: the kept tail when it has no output, the remarks before its own. */
+  final(result: ToolExecutionResult): ToolExecutionResult {
     return {
-      end: result.isError === true ? "failed" : "finished",
-      text: [...content.flatMap((block) => (block.type === "text" ? [block.text] : [])), ...remarks].join("\n"),
-      images: content.flatMap((block) => (block.type === "image" ? [block] : [])),
+      ...result,
+      output: result.output ?? (this.tail === "" ? [] : [{ type: "text", text: this.tail }]),
+      diagnostics: [...this.diagnostics, ...(result.diagnostics ?? [])],
     };
   }
 
   failed(error: unknown): Ended {
     const lines = [this.tail, ...this.diagnostics.map((diagnostic) => diagnostic.message), messageOf(error)];
-    return { end: "failed", text: lines.filter((line) => line !== "").join("\n"), images: [] };
+    return { end: "failed", text: lines.filter((line) => line !== "").join("\n"), images: [], render: null };
   }
 
   /** The tail the call would have kept: at most its window's size when it has one, as the Harness keeps it. */
@@ -297,6 +313,17 @@ class HeldOutput {
       this.truncated = true;
     }
   }
+}
+
+function endedOf(result: ToolExecutionResult): Ended {
+  const content = result.output ?? [];
+  const remarks = (result.diagnostics ?? []).map((diagnostic) => diagnostic.message);
+  return {
+    end: result.isError === true ? "failed" : "finished",
+    text: [...content.flatMap((block) => (block.type === "text" ? [block.text] : [])), ...remarks].join("\n"),
+    images: content.flatMap((block) => (block.type === "image" ? [block] : [])),
+    render: renderOf(result.details),
+  };
 }
 
 function noticeText(tool: string, call: CallId, ended: Ended): string {

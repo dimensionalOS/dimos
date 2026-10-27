@@ -82,7 +82,10 @@ export class RuntimeLoader {
     let stderr = "";
     child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    let settled = false;
     const settle = (error: string | null): void => {
+      if (settled) return;
+      settled = true;
       this.running = null;
       if (this.closed) return;
       if (error === null) this.exited(stdout, reason);
@@ -94,7 +97,8 @@ export class RuntimeLoader {
       }
     };
     child.on("error", (error) => settle(String(error)));
-    child.on("exit", (code, signal) =>
+    // "exit" can come before the last of stdout; "close" also follows an "error" when the spawn fails.
+    child.on("close", (code, signal) =>
       settle(
         code === 0
           ? null
@@ -110,7 +114,7 @@ export class RuntimeLoader {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     const child = this.running;
-    if (child !== null && child.exitCode === null) {
+    if (child !== null && child.exitCode === null && child.signalCode === null) {
       await new Promise<void>((resolve) => {
         child.once("exit", () => resolve());
         child.kill("SIGTERM");

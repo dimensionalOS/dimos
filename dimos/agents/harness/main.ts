@@ -218,7 +218,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
   });
   await intake.start(context);
   loader.start();
-  const trajectory = new TrajectorySender({ harness, connection, runtime, batch: 50, report });
+  const trajectory = new TrajectorySender({ harness, connection, runtime, batch: 50, maxBackoffMs: 60_000, report });
   trajectory.start(context);
   const kicker = new QueueKicker({ harness, inputs, backoffMs: (n) => Math.min(60_000 * 2 ** n, 1_800_000), report });
   kicker.start();
