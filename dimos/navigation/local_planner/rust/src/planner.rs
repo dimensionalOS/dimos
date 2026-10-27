@@ -20,6 +20,8 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
+use crate::geom::arcs_of;
+
 /// Fine distance-field pitch: half the map's voxel.
 const FINE: f64 = 0.04; // VOXEL / 2
 const PAD: f64 = 1.5;
@@ -28,6 +30,8 @@ const CELL: f64 = 0.12; // 3 * FINE
 /// Lattice, fine field and voxel grid are commensurate at this pitch; working
 /// areas snap to it in the world frame, so a far point never moves a sample.
 const PERIOD: f64 = 0.24; // 2 * CELL == 3 * VOXEL == 6 * FINE
+/// Pitch of the refining lattice: one fine sample, the finest commensurate with the field.
+const REFINE_CELL: f64 = FINE;
 /// Free space kept around the working area, in whole periods.
 const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
@@ -42,6 +46,9 @@ const COST_STEP: f64 = FINE;
 
 /// Gait cost (m) a shortcut chord may add over the raw span it replaces.
 const GAIT_SLACK: f64 = 0.05;
+
+/// A plan end this far from the carrot falls short of it (m), past the lattice's snap.
+pub const SHORT_M: f64 = CELL * std::f64::consts::SQRT_2;
 
 /// Cost advantage (m) a fresh route needs before it replaces the incumbent.
 pub const COMMIT_MARGIN: f64 = 3.0;
@@ -522,6 +529,8 @@ struct World {
     pts: Option<PointBuckets>,
     cap: f64,
     pub bounds: (f64, f64, f64, f64),
+    /// Lattice pitch (m), a whole number of FINE samples dividing PERIOD.
+    cell: f64,
     /// Absolute LATTICE index of the working area's low corner, the same way.
     pub kx: i64,
     pub ky: i64,
@@ -548,8 +557,8 @@ impl World {
         if self.price.is_empty() {
             return 1.0;
         }
-        let i = ((x / CELL).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
-        let j = ((y / CELL).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
+        let i = ((x / self.cell).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
+        let j = ((y / self.cell).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
         self.price[i * self.nly + j]
     }
 
@@ -599,6 +608,34 @@ impl World {
     }
 }
 
+/// The lattice a world is searched on and the working area it spans.
+#[derive(Clone, Copy, Debug)]
+struct Lattice {
+    cell: f64,
+    /// Room around the working area (m).
+    pad: f64,
+    /// The working area spans the cloud too, not only the pose and approach.
+    fit_cloud: bool,
+}
+
+impl Lattice {
+    /// The planning lattice, over the whole cloud.
+    const COARSE: Lattice = Lattice {
+        cell: CELL,
+        pad: PAD,
+        fit_cloud: true,
+    };
+
+    /// The refining lattice over a window, padded by window_m.
+    fn refining(window_m: f64) -> Self {
+        Lattice {
+            cell: REFINE_CELL,
+            pad: window_m,
+            fit_cloud: false,
+        }
+    }
+}
+
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
     build_world_explored(
@@ -608,6 +645,7 @@ fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap
         pose,
         &[[goal.0, goal.1]],
         cap,
+        Lattice::COARSE,
     )
 }
 
@@ -619,15 +657,22 @@ fn build_world_explored(
     pose: (f64, f64, f64),
     approach: &[[f64; 2]],
     cap: f64,
+    lattice: Lattice,
 ) -> World {
+    let Lattice {
+        cell,
+        pad,
+        fit_cloud,
+    } = lattice;
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
-    // Working area over {pose, approach, cloud} padded by PAD, low corner snapped
-    // onto the absolute lattice.
+    // Working area over the pose, the approach and maybe the cloud, padded, low corner
+    // snapped onto the absolute lattice.
     let (mut x0, mut y0, mut x1, mut y1) = (pose.0, pose.1, pose.0, pose.1);
+    let cloud: &[(f64, f64)] = if fit_cloud { &band } else { &[] };
     for (x, y) in approach
         .iter()
         .map(|p| (p[0], p[1]))
-        .chain(band.iter().copied())
+        .chain(cloud.iter().copied())
     {
         x0 = x0.min(x);
         y0 = y0.min(y);
@@ -635,11 +680,11 @@ fn build_world_explored(
         y1 = y1.max(y);
     }
     let (px, py) = (
-        ((x0 - PAD) / PERIOD).floor() as i64,
-        ((y0 - PAD) / PERIOD).floor() as i64,
+        ((x0 - pad) / PERIOD).floor() as i64,
+        ((y0 - pad) / PERIOD).floor() as i64,
     );
     let (x0, y0) = (px as f64 * PERIOD, py as f64 * PERIOD);
-    let (x1, y1) = (x1 + PAD, y1 + PAD);
+    let (x1, y1) = (x1 + pad, y1 + pad);
     let (fkx, fky) = ((px - 3) * 6, (py - 3) * 6); // GRID_PAD = 3 PERIODs = 18 fine
     let (fx0, fy0) = (fkx as f64 * FINE, fky as f64 * FINE);
     let nfx = arange_len(fx0, x1 + GRID_PAD, FINE);
@@ -650,9 +695,12 @@ fn build_world_explored(
     } else {
         (vec![-1.0; ncells], Some(PointBuckets::new(&band)))
     };
-    let (kx, ky) = (px * 2, py * 2);
-    let nlx = arange_len(x0, x1 + CELL, CELL);
-    let nly = arange_len(y0, y1 + CELL, CELL);
+    let per = (PERIOD / cell).round() as i64;
+    let (kx, ky) = (px * per, py * per);
+    let nlx = arange_len(x0, x1 + cell, cell);
+    let nly = arange_len(y0, y1 + cell, cell);
+    // The seen-floor dilation keeps the coarse lattice's radius at any pitch.
+    let grow = (CELL / cell).round() as i64;
     let mut price = if terrain.unseen_cost <= 1.0 {
         Vec::new()
     } else {
@@ -660,10 +708,10 @@ fn build_world_explored(
         // ponytail: one-cell dilation so a voxel-sparse floor does not flicker
         // holes into the explored set; a proper coverage estimate if it does.
         for g in terrain.ground {
-            let i = (g[0] / CELL).round_even_i64() - kx;
-            let j = (g[1] / CELL).round_even_i64() - ky;
-            for di in -1..=1 {
-                for dj in -1..=1 {
+            let i = (g[0] / cell).round_even_i64() - kx;
+            let j = (g[1] / cell).round_even_i64() - ky;
+            for di in -grow..=grow {
+                for dj in -grow..=grow {
                     let (a, b) = (i + di, j + dj);
                     if a >= 0 && b >= 0 && a < nlx as i64 && b < nly as i64 {
                         u[a as usize * nly + b as usize] = 1.0;
@@ -675,15 +723,15 @@ fn build_world_explored(
     };
     if !terrain.soft.is_empty() {
         let mut step = vec![1.0f64; nlx * nly];
-        let span = (reach / CELL).ceil() as i64;
+        let span = (reach / cell).ceil() as i64;
         let r2 = reach * reach;
         for &Soft { xy: p, cost } in terrain.soft {
-            let i = (p[0] / CELL).round_even_i64() - kx;
-            let j = (p[1] / CELL).round_even_i64() - ky;
+            let i = (p[0] / cell).round_even_i64() - kx;
+            let j = (p[1] / cell).round_even_i64() - ky;
             for a in (i - span).max(0)..=(i + span).min(nlx as i64 - 1) {
                 for b in (j - span).max(0)..=(j + span).min(nly as i64 - 1) {
-                    let dx = (a + kx) as f64 * CELL - p[0];
-                    let dy = (b + ky) as f64 * CELL - p[1];
+                    let dx = (a + kx) as f64 * cell - p[0];
+                    let dy = (b + ky) as f64 * cell - p[1];
                     let k = a as usize * nly + b as usize;
                     if dx * dx + dy * dy <= r2 && step[k] < 1.0 + cost {
                         step[k] = 1.0 + cost;
@@ -708,6 +756,7 @@ fn build_world_explored(
         pts,
         cap,
         bounds: (x0, y0, x1, y1),
+        cell,
         kx,
         ky,
         nlx,
@@ -974,8 +1023,8 @@ impl<'a> Clear<'a> {
     /// The cell holding `(x, y)`, clamped to the world.
     fn cell_of(&self, x: f64, y: f64) -> (usize, usize) {
         (
-            ((x / CELL).round_even_i64() - self.w.kx).clamp(0, self.nx as i64 - 1) as usize,
-            ((y / CELL).round_even_i64() - self.w.ky).clamp(0, self.ny as i64 - 1) as usize,
+            ((x / self.w.cell).round_even_i64() - self.w.kx).clamp(0, self.nx as i64 - 1) as usize,
+            ((y / self.w.cell).round_even_i64() - self.w.ky).clamp(0, self.ny as i64 - 1) as usize,
         )
     }
 
@@ -1015,7 +1064,7 @@ fn priced_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
         return 0.0;
     }
     let len = (b[0] - a[0]).hypot(b[1] - a[1]);
-    let n = ((len / (0.5 * CELL)).ceil() as usize).max(1);
+    let n = ((len / (0.5 * w.cell)).ceil() as usize).max(1);
     let h = len / n as f64;
     (0..n)
         .filter(|&q| {
@@ -1059,13 +1108,13 @@ fn seg_free(w: &mut World, fps: &Fps, emb: &Emb, a: &[f64; 3], b: &[f64; 3], flo
 /// The lattice the search walks: cell centres from their absolute index.
 fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
     let (x0, y0, x1, y1) = w.bounds;
-    let (kx, ky) = (w.kx, w.ky);
+    let (kx, ky, cell) = (w.kx, w.ky, w.cell);
     (
-        (0..arange_len(x0, x1 + CELL, CELL))
-            .map(|i| (kx + i as i64) as f64 * CELL)
+        (0..arange_len(x0, x1 + cell, cell))
+            .map(|i| (kx + i as i64) as f64 * cell)
             .collect(),
-        (0..arange_len(y0, y1 + CELL, CELL))
-            .map(|j| (ky + j as i64) as f64 * CELL)
+        (0..arange_len(y0, y1 + cell, cell))
+            .map(|j| (ky + j as i64) as f64 * cell)
             .collect(),
     )
 }
@@ -1086,7 +1135,7 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
     for pair in approach.windows(2).rev() {
         let (a, b) = (pair[0], pair[1]);
         let len = (b[0] - a[0]).hypot(b[1] - a[1]);
-        let n = ((len / (0.5 * CELL)).ceil() as usize).max(1);
+        let n = ((len / (0.5 * cl.w.cell)).ceil() as usize).max(1);
         for q in (0..n).rev() {
             let t = q as f64 / n as f64;
             let (x, y) = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
@@ -1111,6 +1160,7 @@ fn se2_search_in(
     let stand_offs = fps.stand().to_vec();
     let (nx, ny) = (cl.nx, cl.ny);
     let thetas = yaw_bins();
+    let cell = cl.w.cell;
 
     let mut sb = 0;
     let mut sbest = f64::INFINITY;
@@ -1198,7 +1248,7 @@ fn se2_search_in(
                 di,
                 dj,
                 dk: di * ny as i64 + dj,
-                base: ((di * di + dj * dj) as f64).sqrt() * CELL,
+                base: ((di * di + dj * dj) as f64).sqrt() * cell,
                 mids,
             });
         }
@@ -1233,7 +1283,7 @@ fn se2_search_in(
         .iter()
         .map(|r| r[1].min(r[2]))
         .fold(emb.length.min(emb.width), f64::min);
-    let dense_moves = thinnest < CELL * std::f64::consts::SQRT_2;
+    let dense_moves = thinnest < cell * std::f64::consts::SQRT_2;
 
     // Heuristic: exact shortest path to the goal through a relaxed free space
     // (a disc of radius `r_in` fits, priced by an upper bound on clearance),
@@ -1334,7 +1384,7 @@ fn se2_search_in(
         }
         let di = i as f64 - gi as f64;
         let dj = j as f64 - gj as f64;
-        (CELL * (di * di + dj * dj).sqrt()).max(tfin)
+        (cell * (di * di + dj * dj).sqrt()).max(tfin)
     };
 
     let n_states = YAW_BINS * nx * ny;
@@ -1514,7 +1564,7 @@ fn se2_search_in(
         gait[m] = gait[m - 1] + motion_cost(emb, &raw[m - 1], &raw[m]);
     }
     let chord_priced = |w: &World, j: usize, k: usize| -> bool {
-        priced_len(w, &raw[j], &raw[k]) <= priced[k] - priced[j] + CELL
+        priced_len(w, &raw[j], &raw[k]) <= priced[k] - priced[j] + w.cell
             && motion_cost(emb, &raw[j], &raw[k]) <= gait[k] - gait[j] + GAIT_SLACK
     };
     let mut keep = vec![raw.len() - 1];
@@ -1850,7 +1900,255 @@ pub fn plan(
         resolution,
         incumbent,
         commit_margin,
+        &Refine::default(),
     )
+}
+
+/// Where the coarse lattice hands a tight spot to the refining one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Refine {
+    /// Arc of approach searched finely on each side of the tight spot, and the room
+    /// around it. Zero turns refinement off.
+    pub window_m: f64,
+    /// A coarse route farther than this from the approach counts as a detour.
+    pub detour_m: f64,
+}
+
+/// Distance from `p` to the `approach` polyline, and the arc length to its nearest point.
+fn nearest(approach: &[[f64; 2]], p: (f64, f64)) -> (f64, f64) {
+    let mut best = ((p.0 - approach[0][0]).hypot(p.1 - approach[0][1]), 0.0);
+    let mut s = 0.0;
+    for w in approach.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
+        let l2 = vx * vx + vy * vy;
+        let t = if l2 > 1e-12 {
+            (((p.0 - a[0]) * vx + (p.1 - a[1]) * vy) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let d = (p.0 - a[0] - t * vx).hypot(p.1 - a[1] - t * vy);
+        if d < best.0 {
+            best = (d, s + t * l2.sqrt());
+        }
+        s += l2.sqrt();
+    }
+    best
+}
+
+/// Farthest any state of `states` sits from the `approach` polyline.
+fn stray(states: &[[f64; 3]], approach: &[[f64; 2]]) -> f64 {
+    states
+        .iter()
+        .map(|s| nearest(approach, (s[0], s[1])).0)
+        .fold(0.0, f64::max)
+}
+
+/// `approach` sampled every `step` of arc, each sample with its arc length.
+fn arc_samples(approach: &[[f64; 2]], step: f64) -> Vec<(f64, [f64; 2])> {
+    let mut out = vec![(0.0, approach[0])];
+    let mut s = 0.0;
+    for p in approach.windows(2) {
+        let (a, b) = (p[0], p[1]);
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let n = ((len / step).ceil() as usize).max(1);
+        for q in 1..=n {
+            let t = q as f64 / n as f64;
+            out.push((
+                s + t * len,
+                [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])],
+            ));
+        }
+        s += len;
+    }
+    out
+}
+
+/// A refined route and the goal it reaches.
+struct Splice {
+    route: Vec<[f64; 3]>,
+    end: (f64, f64),
+}
+
+/// The stretch of approach around its first tight spot, by arc length.
+struct Window {
+    tight: f64,
+    s_in: f64,
+    s_out: f64,
+    points: Vec<[f64; 2]>,
+}
+
+/// The `samples` within `window_m` of the first one the walking body does not fit.
+fn tight_window(
+    cl: &mut Clear,
+    fps: &Fps,
+    emb: &Emb,
+    samples: &[(f64, [f64; 2])],
+    margin: f64,
+    window_m: f64,
+) -> Option<Window> {
+    let walk = fps.id(emb, Some(0.0));
+    let total = samples.last()?.0;
+    let tight = samples
+        .iter()
+        .find(|(_, p)| {
+            let (i, j) = cl.cell_of(p[0], p[1]);
+            !(0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
+        })?
+        .0;
+    let (s_in, s_out) = ((tight - window_m).max(0.0), (tight + window_m).min(total));
+    let points = samples
+        .iter()
+        .filter(|(s, _)| (s_in..=s_out).contains(s))
+        .map(|(_, p)| *p)
+        .collect();
+    Some(Window {
+        tight,
+        s_in,
+        s_out,
+        points,
+    })
+}
+
+/// Where the refining lattice gets through `window` from `start`, and its route there.
+#[allow(clippy::too_many_arguments)]
+fn fine_leg(
+    fps: &Fps,
+    emb: &Emb,
+    points: &[[f64; 2]],
+    terrain: &Terrain,
+    start: (f64, f64, f64),
+    window: &[[f64; 2]],
+    cap: f64,
+    margin: f64,
+    window_m: f64,
+) -> Option<Splice> {
+    // The fine lattice spans the window padded by window_m. The points cover it out to the
+    // field's cap, so nothing inside reads as empty floor.
+    let room = window_m + cap + GRID_PAD;
+    let (mut x0, mut y0, mut x1, mut y1) = (start.0, start.1, start.0, start.1);
+    for p in window {
+        x0 = x0.min(p[0]);
+        y0 = y0.min(p[1]);
+        x1 = x1.max(p[0]);
+        y1 = y1.max(p[1]);
+    }
+    let near: Vec<[f64; 2]> = points
+        .iter()
+        .copied()
+        .filter(|p| {
+            p[0] >= x0 - room && p[0] <= x1 + room && p[1] >= y0 - room && p[1] <= y1 + room
+        })
+        .collect();
+    let mut fw = build_world_explored(
+        &near,
+        terrain,
+        step_reach(emb),
+        start,
+        window,
+        cap,
+        Lattice::refining(window_m),
+    );
+    let (gx, gy) = lattice_axes(&fw);
+    let mut fcl = Clear::new(&mut fw, fps, margin, gx, gy, emb.governor());
+    let exit = pull_back(&mut fcl, fps, emb, window)?;
+    let route = se2_search_in(&mut fcl, fps, start, exit, emb, margin)?;
+    Some(Splice { route, end: exit })
+}
+
+/// Appends `leg` past its head to `route` when the segment joining them is free.
+fn join(cl: &mut Clear, fps: &Fps, emb: &Emb, route: &mut Vec<[f64; 3]>, leg: &[[f64; 3]]) -> bool {
+    let (Some(&from), Some(to)) = (route.last(), leg.get(1)) else {
+        return true;
+    };
+    if !seg_free(cl.w, fps, emb, &from, to, 0.0) {
+        return false;
+    }
+    route.extend_from_slice(&leg[1..]);
+    true
+}
+
+/// The fine leg saw only the window's points, so every state after the robot's is
+/// checked on the full world for a wall the window missed.
+fn clear_on_full_world(cl: &mut Clear, fps: &Fps, route: &[[f64; 3]]) -> bool {
+    let gap = OFFSET_STEP * std::f64::consts::FRAC_1_SQRT_2;
+    let stand = fps.stand().to_vec();
+    route
+        .iter()
+        .skip(1)
+        .all(|s| pose_clear(cl.w, &stand, s[0], s[1], s[2]) > gap)
+}
+
+/// The coarse route with its tight-spot window re-searched on the refining lattice.
+#[allow(clippy::too_many_arguments)]
+fn refined(
+    cl: &mut Clear,
+    fps: &Fps,
+    emb: &Emb,
+    points: &[[f64; 2]],
+    terrain: &Terrain,
+    pose: (f64, f64, f64),
+    approach: &[[f64; 2]],
+    cap: f64,
+    margin: f64,
+    refine: &Refine,
+) -> Option<Splice> {
+    let samples = arc_samples(approach, 0.5 * CELL);
+    let total = samples.last()?.0;
+    let window = tight_window(cl, fps, emb, &samples, margin, refine.window_m)?;
+    let entry = *window.points.first()?;
+    let lead = if window.s_in > 0.0 {
+        se2_search_in(cl, fps, pose, (entry[0], entry[1]), emb, margin)?
+    } else {
+        vec![[pose.0, pose.1, pose.2]]
+    };
+    let start = {
+        let e = lead.last()?;
+        (e[0], e[1], e[2])
+    };
+    let Splice {
+        route: mid,
+        end: exit,
+    } = fine_leg(
+        fps,
+        emb,
+        points,
+        terrain,
+        start,
+        &window.points,
+        cap,
+        margin,
+        refine.window_m,
+    )?;
+    let past = samples
+        .iter()
+        .min_by(|a, b| {
+            let d = |p: [f64; 2]| (p[0] - exit.0).hypot(p[1] - exit.1);
+            d(a.1).total_cmp(&d(b.1))
+        })?
+        .0;
+    if past <= window.tight {
+        return None;
+    }
+    let mut route = lead;
+    if !join(cl, fps, emb, &mut route, &mid) {
+        return None;
+    }
+    let mut end = exit;
+    if window.s_out < total {
+        let tail: Vec<[f64; 2]> = samples
+            .iter()
+            .filter(|(s, _)| *s >= window.s_out)
+            .map(|(_, p)| *p)
+            .collect();
+        let goal = pull_back(cl, fps, emb, &tail)?;
+        let from = *route.last()?;
+        let rest = se2_search_in(cl, fps, (from[0], from[1], from[2]), goal, emb, margin);
+        if rest.is_some_and(|r| join(cl, fps, emb, &mut route, &r)) {
+            end = goal;
+        }
+    }
+    clear_on_full_world(cl, fps, &route).then_some(Splice { route, end })
 }
 
 /// A soft point as the search takes it.
@@ -1891,20 +2189,53 @@ pub fn plan_explored(
     resolution: f64,
     incumbent: Option<&[[f64; 3]]>,
     commit_margin: f64,
+    refine: &Refine,
 ) -> Option<Vec<[f64; 3]>> {
     let fps = Fps::new(emb);
     let offs = fps.union().to_vec();
     let reach = reach_of(&offs);
     // Covers the certificate (`speed_clearance`) and the smoothing floor (`comfort`).
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world_explored(points, terrain, step_reach(emb), pose, approach, cap);
+    let mut w = build_world_explored(
+        points,
+        terrain,
+        step_reach(emb),
+        pose,
+        approach,
+        cap,
+        Lattice::COARSE,
+    );
     let margin = emb.precision;
     // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
-        let goal = pull_back(&mut cl, &fps, emb, approach)?;
-        let fresh = se2_search_in(&mut cl, &fps, pose, goal, emb, margin);
+        let mut goal = pull_back(&mut cl, &fps, emb, approach)?;
+        let mut fresh = se2_search_in(&mut cl, &fps, pose, goal, emb, margin);
+        // A refusal, a carrot pulled short or a long detour may be a gap the coarse
+        // lattice cannot land in. The refining lattice gets one look at it.
+        let carrot = *approach.last()?;
+        let short = (goal.0 - carrot[0]).hypot(goal.1 - carrot[1]) > SHORT_M;
+        let strays = fresh
+            .as_ref()
+            .is_some_and(|f| stray(f, approach) > refine.detour_m);
+        if refine.window_m > 0.0 && (fresh.is_none() || short || strays) {
+            let arc = |r: &[[f64; 3]]| arcs_of(r).last().copied().unwrap_or(0.0);
+            if let Some(Splice { route, end }) = refined(
+                &mut cl, &fps, emb, points, terrain, pose, approach, cap, margin, refine,
+            ) {
+                // A refined route that stops before the coarse one is never taken. One that
+                // gets as far replaces a detour only by being shorter.
+                let (got, was) = (nearest(approach, end).1, nearest(approach, goal).1);
+                let take = fresh.as_ref().is_none_or(|f| {
+                    got > was + SHORT_M || (got >= was - SHORT_M && (short || arc(&route) < arc(f)))
+                });
+                if take {
+                    fresh = Some(route);
+                    goal = end;
+                }
+            }
+        }
         let held = match incumbent {
             None => None,
             Some(inc) => committed(&mut cl, &fps, emb, inc, pose, goal, margin),
@@ -1975,6 +2306,7 @@ mod tests {
                 0.1,
                 None,
                 COMMIT_MARGIN,
+                &Refine::default(),
             )
             .expect("open world routes");
             p.iter().map(|s| s[1]).fold(0.0f64, f64::max)
@@ -1995,7 +2327,8 @@ mod tests {
             &emb,
             0.1,
             None,
-            COMMIT_MARGIN
+            COMMIT_MARGIN,
+            &Refine::default()
         )
         .is_some());
     }
@@ -2032,6 +2365,7 @@ mod tests {
                 0.1,
                 None,
                 COMMIT_MARGIN,
+                &Refine::default(),
             )
             .expect("routes")
         };
@@ -2322,6 +2656,7 @@ mod tests {
             0.1,
             None,
             COMMIT_MARGIN,
+            &Refine::default(),
         )
     }
 
@@ -2706,5 +3041,134 @@ mod tests {
             }
         }
         assert!(noff > 0);
+    }
+
+    #[test]
+    fn a_refined_dead_end_never_replaces_a_complete_detour() {
+        let emb = Emb {
+            length: 0.542,
+            width: 0.534,
+            center_off: 0.0,
+            envelope: Vec::new(),
+            arc_inflate: 0.0,
+            ..Emb::fixture()
+        };
+        let refine = Refine {
+            window_m: 0.75,
+            detour_m: 1.5,
+        };
+        for (off, door) in [(0.03, 0.68), (0.06, 0.68), (0.06, 0.70), (0.06, 0.72)] {
+            let mut pts = Vec::new();
+            let mut y: f64 = -3.0;
+            while y <= 3.0 {
+                if (y - off).abs() > door / 2.0 {
+                    for x in [2.0, 2.05, 2.1] {
+                        pts.push([x, y]);
+                    }
+                }
+                y += 0.02;
+            }
+            let mut x: f64 = 2.1;
+            while x <= 4.0 {
+                pts.push([x, off + 0.8]);
+                pts.push([x, off - 0.8]);
+                x += 0.02;
+            }
+            let mut y = off - 0.8;
+            while y <= off + 0.8 {
+                pts.push([4.0, y]);
+                y += 0.02;
+            }
+            let path = plan_explored(
+                &pts,
+                &Terrain::default(),
+                (0.0, off, 0.0),
+                &[[0.0, off], [6.0, off]],
+                &emb,
+                0.1,
+                None,
+                COMMIT_MARGIN,
+                &refine,
+            )
+            .expect("a route around the wall");
+            let end = path.last().unwrap();
+            assert!(
+                (end[0] - 6.0).hypot(end[1] - off) < 0.3,
+                "the route stopped at {end:?} behind a {door} m door"
+            );
+        }
+    }
+
+    /// Doors the body fits but the coarse lattice lands no pose in are passed when refining.
+    /// A door narrower than the body plus its margin stays closed.
+    #[test]
+    fn refining_passes_doors_the_coarse_lattice_misses() {
+        let emb = Emb {
+            length: 0.542,
+            width: 0.534,
+            center_off: 0.0,
+            envelope: Vec::new(),
+            arc_inflate: 0.0,
+            ..Emb::fixture()
+        };
+        let refine = Refine {
+            window_m: 0.75,
+            detour_m: 1.5,
+        };
+        let through = |door: f64, ang: f64, off: f64, refine: &Refine| -> bool {
+            let (s, c) = ang.to_radians().sin_cos();
+            let rot = |x: f64, y: f64| [c * x - s * y, s * x + c * y];
+            let mut pts = Vec::new();
+            let mut y = -8.0;
+            while y <= 8.0 {
+                if (y - off).abs() > door / 2.0 {
+                    for x in [2.0, 2.05, 2.1] {
+                        pts.push(rot(x, y));
+                    }
+                }
+                y += 0.02;
+            }
+            let (a, b) = (rot(0.0, off), rot(4.0, off));
+            let Some(path) = plan_explored(
+                &pts,
+                &Terrain::default(),
+                (a[0], a[1], ang.to_radians()),
+                &[a, b],
+                &emb,
+                0.1,
+                None,
+                COMMIT_MARGIN,
+                refine,
+            ) else {
+                return false;
+            };
+            let end = path.last().unwrap();
+            let in_door = path.iter().all(|p| {
+                let (lx, ly) = (c * p[0] + s * p[1], -s * p[0] + c * p[1]);
+                !(1.9..=2.2).contains(&lx) || (ly - off).abs() < door / 2.0
+            });
+            in_door && (end[0] - b[0]).hypot(end[1] - b[1]) < 0.3
+        };
+        let mut coarse = 0;
+        let mut fine = 0;
+        for ang in [0.0, 5.0, 10.0, 15.0, 22.5, 30.0, 37.0] {
+            for off in [0.0, 0.03, 0.06] {
+                let (c, f) = (
+                    through(0.72, ang, off, &Refine::default()),
+                    through(0.72, ang, off, &refine),
+                );
+                assert!(f || !c, "refining lost the door at {ang} deg, offset {off}");
+                coarse += c as usize;
+                fine += f as usize;
+                assert!(
+                    !through(0.60, ang, off, &refine),
+                    "a 0.60 m door passed at {ang} deg"
+                );
+            }
+        }
+        assert!(
+            fine > coarse,
+            "refining passed {fine} doors, the coarse lattice {coarse}"
+        );
     }
 }

@@ -90,12 +90,13 @@ def _alfred_rerun_config() -> dict[str, Any]:
         # so the viewer keeps up over wifi.
         "max_hz": {
             "world/tf": 1.0,
-            "world/lidar": 1.0,
             "world/global_map": 1.0,
             "world/local_map": 1.0,
             "world/nodes": 1.0,
         },
         "visual_override": {
+            "world/lidar": None,
+            "world/lidar_raw": None,
             "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
             **motion_visual_override(embodiment=ALFRED),
             # The planner publishes its surface and edges by cell.
