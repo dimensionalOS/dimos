@@ -24,10 +24,10 @@ import pytest
 from dimos.memory.embed import EmbedImages
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import QualityWindow
+from dimos.message_utils import image as image_utils
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data_dir
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
@@ -102,7 +102,7 @@ class TestImportReplay:
         video_replay: LegacyPickleStore[Any],
     ) -> None:
         threshold = video_replay.first_timestamp()
-        with session.stream("odom", Odometry) as odom:
+        with session.stream("odom", PoseStamped) as odom:
             count = 0
             skipped = 0
             for ts, data in odom_index:
@@ -173,9 +173,9 @@ class TestEmbed:
 
         # Downsample to 2Hz, then embed
         pipeline = (
-            video.filter(lambda obs: obs.data.brightness > 0.1)
+            video.filter(lambda obs: image_utils.brightness(obs.data) > 0.1)
             .tap(print)
-            .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+            .transform(QualityWindow(lambda img: image_utils.sharpness(img), window=0.5))
             .transform(EmbedImages(clip))
             .save(embedded)
         )

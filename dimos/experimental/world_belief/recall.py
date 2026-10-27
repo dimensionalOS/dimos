@@ -24,7 +24,8 @@ import re
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory.embed import EmbedImages
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -86,14 +87,14 @@ def build_frame_clip_index(
             if bucket in indexed_buckets:
                 continue
             indexed_buckets.add(bucket)
-            yield max(observations, key=lambda obs: obs.data.sharpness)
+            yield max(observations, key=lambda obs: image_utils.sharpness(obs.data))
 
     pipeline = (
         # Skip pose-less frames — they can't answer "where" (world-frame frames need no pose).
         src_stream.filter(
-            lambda obs: obs.pose is not None or (obs.data.frame_id or "") in ("", "world")
+            lambda obs: obs.pose is not None or (obs.data.header.frame_id or "") in ("", "world")
         )
-        .filter(lambda obs: obs.data.brightness > 0.1)
+        .filter(lambda obs: image_utils.brightness(obs.data) > 0.1)
         .transform(best_in_new_buckets)
         .transform(EmbedImages(model))
     )

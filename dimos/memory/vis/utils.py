@@ -21,7 +21,8 @@ from typing import Any
 import numpy as np
 
 from dimos.memory.type.observation import EmbeddedObservation, Observation
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -74,8 +75,8 @@ def mosaic(
     canvas = np.zeros((rows * cell_height, cols * cell_w, 3), dtype=np.uint8)
     for i, img in enumerate(images):
         r, c = divmod(i, cols)
-        tile = cv2.resize(img.to_bgr().data, (cell_w, cell_height))
+        tile = cv2.resize(image_utils.to_bgr(img), (cell_w, cell_height))
         canvas[r * cell_height : (r + 1) * cell_height, c * cell_w : (c + 1) * cell_w] = tile
 
-    result = Image(data=canvas, format=ImageFormat.BGR)
+    result = image_utils.from_array(canvas, encoding="bgr8")
     return Observation(id=0, ts=0.0, data_type=Image, _data=result, tags={"mosaic": True})

@@ -23,9 +23,10 @@ from dimos.memory.module import MemoryModule, MemoryModuleConfig
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.memory.type.observation import EmbeddedObservation, Observation
+from dimos.message_utils import image as image_utils
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.embedding.base import EmbeddingModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 class SemanticSearchConfig(MemoryModuleConfig):
@@ -55,8 +56,8 @@ class SemanticSearch(MemoryModule):
         # fmt: off
         self.store.streams.color_image \
            .live() \
-           .filter(lambda obs: obs.data.brightness > 0.1) \
-           .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+           .filter(lambda obs: image_utils.brightness(obs.data) > 0.1) \
+           .transform(QualityWindow(lambda img: image_utils.sharpness(img), window=0.5)) \
            .transform(EmbedImages(self.model, batch_size=2)) \
            .save(self.embeddings) \
            .drain_thread()

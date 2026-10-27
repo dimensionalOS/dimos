@@ -90,7 +90,7 @@ def test_recording_export_contains_only_selected_data(dataset: str, tmp_path: Pa
 
     with SqliteStore(path=str(exported), must_exist=True) as copy:
         assert copy.list_streams() == ["odom"]
-        assert [(obs.ts, obs.data.position.x) for obs in copy.streams.odom] == [
+        assert [(obs.ts, obs.data.pose.position.x) for obs in copy.streams.odom] == [
             (1000.0, 0.0),
             (1001.0, 1.0),
         ]

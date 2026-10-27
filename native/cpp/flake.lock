@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "dimos-source": {
+      "flake": false,
+      "locked": {
+        "path": "../..",
+        "type": "path"
+      },
+      "original": {
+        "path": "../..",
+        "type": "path"
+      },
+      "parent": []
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -91,6 +103,7 @@
     },
     "root": {
       "inputs": {
+        "dimos-source": "dimos-source",
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",
         "nix-filter": "nix-filter",

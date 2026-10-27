@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import image as image_utils, pointcloud as pointcloud_utils
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -48,10 +48,14 @@ def plain_recording(streams: Sequence[Stream[Any, Any]], directory: Path) -> Pat
             record: dict[str, Any] = {
                 "stream": stream.name,
                 "timestamp": obs.ts,
-                "frame_id": getattr(data, "frame_id", None),
+                "frame_id": data.header.frame_id
+                if isinstance(data, (Image, PointCloud2))
+                else None,
             }
             if isinstance(data, PointCloud2):
-                points, colors = data.as_numpy()
+                points = pointcloud_utils.xyz(data)
+                colors_rgb = pointcloud_utils.rgb(data)
+                colors = None if colors_rgb is None else colors_rgb.astype(np.float64) / 255.0
                 values = points if colors is None else np.column_stack((points, colors))
                 path = directory / f"{stem}.csv"
                 np.savetxt(
@@ -65,7 +69,7 @@ def plain_recording(streams: Sequence[Stream[Any, Any]], directory: Path) -> Pat
                 record["format"] = "XYZ in source coordinates; optional RGB in [0,1]"
             elif isinstance(data, Image):
                 path = directory / f"{stem}.png"
-                PILImage.fromarray(data.to_rgb().data).save(path)
+                PILImage.fromarray(image_utils.to_rgb(data)).save(path)
                 record["format"] = "RGB PNG"
             elif data is None or isinstance(data, (bool, int, float, str, list, dict)):
                 path = directory / f"{stem}.json"

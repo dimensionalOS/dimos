@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import time
 from typing import Any
 
@@ -23,11 +24,15 @@ from dimos.agents.skills.visual_servoing.query import get_object_bbox_from_image
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+)
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.qwen.bbox import BBox
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
@@ -96,8 +101,8 @@ class NavigationSkillContainer(Module):
         if not self._latest_odom:
             return "No odometry data received yet, cannot tag location."
 
-        position = self._latest_odom.position
-        rotation = self._latest_odom.orientation
+        position = self._latest_odom.pose.position
+        rotation = self._latest_odom.pose.orientation
 
         location = RobotLocation(
             name=location_name,
@@ -158,16 +163,18 @@ class NavigationSkillContainer(Module):
 
         logger.info("Found tagged location", location=robot_location)
         goal_pose = PoseStamped(
-            position=make_vector3(*robot_location.position),
-            orientation=Quaternion.from_euler(Vector3(*robot_location.rotation)),
-            frame_id="map",
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="map"),
+            pose=Pose(
+                position=Point(*robot_location.position),
+                orientation=geometry.quaternion_from_euler(*robot_location.rotation),
+            ),
         )
 
         return self._navigate_to(goal_pose, f"Found a tagged location called '{query}'.")
 
     def _navigate_to(self, pose: PoseStamped, message: str) -> str:
         logger.info(
-            f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+            f"Navigating to pose: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f}, {pose.pose.position.z:.2f})"
         )
         self._navigation.set_goal(pose)
 
@@ -281,7 +288,9 @@ class NavigationSkillContainer(Module):
         theta = first.get("rot_z", 0)
 
         return PoseStamped(
-            position=make_vector3(pos_x, pos_y, 0),
-            orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
-            frame_id="map",
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="map"),
+            pose=Pose(
+                position=Point(pos_x, pos_y, 0),
+                orientation=geometry.quaternion_from_euler(0, 0, theta),
+            ),
         )

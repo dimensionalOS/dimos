@@ -1,5 +1,5 @@
 {
-  description = "depth2depth_cloud native module for DimOS: the depth2depth crate behind an LCM wrapper";
+  description = "depth2depth_cloud native module for DimOS: the depth2depth crate with CDR messages over the selected transport";
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
@@ -32,7 +32,34 @@
         cudaPackages = if system == "aarch64-linux" then pkgs.cudaPackages_12_6 else pkgs.cudaPackages_12_8;
 
         name = "dimos-depth2depth-cloud";
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sharedArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/a9365487b4323151ea85041c6a944b509c0c3268";
+          sha256 = "e339487dd2281980fcde7ab03c46dfd2e274491e0f73e66d9c6cbcaeea8902b2";
+        };
+        sharedSource = pkgs.runCommand "dimos-depth-cloud-sdk-source" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sharedArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${sharedSource}/native/message-source.nix" { inherit pkgs; }).source;
+        # Cargo resolves only these explicit local paths. No checkout or generation
+        # process is needed at runtime; the message derivation is shared with pip.
+        src = pkgs.runCommand "depth-cloud-cdr-source" { } ''
+          cp -r ${moduleSource} $out
+          chmod -R u+w $out
+          mkdir -p $out/sdk
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-module/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
+          substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          substituteInPlace $out/Cargo.toml \
+            --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../build/message-source/rust' 'messages'
+        '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];

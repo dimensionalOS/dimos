@@ -35,7 +35,9 @@ from typing import Any
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.perception.localize.module import PerceptionLocalize
+from dimos.visualization.rerun.cdr import camera_pinhole
 from dimos.visualization.vis_module import vis_module
 
 OPTICAL_FRAME = "camera_color_optical_frame"
@@ -62,8 +64,8 @@ def _rerun_blueprint() -> Any:
     )
 
 
-def _convert_camera_info(camera_info: Any) -> Any:
-    return camera_info.to_rerun(image_topic="/world/color_image", optical_frame=OPTICAL_FRAME)
+def _convert_camera_info(camera_info: CameraInfo) -> Any:
+    return [("/world/color_image", camera_pinhole(camera_info, OPTICAL_FRAME))]
 
 
 rerun_config: dict[str, Any] = {

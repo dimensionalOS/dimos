@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from collections.abc import Iterator
 import threading
 import time
@@ -22,7 +23,10 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 @pytest.fixture
@@ -40,7 +44,9 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ObserveSkill]:
 
 
 def test_observe_returns_published_frame(module: ObserveSkill) -> None:
-    frame = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0)
+    frame = image.from_array(
+        np.zeros((8, 8, 3), dtype=np.uint8), encoding="rgb8", header=Header(Time(1, 0), "")
+    )
     stop = threading.Event()
 
     # get_next subscribes lazily, so keep publishing until observe picks a frame up.
@@ -58,7 +64,7 @@ def test_observe_returns_published_frame(module: ObserveSkill) -> None:
         thread.join()
 
     assert isinstance(result, Image)
-    assert result.data.shape[:2] == (8, 8)
+    assert image.view(result).shape[:2] == (8, 8)
 
 
 def test_observe_without_frames_raises(

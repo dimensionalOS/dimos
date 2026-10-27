@@ -14,13 +14,17 @@
 
 from __future__ import annotations  # noqa: I001
 
+
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import numpy as np
-from dimos_lcm.std_msgs import String, Bool
+from dimos.messages.std_msgs.msg import String, Bool, Header
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.message_utils import image as image_utils
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -33,11 +37,11 @@ from dimos.core.stream import In, Out
 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
@@ -256,7 +260,7 @@ class SecurityModule(Module):
                 case "FOLLOWING":
                     self._follow_step()
 
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)))
         self._transition_to("IDLE")
 
     def _patrol_step(self) -> None:
@@ -301,11 +305,17 @@ class SecurityModule(Module):
             area=f"{best.bbox_2d_volume():.0f}px",
         )
 
-        annotated = image.data.copy()
+        annotated = image_utils.view(image).copy()
         best.draw_on(annotated)
         if isinstance(best, Detection2DPerson):
             _draw_skeleton(annotated, best)
-        self.detection.publish(Image.from_numpy(annotated, format=image.format))
+        self.detection.publish(
+            image_utils.from_array(
+                annotated,
+                encoding=image.encoding,
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            )
+        )
 
         # Init EdgeTAM with YOLO bbox for continuous tracking
         box = np.array(list(best.bbox), dtype=np.float32)
@@ -330,7 +340,9 @@ class SecurityModule(Module):
         detections = self._tracker.process_image(latest_image)
 
         if len(detections) == 0:
-            self.cmd_vel.publish(Twist.zero())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+            )
             self._speak_skill.speak("Lost sight of intruder, resuming patrol", blocking=False)
             self._router.reset()
             self._has_active_goal = False
@@ -341,7 +353,7 @@ class SecurityModule(Module):
         twist = self._visual_servo.compute_twist(best.bbox, latest_image.width)
         self.cmd_vel.publish(twist)
 
-        overlay = latest_image.data.copy()
+        overlay = image_utils.view(latest_image).copy()
         if hasattr(best, "mask") and best.mask is not None:
             mask_bool = best.mask > 0
             green = np.zeros_like(overlay)
@@ -359,7 +371,11 @@ class SecurityModule(Module):
             _draw_skeleton(overlay, person)
 
         self.tracking_image.publish(
-            Image.from_numpy(overlay, format=latest_image.format, ts=latest_image.ts)
+            image_utils.from_array(
+                overlay,
+                encoding=latest_image.encoding,
+                header=Header(stamp=latest_image.header.stamp, frame_id=""),
+            )
         )
 
         time.sleep(1.0 / self.config.follow_frequency)

@@ -38,6 +38,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
+from dimos.message_utils.agent import content_blocks
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
@@ -222,6 +223,11 @@ async def _handle_tools_call(
 
     duration = f"{time.monotonic() - t0:.3f}s"
     response = str(result)[:200]
+
+    blocks = content_blocks(result)
+    if blocks is not None:
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
+        return _jsonrpc_result(req_id, {"content": blocks})
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)

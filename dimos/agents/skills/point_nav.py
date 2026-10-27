@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import asyncio
 from collections.abc import AsyncIterator
 import math
-
-from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos.messages.std_msgs.msg import Bool
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 class PointNavSkillContainerConfig(ModuleConfig):
@@ -92,19 +92,21 @@ class PointNavSkillContainer(Module):
         # TODO: fix this in the planner. It drops a goal the robot is already within its
         # goal_tolerance of without publishing anything, so no goal_reached would ever end this
         # go_to. Until the planner announces such a goal, repeat its check here.
-        distance = math.dist((x, y), (pose.x, pose.y))
+        distance = math.dist((x, y), (pose.pose.position.x, pose.pose.position.y))
         if distance < self.config.arrival_radius_m:
             self.stop_tool("go_to")
             return (
-                f"Already there: robot at ({pose.x:.2f}, {pose.y:.2f}), "
+                f"Already there: robot at ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f}), "
                 f"{distance:.2f} m from the target."
             )
 
         # One x, y can have walkable surfaces at several heights, e.g. downstairs and upstairs.
         # The planner picks the one nearest the goal's z, so send the height of the floor under
         # the robot.
-        floor_z = pose.z - self.config.base_height_m
-        self.goal.publish(PointStamped(x, y, floor_z, frame_id=self.config.world_frame))
+        floor_z = pose.pose.position.z - self.config.base_height_m
+        self.goal.publish(
+            PointStamped(message_time.header_now(self.config.world_frame), Point(x, y, floor_z))
+        )
         self._target = (x, y)
         self._timeout = asyncio.get_running_loop().call_later(
             timeout_s, self._finish, f"Gave up after {timeout_s:g}s"
@@ -118,7 +120,10 @@ class PointNavSkillContainer(Module):
         self._timeout = None
         # A NaN goal cancels the planner's goal
         self.goal.publish(
-            PointStamped(math.nan, math.nan, math.nan, frame_id=self.config.world_frame)
+            PointStamped(
+                message_time.header_now(self.config.world_frame),
+                Point(math.nan, math.nan, math.nan),
+            )
         )
         # Tell the BasicPathFollower to stop
         self.stop_movement.publish(Bool(True))
@@ -126,8 +131,8 @@ class PointNavSkillContainer(Module):
         if pose is None:
             where = "robot position unknown"
         else:
-            distance = math.dist(self._target, (pose.x, pose.y))
-            where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
+            distance = math.dist(self._target, (pose.pose.position.x, pose.pose.position.y))
+            where = f"robot at ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f}), {distance:.2f} m from the target"
         self.tool_update("go_to", f"{outcome}; {where}.")
         self.stop_tool("go_to")
 

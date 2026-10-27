@@ -14,10 +14,9 @@
 
 """Scoring helpers: plain functions over typed values, graded credit in one line.
 
-Scores are floats in ``[0, 1]``. Msg types support arithmetic, so physical
-scorers stay one-liners::
+Scores are floats in ``[0, 1]``. Geometry utilities keep physical scorers concise::
 
-    lambda s: ramp((GOAL - s.streams.odom.last().data.position).length(), band=0.5)
+    lambda s: ramp(point_distance(GOAL, s.streams.odom.last().data.pose.position), band=0.5)
 
 LLM-based scoring wraps ``openevals`` — a function library (nothing to
 subclass): factories return evaluators called with
@@ -31,9 +30,11 @@ import math
 from typing import TypeVar
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.types import Outcome, recording
+from dimos.message_utils.geometry import quaternion_array, vector_array
 
 T = TypeVar("T")
 
@@ -160,11 +161,11 @@ def lifted(body: str, *, by_m: float) -> Callable[[Outcome], float]:
     def grade(outcome: Outcome) -> float:
         with recording(outcome) as store:
             try:
-                start = first_body_transform(store, body).translation.z
-                end = last_body_transform(store, body).translation.z
+                start = first_body_transform(store, body).transform.translation.z
+                end = last_body_transform(store, body).transform.translation.z
             except LookupError:
                 return 0.0
-        return min(max((end - start) / by_m, 0.0), 1.0)
+        return float(min(max((end - start) / by_m, 0.0), 1.0))
 
     return grade
 
@@ -178,8 +179,8 @@ def stacked_on(
     def grade(outcome: Outcome) -> float:
         with recording(outcome) as store:
             try:
-                t = last_body_transform(store, top).translation
-                b = last_body_transform(store, base).translation
+                t = last_body_transform(store, top).transform.translation
+                b = last_body_transform(store, base).transform.translation
             except LookupError:
                 return 0.0
         if not rise_m[0] <= t.z - b.z <= rise_m[1]:
@@ -192,8 +193,12 @@ def stacked_on(
 def opened_door(outcome: Outcome) -> float:
     with recording(outcome) as store:
         try:
-            frame = last_body_transform(store, "Door_frame").rotation.to_rotation_matrix()
-            panel = last_body_transform(store, "Door_door").rotation.to_rotation_matrix()
+            frame = Rotation.from_quat(
+                quaternion_array(last_body_transform(store, "Door_frame").transform.rotation)
+            ).as_matrix()
+            panel = Rotation.from_quat(
+                quaternion_array(last_body_transform(store, "Door_door").transform.rotation)
+            ).as_matrix()
         except LookupError:
             return 0.0
     relative = frame.T @ panel
@@ -207,10 +212,10 @@ def placed_can(outcome: Outcome) -> float:
             marker = last_body_transform(store, "VisualCan_main")
         except LookupError:
             return 0.0
-    delta = (can.translation - marker.translation).to_numpy()
+    delta = vector_array(can.transform.translation) - vector_array(marker.transform.translation)
     return float(
         np.all(np.abs(delta) <= [0.05, 0.075, 0.005])
-        and can.rotation.to_rotation_matrix()[2, 2] > 0.98
+        and Rotation.from_quat(quaternion_array(can.transform.rotation)).as_matrix()[2, 2] > 0.98
     )
 
 
@@ -221,12 +226,13 @@ def seated_nut(outcome: Outcome) -> float:
             peg = last_body_transform(store, "peg1")
         except LookupError:
             return 0.0
-    delta = (nut.translation - peg.translation).to_numpy()
+    delta = vector_array(nut.transform.translation) - vector_array(peg.transform.translation)
     # The seated nut's centre is 2 cm below the exported peg body's origin.
     return float(
         np.linalg.norm(delta[:2]) < 0.007
         and abs(delta[2] + 0.02) < 0.004
-        and abs(nut.rotation.to_rotation_matrix()[2, 2]) > 0.98
+        and abs(Rotation.from_quat(quaternion_array(nut.transform.rotation)).as_matrix()[2, 2])
+        > 0.98
     )
 
 
@@ -239,19 +245,29 @@ def hung_tool(outcome: Outcome) -> float:
             hole = last_body_transform(store, "tool_hole1_root")
         except LookupError:
             return 0.0
-    stand_r = stand.rotation.to_rotation_matrix()
-    frame_r = frame.rotation.to_rotation_matrix()
+    stand_r = Rotation.from_quat(quaternion_array(stand.transform.rotation)).as_matrix()
+    frame_r = Rotation.from_quat(quaternion_array(frame.transform.rotation)).as_matrix()
     # Local offsets from the exported frame tip, stand slot and horizontal hook.
-    tip_world = frame.translation.to_numpy() + frame_r @ np.array([0.04375, 0, -0.13445])
-    tip_in_stand = stand_r.T @ (tip_world - stand.translation.to_numpy())
-    hole_in_frame = frame_r.T @ (hole.translation - frame.translation).to_numpy()
+    tip_world = vector_array(frame.transform.translation) + frame_r @ np.array(
+        [0.04375, 0, -0.13445]
+    )
+    tip_in_stand = stand_r.T @ (tip_world - vector_array(stand.transform.translation))
+    hole_in_frame = frame_r.T @ (
+        vector_array(hole.transform.translation) - vector_array(frame.transform.translation)
+    )
     return float(
         stand_r[2, 2] > 0.98
         and np.dot(stand_r[:, 2], frame_r[:, 2]) > 0.98
         and np.linalg.norm(tip_in_stand - np.array([0, 0.045, -0.07])) < 0.01
         and -0.043 < hole_in_frame[0] < 0.04375
         and math.hypot(hole_in_frame[1], hole_in_frame[2] - 0.08625) < 0.007
-        and abs(np.dot(hole.rotation.to_rotation_matrix()[:, 2], frame_r[:, 0])) > 0.95
+        and abs(
+            np.dot(
+                Rotation.from_quat(quaternion_array(hole.transform.rotation)).as_matrix()[:, 2],
+                frame_r[:, 0],
+            )
+        )
+        > 0.95
     )
 
 

@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from collections.abc import Iterator
 import threading
 import time
 
+import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -22,12 +24,21 @@ from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.agents.typesafe.test_drive import answers
 from dimos.agents.typesafe.test_world_state import det2d, det3d
 from dimos.agents.typesafe.types import Answers, Question
-from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.core.transport import ZenohTransport, pZenohTransport
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.std_msgs.msg import Header
 
 
 class FakeSystemOne:
@@ -61,9 +72,9 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
         stale_s=5.0,
         give_up_s=0.3,
     )
-    a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
-    a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)
-    a.goal.transport = LCMTransport("/test_typesafe/goal", PointStamped)
+    a.odom.transport = ZenohTransport("test_typesafe/odom", PoseStamped)
+    a.cmd_vel.transport = ZenohTransport("test_typesafe/cmd_vel", Twist)
+    a.goal.transport = ZenohTransport("test_typesafe/goal", PointStamped)
     for name in (
         "odometry",
         "detections_3d",
@@ -76,7 +87,7 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
         "scores",
         "nouls",
     ):
-        getattr(a, name).transport = pLCMTransport(f"/test_typesafe/{name}")
+        getattr(a, name).transport = pZenohTransport(f"test_typesafe/{name}")
     twists: list[Twist] = []
     unsub = a.cmd_vel.transport.subscribe(twists.append)
     fake = FakeSystemOne()
@@ -89,7 +100,12 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
 
 
 def odom(a: TypeSafeNavigationAgent, x: float = 0.0) -> None:
-    a.odom.transport.publish(PoseStamped(position=(x, 0, 0.4), frame_id="world"))
+    a.odom.transport.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(position=Point(x, 0, 0.4), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
+    )
 
 
 def scene(a: TypeSafeNavigationAgent, robot_x: float = 0.0) -> None:
@@ -137,7 +153,16 @@ def test_drives_then_stops_and_clears(rig: Rig) -> None:
     assert until(lambda: moving(twists))
     fake.answers = answers(stop=0.95)
     assert until(lambda: (odom(a), a.current_goal() is None)[1])
-    assert twists[-1].is_zero()
+    assert not any(
+        (
+            twists[-1].linear.x,
+            twists[-1].linear.y,
+            twists[-1].linear.z,
+            twists[-1].angular.x,
+            twists[-1].angular.y,
+            twists[-1].angular.z,
+        )
+    )
 
 
 def test_arrival_by_distance(rig: Rig) -> None:
@@ -156,12 +181,26 @@ def test_odometry_feeds_pose(rig: Rig) -> None:
     a.detections_3d.transport.publish(det3d("chair", 3.0, 0.0))
     time.sleep(0.05)
     a.odometry.transport.publish(
-        Odometry(ts=time.time(), frame_id="world", pose=Pose(position=(2.8, 0, 0.4)))
+        Odometry(
+            header=message_time.header_now("world"),
+            child_frame_id="base_link",
+            pose=PoseWithCovariance(Pose(Point(2.8, 0, 0.4), Quaternion(0, 0, 0, 1)), np.zeros(36)),
+            twist=TwistWithCovariance(Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)), np.zeros(36)),
+        )
     )
     assert until(
         lambda: (
             a.odometry.transport.publish(
-                Odometry(ts=time.time(), frame_id="world", pose=Pose(position=(2.8, 0, 0.4)))
+                Odometry(
+                    header=message_time.header_now("world"),
+                    child_frame_id="base_link",
+                    pose=PoseWithCovariance(
+                        Pose(Point(2.8, 0, 0.4), Quaternion(0, 0, 0, 1)), np.zeros(36)
+                    ),
+                    twist=TwistWithCovariance(
+                        Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)), np.zeros(36)
+                    ),
+                )
             ),
             a.current_goal() is None,
         )[1]
@@ -177,7 +216,19 @@ def test_inference_failure_zeroes_target(rig: Rig) -> None:
     assert until(lambda: moving(twists))
     fake.fail = True
     odom(a)
-    assert until(lambda: twists[-1].is_zero(), timeout=3.0)
+    assert until(
+        lambda: not any(
+            (
+                twists[-1].linear.x,
+                twists[-1].linear.y,
+                twists[-1].linear.z,
+                twists[-1].angular.x,
+                twists[-1].angular.y,
+                twists[-1].angular.z,
+            )
+        ),
+        timeout=3.0,
+    )
 
 
 def test_deadman_zeroes_when_inference_stalls(rig: Rig) -> None:
@@ -189,7 +240,19 @@ def test_deadman_zeroes_when_inference_stalls(rig: Rig) -> None:
     assert until(lambda: moving(twists))
     fake.gate.clear()
     odom(a)
-    assert until(lambda: twists[-1].is_zero(), timeout=3.0)
+    assert until(
+        lambda: not any(
+            (
+                twists[-1].linear.x,
+                twists[-1].linear.y,
+                twists[-1].linear.z,
+                twists[-1].angular.x,
+                twists[-1].angular.y,
+                twists[-1].angular.z,
+            )
+        ),
+        timeout=3.0,
+    )
     fake.gate.set()
 
 
@@ -201,7 +264,7 @@ def test_goal_point_published_and_used_when_target_leaves_view(rig: Rig) -> None
     a.set_goal("go to the chair")
     scene(a)
     assert until(lambda: moving(twists) and bool(goals))
-    assert (goals[0].x, goals[0].y, goals[0].frame_id) == (3.0, 0.0, "world")
+    assert (goals[0].point.x, goals[0].point.y, goals[0].header.frame_id) == (3.0, 0.0, "world")
     # detections go stale, odom keeps coming: the latched goal point keeps it driving
     a.config.stale_s = 0.2
     time.sleep(0.3)
@@ -240,7 +303,16 @@ def test_lost_detections_give_up(rig: Rig) -> None:
     assert until(lambda: moving(twists))
     a.config.stale_s = 0.0  # every detection is now stale
     assert until(lambda: (odom(a), a.current_goal() is None)[1])
-    assert twists[-1].is_zero()
+    assert not any(
+        (
+            twists[-1].linear.x,
+            twists[-1].linear.y,
+            twists[-1].linear.z,
+            twists[-1].angular.x,
+            twists[-1].angular.y,
+            twists[-1].angular.z,
+        )
+    )
 
 
 def test_timeout_clears_only_the_goal_that_timed_out(rig: Rig) -> None:

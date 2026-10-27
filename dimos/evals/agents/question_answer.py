@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One model call over the encoded recording. The only place in
-:mod:`dimos.evals` that calls ``agent_encode()`` — the surface under test."""
+"""One model call over sensor content and typed recording summaries."""
 
 from __future__ import annotations
 
@@ -28,15 +27,20 @@ from dimos.evals.agents.lib.single_call import (
     SingleCallAgentConfig,
 )
 from dimos.evals.types import RunningEnvironment
+from dimos.message_utils.agent import content_blocks
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
 
 
 def _observation_blocks(obs: Observation[Any], stamp: str) -> Blocks:
-    """One observation as ``agent_encode()`` renders it. ``str(data)`` where a
-    type has no encoder: an encoding gap the eval surfaces by design."""
+    """One observation as model content, with custom result hooks preserved."""
     data = obs.data
+    blocks = content_blocks(data)
+    if blocks is not None:
+        if len(blocks) == 1 and blocks[0]["type"] == "text":
+            return [{"type": "text", "text": f"{stamp} {blocks[0]['text']}"}]
+        return [{"type": "text", "text": stamp}, *blocks]
     encoded = data.agent_encode() if hasattr(data, "agent_encode") else None
     if isinstance(encoded, list):  # e.g. Image -> image_url blocks
         return [{"type": "text", "text": stamp}, *encoded]
@@ -57,7 +61,7 @@ class QuestionAnswerConfig(SingleCallAgentConfig):
 
 
 class QuestionAnswer(SingleCallAgent):
-    """One model call: ``agent_encode()`` of everything in the recording, then
+    """One model call: model content for everything in the recording, then
     the instruction. At most ``frames_per_stream`` observations per stream,
     spread evenly over the stream."""
 

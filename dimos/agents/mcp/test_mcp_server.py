@@ -348,3 +348,23 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
         app.state.cap_acquire_timeout = saved_timeout
+
+
+def test_generated_camera_skill_returns_image_content() -> None:
+    import numpy as np
+
+    from dimos.message_utils import image
+
+    frame = image.from_array(np.full((2, 3, 3), 25, dtype=np.uint8), encoding="rgb8")
+    skills = [SkillInfo(class_name="Observe", func_name="observe", args_schema='{"type":"object"}')]
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 7, "params": {"name": "observe", "arguments": {}}},
+            skills,
+            _make_rpc_calls(skills, {"observe": frame}),
+        )
+    )
+    assert response is not None
+    blocks = response["result"]["content"]
+    assert blocks[0]["type"] == "image_url"
+    assert blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")

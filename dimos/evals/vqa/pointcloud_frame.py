@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
@@ -26,10 +26,12 @@ import numpy as np
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import camera_info as camera_info_utils, image as image_utils
+from dimos.message_utils.geometry import transform_from_matrix, transform_matrix
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -45,7 +47,7 @@ class PointCloudFrame:
     image: Image
     pointcloud: PointCloud2
     camera_info: CameraInfo
-    pointcloud_to_camera: Transform
+    pointcloud_to_camera: TransformStamped
     image_observation_timestamp: float
     pointcloud_observation_timestamp: float
     calibration_source: str
@@ -191,8 +193,10 @@ class PointCloudFrameLoader:
         image_query = self._images.offset(frame_index).limit(1)
         image_obs = image_query.first()
         lidar_obs = _align_one(image_query, self._lidar, self._tolerance_s)
-        source_image = image_obs.data.copy()
-        source_image.ts = image_obs.ts
+        source_image = replace(
+            image_obs.data,
+            header=replace(image_obs.data.header, stamp=time_from_seconds(image_obs.ts)),
+        )
 
         recorded_camera_info = self._recorded_camera_info
         recorded_tf = self._recorded_tf
@@ -203,19 +207,22 @@ class PointCloudFrameLoader:
         pointcloud_to_camera = _recorded_pointcloud_to_camera(
             image_obs,
             lidar_obs,
-            camera_info.frame_id,
+            camera_info.header.frame_id,
             recorded_tf,
             self._tolerance_s,
         )
         rectification = np.eye(4, dtype=np.float64)
-        rectification[:3, :3] = np.asarray(source_camera_info.R, dtype=np.float64).reshape(3, 3)
-        pointcloud_to_camera = Transform.from_matrix(
-            rectification @ pointcloud_to_camera.to_matrix(),
-            ts=image_obs.ts,
-            frame_id=camera_info.frame_id,
-            child_frame_id=lidar_obs.data.frame_id,
+        rectification[:3, :3] = np.asarray(source_camera_info.r, dtype=np.float64).reshape(3, 3)
+        pointcloud_to_camera = TransformStamped(
+            header=Header(
+                stamp=time_from_seconds(image_obs.ts), frame_id=camera_info.header.frame_id
+            ),
+            child_frame_id=lidar_obs.data.header.frame_id,
+            transform=transform_from_matrix(
+                rectification @ transform_matrix(pointcloud_to_camera.transform)
+            ),
         )
-        if not np.all(np.isfinite(pointcloud_to_camera.to_matrix())):
+        if not np.all(np.isfinite(transform_matrix(pointcloud_to_camera.transform))):
             raise PointCloudFrameUnavailableError(
                 "recorded point-cloud-to-camera transform must be finite"
             )
@@ -238,8 +245,10 @@ class PointCloudFrameLoader:
         if self._images is None:
             raise RuntimeError("point-cloud frame loader must be started before loading frames")
         observation = self._images.offset(frame_index).limit(1).first()
-        image = observation.data.copy()
-        image.ts = observation.ts
+        image = replace(
+            observation.data,
+            header=replace(observation.data.header, stamp=time_from_seconds(observation.ts)),
+        )
         recorded_camera_info = self._recorded_camera_info
         if recorded_camera_info is None:
             raise RuntimeError("camera calibration was not initialized")
@@ -274,8 +283,8 @@ def select_quality_indices(
         "list[Observation[Image]]",
         list(
             images.range_seek(start, stop)
-            .filter(lambda obs: obs.data.brightness > brightness_floor)
-            .transform(QualityWindow(lambda img: img.sharpness, window=quality_window))
+            .filter(lambda obs: image_utils.brightness(obs.data) > brightness_floor)
+            .transform(QualityWindow(lambda img: image_utils.sharpness(img), window=quality_window))
         ),
     )
     indices: list[int] = []
@@ -314,30 +323,34 @@ class _ImageRectifier:
             image.width,
             image.height,
             source.distortion_model,
-            tuple(source.K),
-            tuple(source.D),
-            tuple(source.R),
-            tuple(source.P),
+            tuple(source.k),
+            tuple(source.d),
+            tuple(source.r),
+            tuple(source.p),
         )
         maps = self._maps.get(key)
         if maps is None:
             maps = _rectification_maps(image, source)
             self._maps[key] = maps
         map_x, map_y, output_matrix = maps
-        data = cv2.remap(image.data, map_x, map_y, interpolation=cv2.INTER_LINEAR)
-        frame_id = source.frame_id or image.frame_id
+        data = cv2.remap(image_utils.view(image), map_x, map_y, interpolation=cv2.INTER_LINEAR)
+        frame_id = source.header.frame_id or image.header.frame_id
         if not frame_id:
             raise ValueError("camera calibration requires a camera frame_id")
-        camera_info = CameraInfo.from_intrinsics(
+        camera_info = camera_info_utils.from_intrinsics(
             output_matrix[0, 0],
             output_matrix[1, 1],
             output_matrix[0, 2],
             output_matrix[1, 2],
             image.width,
             image.height,
-            frame_id=frame_id,
-        ).with_ts(image.ts)
-        return Image(data=data, format=image.format, frame_id=frame_id, ts=image.ts), camera_info
+            header=Header(frame_id=frame_id, stamp=image.header.stamp),
+        )
+        return image_utils.from_array(
+            data,
+            encoding=image.encoding,
+            header=Header(stamp=image.header.stamp, frame_id=frame_id),
+        ), camera_info
 
 
 def _align_one(
@@ -369,8 +382,8 @@ def _recorded_pointcloud_to_camera(
     camera_frame: str,
     tf: TFLookup,
     tolerance_s: float,
-) -> Transform:
-    cloud_frame = lidar_obs.data.frame_id
+) -> TransformStamped:
+    cloud_frame = lidar_obs.data.header.frame_id
     if not cloud_frame:
         raise PointCloudFrameUnavailableError("recorded point cloud requires a frame_id")
     camera_from_cloud = tf.get(
@@ -393,15 +406,15 @@ def _rectification_maps(
     # OpenCV is intentionally lazy because importing it loads a large native library.
     import cv2
 
-    intrinsics = np.asarray(source.K, dtype=np.float64)
+    intrinsics = np.asarray(source.k, dtype=np.float64)
     if intrinsics.size != 9:
         raise ValueError("camera intrinsics must contain nine values")
     matrix = intrinsics.reshape(3, 3)
     if not np.all(np.isfinite(matrix)) or matrix[0, 0] <= 0 or matrix[1, 1] <= 0:
         raise ValueError("camera intrinsics must be finite with positive focal lengths")
-    distortion = np.asarray(source.D, dtype=np.float64)
-    rectification = np.asarray(source.R, dtype=np.float64).reshape(3, 3)
-    projection = np.asarray(source.P, dtype=np.float64).reshape(3, 4)[:, :3]
+    distortion = np.asarray(source.d, dtype=np.float64)
+    rectification = np.asarray(source.r, dtype=np.float64).reshape(3, 3)
+    projection = np.asarray(source.p, dtype=np.float64).reshape(3, 4)[:, :3]
     output_matrix = projection if projection[0, 0] > 0 and projection[1, 1] > 0 else matrix
     size = (image.width, image.height)
     model = source.distortion_model.strip().lower()

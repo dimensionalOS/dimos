@@ -310,9 +310,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
 
     # sensor reply of raw video frames
     video_raw = (
-        LegacyPickleStore(
-            "unitree_office_walk/video", autocast=rgb_frame
-        )
+        LegacyPickleStore("unitree_office_walk/video", autocast=rgb_frame)
         .stream(speed)
         .pipe(ops.take(30))
     )

@@ -25,8 +25,8 @@ from pydantic import ValidationError
 from dimos.evals.vqa.contracts import FamilySpec, QuestionProposal
 
 if TYPE_CHECKING:
+    from dimos.messages.sensor_msgs.msg import Image
     from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs.Image import Image
 
 
 class QuestionAuthor(Protocol):

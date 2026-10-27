@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from functools import cached_property
 import os
 from typing import Any
@@ -19,8 +20,9 @@ from typing import Any
 import numpy as np
 from openai import OpenAI
 
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -60,12 +62,12 @@ class OpenAIVlModel(VlModel):
                 stacklevel=2,
             )
 
-            image = Image.from_numpy(image)
+            image = image_utils.from_array(image, encoding="bgr8")
 
         # Apply auto_resize if configured
         image, _ = self._prepare_image(image)
 
-        img_base64 = image.to_base64()
+        img_base64 = base64.b64encode(image_utils.to_jpeg(image)).decode("ascii")
 
         api_kwargs: dict[str, Any] = {
             "model": self.config.model_name,
@@ -105,7 +107,7 @@ class OpenAIVlModel(VlModel):
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/jpeg;base64,{self._prepare_image(img)[0].to_base64()}"
+                    "url": f"data:image/jpeg;base64,{base64.b64encode(image_utils.to_jpeg(self._prepare_image(img)[0])).decode('ascii')}"
                 },
             }
             for img in images

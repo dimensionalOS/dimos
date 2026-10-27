@@ -15,9 +15,10 @@
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 
@@ -26,7 +27,7 @@ from dimos.utils.data import get_data
 def test_query_detections_real() -> None:
     """Test query_detections with real API calls (requires API key)."""
     # Load test image
-    image = Image.from_file(get_data("cafe.jpg"))
+    image = image_utils.from_file(get_data("cafe.jpg"))
 
     # Initialize the model (will use real API)
     model = QwenVlModel()
@@ -55,7 +56,9 @@ def test_query_detections_real() -> None:
 def test_query_points() -> None:
     """Test query_points with real API calls (requires API key)."""
     # Load test image
-    image = Image.from_file(get_data("cafe.jpg"), format=ImageFormat.RGB).to_rgb()
+    image = image_utils.from_array(
+        image_utils.to_rgb(image_utils.from_file(get_data("cafe.jpg"))), encoding="rgb8"
+    )
 
     # Initialize the model (will use real API)
     model = MoondreamVlModel()

@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
@@ -36,7 +36,7 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
 
     # Load 5 frames at 1-second intervals using LegacyPickleStore
     replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
-    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
+    images = [replay.find_closest_seek(i) for i in range(0, 10, 2)]
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
 

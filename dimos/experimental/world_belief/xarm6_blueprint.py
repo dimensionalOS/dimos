@@ -30,12 +30,15 @@ from dimos.experimental.world_belief.worldbelief_recorder import (
 )
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import (
+    Quaternion,
+    Transform,
+    Vector3,
+)
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.cdr import camera_pinhole
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
@@ -61,7 +64,7 @@ def _topic_to_entity(topic: Any) -> str:
 def _camera_info_to_rerun(msg: Any, image_topic: str) -> list[tuple[str, Any]]:
     return cast(
         "list[tuple[str, Any]]",
-        msg.to_rerun(image_topic=image_topic, optical_frame=getattr(msg, "frame_id", None)),
+        [(image_topic, camera_pinhole(msg, optical_frame=msg.header.frame_id or None))],
     )
 
 

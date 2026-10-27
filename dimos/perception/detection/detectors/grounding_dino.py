@@ -22,8 +22,9 @@ import numpy as np
 from PIL import Image as PILImage
 import torch
 
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -83,7 +84,7 @@ class GroundingDinoDetector(HuggingFaceModel):
                 class_id=label,
                 confidence=float(row[label]),
                 name=queries[label],
-                ts=image.ts,
+                ts=message_time.to_seconds(image.header.stamp),
                 image=image,
             )
             if det.is_valid():
@@ -107,7 +108,7 @@ class GroundingDinoDetector(HuggingFaceModel):
         from torchvision.ops.boxes import batched_nms  # type: ignore[import-untyped]
         from transformers.image_transforms import center_to_corners_format
 
-        pil = PILImage.fromarray(image.to_rgb().data)
+        pil = PILImage.fromarray(image_utils.to_rgb(image))
         phrases = [" ".join(query.replace(".", " ").lower().split()) for query in queries]
         caption = " ".join(f"{phrase}." for phrase in phrases)
         with torch.inference_mode():

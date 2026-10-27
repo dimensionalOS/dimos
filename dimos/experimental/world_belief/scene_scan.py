@@ -23,9 +23,17 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.experimental.world_belief.world_belief import WorldBelief
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import (
+    geometry,
+    image as image_utils,
+    time as message_time,
+)
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped,
+    TransformStamped,
+)
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
@@ -156,10 +164,7 @@ class SceneScanner:
         set_prompts = getattr(detector, "set_prompts", None)
         if self._text_prompts and callable(set_prompts):
             set_prompts(text=list(self._text_prompts))
-        dummy = Image(
-            data=np.zeros((64, 64, 3), dtype=np.uint8),
-            format=ImageFormat.RGB,
-        )
+        dummy = image_utils.from_array(np.zeros((64, 64, 3), dtype=np.uint8), encoding="rgb8")
         detector_warmup = getattr(detector, "warmup", None)
         if callable(detector_warmup):
             detector_warmup(dummy)
@@ -237,7 +242,9 @@ class SceneScanner:
             last_source_ts = obs_ts if last_source_ts is None else max(last_source_ts, obs_ts)
             if obs.pose is None:
                 if poseless_in_target is None:
-                    frame_id = obs.data.frame_id or ""  # one decode, first pose-less frame only
+                    frame_id = (
+                        obs.data.header.frame_id or ""
+                    )  # one decode, first pose-less frame only
                     poseless_in_target = frame_id in ("", self._target_frame)
                 if not poseless_in_target:
                     skipped += 1
@@ -325,8 +332,8 @@ class SceneScanner:
                 p0 is not None
                 and p1 is not None
                 and (
-                    p0.position.distance(p1.position) / dt > _TRANS_SPEED
-                    or p0.orientation.angle_to(p1.orientation) / dt > _ROT_SPEED
+                    geometry.point_distance(p0.position, p1.position) / dt > _TRANS_SPEED
+                    or geometry.quaternion_angle(p0.orientation, p1.orientation) / dt > _ROT_SPEED
                 )
             )
             period = 1.0 / (_MOVING_HZ if moving else self._stationary_hz)
@@ -344,7 +351,7 @@ class SceneScanner:
         depth_stream: Any,
         depth_tolerance: float,
         detector: Detector,
-    ) -> tuple[list[Object], Any, Transform | None] | None:
+    ) -> tuple[list[Object], Any, TransformStamped | None] | None:
         """Detect + NMS + 2D→3D lift + embed one frame; None if no depth within tolerance."""
         color_img: Image = obs.data
         depth_img = self._nearest_depth(depth_stream, obs.ts, depth_tolerance)
@@ -352,12 +359,25 @@ class SceneScanner:
             return None
         process = getattr(detector, "predict_image", detector.process_image)
         detections: ImageDetections2D[Any] = process(color_img)
-        frame_id = color_img.frame_id or ""
+        frame_id = color_img.header.frame_id or ""
         in_target = frame_id in ("", self._target_frame)
-        camera_transform = None if in_target else Transform.from_pose(frame_id, obs.pose)
+        camera_transform = (
+            None
+            if in_target
+            else geometry.transform_from_pose(
+                PoseStamped(
+                    header=Header(
+                        stamp=message_time.time_from_seconds(float(obs.ts)),
+                        frame_id=self._target_frame,
+                    ),
+                    pose=obs.pose,
+                ),
+                child_frame_id=frame_id,
+            )
+        )
         if camera_transform is not None:
-            camera_transform.frame_id = self._target_frame
-            camera_transform.ts = float(obs.ts)
+            camera_transform.header.frame_id = self._target_frame
+            camera_transform.header.stamp = message_time.time_from_seconds(float(obs.ts))
         objects = Object.from_2d_to_list(
             detections_2d=detections,
             color_image=color_img,
@@ -366,7 +386,9 @@ class SceneScanner:
             camera_transform=camera_transform,
         )
         for obj in objects:
-            obj.frame_id = obj.pose.frame_id = obj.pointcloud.frame_id = self._target_frame
+            obj.frame_id = obj.pose.header.frame_id = obj.pointcloud.header.frame_id = (
+                self._target_frame
+            )
         objects = [o for o in objects if float(o.confidence) >= self._detector_conf]
         # Remove overlapping prompts and same-depth contained regions; a contained object
         # at a different depth survives.
@@ -377,7 +399,12 @@ class SceneScanner:
                 _bbox_iou(o.bbox, k.bbox) > _NMS_IOU
                 or (
                     _bbox_containment(o.bbox, k.bbox) >= _NMS_CONTAINMENT
-                    and o.center.distance(k.center) <= _SUBREGION_COLOCATED_M
+                    and float(
+                        np.linalg.norm(
+                            geometry.vector_array(o.center) - geometry.vector_array(k.center)
+                        )
+                    )
+                    <= _SUBREGION_COLOCATED_M
                 )
                 for k in kept
             ):
@@ -390,7 +417,7 @@ class SceneScanner:
                     x1 <= 3 or y1 <= 3 or x2 >= color_img.width - 3 or y2 >= color_img.height - 3
                 )
             self._attach_embeddings(kept, color_img)
-        depth_arr = np.asarray(depth_img.to_opencv(), dtype=np.float32)
+        depth_arr = np.asarray(image_utils.view(depth_img), dtype=np.float32)
         return kept, depth_arr, camera_transform
 
     def _attach_embeddings(self, objects: list[Object], color_img: Image) -> None:
@@ -401,11 +428,13 @@ class SceneScanner:
         crops: list[Image] = []
         idxs: list[int] = []
         for i, obj in enumerate(objects):
-            crop = obj.cropped_image(padding=0).to_rgb()
+            crop = image_utils.from_array(
+                image_utils.to_rgb(obj.cropped_image(padding=0)), encoding="rgb8"
+            )
             if crop.width < 2 or crop.height < 2:
                 continue
-            crop.frame_id = color_img.frame_id
-            crop.ts = color_img.ts
+            crop.header.frame_id = color_img.header.frame_id
+            crop.header.stamp = color_img.header.stamp
             crops.append(crop)
             idxs.append(i)
         if not crops:
@@ -427,9 +456,9 @@ class SceneScanner:
             return None
         depth_obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
         raw: Image = depth_obs.data
-        cv = raw.to_opencv()
-        if raw.format == ImageFormat.DEPTH16:
+        cv = image_utils.view(raw)
+        if raw.encoding in {"16UC1", "16SC1"}:
             cv = cv.astype("float32") / 1000.0
         elif cv.dtype != "float32":
             cv = cv.astype("float32")
-        return Image(data=cv, format=ImageFormat.DEPTH, frame_id=raw.frame_id, ts=raw.ts)
+        return image_utils.from_array(cv, encoding="32FC1", header=raw.header)
