@@ -13,17 +13,19 @@ until a gateway answers, so a command first checks for one with `gatewayState` o
 
 ## Commands
 
-| Command                                      | What it does                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `run [--conversation ID] [--cwd DIR] PROMPT` | Sends `PROMPT` to a new conversation, or to `--conversation`, and streams the answer |
-| `status [--json]`                            | Prints the gateway, its DimOS link, modules, jobs and streams                        |
-| `conversations`                              | Lists the conversations, newest first                                                |
-| `gateway [--daemon]`                         | Runs the gateway in the foreground, or in the background with `--daemon`             |
-| `stop`                                       | Stops the gateway                                                                    |
-| `version`                                    | Prints this build                                                                    |
+| Command                                      | What it does                                                                                                                |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `[--conversation ID] [--view] [--cwd DIR]`   | Opens the [terminal](../frontends/tui/README.md) on a new conversation, or on `--conversation`. `--view` opens it read-only |
+| `run [--conversation ID] [--cwd DIR] PROMPT` | Sends `PROMPT` to a new conversation, or to `--conversation`, and streams the answer                                        |
+| `status [--json]`                            | Prints the gateway, its DimOS link, modules, jobs and streams                                                               |
+| `conversations`                              | Lists the conversations, newest first                                                                                       |
+| `gateway [--daemon]`                         | Runs the gateway in the foreground, or in the background with `--daemon`                                                    |
+| `stop`                                       | Stops the gateway                                                                                                           |
+| `version`                                    | Prints this build                                                                                                           |
 
-`run` and `conversations` start the gateway in the background when none runs. Python runs `load` and `service` itself
-and hands every other command line to Node unparsed.
+`dimos agent` with no command runs [tui.ts](commands/tui.ts). `dimos agent`, `run` and `conversations` start the
+gateway in the background when none runs. Python runs `load` and `service` itself and hands every other command line
+to Node unparsed.
 
 ## Quickstart
 
