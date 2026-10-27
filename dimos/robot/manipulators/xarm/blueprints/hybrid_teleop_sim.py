@@ -18,8 +18,7 @@ The same modules as xarm-perception-sim, on a coordinator that also runs the
 operator hold and takes hold and e-stop commands and sends their status as
 streams. OperatorCommandsModule runs scan, click-to-target and pick commands.
 The camera, a point cloud of the scene, every status and every command also go
-to the page in web/hybrid-teleop: run
-`dimos run hybrid-teleop-sim --serve-dir web/hybrid-teleop`.
+out on the cockpit channels for an operator page.
 """
 
 from __future__ import annotations
