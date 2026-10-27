@@ -37,6 +37,23 @@ logger = setup_logger()
 EXCEPTION_ENCODING = zenoh.Encoding("dimos/rpc-exception")
 
 
+def _encode_request(name: str, arguments: Args) -> bytes:
+    """Pickle a call as ``(args, kwargs, name)``.
+
+    The name lets the server refuse a query zenoh delivered to the wrong
+    queryable. Servers from before the check read only ``[0]`` and ``[1]``,
+    and callers that send just ``(args, kwargs)`` skip the check.
+    """
+    args, kwargs = arguments
+    return pickle.dumps((args, kwargs, name))
+
+
+def _addressed_to(intended: str, served: str) -> bool:
+    if intended == served:
+        return True
+    return zenoh.KeyExpr(f"dimos/rpc/{intended}").intersects(zenoh.KeyExpr(f"dimos/rpc/{served}"))
+
+
 class ZenohRPC(RPCSpec, ZenohService):
     def __init__(
         self,
@@ -91,7 +108,10 @@ class ZenohRPC(RPCSpec, ZenohService):
         call_id = next(self._call_counter)
         self._pending[call_id] = cb
         self._issue_query(
-            call_id, f"dimos/rpc/{name}", pickle.dumps(arguments), time.monotonic() + timeout
+            call_id,
+            f"dimos/rpc/{name}",
+            _encode_request(name, arguments),
+            time.monotonic() + timeout,
         )
 
         def unsubscribe_callback() -> None:
@@ -147,7 +167,7 @@ class ZenohRPC(RPCSpec, ZenohService):
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.BLOCK,
             timeout=timeout,
-            payload=pickle.dumps(arguments),
+            payload=_encode_request(name, arguments),
             attachment=b"nowait",
         )
 
@@ -169,6 +189,20 @@ class ZenohRPC(RPCSpec, ZenohService):
     def _execute_rpc(self, f: Callable[..., Any], name: str, query: zenoh.Query) -> None:
         args = pickle.loads(query.payload.to_bytes())  # type: ignore[union-attr]
         nowait = query.attachment is not None
+        if len(args) > 2 and not _addressed_to(args[2], name):
+            # Never run a handler on another RPC's arguments: on a robot the
+            # wrong method can move hardware. LCMRPC drops these by name too.
+            misrouted = RuntimeError(
+                f"RPC for {args[2]} was delivered to {name}'s queryable "
+                f"(query key {query.key_expr}); refused without running it"
+            )
+            logger.error(str(misrouted))
+            if not nowait:
+                query.reply_err(
+                    pickle.dumps(serialize_exception(misrouted)), encoding=EXCEPTION_ENCODING
+                )
+            query.drop()
+            return
         try:
             response = f(*args[0], **args[1])
             if not nowait:
