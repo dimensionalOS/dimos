@@ -24,6 +24,8 @@ the world then says whether the robot keeps clear:
   have to push it aside to get there. Nothing may come near the scene.
 - At each closing step the same holds, until the first step where anything
   touches. There the pads may touch the object; later steps are not checked.
+- Fingers that close all the way without touching anything closed on nothing,
+  and reject the grasp.
 
 Near means within about a margin. The object and the scene are octree
 obstacles: each point fills the grid cell it falls in, so a cell one margin
@@ -206,6 +208,8 @@ class GraspContactChecker:
                 )
                 if (pose := next(touching, None)) is not None:
                     first_touch[index] = pose
+                elif len(poses) > 1:
+                    clear[-1] = False  # The fingers closed on nothing.
         # At that step the pads may touch the object: let them, and ask again.
         # Every earlier step touched nothing, so it passes either way.
         if first_touch and surface is not None:
