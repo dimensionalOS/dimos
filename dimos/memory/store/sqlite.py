@@ -32,7 +32,7 @@ from dimos.memory.utils.sqlite import (
     conn_lock,
     open_disposable_sqlite_connection,
 )
-from dimos.memory.utils.validation import validate_identifier
+from dimos.memory.utils.validation import is_identifier, validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
 
@@ -214,7 +214,8 @@ class SqliteStore(Store):
 
     def list_streams(self) -> list[str]:
         db_names = set(self._registry.list_streams())
-        return sorted(db_names | set(self._streams.keys()))
+        # a name that is not a safe identifier (another writer's "map/pipeline") cannot be opened here, so it is not listed
+        return sorted(name for name in db_names | set(self._streams.keys()) if is_identifier(name))
 
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
