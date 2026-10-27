@@ -117,6 +117,12 @@ def test_xarm_keeps_a_grasp_with_the_pads_on_the_box_sides(xarm: GraspContactChe
 
 
 @pytest.mark.self_hosted
+def test_xarm_rejects_fingers_closing_on_nothing_above_the_box(xarm: GraspContactChecker) -> None:
+    # The box's top is at 6 cm; the fingers close 9 cm above it.
+    assert not _clear(xarm, _top_down(0.0, 0.0, 0.15), BOX, BOX_TABLE)
+
+
+@pytest.mark.self_hosted
 def test_xarm_rejects_a_fingertip_pressing_into_the_top_of_the_box(
     xarm: GraspContactChecker,
 ) -> None:

@@ -71,6 +71,16 @@ def xarm_gripper_config(prefix: str = "") -> GripperConfig:
     )
 
 
+# Where the xArm Gripper's parts sit along its approach from link_tcp, metres:
+# the closed pads' centre behind it, the fingertips' farthest reach past it while
+# closing, and the palm behind it. Heuristic grasps aim the pads with these.
+XARM_HEURISTIC_AIM = {
+    "pad_behind_tcp": 0.0167,
+    "fingertip_reach": 0.0031,
+    "palm_behind_tcp": 0.0499,
+}
+
+
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
