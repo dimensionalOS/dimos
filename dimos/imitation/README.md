@@ -25,21 +25,33 @@ dimos --simulation run learning-collect-webxr-xarm7
 
 # Piper on real hardware
 dimos run learning-collect-webxr-piper
+
+# Dual OpenYAM on real hardware (both arms, one Quest)
+dimos run learning-collect-webxr-dual-openyam --left-can-port can0 --right-can-port can1
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the
-recorder, all wired together.
+recorder, all wired together. The dual OpenYAM graph also records the
+coordinator's intended joint commands, both wrist cameras, the operator's
+controller poses, gripper commands and button word, and binds **A** to the zero joint pose: both arms plan to zero and run there through the
+manipulation module. Release both grips first.
 
 ### Controls (WebXR)
 
 | Button | Action |
 | --- | --- |
-| **Grip** (middle-finger button) | **Hold to engage** — the arm tracks that controller only while held |
-| **B** | **Toggle record** — press to start an episode, press again to save it |
+| **Grip** (middle-finger button) | **Hold to engage**: the arm tracks that controller only while held; each arm has its own grip |
+| **Trigger** (index finger) | **Gripper**: analog close while that hand is engaged |
+| **B** | **Toggle record**: press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
+| **A** | **Zero pose** (dual OpenYAM): both arms plan to the zero joint pose; release both grips first |
 
-So a take is: hold the **grip** to move the arm into place → press **B** to start →
-perform the task → press **B** to save (or **Y** to throw it away). The terminal
+The headset's forward axis is the robot's +x, fixed where the headset faced when the
+WebXR session started: stand behind the arms facing the workspace and recentre the
+headset before engaging.
+
+So a take is: hold the **grip** to move the arm into place, press **B** to start,
+perform the task, press **B** to save (or **Y** to throw it away). The terminal
 prints one line per transition:
 
 ```
@@ -58,7 +70,10 @@ prints one line per transition:
 
 A new timestamped file per run (nothing is overwritten). It records three
 streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+start/save/discard markers). The dual OpenYAM blueprint adds both wrist cameras
+(`left_wrist_color_image`, `right_wrist_color_image`) and the operator's
+commands (`left_cartesian_command`, `right_cartesian_command`,
+`left_gripper_command`, `right_gripper_command`); it runs on hardware only.
 
 The exact path is printed when the recorder starts — note it for the next step.
 
