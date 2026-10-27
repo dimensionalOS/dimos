@@ -505,6 +505,11 @@ pub struct GscPgo {
     pub(crate) world_positions: Vec<(f64, u32, Vec3, Vec3, Mat3)>,
     pub(crate) world_positions_dispatched: usize,
     pub(crate) world_alignment: Vec<(u32, f64, Vec3)>,
+    /// Landmark sightings (`add_landmark_sighting`): time, landmark id, position and covariance in the body frame; how
+    /// many a solve has been started for; and the newest solve's landmark positions (id, map position).
+    pub(crate) landmark_sightings: Vec<(f64, u64, Vec3, Mat3)>,
+    pub(crate) landmark_sightings_dispatched: usize,
+    pub(crate) landmarks: Vec<(u64, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
