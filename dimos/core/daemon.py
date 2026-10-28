@@ -109,7 +109,6 @@ def redirect_stdio_to_devnull() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
 
-    # Writable: a later write to stdout, e.g. the flush before a worker starts, must succeed.
     devnull = open(os.devnull, "r+")
     os.dup2(devnull.fileno(), sys.stdin.fileno())
     os.dup2(devnull.fileno(), sys.stdout.fileno())
