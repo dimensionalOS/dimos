@@ -103,7 +103,7 @@ class PGOConfig(NativeModuleConfig):
     closure_skip_known: bool = False
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
-    # True: a candidate the graph disputes (innovation beyond the graph's and ICP's combined spread) is never uninformative and gets every extended-ICP round
+    # True: a candidate the graph disputes (innovation beyond the graph's and ICP's combined spread) gets every extended-ICP round
     closure_disagreement_pressure: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False

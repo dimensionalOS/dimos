@@ -464,8 +464,10 @@ pub struct Config {
     pub closure_pcm: bool,
     /// When true, a candidate the graph disputes (`ClosureCandidateDiag::disagreement_z2` beyond the 3-DoF chi-square
     /// cutoff at `closure_gnc_inlier_probability`: outside the graph's and ICP's combined confidence region, so the
-    /// odometry is overtrusted or the match is wrong) is never called uninformative, and is measured on all the data:
-    /// every extended-ICP round up to `closure_extended_icp_max_keyframes`, the last that still clears the bar kept.
+    /// odometry is overtrusted or the match is wrong) is measured on all the data: every extended-ICP round up to
+    /// `closure_extended_icp_max_keyframes`, the last that still clears the bar kept, so the closure that stands against
+    /// the graph rests on as much surface as there is. (Exempting it from the uninformative gate too let wrong matches
+    /// the overtrusted graph had been screening out through: small_mid overtrust committed 150 wrong closures, 62 kept.)
     pub closure_disagreement_pressure: bool,
     /// When true, each solve also runs GNC with the Geman-McClure surrogate, which starts at least squares rather than
     /// at TLS's odometry-dominated start, and takes its verdict when the odometry residuals of its solution reject the
@@ -924,10 +926,7 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // a disputed measurement is not redundant whatever its variance: it says the graph is wrong
-        if self.config.closure_uninformative_gate
-            && !disputed
-            && icp.fitness * diag.closure_noise_scale >= known
+        if self.config.closure_uninformative_gate && icp.fitness * diag.closure_noise_scale >= known
         {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
