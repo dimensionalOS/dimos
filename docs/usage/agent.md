@@ -64,7 +64,7 @@ Image previews use the terminal's available graphics or text mode over SSH. To f
 
 Ctrl+O opens the conversation switcher. Every conversation is listed with its state, what it is running, its unread notices and who is attached; a fork is indented under its source. Typing filters the list. Enter attaches and takes the input, Tab attaches read-only, Ctrl+N starts a new conversation, Esc closes.
 
-With nothing running and an empty editor, Esc selects a message. The arrows move between your messages and the agent's answers, and the chat scrolls to the selected one. On a message of yours, `e` puts its text in the editor; Enter then sends the edited text into a fork of the conversation that continues from before that message, and the terminal attaches to the fork. On any message, `u` summarizes the conversation up to it into a new fork, and `f` summarizes from it. The original conversation stays as it was.
+With nothing running and an empty editor, Esc selects a message. The arrows move between your messages and the agent's answers, and the chat scrolls to the selected one. On a message of yours, `e` puts its text in the editor; Enter then sends the edited text and the message's images into a fork of the conversation that continues from before that message, and the terminal attaches to the fork. On any message, `u` summarizes the conversation up to it into a new fork, and `f` summarizes from it. The original conversation stays as it was.
 
 A long-running tool call that allows it, such as `bash`, shows `Ctrl+B background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
 

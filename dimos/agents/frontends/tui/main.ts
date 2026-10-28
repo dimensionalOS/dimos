@@ -6,6 +6,8 @@ import { ConversationContract } from "../../shared/protocol/conversation/contrac
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "../../shared/protocol/time.ts";
+import type { ImageAddress } from "../../shared/protocol/conversation/images.ts";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Outcome } from "../../shared/protocol/outcome.ts";
 import type { ProgressPanel } from "./conversation/progress.ts";
 import type { Role } from "../../sdk/state.ts";
@@ -50,7 +52,7 @@ import { Feedback } from "./feedback.ts";
 import type { Ui } from "./session.ts";
 import { connectionSegment } from "../../shared/view-models/connection.ts";
 import { duration } from "../../shared/view-models/time.ts";
-import { editText, selectables } from "../../shared/view-models/conversation/history.ts";
+import { editImages, editText, selectables } from "../../shared/view-models/conversation/history.ts";
 import { editorTextOf, queuedRows, userQueued } from "../../shared/view-models/conversation/queue.ts";
 import { footerOf } from "../../shared/view-models/conversation/footer.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -85,13 +87,19 @@ type LocalLine = { readonly text: string; readonly afterSeq: number };
 
 /**
  * What the input area is doing: the editor takes typed text, the login panel takes a credential, message selection
- * takes the arrows and its choice keys, and an edit sends the editor's text into a fork before `message`.
+ * takes the arrows and its choice keys, and an edit sends the editor's text and `images` into a fork before `message`.
  */
 type InputMode =
   | { readonly kind: "chat" }
   | { readonly kind: "login" }
   | { readonly kind: "select"; readonly selection: MessageSelection }
-  | { readonly kind: "edit"; readonly message: EntryId; readonly position: number; readonly of: ConversationId };
+  | {
+      readonly kind: "edit";
+      readonly message: EntryId;
+      readonly position: number;
+      readonly of: ConversationId;
+      readonly images: readonly ImageAddress[];
+    };
 
 const RENDER_CACHE_BYTES = 128 * 1024 * 1024;
 
@@ -260,10 +268,13 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       case "select":
       case "login":
         return null;
-      case "edit":
+      case "edit": {
+        const count = mode.images.length;
+        const images = count === 0 ? "" : ` + ${count === 1 ? "image" : `${count} images`}`;
         return muted(
-          `  Editing message ${mode.position} of #${mode.of} · Enter sends into a new fork of #${mode.of} · Esc cancels`,
+          `  Editing message ${mode.position} of #${mode.of}${images} · Enter sends into a new fork · Esc cancels`,
         );
+      }
       case "chat":
         break;
     }
@@ -551,7 +562,13 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           (candidate) => candidate.entry === choice.target.entry,
         );
         editor.setValue(editText(choice.target.item));
-        setMode({ kind: "edit", message: choice.target.entry, position: position + 1, of: id });
+        setMode({
+          kind: "edit",
+          message: choice.target.entry,
+          position: position + 1,
+          of: id,
+          images: editImages(choice.target.item),
+        });
         return;
       }
       case "summarize_up_to":
@@ -658,18 +675,33 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   editor.onSubmit = (value) => {
     if (mode.kind === "edit") {
       if (value.trim() === "" || showing === null) return;
-      const { conversation } = showing;
-      const { message } = mode;
+      const { conversation, id } = showing;
+      const { message, images: addresses } = mode;
       editor.addToHistory(value);
       leaveToChat();
-      void ui.actions
-        .observe(
-          "edit and resend",
-          retryByRequestId(ui, { request: newUserRequest(), message, text: value, images: [] }, (args) =>
-            owner(conversation).edit(args),
-          ),
-        )
-        .then((result) => (result.ok ? switchTo(result.value.conversation, "owner") : undefined))
+      const loaded = async (): Promise<Outcome<ImageContent[]>> => {
+        const images: ImageContent[] = [];
+        for (const at of addresses) {
+          const image = await conversation.image({ at });
+          if (showing?.conversation !== conversation)
+            throw new Error(`Not sent: the chat left #${id} while the message's images loaded.`);
+          if (!image.ok) return image;
+          images.push(image.value);
+        }
+        return done(images);
+      };
+      void loaded()
+        .then((images) => {
+          if (!images.ok) return ui.actions.refuse("edit and resend", images.refusal);
+          return ui.actions
+            .observe(
+              "edit and resend",
+              retryByRequestId(ui, { request: newUserRequest(), message, text: value, images: images.value }, (args) =>
+                owner(conversation).edit(args),
+              ),
+            )
+            .then((result) => (result.ok ? switchTo(result.value.conversation, "owner") : undefined));
+        })
         .catch(note);
       return;
     }

@@ -1,4 +1,5 @@
 import type { EntryId } from "@earendil-works/pi-durable";
+import type { ImageAddress } from "../../protocol/conversation/images.ts";
 import type { Transcript, TranscriptItem } from "../../protocol/conversation/state.ts";
 
 /** A message Esc-then-arrows can select, and what can be done with it. */
@@ -26,6 +27,15 @@ export function selectables(transcript: Transcript): readonly Selectable[] {
     found.push({ entry: item.entry, item, edit: user ? "fork" : null, summarizeUpTo: !first, summarizeFrom: true });
   });
   return found;
+}
+
+/** Where the images an edit of `item` keeps are stored: a user input's image refs, or a user message's image blocks. */
+export function editImages(item: TranscriptItem): readonly ImageAddress[] {
+  if (item.kind === "input") return item.images.map((image) => image.at);
+  if (item.kind !== "user" || typeof item.message.content === "string") return [];
+  return item.message.content.flatMap((block, index) =>
+    block.type === "image" ? [{ entry: item.entry, message: 0, block: index }] : [],
+  );
 }
 
 /** The text an edit of `item` starts from: a user input's text, or a user message's text blocks joined. */
