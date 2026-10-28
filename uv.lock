@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
@@ -1838,6 +1838,7 @@ wheels = [
 name = "dimos"
 version = "0.0.15"
 source = { editable = "." }
+default-groups = ["tests"]
 dependencies = [
     { name = "annotation-protocol" },
     { name = "attrs" },
@@ -1931,10 +1932,9 @@ all = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "ffmpeg-python" },
     { name = "gdown" },
     { name = "googlemaps" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2002,13 +2002,13 @@ apriltag = [
 ]
 base = [
     { name = "aioquic" },
+    { name = "av" },
     { name = "chromadb" },
     { name = "dimos-viewer" },
     { name = "edgetam-dimos" },
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "ffmpeg-python" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2076,6 +2076,7 @@ learning = [
 ]
 manipulation = [
     { name = "aioquic" },
+    { name = "av" },
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "dimos-viewer" },
@@ -2085,7 +2086,6 @@ manipulation = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "ffmpeg-python" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2135,7 +2135,7 @@ manipulation = [
     { name = "yourdfpy" },
 ]
 mapping = [
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
 ]
 misc = [
     { name = "gdown" },
@@ -2195,14 +2195,14 @@ spot = [
 ]
 unitree = [
     { name = "aioquic" },
+    { name = "av" },
     { name = "chromadb" },
     { name = "dimos-viewer" },
     { name = "edgetam-dimos" },
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "ffmpeg-python" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2240,6 +2240,7 @@ unitree = [
 ]
 unitree-dds = [
     { name = "aioquic" },
+    { name = "av" },
     { name = "chromadb" },
     { name = "cyclonedds" },
     { name = "dimos-viewer" },
@@ -2247,8 +2248,7 @@ unitree-dds = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "ffmpeg-python" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2293,8 +2293,8 @@ visualization = [
 ]
 web = [
     { name = "aioquic" },
+    { name = "av" },
     { name = "fastapi" },
-    { name = "ffmpeg-python" },
     { name = "jinja2" },
     { name = "python-multipart" },
     { name = "python-socketio" },
@@ -2522,6 +2522,9 @@ tests-self-hosted = [
     { name = "xacro" },
 ]
 
+[package.group-requires-python]
+docs = ">=3.11"
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
@@ -2529,6 +2532,7 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "attrs", specifier = ">=25.4" },
+    { name = "av", marker = "extra == 'web'", specifier = ">=16.1" },
     { name = "av", marker = "extra == 'webrtc'", specifier = ">=16.1" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
@@ -2558,12 +2562,11 @@ requires-dist = [
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },
     { name = "faster-whisper", marker = "extra == 'agents'", specifier = ">=1.0.0" },
-    { name = "ffmpeg-python", marker = "extra == 'web'" },
     { name = "filelock", specifier = ">=3.20,<4" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "gitpython", specifier = ">=3.1.45" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
     { name = "huggingface-hub", marker = "extra == 'perception'", specifier = ">=0.36" },
@@ -3318,18 +3321,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ffmpeg-python"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "future" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/5e/d5f9105d59c1325759d838af4e973695081fbbc97182baf73afc78dec266/ffmpeg-python-0.2.0.tar.gz", hash = "sha256:65225db34627c578ef0e11c8b1eb528bb35e024752f6f10b78c011f6f64c4127", size = 21543, upload-time = "2019-07-06T00:19:08.989Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/0c/56be52741f75bad4dc6555991fabd2e07b432d333da82c11ad701123888a/ffmpeg_python-0.2.0-py3-none-any.whl", hash = "sha256:ac441a0404e053f8b6a1113a77c0f452f1cfc62f6344a769475ffdc0f56c23c5", size = 25024, upload-time = "2019-07-06T00:19:07.215Z" },
-]
-
-[[package]]
 name = "filelock"
 version = "3.23.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3586,15 +3577,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
-]
-
-[[package]]
-name = "future"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a7/b2/4140c69c6a66432916b26158687e821ba631a4c9273c474343badf84d3ba/future-1.0.0.tar.gz", hash = "sha256:bd2968309307861edae1458a4f8a4f3598c03be43b97521076aebf5d94c07b05", size = 1228490, upload-time = "2024-02-21T11:52:38.461Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl", hash = "sha256:929292d34f5872e70396626ef385ec22355a1fae8ad29e1a734c3e43f9fbc216", size = 491326, upload-time = "2024-02-21T11:52:35.956Z" },
 ]
 
 [[package]]

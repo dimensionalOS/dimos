@@ -129,6 +129,47 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
 
 
+def test_relaunch_waits_for_the_stopped_run_to_be_reaped(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+
+
+def test_a_launch_right_after_a_stop_starts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    assert client.post("/active/stop").status_code == 200
+    launched = client.post("/active/launch", json={"blueprint": "demo"})
+    assert launched.status_code == 200, launched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+
+
 def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
     assert client.post("/active/relaunch").status_code == 409
     config = {"global": {"n_workers": 2}, "modules": {"agent": {"api_key": "k2"}}}

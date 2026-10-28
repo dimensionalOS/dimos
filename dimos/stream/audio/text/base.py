@@ -44,12 +44,3 @@ class AbstractTextConsumer(ABC):
             Self for method chaining
         """
         pass
-
-
-class AbstractTextTransform(AbstractTextConsumer, AbstractTextEmitter):
-    """Base class for components that both consume and emit audio.
-
-    This represents a transform in an audio processing pipeline.
-    """
-
-    pass

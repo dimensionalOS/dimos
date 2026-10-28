@@ -249,7 +249,7 @@ web = [
     "uvicorn>=0.34.0",
     "watchfiles>=1.0",  # the dimos gateway's file watchers
     "jinja2>=3.1.6",
-    "ffmpeg-python",
+    "av>=16.1",  # browser audio decode (stream/audio/decode.py)
     "soundfile",
     "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
@@ -660,7 +660,6 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
-ffmpeg-python = "ffmpeg"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
