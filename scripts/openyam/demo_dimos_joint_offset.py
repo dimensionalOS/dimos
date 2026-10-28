@@ -3,6 +3,10 @@
 Run with the modified /home/dimos/dimos checkout's Python environment. This
 script commands real arm motors only when --execute is supplied. It never
 commands grippers, changes motor zero, or writes motor firmware.
+
+Stop teleop before running. Supply twelve target angles in degrees, ordered
+left J1-J6 then right J1-J6. The script moves from its measured starting pose
+to this target, tests offsets there, and returns to the starting pose.
 """
 
 from __future__ import annotations
@@ -60,6 +64,27 @@ class ArmOnlyDimOSAdapter(DualOpenYamDamiaoAdapter):
             .add_arm("right_arm", bus="right", motors=_arm_motors("right"))
             .build()
         )
+
+    def _release_robot(self, robot: can_motor_control.Robot) -> None:
+        if self._active:
+            super()._release_robot(robot)
+            return
+        self._arms.clear()
+        self._grippers.clear()
+        if hasattr(self, "_robot") and self._robot is robot:
+            del self._robot
+        self._connected = False
+        self._has_state = False
+        self._reset_tracking()
+
+    def adopt_enabled_motors(self) -> None:
+        """Start commanding already enabled motors without an enable cycle."""
+        self._preflight_gravity()
+        for arm in self._arms.values():
+            arm.set_mode("mit")
+        self._active = True
+        self.read_motor_states()
+
 
 class RawMonitor:
     """Independent SocketCAN encoder/status/temperature observation."""
@@ -141,6 +166,25 @@ class RawMonitor:
                 side: {joint: row.copy() for joint, row in rows.items()}
                 for side, rows in self.latest.items()
             }
+
+    def refresh(self, timeout: float = 1.0) -> None:
+        """Request fresh arm feedback without changing motor enable state."""
+        requested_at = time.monotonic()
+        for sock in self.sockets.values():
+            for joint in range(1, 7):
+                query = bytes([joint, 0, 0xCC, 0, 0, 0, 0, 0])
+                sock.send(struct.pack("=IB3x8s", 0x7FF, 8, query))
+        deadline = requested_at + timeout
+        while time.monotonic() < deadline:
+            snapshot = self.snapshot()
+            if all(
+                snapshot[side].get(joint, {}).get("mono", 0.0) >= requested_at
+                for side in self.sockets
+                for joint in range(1, 7)
+            ):
+                return
+            time.sleep(0.01)
+        raise RuntimeError("Could not read current feedback from all twelve arm motors")
 
     def close(self) -> None:
         self.stop.set()
@@ -249,23 +293,13 @@ class Runner:
         self.activated_at = 0.0
         self.last_sample_at: float | None = None
 
-    def preflight(self) -> np.ndarray:
-        probe = ArmOnlyDimOSAdapter(
-            runtime_config=DamiaoRuntimeConfig(
-                bus_devices={"left": self.args.left_can, "right": self.args.right_can},
-                gravity_comp=True,
-                tracking_comp=False,
-            )
-        )
-        try:
-            if not probe.connect():
-                raise RuntimeError("Read-only DimOS preflight connection failed")
-            for _ in range(10):
-                probe.read_motor_states()
-                time.sleep(0.01)
-            raw_q, temperature = raw_vectors(self.monitor, enabled=False)
-        finally:
-            probe.disconnect()
+    def preflight(self) -> tuple[np.ndarray, bool]:
+        self.monitor.refresh()
+        raw_q, temperature = raw_vectors(self.monitor)
+        snapshot = self.monitor.snapshot()
+        statuses = [snapshot[side][joint]["status"] for side in SIDES for joint in range(1, 7)]
+        if len(set(statuses)) != 1 or statuses[0] not in (0, 1):
+            raise RuntimeError(f"Arm motors have mixed or faulted states: {statuses}")
         # if temperature >= TEMPERATURE_MARGIN_C:
         #     raise RuntimeError(f"Motor is too warm to start ({temperature} C)")
         check_path(self.checker, raw_q, raw_q)
@@ -278,9 +312,9 @@ class Runner:
                 expected = (12.5, 10.0, 28.0) if joint <= 3 else (12.5, 30.0, 10.0)
                 if not np.allclose([pmax, vmax, tmax], expected, atol=0.02) or mode != 1:
                     raise RuntimeError(f"Unexpected protocol limits or MIT mode: {side} J{joint}")
-        return raw_q
+        return raw_q, statuses[0] == 1
 
-    def connect(self, mode: str, expected_q: np.ndarray) -> None:
+    def connect(self, mode: str, *, already_enabled: bool) -> None:
         self.adapter = ArmOnlyDimOSAdapter(
             runtime_config=DamiaoRuntimeConfig(
                 bus_devices={"left": self.args.left_can, "right": self.args.right_can},
@@ -292,17 +326,15 @@ class Runner:
         if not self.adapter.connect():
             raise RuntimeError("DimOS adapter failed to connect")
         for _ in range(10):
-            states = self.adapter.read_motor_states()
+            self.adapter.read_motor_states()
             time.sleep(0.01)
-        # library_q = np.array([state.q for state in states])
-        raw_q, _ = raw_vectors(self.monitor, enabled=False)
-        # if np.max(np.abs(raw_q - expected_q)) > 0.04:
-        #     raise RuntimeError("Starting pose changed since path preflight")
-        # if np.max(np.abs(raw_q - library_q)) > 0.003:
-        #     raise RuntimeError("DimOS and raw encoder positions disagree")
+        self.monitor.refresh()
+        raw_q, _ = raw_vectors(self.monitor, enabled=already_enabled)
         self.reference = raw_q.copy()
         self.last_command = raw_q.copy()
-        if not self.adapter.activate():
+        if already_enabled:
+            self.adapter.adopt_enabled_motors()
+        elif not self.adapter.activate():
             raise RuntimeError("DimOS adapter failed to activate")
         # Activation sends mode, enable, and refresh frames in quick succession.
         # Let the SocketCAN transmit queue drain before the first trial refresh.
@@ -310,6 +342,7 @@ class Runner:
         self.activated_at = time.monotonic()
         self.last_sample_at = None
         self.next_tick = time.monotonic()
+        self.sample(raw_q, f"{mode}:start_hold")
 
     def sample(self, target: np.ndarray, phase: str) -> dict[str, Any]:
         if self.adapter is None or self.reference is None:
@@ -434,7 +467,8 @@ class Runner:
         if self.adapter is None:
             return
         try:
-            self.adapter.deactivate()
+            if self.adapter._active:
+                self.adapter.deactivate()
         finally:
             self.adapter.disconnect()
             self.adapter = None
@@ -448,6 +482,14 @@ def arguments() -> argparse.Namespace:
         required=True,
         help="Absolute requested change per joint in degrees",
     )
+    parser.add_argument(
+        "--target-deg",
+        type=float,
+        nargs=12,
+        required=True,
+        metavar="DEG",
+        help="Target pose in degrees: left J1-J6, then right J1-J6",
+    )
     parser.add_argument("--mode", choices=("baseline", "candidate", "both"), default="both")
     parser.add_argument("--side", choices=SIDES, help="Test only this arm")
     parser.add_argument("--joint", type=int, choices=range(1, 7), help="Test only this joint")
@@ -457,10 +499,12 @@ def arguments() -> argparse.Namespace:
         "--hold-seconds", type=float, help="Override default 15 s; J3 40 s; J4 20 s"
     )
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--execute", action="store_true", help="Enable real arm motors")
+    parser.add_argument("--execute", action="store_true", help="Run on real arm motors")
     args = parser.parse_args()
     # if not math.isfinite(args.delta_deg) or not 0 < args.delta_deg <= MAX_DELTA_DEG:
     #     parser.error("--delta-deg must be in (0, 5]")
+    if not all(math.isfinite(value) for value in args.target_deg):
+        parser.error("--target-deg values must be finite")
     if args.hold_seconds is not None and (
         not math.isfinite(args.hold_seconds) or not 2 <= args.hold_seconds <= 60
     ):
@@ -474,7 +518,7 @@ def main() -> int:
     global stop_requested
     args = arguments()
     if not args.execute:
-        print("No motors were enabled. Add --execute to run the checked hardware test.")
+        print("No motor commands were sent. Add --execute to run the hardware test.")
         return 0
     args.output_dir.mkdir(parents=True, exist_ok=False)
 
@@ -494,7 +538,9 @@ def main() -> int:
     final_disabled: bool | None = None
     try:
         time.sleep(0.2)
-        initial = runner.preflight()
+        initial, initial_enabled = runner.preflight()
+        target_pose = np.radians(np.asarray(args.target_deg, dtype=float))
+        check_path(checker, initial, target_pose)
         selected = [
             (side, joint)
             for side in SIDES
@@ -506,10 +552,10 @@ def main() -> int:
         for side, joint in selected:
             index = (0 if side == "left" else 6) + joint - 1
             for direction in (1, -1):
-                target = initial.copy()
+                target = target_pose.copy()
                 target[index] += direction * math.radians(args.delta_deg)
                 try:
-                    check_path(checker, initial, target)
+                    check_path(checker, target_pose, target)
                 except ValueError:
                     continue
                 directions[(side, joint)] = direction
@@ -523,6 +569,9 @@ def main() -> int:
                     "mode": args.mode,
                     "ports": ports,
                     "initial_raw_q": initial.tolist(),
+                    "initial_motors_enabled": initial_enabled,
+                    "target_deg": args.target_deg,
+                    "target_rad": target_pose.tolist(),
                     "kp": KP.tolist(),
                     "kd": KD.tolist(),
                     "workspace_checker": str(CHECKER),
@@ -537,32 +586,33 @@ def main() -> int:
         )
         modes = ("baseline", "candidate") if args.mode == "both" else (args.mode,)
         for mode in modes:
-            runner.preflight()
-            runner.connect(mode, initial)
+            mode_start, already_enabled = runner.preflight()
+            check_path(checker, mode_start, target_pose)
+            runner.connect(mode, already_enabled=already_enabled)
             try:
+                runner.move(target_pose, mode + ":position", speed=0.04)
+                runner.hold(target_pose, 3.0, mode + ":position_settle")
+                runner.reference = target_pose.copy()
                 for side, joint in selected:
                     if stop_requested:
                         raise InterruptedError("Stop requested")
                     result = runner.trial(side, joint, directions[(side, joint)], mode)
                     results.append(result)
                     print(json.dumps(result), flush=True)
-                if runner.reference is not None:
-                    runner.move(runner.reference, mode + ":final_return", speed=0.025)
-                    runner.hold(runner.reference, 3.0, mode + ":final_hold")
+                runner.move(initial, mode + ":final_return", speed=0.025)
+                runner.hold(initial, 3.0, mode + ":final_hold")
             finally:
                 if runner.adapter is not None:
                     try:
                         if runner.reference is not None:
                             runner.recovering = True
-                            runner.move(runner.reference, mode + ":guarded_return", speed=0.02)
-                            runner.hold(runner.reference, 2.0, mode + ":guarded_hold")
+                            runner.move(initial, mode + ":guarded_return", speed=0.02)
+                            runner.hold(initial, 2.0, mode + ":guarded_hold")
                     except Exception as recovery_error:
                         print(f"Guarded return failed: {recovery_error!r}", flush=True)
                     runner.close()
                     runner.recovering = False
             wait_disabled(monitor)
-            # if np.max(np.abs(returned - initial)) > 0.04:
-            #     raise RuntimeError("Return pose differs from initial by more than 0.04 rad")
     except BaseException as exc:
         traceback.print_exc()
         error = repr(exc)
