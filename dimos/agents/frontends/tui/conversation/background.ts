@@ -4,7 +4,7 @@ import type { MovedRow } from "../../../shared/view-models/conversation/tools.ts
 import { accent, muted } from "../style.ts";
 import { clean } from "../../../shared/view-models/text.ts";
 import { duration } from "../../../shared/view-models/time.ts";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Rows shown at once; the selection scrolls the rest into view. */
 const VISIBLE_ROWS = 5;
@@ -18,8 +18,9 @@ export type BackgroundActions = {
 };
 
 /**
- * The calls running in the background, under the editor, while there are any. Down on an empty editor focuses it;
- * Up/Down select, Enter opens the output, x stops the call, Esc or Up past the first row goes back to the editor.
+ * The calls running in the background, under the editor, while there are any: one line for the newest until Down on an
+ * empty editor focuses it, then the list. Up/Down select, Enter opens the output, x stops the call, Esc or Up past the
+ * first row goes back to the editor.
  */
 export class BackgroundPanel implements Component {
   private readonly rows: () => readonly MovedRow[];
@@ -63,19 +64,23 @@ export class BackgroundPanel implements Component {
       if (this.hasFocus) this.actions.leave();
       return [];
     }
+    if (!this.hasFocus) {
+      const newest = rows[rows.length - 1];
+      const more = rows.length > 1 ? ` · ${rows.length - 1} more` : "";
+      const hint = muted(`${more} · ↓ to manage`);
+      return newest === undefined
+        ? []
+        : [truncateToWidth(`  ${describe(newest)}`, Math.max(0, width - visibleWidth(hint))) + hint];
+    }
     const index = this.indexIn(rows);
     this.selected = rows[index]?.call ?? null;
     const start = Math.max(0, Math.min(rows.length - VISIBLE_ROWS, index - Math.floor(VISIBLE_ROWS / 2)));
-    const lines = rows.slice(start, start + VISIBLE_ROWS).map((row, offset) => {
-      const marker = this.hasFocus && start + offset === index ? accent("› ") : "  ";
-      const output = row.lastLine === "" ? "" : muted(` · ${clean(row.lastLine)}`);
-      return `${marker}${accent("⇢")} ${clean(row.label)}${muted(` · ${duration(row.forMs)}`)}${output}`;
-    });
+    const lines = rows
+      .slice(start, start + VISIBLE_ROWS)
+      .map((row, offset) => `${start + offset === index ? accent("› ") : "  "}${describe(row)}`);
     const count = rows.length > VISIBLE_ROWS ? ` (${index + 1}/${rows.length})` : "";
-    const hint = this.hasFocus
-      ? `  ↑↓ move · Enter output · x stop · Esc chat${count}`
-      : `  ${rows.length} in the background · ↓ to manage`;
-    return [...lines, muted(hint)].map((line) => truncateToWidth(line, width));
+    const hint = muted(`  ↑↓ move · Enter output · x stop · Esc chat${count}`);
+    return [...lines, hint].map((line) => truncateToWidth(line, width));
   }
 
   invalidate(): void {}
@@ -85,4 +90,9 @@ export class BackgroundPanel implements Component {
     const at = rows.findIndex((row) => row.call === this.selected);
     return at === -1 ? 0 : at;
   }
+}
+
+function describe(row: MovedRow): string {
+  const output = row.lastLine === "" ? "" : muted(` · ${clean(row.lastLine)}`);
+  return `${accent("⇢")} ${clean(row.label)}${muted(` · ${duration(row.forMs)}`)}${output}`;
 }

@@ -381,8 +381,8 @@ masked `ChatInput` drops its undo and kill-ring history when it leaves the mode.
 is `SwitcherOverlay`, the Ctrl+O overlay over `switcherRows`. [selection.ts](conversation/selection.ts) is
 `MessageSelection` and its `SelectionChoice`, the Esc-then-arrows selection over `selectables`, which starts at the
 newest message. [progress.ts](conversation/progress.ts) is `ProgressPanel`, a spinner, a bar and the newest finished
-frame while `/inspect` renders a clip. [background.ts](conversation/background.ts) is `BackgroundPanel`, the calls
-running in the background under the editor; Down on an empty editor focuses it, Enter opens a call's output full
+frame while `/inspect` renders a clip. [background.ts](conversation/background.ts) is `BackgroundPanel`, one line under the
+editor for the calls running in the background; Down on an empty editor focuses it and lists them all, Enter opens a call's output full
 screen, and `x` stops the call. input.test.ts checks that a paste submits whole, that a modified Enter adds a
 line, and that a secret never reaches the editor history. progress.test.ts checks that the preview keeps its picture
 while the next frame loads. The timeline and selection calculations live in shared/view-models/conversation/.
