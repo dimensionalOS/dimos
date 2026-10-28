@@ -46,7 +46,12 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport, zenoh_prefix
-from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
+from dimos.spec.utils import (
+    is_spec,
+    spec_annotation_compliance,
+    spec_methods_without_rpc,
+    spec_structural_compliance,
+)
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -1118,6 +1123,19 @@ def _resolve_single_ref(
         return candidate.module if isinstance(candidate, BlueprintAtom) else candidate
 
     def result_of(candidate: Any) -> Any:
+        """The resolved provider, once a proxy can call every spec method on it."""
+        if not is_class_ref:
+            missing = spec_methods_without_rpc(module_of(candidate), spec)
+            if missing:
+                raise Exception(
+                    _ref_msg(
+                        m,
+                        module_ref,
+                        s,
+                        f"{module_of(candidate).__name__} has {', '.join(missing)} without @rpc, "
+                        "and a module reference can only call @rpc methods. Add @rpc to them.",
+                    )
+                )
         return candidate.name if isinstance(candidate, BlueprintAtom) else candidate
 
     def display(candidate: Any) -> str:

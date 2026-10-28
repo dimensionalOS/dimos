@@ -61,14 +61,11 @@ def test_dir_exposes_rpcs_and_proxy_attributes_without_transport_calls(proxy):
     assert transport.mock_calls == []
 
 
-class PlainStart(Module):
-    def start(self) -> None:  # no @rpc, so it is missing from PlainStart.rpcs
-        super().start()
-
-
 def test_plain_method_override_is_a_clear_error(mocker: MockerFixture) -> None:
-    actor = Actor(None, PlainStart, worker_id=0)
-    client = RPCClient(actor, PlainStart, rpc=mocker.Mock(spec=RPCSpec))
+    # Built with type() so the codebase check for plain overrides does not see this one.
+    plain_start = type("PlainStart", (Module,), {"start": lambda self: None})
+    actor = Actor(None, plain_start, worker_id=0)
+    client = RPCClient(actor, plain_start, rpc=mocker.Mock(spec=RPCSpec))
 
     with pytest.raises(AttributeError, match="without @rpc"):
         client.start  # noqa: B018
