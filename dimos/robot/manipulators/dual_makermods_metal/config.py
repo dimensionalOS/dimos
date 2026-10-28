@@ -28,10 +28,12 @@ def dual_metal_hardware(
     *,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
-    left_gripper_opening_direction: Literal["increasing_position", "decreasing_position"]
-    | None = None,
-    right_gripper_opening_direction: Literal["increasing_position", "decreasing_position"]
-    | None = None,
+    left_gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
+        "increasing_position"
+    ),
+    right_gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
+        "increasing_position"
+    ),
 ) -> list[HardwareComponent]:
     """Require two distinct explicit CAN selectors before selecting physical arms."""
     ports = (left_can_port, right_can_port)
@@ -40,8 +42,6 @@ def dual_metal_hardware(
             raise ValueError("dual Metal requires both non-empty CAN selectors")
         if left_can_port == right_can_port:
             raise ValueError("dual Metal requires distinct left and right CAN selectors")
-        if left_gripper_opening_direction is None or right_gripper_opening_direction is None:
-            raise ValueError("dual Metal requires both gripper opening directions")
     components = []
     for side, port, direction in zip(
         SIDES, ports, (left_gripper_opening_direction, right_gripper_opening_direction), strict=True

@@ -14,8 +14,6 @@
 
 """Dual-CAN Metal deployment configuration."""
 
-from typing import Literal
-
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.stream import In
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -25,12 +23,6 @@ from dimos.robot.manipulators.dual_makermods_metal.config import dual_metal_hard
 class DualMetalCoordinatorConfig(ControlCoordinatorConfig):
     left_can_port: str | None = None
     right_can_port: str | None = None
-    left_gripper_opening_direction: Literal["increasing_position", "decreasing_position"] | None = (
-        None
-    )
-    right_gripper_opening_direction: (
-        Literal["increasing_position", "decreasing_position"] | None
-    ) = None
 
 
 class DualMetalCoordinator(ControlCoordinator):
@@ -42,7 +34,5 @@ class DualMetalCoordinator(ControlCoordinator):
         self.config.hardware = dual_metal_hardware(
             left_can_port=self.config.left_can_port,
             right_can_port=self.config.right_can_port,
-            left_gripper_opening_direction=self.config.left_gripper_opening_direction,
-            right_gripper_opening_direction=self.config.right_gripper_opening_direction,
         )
         super()._setup_from_config()

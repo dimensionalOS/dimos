@@ -95,10 +95,6 @@ def test_blueprint_parses_mounts_and_can_selectors() -> None:
             "left",
             "--right-can-port",
             "right",
-            "--left-gripper-opening-direction",
-            "increasing_position",
-            "--right-gripper-opening-direction",
-            "increasing_position",
             "--left-base-xyz",
             "[0,0.25,0]",
             "--right-base-xyz",
@@ -170,9 +166,12 @@ def test_gripper_commands_route_to_selected_group_only() -> None:
         m.stop()
 
 
-def test_both_can_selectors_require_gripper_directions() -> None:
-    with pytest.raises(ValueError, match="both gripper opening directions"):
-        dual_metal_hardware(left_can_port="left", right_can_port="right")
+def test_both_grippers_default_to_increasing_position() -> None:
+    components = dual_metal_hardware(left_can_port="left", right_can_port="right")
+    assert [component.adapter_kwargs["gripper_opening_direction"] for component in components] == [
+        "increasing_position",
+        "increasing_position",
+    ]
 
 
 @pytest.mark.parametrize("position", [(0.0, float("nan"), 0.0), (0.0, float("inf"), 0.0)])
