@@ -125,6 +125,9 @@ pub struct ClosureCandidateDiag {
     pub odometry_noise_mixture: [f64; 4],
     pub odometry_noise_mixture_share: f64,
     pub odometry_noise_from_mixture: bool,
+    /// At the newest check: the closures the solve kept, the number the mixture calls right, its spread, and the
+    /// residual estimate's excess cost under the mixture (chi-square, four degrees of freedom).
+    pub odometry_noise_check: [f64; 4],
     /// The closure noise scale when the search started (`GscPgo::closure_noise_scale`).
     pub closure_noise_scale: f64,
     /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
@@ -219,6 +222,7 @@ impl ClosureCandidateDiag {
             odometry_noise_mixture: [1.0; 4],
             odometry_noise_mixture_share: f64::NAN,
             odometry_noise_from_mixture: false,
+            odometry_noise_check: [f64::NAN; 4],
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
@@ -617,6 +621,7 @@ pub struct GscPgo {
     /// (`odometry_noise_innovation_check`), and whether it replaced the residual estimate.
     pub(crate) odometry_noise_mixture: Option<(crate::odometry_noise::Mixture, usize)>,
     pub(crate) odometry_noise_from_mixture: bool,
+    pub(crate) odometry_noise_check: [f64; 4],
     /// ln of the closure noise scale (0: a closure's variance is its ICP fitness).
     pub(crate) closure_noise_ln_scale: f64,
     /// ln of the closures' rotation variance scale apart from their translation's (`closure_noise_from_residuals`).
@@ -1202,6 +1207,7 @@ impl GscPgo {
             diag.odometry_noise_mixture_share = m.share;
         }
         diag.odometry_noise_from_mixture = self.odometry_noise_from_mixture;
+        diag.odometry_noise_check = self.odometry_noise_check;
     }
 
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
@@ -1354,6 +1360,7 @@ impl GscPgo {
                 1,
             )
             .sqrt();
+            self.odometry_noise_check = [kept, expected, spread, excess];
             if excess > cutoff && kept < expected - z * spread {
                 ln_odometry = mixture.odometry;
                 self.odometry_noise_ln_sd = mixture.odometry_sd.map(Some);
