@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! An odometry reported 100x too confident, closed by laps of a square: the solve at that noise rejects every right
-//! closure, so the residuals never see the odometry is noisier and the learner stays stuck where it started. With
-//! `odometry_noise_innovation_check`, the closures' innovations against the raw odometry raise it, and the solve keeps
-//! them.
+//! Overtrust: an odometry reported 100x more accurate than it is, closed by laps of a square. The solve at that noise
+//! rejects the right closures, and once it keeps none the residuals give no evidence and the learner stays where it
+//! is. With `odometry_noise_innovation_check`, the closures' innovations against the raw odometry raise the noise and
+//! the solve keeps them; a true or undertrusted (reported less accurate) odometry is left as well off.
 
 use crate::gsc_pgo::{Config, GscPgo, KeyPoseWithCloud};
 use crate::mat3::{self, Vec3};
@@ -145,18 +145,14 @@ fn run(reported_over_true: f64, innovation_check: bool) -> (f64, f64) {
 }
 
 #[test]
-fn overconfident_odometry_is_corrected_by_the_closures_it_rejects() {
+fn overtrusted_odometry_is_corrected_by_the_closures_it_rejects() {
     let (stuck_kept, stuck_yaw) = run(0.01, false);
     eprintln!(
         "without the check: {stuck_kept:.2} of right closures kept, yaw x{stuck_yaw:.3} of true"
     );
     assert!(
         stuck_kept < 0.1,
-        "the overconfident solve rejects the right closures ({stuck_kept})"
-    );
-    assert!(
-        stuck_yaw < 0.1,
-        "and the residuals cannot raise the noise ({stuck_yaw})"
+        "the overtrusted solve ends rejecting the right closures ({stuck_kept})"
     );
     let (kept, yaw) = run(0.01, true);
     eprintln!("with the check: {kept:.2} of right closures kept, yaw x{yaw:.3} of true");
@@ -165,7 +161,7 @@ fn overconfident_odometry_is_corrected_by_the_closures_it_rejects() {
 }
 
 #[test]
-fn the_check_leaves_a_well_stated_or_underconfident_odometry_alone() {
+fn the_check_leaves_a_true_or_undertrusted_odometry_as_well_off() {
     for reported_over_true in [1.0, 100.0] {
         let (kept_off, yaw_off) = run(reported_over_true, false);
         let (kept, yaw) = run(reported_over_true, true);

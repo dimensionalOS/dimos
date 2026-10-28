@@ -411,9 +411,10 @@ pub struct Config {
     /// closure's innovation against the raw odometry, which no solve's verdict filters: alongside each solve the
     /// right/wrong mixture over them is fitted (`odometry_noise::fit_mixture`), and where the residual estimate lies
     /// outside the mixture's region at `closure_gnc_inlier_probability` (its posterior ratio against chi-square with
-    /// four degrees of freedom) the mixture's estimate and spread replace it. An odometry stated too confident makes
-    /// the solve reject the very closures that would show it (none kept, no residual evidence), so without this the
-    /// residuals can never raise it; with it the disagreeing closures build up until the estimate must move.
+    /// four degrees of freedom) the mixture's estimate and spread replace it. An overtrusted odometry (reported more
+    /// accurate than it is) makes the solve reject the very closures that would show it (none kept, no residual
+    /// evidence), so without this the residuals can never raise it; with it the disagreeing closures build up until
+    /// the estimate must move.
     pub odometry_noise_innovation_check: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
