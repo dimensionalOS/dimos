@@ -222,7 +222,9 @@
       "lidar": "l1_cloud",
       "mount": null,
       "db": "~/datasets/mid360_recordings/2026-06-01_05-32pm-PST__grassy_field/mem2.db",
-      "gt": null,
+      "gt": {
+        "note": "unknown for now: uncorrectable, no proxy"
+      },
       "status": "no_gt"
     },
     {
@@ -232,7 +234,10 @@
       "lidar": "pointlio_lidar",
       "mount": "TODO",
       "db": "~/datasets/d455/hotel_slow/main.db",
-      "gt": null,
+      "gt": {
+        "proxy": "hotel_regular's corrected trajectory (same place); align and compare tag/map positions",
+        "note": "uncorrectable with current tooling"
+      },
       "status": "no_gt"
     },
     {
@@ -338,6 +343,6 @@
   "requirements": [
     "each recording has a corrected odometry to score against, validated (AprilTag spread through the correct camera mount, and lidar map consistency)",
     "lidar scans in the sensor frame, not world (audit 2026-10-28: all current lidar streams are: l1_link / mid360_link / livox_frame)",
-    "standardized copies uploaded to the dimos cloud (eventually MCAP with CDR encoding); ask Jeff before uploading"
+    "only the MAIN tier must be fully standardized (validated corrected odometry, sensor-frame lidar) and uploaded to the dimos cloud (eventually MCAP/CDR); ask Jeff before uploading"
   ]
 }
