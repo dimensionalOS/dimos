@@ -38,7 +38,7 @@ app, acknowledges holds by itself).
 |---|---|---|
 | G | `perf(gateway): RPC calls without listing every module and stream` | `Live.call` lists all modules and streams before each call (0.2-0.3 s); cache the module lookup so a button press is one RPC. |
 
-## dim-manipulation (branch `hybrid-teleop`, 4 commits so far)
+## dim-manipulation (branch `hybrid-teleop`, 3 commits so far)
 
 | # | PR | Files | One line |
 |---|---|---|---|
