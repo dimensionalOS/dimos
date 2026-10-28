@@ -156,6 +156,8 @@ class PGOConfig(NativeModuleConfig):
     closure_uninformative_gate: bool = True
     # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
     closure_uninformative_noise_upper_bound: bool = False
+    # True (with odometry_noise_from_closures): learn the closures' variance scale jointly with the odometry's from the solved graph's residuals
+    closure_noise_from_residuals: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5

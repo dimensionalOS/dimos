@@ -389,6 +389,11 @@ pub struct Config {
     /// its estimate: a closure is only called uninformative when the graph is surely surer than ICP, so a few tight
     /// early loops that shrink the estimate cannot shut the gate on the loops that would correct it.
     pub closure_uninformative_noise_upper_bound: bool,
+    /// When true (with `odometry_noise_from_closures`), the closures' variance scale is learned with the odometry's
+    /// from the same solved-graph residuals (Helmert's variance components over every group at once) instead of from
+    /// their innovations: the solve splits each loop's misfit between the odometry and the closure by their stated
+    /// variances, so a closure variance stated too loose would otherwise read as odometry too good.
+    pub closure_noise_from_residuals: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -518,6 +523,7 @@ impl Default for Config {
             closure_informative_by_graph_covariance: false,
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: false,
+            closure_noise_from_residuals: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -583,6 +589,9 @@ pub struct GscPgo {
     pub(crate) odometry_noise_ln_sd: [Option<f64>; 4],
     /// ln of the closure noise scale (0: a closure's variance is its ICP fitness).
     pub(crate) closure_noise_ln_scale: f64,
+    /// ln of the closures' rotation variance scale apart from their translation's (`closure_noise_from_residuals`).
+    pub(crate) closure_noise_ln_rotation_scale: f64,
+    pub(crate) closure_noise_ln_rotation_scale_dispatched: f64,
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) odometry_noise_ln_dispatched: [f64; 4],
     pub(crate) closure_noise_ln_scale_dispatched: f64,
@@ -1066,11 +1075,20 @@ impl GscPgo {
     pub fn closure_noise_scale(&self) -> f64 {
         self.closure_noise_ln_scale.exp()
     }
+    /// The factor on a closure's ICP-fitness variance for its rotation: its own with `closure_noise_from_residuals`,
+    /// else the translation's.
+    pub fn closure_noise_rotation_scale(&self) -> f64 {
+        if self.config.closure_noise_from_residuals {
+            self.closure_noise_ln_rotation_scale.exp()
+        } else {
+            self.closure_noise_scale()
+        }
+    }
 
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
     /// re-solve when either moved by more than its own standard error since the solve began, so the graph is solved at
     /// the noise its closures imply.
-    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 4]>) {
+    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 6]>) {
         let (fit_odometry, fit_closure) = (
             self.config.odometry_noise_from_closures,
             self.config.closure_noise_from_closures,
@@ -1107,7 +1125,39 @@ impl GscPgo {
             })
             .product();
         // the closure scale from the closures' innovations (fitted with the odometry's noise held where it is)
-        let ln_closure = if fit_closure {
+        // the closures' rotation and translation scales from the same residuals (`closure_noise_from_residuals`)
+        let mut closure_redundancy = [0.0; 2];
+        let joint =
+            |group: usize, dispatched: f64, current: f64, redundancy: &mut [f64; 2]| match evidence
+            {
+                Some(evidence)
+                    if evidence[4 + group].1 > 0.5 && evidence[4 + group].0.is_finite() =>
+                {
+                    redundancy[group] = evidence[4 + group].1;
+                    crate::odometry_noise::closure_residual_ln_ratio(
+                        evidence[4 + group].0,
+                        evidence[4 + group].1,
+                        dispatched,
+                    )
+                    .0
+                }
+                _ => current,
+            };
+        let mut ln_closure_rotation = self.closure_noise_ln_rotation_scale;
+        let ln_closure = if self.config.closure_noise_from_residuals && fit_odometry {
+            ln_closure_rotation = joint(
+                0,
+                self.closure_noise_ln_rotation_scale_dispatched,
+                self.closure_noise_ln_rotation_scale,
+                &mut closure_redundancy,
+            );
+            joint(
+                1,
+                self.closure_noise_ln_scale_dispatched,
+                self.closure_noise_ln_scale,
+                &mut closure_redundancy,
+            )
+        } else if fit_closure {
             match crate::odometry_noise::fit(
                 &innovations,
                 self.odometry_noise_prior(),
@@ -1156,11 +1206,19 @@ impl GscPgo {
                 && (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
                     > (2.0 / redundancy[c]).sqrt()
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
-            > (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt();
+            > if self.config.closure_noise_from_residuals {
+                (2.0 / closure_redundancy[1].max(0.5)).sqrt()
+            } else {
+                (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt()
+            }
+            || (self.config.closure_noise_from_residuals
+                && (ln_closure_rotation - self.closure_noise_ln_rotation_scale_dispatched).abs()
+                    > (2.0 / closure_redundancy[0].max(0.5)).sqrt());
         if moved && !self.odometry_noise_rescaled {
             self.odometry_noise_rescale = true;
         }
         (self.odometry_noise_ln, self.closure_noise_ln_scale) = (ln_odometry, ln_closure);
+        self.closure_noise_ln_rotation_scale = ln_closure_rotation;
     }
 
     /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, pose-graph solves.
@@ -1518,7 +1576,10 @@ impl GscPgo {
                 self.committed_closures
                     .iter()
                     .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
-                self.closure_noise_scale(),
+                [
+                    self.closure_noise_rotation_scale(),
+                    self.closure_noise_scale(),
+                ],
             ),
             diag,
             target_idx,

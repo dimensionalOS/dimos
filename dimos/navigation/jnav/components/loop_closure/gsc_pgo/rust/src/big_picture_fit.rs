@@ -79,9 +79,9 @@ pub struct Solution {
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
     /// Variance-component evidence on the odometry noise from the solved graph (`odometry_noise_evidence`): per source
-    /// (xy, z, yaw, roll/pitch), the sum of its odometry residuals squared and whitened, and its redundancy; None if the
-    /// graph could not be factored.
-    pub odometry_noise_evidence: Option<[(f64, f64); 4]>,
+    /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
+    /// redundancy; None if the graph could not be factored.
+    pub odometry_noise_evidence: Option<[(f64, f64); 6]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -428,7 +428,7 @@ fn odometry_noise_evidence(
     unary_weights: &[f64],
     sightings: &[Sighting],
     sighting_weights: &[f64],
-) -> Option<[(f64, f64); 4]> {
+) -> Option<[(f64, f64); 6]> {
     let size = pattern.size;
     let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
         let (mut values, _, diagonal) = normal_equations(
@@ -449,7 +449,7 @@ fn odometry_noise_evidence(
     )?;
     let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
         odometry.iter().map(|e| linearize(e, state)).collect();
-    let mut evidence = [(0.0, 0.0); 4];
+    let mut evidence = [(0.0, 0.0); 6];
     for (e, (r, _, _)) in odometry.iter().zip(&linear) {
         for k in 0..6 {
             evidence[RESIDUAL_SOURCE[k]].0 += r[k] * r[k] / e.variances[k];
@@ -510,6 +510,70 @@ fn odometry_noise_evidence(
                 estimate += weight * jy;
             }
             evidence[source].1 += estimate / PROBES as f64;
+        }
+    }
+    // the kept closures' rotation and translation as two more sources: sum of their whitened residuals squared, and redundancy
+    // r = n - tr(K N^-1 K^T) = tr(M), M = I - K N^-1 K^T (K their weighted whitened rows): symmetric, eigenvalues in
+    // [0, 1], so the same +-1 probes estimate it to about sqrt(2 r / probes). With it, a closure variance reported too
+    // loose shows as closure residuals too small for their redundancy, instead of passing as odometry too good
+    let closure_linear: Vec<(usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> = closures
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| closure_weights[i] > 0.0)
+        .map(|(i, e)| {
+            let (r, jf, jt) = linearize(e, state);
+            (i, r, jf, jt)
+        })
+        .collect();
+    for &(i, r, _, _) in &closure_linear {
+        let e = &closures[i];
+        for k in 0..6 {
+            evidence[4 + k / 3].0 += closure_weights[i] * r[k] * r[k] / e.variances[k];
+        }
+    }
+    for group in 0..2 {
+        let rows: Vec<(usize, usize)> = (0..closure_linear.len())
+            .flat_map(|c| (3 * group..3 * group + 3).map(move |k| (c, k)))
+            .collect();
+        let row_weight = |c: usize, k: usize| {
+            let (i, ..) = closure_linear[c];
+            (closure_weights[i] / closures[i].variances[k]).sqrt()
+        };
+        for probe in 0..PROBES {
+            let mut u = Mat::<f64>::zeros(size, 1);
+            let mut norm = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let s = sign(probe * 4 + 4 + group, index);
+                norm += s * s;
+                let weight = s * row_weight(c, k);
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            u[(6 * slot + m, 0)] += j[k][m] * weight;
+                        }
+                    }
+                }
+            }
+            let mut y = u;
+            full.solve_in_place_with_conj(Conj::No, y.as_mut());
+            let mut projected = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let weight = sign(probe * 4 + 4 + group, index) * row_weight(c, k);
+                let mut jy = 0.0;
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            jy += j[k][m] * y[(6 * slot + m, 0)];
+                        }
+                    }
+                }
+                projected += weight * jy;
+            }
+            evidence[4 + group].1 += (norm - projected) / PROBES as f64;
         }
     }
     Some(evidence)
@@ -1410,7 +1474,13 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let closures = closure_edges(self.committed_closures.iter(), self.closure_noise_scale());
+        let closures = closure_edges(
+            self.committed_closures.iter(),
+            [
+                self.closure_noise_rotation_scale(),
+                self.closure_noise_scale(),
+            ],
+        );
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let pinned = &self.key_poses[0];
@@ -1489,6 +1559,7 @@ impl GscPgo {
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         self.odometry_noise_ln_dispatched = self.odometry_noise_ln;
         self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
+        self.closure_noise_ln_rotation_scale_dispatched = self.closure_noise_ln_rotation_scale;
         self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
@@ -1662,7 +1733,8 @@ pub(crate) fn odometry_edges(
 /// (`GscPgo::closure_noise_scale`).
 pub(crate) fn closure_edges<'a>(
     closures: impl Iterator<Item = &'a CommittedClosure>,
-    scale: f64,
+    // [rotation, translation] factors on ICP fitness
+    scale: [f64; 2],
 ) -> Vec<Edge> {
     closures
         .map(|l| Edge {
@@ -1670,7 +1742,7 @@ pub(crate) fn closure_edges<'a>(
             to: l.source_id,
             rotation: l.rotation_offset,
             translation: l.translation_offset,
-            variances: [l.score.max(1e-6) * scale; 6],
+            variances: std::array::from_fn(|k| l.score.max(1e-6) * scale[k / 3]),
         })
         .collect()
 }

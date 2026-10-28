@@ -95,6 +95,7 @@ config! {
     closure_informative_by_graph_covariance: bool,
     closure_uninformative_gate: bool,
     closure_uninformative_noise_upper_bound: bool,
+    closure_noise_from_residuals: bool,
     odom_xy_var_per_m: f64,
     odom_xy_var_per_rad: f64,
     odom_z_var_per_m: f64,
