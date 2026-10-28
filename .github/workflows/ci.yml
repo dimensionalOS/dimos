@@ -408,7 +408,7 @@ jobs:
           - check_name: isolated-lerobot-tests
             project: native/python/lerobot
             tests: [dimos_lerobot]
-            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
+            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg, nasm]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -431,6 +431,15 @@ jobs:
           mapfile -t packages < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["SYSTEM_PACKAGES"])))')
           sudo apt-get update
           sudo apt-get install -y "${packages[@]}"
+      - name: Install Rust for collection profile E2E
+        if: matrix.project == 'native/python/lerobot'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build recorder for collection profile E2E
+        if: matrix.project == 'native/python/lerobot'
+        run: |
+          recorder_target="$RUNNER_TEMP/collection-recorder"
+          cargo build --locked --manifest-path dimos/experimental/memory/rust/Cargo.toml --target-dir "$recorder_target"
+          echo "DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE=$recorder_target/debug/dimos-memory-recorder" >> "$GITHUB_ENV"
       - name: Test isolated Python project
         working-directory: ${{ matrix.project }}
         env:

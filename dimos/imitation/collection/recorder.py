@@ -123,7 +123,7 @@ class CollectionRecorder(RustRecorder):
         super().__init__(**kwargs)
         self.recording_inputs = (*input_types.items(), ("status", String))
         self._recording_schema = recording_schema
-        self._prepared = False
+        self._store_prepared = False
 
     @classmethod
     def blueprint(cls, **kwargs: Any) -> Blueprint:
@@ -147,7 +147,7 @@ class CollectionRecorder(RustRecorder):
         self._prepare_store(specs)
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
-        if self._prepared:
+        if self._store_prepared:
             return
         schema = self._recording_schema.model_copy(deep=True)
         schema.payload = "recording.db" if self.config.format == "sqlite" else "recording.mcap"
@@ -160,7 +160,7 @@ class CollectionRecorder(RustRecorder):
         with (self.config.recording / "schema.json").open("x") as file:
             file.write(encoded + "\n")
         super()._prepare_store(specs)
-        self._prepared = True
+        self._store_prepared = True
 
     recording_inputs: PortTypes
 

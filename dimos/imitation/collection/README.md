@@ -160,3 +160,21 @@ does not import the current robot configuration. Existing schemas with top-level
 
 See [offline alignment](/dimos/imitation/dataprep/README.md) and
 [the isolated LeRobot exporter](/dimos/imitation/dataprep/README.md#lerobot-export).
+
+## Run the collection-to-dataset E2E
+
+Build the native recorder before running the isolated suite:
+
+```bash
+cargo build --locked --manifest-path dimos/experimental/memory/rust/Cargo.toml
+cd native/python/lerobot
+uv run --frozen --group tests --with-editable ../../.. pytest dimos_lerobot/test_profile_collection_e2e.py
+```
+
+Set `DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE` to use an existing recorder binary.
+The test uses a synthetic profile and loopback Zenoh streams, records through the
+real native process, moves the complete recording directory, and converts it to
+LeRobot. It checks one and two cameras, canonical training keys, joint order,
+causal sparse targets, decoded video, and saved-schema independence from the
+original profile. No robot hardware or policy training is required. The isolated
+CI job builds the recorder and runs this test as part of the standard suite.
