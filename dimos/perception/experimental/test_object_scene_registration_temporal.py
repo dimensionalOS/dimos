@@ -130,7 +130,8 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
         None,
     )
 
-    assert module._latest_scene_snapshot == (old_depth, old_transform)
+    assert module._latest_scene_snapshot is not None
+    assert module._latest_scene_snapshot[:2] == (old_depth, old_transform)
     warning.assert_called_once_with("Failed to lookup transform from camera frame to target frame")
 
 
@@ -140,7 +141,8 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
     depth = _image(3.0)
     transform = MagicMock(name="transform")
     module._tf = _FakeTF(transform)  # type: ignore[assignment]
-    module._latest_scene_snapshot = (depth, transform)
+    module._latest_scene_snapshot = (depth, transform, module._camera_info)
+    module._camera_info = MagicMock(K=[9.0, 0.0, 0.0, 0.0, 9.0, 0.0])
 
     class _PointCloud:
         points = list(range(100))
@@ -167,6 +169,7 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 
     module.get_full_scene_pointcloud()
     result.transform.assert_called_once_with(transform)
+    fake_o3d.camera.PinholeCameraIntrinsic.assert_called_once_with(2, 2, 1.0, 1.0, 0.0, 0.0)
 
 
 def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
