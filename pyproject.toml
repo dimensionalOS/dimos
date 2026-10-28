@@ -527,7 +527,7 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
-    "dim-odom>=0.4.1",
+    "dim-odom>=0.5.0b3",
 ]
 docs = [
     "mkdocstrings[python]==1.0.7",

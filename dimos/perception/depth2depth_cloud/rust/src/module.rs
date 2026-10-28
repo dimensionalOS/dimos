@@ -111,6 +111,9 @@ pub struct Config {
     decimation: i64,
     #[validate(range(min = 0, max = 10000000))]
     max_points: i64,
+    /// Frames taken per second at most; the rest are dropped on arrival. 0 takes every one.
+    #[validate(range(min = 0.0, max = 1000.0))]
+    max_rate_hz: f64,
     /// Frame of the cloud; empty takes the CameraInfo's, then the image's.
     frame_id: String,
     /// Keep only points whose height in `height_frame` is within [min, max]; empty frame keeps all.
@@ -153,6 +156,7 @@ pub struct Depth2DepthCloud {
     tasks: Vec<JoinHandle<()>>,
     to_model: Arc<Latest<Picked>>,
     model_thread: Option<std::thread::JoinHandle<()>>,
+    last_frame_stamp: f64,
 }
 
 /// What the handlers hand the worker.
@@ -284,7 +288,15 @@ impl Depth2DepthCloud {
     }
 
     async fn on_image(&mut self, msg: CompressedImage) {
-        let oldest = seconds(&msg.header.stamp) - self.config.max_tf_lag_s;
+        let stamp = seconds(&msg.header.stamp);
+        // 10 % slack: camera stamps jitter a few ms.
+        if self.config.max_rate_hz > 0.0
+            && stamp - self.last_frame_stamp < 0.9 / self.config.max_rate_hz
+        {
+            return;
+        }
+        self.last_frame_stamp = stamp;
+        let oldest = stamp - self.config.max_tf_lag_s;
         let mut frames = self.shared.frames.lock().unwrap();
         frames.push_back(msg);
         while frames

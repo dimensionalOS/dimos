@@ -14,8 +14,12 @@
 
 mod msg_convert;
 
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
 use dim_slam::{
-    CameraConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds, SourceConfig,
+    CameraConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds, ProcessNoise,
+    SourceConfig, SourceKind,
 };
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Odometry;
@@ -51,8 +55,13 @@ impl Covariance {
 struct OdomSourceConfig {
     parent_frame_id: String,
     child_frame_id: String,
+    kind: SourceKind,
     pose_variances: Covariance,
     twist_variances: Covariance,
+    realign_after_seconds: f64,
+    still_variance: f64,
+    still_speed: f64,
+    still_angular_speed: f64,
 }
 
 /// One IMU, identified by the frame its samples carry.
@@ -75,6 +84,7 @@ struct InitialStdsConfig {
     position: f64,
     velocity: f64,
     rotation: f64,
+    angular_velocity: f64,
     bias: f64,
 }
 
@@ -104,11 +114,13 @@ struct DimSlamConfig {
     imus: Vec<ImuSourceConfig>,
     initial_gravity_estimate: f64,
     initial_stds: InitialStdsConfig,
+    process_noise: ProcessNoise,
     /// Trust in the in-process visual odometry source.
     visual_odom_pose_variances: Covariance,
     /// External sources, each identified by the transform its estimates carry.
     odom_sources: Vec<OdomSourceConfig>,
-    per_dimension_error_variance: Covariance,
+    planar: bool,
+    zero_velocity_variances: Covariance,
 }
 
 #[derive(Module)]
@@ -139,7 +151,29 @@ struct DimSlam {
     #[config]
     config: DimSlamConfig,
 
-    slam: Option<DimSlamCore>,
+    slam: Option<Arc<Mutex<Slam>>>,
+}
+
+/// The core plus the newest input stamp and when it arrived: the timer runs on the inputs' clock, live or replayed.
+struct Slam {
+    core: DimSlamCore,
+    newest_stamp: Option<(i64, Instant)>,
+}
+
+impl Slam {
+    fn saw(&mut self, timestamp_ns: i64) {
+        if self
+            .newest_stamp
+            .is_none_or(|(newest, _)| timestamp_ns > newest)
+        {
+            self.newest_stamp = Some((timestamp_ns, Instant::now()));
+        }
+    }
+
+    fn data_now_ns(&self) -> Option<i64> {
+        let (stamp, arrived) = self.newest_stamp?;
+        Some(stamp + arrived.elapsed().as_nanos() as i64)
+    }
 }
 
 impl DimSlam {
@@ -180,8 +214,10 @@ impl DimSlam {
                 position: self.config.initial_stds.position,
                 velocity: self.config.initial_stds.velocity,
                 rotation: self.config.initial_stds.rotation,
+                angular_velocity: self.config.initial_stds.angular_velocity,
                 bias: self.config.initial_stds.bias,
             },
+            process_noise: self.config.process_noise,
             odom_sources: self
                 .config
                 .odom_sources
@@ -189,85 +225,113 @@ impl DimSlam {
                 .map(|source| SourceConfig {
                     parent_frame_id: source.parent_frame_id.clone(),
                     child_frame_id: source.child_frame_id.clone(),
+                    kind: source.kind,
                     pose_variances: source.pose_variances.to_array(),
                     twist_variances: source.twist_variances.to_array(),
+                    realign_after_seconds: source.realign_after_seconds,
+                    still_variance: source.still_variance,
+                    still_speed: source.still_speed,
+                    still_angular_speed: source.still_angular_speed,
                 })
                 .collect(),
-            per_dimension_error_variance: self.config.per_dimension_error_variance.to_array(),
+            planar: self.config.planar,
+            zero_velocity_variances: self.config.zero_velocity_variances.to_array(),
         });
-        self.slam = Some(slam.unwrap_or_else(|error| panic!("{error}")));
+        let slam = Arc::new(Mutex::new(Slam {
+            core: slam.unwrap_or_else(|error| panic!("{error}")),
+            newest_stamp: None,
+        }));
+        self.slam = Some(Arc::clone(&slam));
+        let (odometry, tf, publish_tf) = (
+            self.odometry.clone(),
+            self.tf.clone(),
+            self.config.publish_tf,
+        );
+        let mut ticks = tokio::time::interval(Duration::from_secs_f64(
+            1.0 / self.config.publish_rate.max(1.0),
+        ));
+        tokio::spawn(async move {
+            loop {
+                ticks.tick().await;
+                let estimate = {
+                    let mut slam = slam.lock().expect("slam lock");
+                    let Some(now_ns) = slam.data_now_ns() else {
+                        continue;
+                    };
+                    slam.core.maybe_publish_at(now_ns)
+                };
+                let Some(estimate) = estimate else { continue };
+                odometry.publish(&to_odometry_msg(&estimate)).await.ok();
+                if publish_tf {
+                    tf.publish(&[to_transform(&estimate)]).await.ok();
+                }
+            }
+        });
+    }
+
+    fn slam(&self) -> std::sync::MutexGuard<'_, Slam> {
+        self.slam
+            .as_ref()
+            .expect("setup ran")
+            .lock()
+            .expect("slam lock")
     }
 
     async fn handle_camera_info(&mut self, info: CameraInfo) {
-        let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_camera_info(to_camera_model(info), &tf_lookup(tf));
+        let lookup = tf_lookup(&self.tf);
+        self.slam()
+            .core
+            .handle_camera_info(to_camera_model(info), &lookup);
     }
 
     async fn handle_image(&mut self, img: Image) {
-        let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_image(to_image_frame(img), &tf_lookup(tf));
-        self.publish().await;
+        let lookup = tf_lookup(&self.tf);
+        let frame = to_image_frame(img);
+        let mut slam = self.slam();
+        slam.saw(frame.timestamp_ns);
+        slam.core.handle_image(frame, &lookup);
     }
 
     async fn handle_depth_image(&mut self, img: Image) {
-        let Self { slam, tf, .. } = self;
-        let cloud = slam
-            .as_mut()
-            .expect("setup ran")
-            .handle_depth_image(to_image_frame(img), &tf_lookup(tf));
+        let lookup = tf_lookup(&self.tf);
+        let frame = to_image_frame(img);
+        let cloud = {
+            let mut slam = self.slam();
+            slam.saw(frame.timestamp_ns);
+            slam.core.handle_depth_image(frame, &lookup)
+        };
         if let Some(cloud) = cloud {
             self.depth_cloud
                 .publish(&to_point_cloud2(&cloud))
                 .await
                 .ok();
         }
-        self.publish().await;
     }
 
     async fn handle_depth_camera_info(&mut self, info: CameraInfo) {
-        self.slam
-            .as_mut()
-            .expect("setup ran")
+        self.slam()
+            .core
             .handle_depth_camera_info(to_camera_model(info));
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
-        let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_imu(&to_imu_sample(&msg), &tf_lookup(tf));
-        self.publish().await;
+        let lookup = tf_lookup(&self.tf);
+        let sample = to_imu_sample(&msg);
+        let mut slam = self.slam();
+        slam.saw(sample.timestamp_ns);
+        slam.core.handle_imu(&sample, &lookup);
     }
 
     async fn handle_odom_sources(&mut self, msg: Odometry) {
-        self.slam
-            .as_mut()
-            .expect("setup ran")
-            .handle_source(&to_estimate(&msg));
-        self.publish().await;
-    }
-
-    async fn publish(&mut self) {
-        let Some(estimate) = self.slam.as_mut().expect("setup ran").maybe_publish() else {
-            return;
-        };
-        self.odometry
-            .publish(&to_odometry_msg(&estimate))
-            .await
-            .ok();
-        if !self.config.publish_tf {
-            return;
-        }
-        self.tf.publish(&[to_transform(&estimate)]).await.ok();
+        let estimate = to_estimate(&msg);
+        let mut slam = self.slam();
+        slam.saw(estimate.timestamp_ns);
+        slam.core.handle_source(&estimate);
     }
 
     async fn report(&mut self) {
-        if let Some(slam) = &self.slam {
-            slam.report();
+        if self.slam.is_some() {
+            self.slam().core.report();
         }
     }
 }

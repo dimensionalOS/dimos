@@ -567,7 +567,7 @@ dependencies = [
 [[package]]
 name = "dim_slam"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimSLAM?tag=v0.4.1#7a8fc571fbd2b43fbdf9b99dc4f6eb5c014376d9"
+source = "git+https://github.com/dimensionalOS/dimSLAM?tag=v0.5.0-beta3#4a65da197d7ff6bf66287b3124fcf62afee30da0"
 dependencies = [
  "cu_vslam_rs",
  "nalgebra",
@@ -3776,8 +3776,7 @@ dependencies = [
 [[package]]
 name = "zenoh"
 version = "1.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "453ba5d28a1197653aae4bb024fd74a9d5c7051d5a19a77f3a43d83f40c22584"
+source = "git+https://github.com/jeff-hykin/zenoh-vendor?tag=zenoh-1.10.1-patch.2#083bc2d17d5382e9e425113d9c3cb9c15d1a2153"
 dependencies = [
  "ahash",
  "arc-swap",

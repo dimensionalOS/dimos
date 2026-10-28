@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro 3D navigation on Point-LIO (lidar + lidar-anchored head depth into one ray-traced map) with arm planning: ``dimos run r1pro-nav``."""
+"""R1 Pro 3D navigation on dimSLAM fusing Point-LIO and wheel odometry (lidar + lidar-anchored head depth into one ray-traced map) with arm planning: ``dimos run r1pro-nav``."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -28,7 +28,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
-    r1pro_lidar_odometry,
+    r1pro_fused_odometry,
 )
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
@@ -36,10 +36,11 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
+    R1PRO_WHEEL_ODOM_FRAME,
     make_r1pro_model_config,
 )
+from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
@@ -62,9 +63,16 @@ r1pro_nav = autoconnect(
         viewer_backend=global_config.viewer,
         rerun_config=r1pro_nav_rerun_config(VOXEL_SIZE_M, WALL_CLEARANCE_M, PLANNER_VIZ_HZ),
     ),
-    # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
-    r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
-    r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
+    # dimSLAM owns odom -> base_link, so the connection's wheel odometry stays off tf and goes to it in a frame of its own.
+    r1pro_control(
+        publish_odom_tf=False,
+        odom_frame_id=R1PRO_WHEEL_ODOM_FRAME,
+        enable_wrist_color=False,
+        enable_imu=False,
+        # Head depth reads only the left eye.
+        head_right=False,
+    ).remappings([(R1ProConnection, "odometry", "slam_sources")]),
+    r1pro_fused_odometry().remappings([(PointLio, "lidar", "lidar_with_robot")]),
     # Joints on tf (the head cameras ride the torso), and the robot's body cut out of both the Mid-360 and head depth.
     UrdfManagerPointClearing.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
@@ -85,7 +93,8 @@ r1pro_nav = autoconnect(
         max_range=10.0,
         # Live, heavier head depth fell ~10 s behind; skipping stale clouds means it never works through a queue.
         max_cloud_age_s=1.0,
-        emit_every=1,
+        # Every 2nd cloud (~7 Hz with head depth) is plenty for MLS, which rebuilt its surface on each one at ~32% of a core.
+        emit_every=2,
         global_emit_every=50,
         support_min=4,
         graze_recent_frames=GRAZE_RECENT_FRAMES,

@@ -34,7 +34,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, ProcessNoise, SourceConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -48,6 +50,8 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
+    R1PRO_POINTLIO_ODOM_FRAME,
+    R1PRO_WHEEL_ODOM_FRAME,
 )
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
@@ -55,7 +59,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig, R1ProPointLio
+from dimos.robot.galaxea.r1pro.lio import PoseFromOdometry, R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -167,20 +171,27 @@ def _zenoh_transport(
     )
 
 
-def _head_cameras() -> list[Blueprint]:
-    """Both head eyes and their intrinsics; see ``head_cameras``."""
-    return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
+def _head_cameras(head_right: bool) -> list[Blueprint]:
+    """The head eyes and their intrinsics; see ``head_cameras``."""
+    eyes = (
+        [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint()]
+        if head_right
+        else [HeadLeftCamera.blueprint()]
+    )
+    return [*eyes, HeadCameraInfo.blueprint()]
 
 
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    head_right: bool = True,
     **connection: Any,
 ) -> Blueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
-    velocity); transports and remappings stay identical either way.
+    velocity); transports and remappings stay identical either way. ``head_right``
+    off leaves the right head eye unread.
     Other keyword args are ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
@@ -200,9 +211,11 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(**connection),
-            *_head_cameras(),
+            *_head_cameras(head_right),
             ControlCoordinator.blueprint(
                 tick_rate=100,
+                # UrdfManager and the arm planner each spent ~40% of a core receiving it at 100 Hz.
+                joint_state_hz=30.0,
                 hardware=[
                     HardwareComponent(
                         hardware_id="r1pro",
@@ -285,7 +298,7 @@ def r1pro_control(
     )
 
 
-def r1pro_lidar_odometry() -> Blueprint:
+def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     return autoconnect(
@@ -294,17 +307,74 @@ def r1pro_lidar_odometry() -> Blueprint:
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        R1ProPointLio.blueprint(
+        PointLio.blueprint(
+            frame_id=R1PRO_POINTLIO_ODOM_FRAME if mount_under_base else "odom",
             sensor_frame_id=lidar_frame,
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
-        ).remappings([(R1ProPointLio, "odometry", "pointlio_odometry")]),
-        R1ProLio.blueprint(),
+            # Every 6th raw point (default 3): half the cloud for the self-filter, ray tracer and depth anchors.
+            point_filter_num=6,
+        ).remappings([(PointLio, "odometry", "pointlio_odometry")]),
+        R1ProLio.blueprint(mount_under_base=mount_under_base),
     ).remappings(
         [
             (R1ProLio, "odometry", "pointlio_odometry"),
+            # The name the planners already read, unless something else owns base_link's pose.
+            (R1ProLio, "pose", "pointlio_base_pose" if mount_under_base else "chassis_odom"),
+        ]
+    )
+
+
+# Replaying a 30 m R1 drive: 4.8 mm / 0.25 deg jitter against Point-LIO's own 13.8 mm / 0.33 deg.
+POINTLIO_SOURCE = SourceConfig(
+    parent_frame_id=R1PRO_POINTLIO_ODOM_FRAME,
+    child_frame_id="base_link",
+    kind="pose",
+    pose_variances=Covariance(x=2e-4, y=2e-4, yaw=3.3e-5),
+    realign_after_seconds=1.0,
+)
+WHEEL_SOURCE = SourceConfig(
+    parent_frame_id=R1PRO_WHEEL_ODOM_FRAME,
+    child_frame_id="base_link",
+    kind="twist",
+    twist_variances=Covariance(x=5e-4, y=5e-4, yaw=6e-4),
+    # Wheels at rest read exactly zero; standing, the pose then settles instead of following Point-LIO's mm of noise.
+    still_variance=1e-6,
+    still_speed=1e-3,
+    still_angular_speed=1e-3,
+)
+
+
+def r1pro_fused_odometry() -> Blueprint:
+    """Point-LIO and wheel odometry (``r1pro_control`` odometry remapped to ``slam_sources``) into dimSLAM, which owns odom -> base_link."""
+    return autoconnect(
+        r1pro_lidar_odometry(mount_under_base=True),
+        DimSlam.blueprint(
+            # Required, but nothing feeds the camera inputs, so the tracker never starts.
+            camera_mode="stereo",
+            odom_sources=[POINTLIO_SOURCE, WHEEL_SOURCE],
+            planar=True,
+            process_noise=ProcessNoise(linear_acceleration=2.0, angular_acceleration=1.0),
+            # No tracker runs, and JetPack 6.0's CUDA 12.2 lacks symbols the Orin SDK (12.6) needs: load the SDK's own.
+            extra_env={"LD_LIBRARY_PATH": ""},
+        ),
+        PoseFromOdometry.blueprint(),
+    ).remappings(
+        [
+            # Point-LIO's own odom -> lidar edge would give base_link's subtree a second root.
+            (PointLio, "tf", "pointlio_tf"),
+            (R1ProLio, "base_odometry", "slam_sources"),
+            (DimSlam, "odom_sources", "slam_sources"),
+            (DimSlam, "odometry", "slam_odometry"),
+            (DimSlam, "image", "dimslam_image"),
+            (DimSlam, "camera_info", "dimslam_camera_info"),
+            (DimSlam, "depth_image", "dimslam_depth_image"),
+            (DimSlam, "depth_camera_info", "dimslam_depth_camera_info"),
+            (DimSlam, "depth_cloud", "dimslam_depth_cloud"),
+            (DimSlam, "imu", "dimslam_imu"),
+            (PoseFromOdometry, "odometry", "slam_odometry"),
             # The name the planners already read.
-            (R1ProLio, "pose", "chassis_odom"),
+            (PoseFromOdometry, "pose", "chassis_odom"),
         ]
     )
 

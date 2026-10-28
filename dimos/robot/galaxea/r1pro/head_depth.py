@@ -180,6 +180,8 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "decode_scale": 4,
                 # One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
                 "anchor_step": 4,
+                # Uncapped it ran ~9.5 fps at 54% of a core.
+                "max_rate_hz": 5.0,
                 **overrides,
             }
         ).remappings(

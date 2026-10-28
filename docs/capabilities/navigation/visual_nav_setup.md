@@ -140,7 +140,7 @@ DimSlam.blueprint(
     # so disable the covariance gate.
     covariance_gate_translation_std=0.0,
     # Alfred is holonomic in the plane.
-    per_dimension_error_variance=Covariance(
+    zero_velocity_variances=Covariance(
         z=0.01,
         roll=0.01,
         pitch=0.01,
@@ -184,14 +184,20 @@ These values are per-axis variances:
 Start by telling dimSLAM that the robot stays on the ground. An indoor ground robot normally does not move vertically, roll, or pitch.
 
 ```python skip
-per_dimension_error_variance=Covariance(
+planar=True
+```
+
+This holds z, roll, and pitch at zero and fuses every source in x, y, and yaw only. For a robot that drives on ramps, leave `planar` off and add soft zero-velocity constraints instead:
+
+```python skip
+zero_velocity_variances=Covariance(
     z=1e-6,
     roll=1e-6,
     pitch=1e-6,
 )
 ```
 
-This acts as a virtual zero-twist measurement whenever dimSLAM receives a source message. It prevents sensor error from making the robot sink, rise, or tilt. Use weaker constraints when the robot drives on ramps.
+This acts as a virtual zero-velocity measurement whenever dimSLAM receives a source message.
 
 ## Visual odometry
 
@@ -236,7 +242,7 @@ Wheel encoders are good at forward velocity and turn rate. They are weaker as a 
 
 A negative source variance uses the message covariance. A fixed positive variance is usually better for a drifting source because its reported covariance describes accumulated drift, not the measured delta.
 
-A source whose parent is `odom_frame_id` contributes absolute measurements. A source with another parent contributes dimSLAM-anchored deltas because its own pose has drifted.
+A source's `kind` says what its pose means. `pose` is a pose that does not drift, such as lidar-inertial odometry: its first message aligns its frame to dimSLAM's, and later messages are absolute measurements. `pose_delta`, the default, is a pose that drifts, such as wheel or visual odometry: only the motion between consecutive messages is fused. `twist` uses only the source's velocity.
 
 ## IMUs
 
@@ -274,7 +280,7 @@ Before driving, verify:
 | Tracking works but the robot moves in the wrong direction | The extrinsics are wrong. A few millimetres of error causes small constant drift. A wrong optical-frame rotation produces complete nonsense. Check tf and the URDF first. |
 | Position drifts badly from startup when using an IMU | The robot moved during gyro-bias initialization. Leave it still for about one second. Initialization restarts automatically after it becomes still. |
 | Bias initialization never completes | `init_gyro_limit` is below the gyro's noise floor at rest. Raise it above the gyro bias while keeping it below any real rotation. |
-| The map has two floors, or the robot appears rolled | z, roll, or pitch are random-walking. Configure `per_dimension_error_variance`. If wheel poses report z, roll, and pitch as zero, keep those dimensions as absolute anchors. |
+| The map has two floors, or the robot appears rolled | z, roll, or pitch are random-walking. Set `planar=True`, or configure `zero_velocity_variances`. If wheel poses report z, roll, and pitch as zero, keep those dimensions as absolute anchors. |
 | The path jumps sharply or resets | The covariance gate is firing. A CPU-only visual estimate's translation standard deviation can start above 1.0 and grow past 9 during normal driving, leaving no useful threshold. Set `covariance_gate_translation_std=0.0` for that case. |
 | Gravity is misaligned and the estimate diverges | The IMU mount is uncalibrated. One bad mount produced about 2.4 m/s² of gravity misalignment. Correct the tf transform. |
 | Wheel odometry appears to be ignored | Its `parent_frame_id` or `child_frame_id` does not exactly match `header.frame_id` or `child_frame_id` in the messages. Unmatched sources are dropped. |
