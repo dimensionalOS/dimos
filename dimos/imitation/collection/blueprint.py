@@ -18,14 +18,17 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.realsense.camera import (
+    RealSenseCamera,
+    RealSenseCameraConfig,
+)
 from dimos.hardware.sensors.camera.spec import CameraConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
@@ -39,13 +42,28 @@ from dimos.teleop.webxr.blueprints import (
 )
 
 
+class CollectionRealSenseConfig(RealSenseCameraConfig):
+    """Capture dimensions must match the shipped collection profile."""
+
+    width: Literal[848] = 848
+    height: Literal[480] = 480
+
+
+class CollectionRealSenseCamera(RealSenseCamera):
+    config: CollectionRealSenseConfig
+
+
 def _camera_if_real() -> tuple[Blueprint, ...]:
     """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
     MujocoSimModule already publishes color_image on /camera/color_image, so a
     real camera would be redundant (and fail with no device connected)."""
     if global_config.simulation:
         return ()
-    return (RealSenseCamera.blueprint(enable_pointcloud=False),)
+    return (
+        CollectionRealSenseCamera.blueprint(
+            instance_name="RealSenseCamera", enable_pointcloud=False
+        ),
+    )
 
 
 def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple[Blueprint, ...]:

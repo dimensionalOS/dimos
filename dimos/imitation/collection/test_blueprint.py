@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
     learning_collect_webxr_piper,
@@ -120,3 +122,13 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     # atom carries its explicit instance_name (the RPC lookup contract).
     assert streams[("recorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
+
+
+@pytest.mark.parametrize("blueprint", [learning_collect_webxr_xarm7, learning_collect_webxr_piper])
+@pytest.mark.parametrize("dimension,value", [("width", "640"), ("height", "360")])
+def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
+    blueprint, dimension, value
+):
+    parser = BlueprintConfigParser(blueprint)
+    with pytest.raises(BlueprintConfigError, match=dimension):
+        parser.parse([f"--RealSenseCamera.{dimension}", value], environ={})
