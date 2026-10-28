@@ -19,6 +19,7 @@ import type { Live } from "../../shared/protocol/status.ts";
 import type { RenderDetails } from "../../shared/protocol/media.ts";
 import { MovedSchema } from "../../shared/protocol/tools/details.ts";
 import { Status } from "../../shared/protocol/status.ts";
+import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { awaitWithContext, withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import { defineExtension, defineTask } from "@earendil-works/pi-durable";
@@ -27,6 +28,15 @@ import { renderOf } from "../tools/details.ts";
 
 /** As often as pi-durable publishes a running call's output. */
 const MOVED_OUTPUT_PACE_MS = 100;
+
+const RUN_IN_BACKGROUND = "run_in_background";
+
+const runInBackgroundSchema = Type.Optional(
+  Type.Boolean({
+    description:
+      "Start the call in the background, for work that runs long: it returns at once with its call id, the background tool reads its output or stops it, and its result arrives later as a message.",
+  }),
+);
 
 export type DetachResult = { readonly kind: "detached"; readonly task: TaskId } | { readonly kind: "not_running" };
 
@@ -207,14 +217,16 @@ export class Detacher {
   }
 
   /**
-   * The tool's registration with `execute` wrapped so a running call can move; `toolsExtension` applies it per tool
-   * policy. A moved call's structured output is its background handle, so a declared schema admits that too. Its work's
-   * result goes through the tool's settle step before the notice, as a call that stays does in the afterTool hook.
+   * The tool's registration with `execute` wrapped so a running call can move, and with `run_in_background` added so
+   * the model can start it in the background; `toolsExtension` applies it per tool policy. A moved call's structured output is its
+   * background handle, so a declared schema admits that too. Its work's result goes through the tool's settle step
+   * before the notice, as a call that stays does in the afterTool hook.
    */
   wrap(tool: AgentTool<AgentToolName>): ToolRegistration {
     const schema = tool.registration.structuredOutputSchema;
     return {
       ...tool.registration,
+      parameters: withRunInBackground(tool.registration.parameters),
       ...(schema === undefined ? {} : { structuredOutputSchema: Type.Union([schema, MovedSchema]) }),
       execute: (args, api, context) => this.execute(tool, args, api, context),
     };
@@ -232,6 +244,7 @@ export class Detacher {
     context: Context,
   ): Promise<ToolExecutionResult> {
     const { registration, settle } = tool;
+    const { [RUN_IN_BACKGROUND]: inBackground, ...rest } = args as JsonObject;
     const conversation = api.conversationId;
     const call = api.callId as CallId;
     const own = new AbortController();
@@ -239,38 +252,41 @@ export class Detacher {
     context.abortSignal?.addEventListener("abort", abortWork, { once: true });
     const held = new HeldOutput(api, () => this.pace(conversation));
     const workContext = withAbortSignal(own.signal, withoutAbortSignal(context));
-    const work = registration.execute(args, held.api, workContext);
+    const work = registration.execute(rest, held.api, workContext);
     const since = epochMs(Date.now());
     let answer: (task: TaskId | null) => void = () => undefined;
-    const asked = new Promise<void>((resolve) => {
-      this.hold(conversation, call, {
-        detachable: { call, tool: registration.name, since },
-        letGo: () =>
-          new Promise<TaskId | null>((reply) => {
-            answer = reply;
-            resolve();
-          }),
+    if (inBackground !== true) {
+      const asked = new Promise<void>((resolve) => {
+        this.hold(conversation, call, {
+          detachable: { call, tool: registration.name, since },
+          letGo: () =>
+            new Promise<TaskId | null>((reply) => {
+              answer = reply;
+              resolve();
+            }),
+        });
       });
-    });
-    const first = await Promise.race([
-      work.then(
-        () => "finished" as const,
-        () => "finished" as const,
-      ),
-      asked.then(() => "asked" as const),
-    ]);
-    this.release(conversation, call);
-    context.abortSignal?.removeEventListener("abort", abortWork);
-    if (first === "finished") {
-      answer(null);
-      return work;
+      const first = await Promise.race([
+        work.then(
+          () => "finished" as const,
+          () => "finished" as const,
+        ),
+        asked.then(() => "asked" as const),
+      ]);
+      this.release(conversation, call);
+      if (first === "finished") {
+        context.abortSignal?.removeEventListener("abort", abortWork);
+        answer(null);
+        return work;
+      }
     }
+    context.abortSignal?.removeEventListener("abort", abortWork);
     held.move();
     const hookCall = {
       type: "toolCall" as const,
       id: api.callId,
       name: registration.name,
-      arguments: args as JsonObject,
+      arguments: rest,
     };
     const moved = new Moved(
       conversation,
@@ -304,7 +320,7 @@ export class Detacher {
         output: [
           {
             type: "text",
-            text: `Moved to the background as call ${call}. Its result arrives later as a message; the background tool lists it, reads its output so far, or stops it.`,
+            text: `${inBackground === true ? "Started in" : "Moved to"} the background as call ${call}. Its result arrives later as a message; the background tool lists it, reads its output so far, or stops it.`,
           },
         ],
         ...(registration.structuredOutputSchema === undefined ? {} : { structuredOutput: { background } }),
@@ -451,6 +467,16 @@ class HeldOutput {
     }
     this.changed();
   }
+}
+
+/** The parameters with `run_in_background` added; a TypeBox object and an MCP JSON Schema object are both JSON Schema. */
+function withRunInBackground(parameters: TSchema): TSchema {
+  const properties =
+    "properties" in parameters && typeof parameters["properties"] === "object" ? parameters["properties"] : {};
+  return Type.Unsafe<unknown>({
+    ...parameters,
+    properties: { ...properties, [RUN_IN_BACKGROUND]: runInBackgroundSchema },
+  });
 }
 
 function endedOf(result: ToolExecutionResult): Ended {

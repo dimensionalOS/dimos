@@ -68,7 +68,7 @@ With nothing running and an empty editor, Esc selects a message. The arrows move
 
 A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /background moves this call to the background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
 
-While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also list, read and stop these calls itself with its `background` tool.
+While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also start a call in the background itself, with the call's `run_in_background` argument, and list, read and stop these calls with its `background` tool.
 
 `/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
 

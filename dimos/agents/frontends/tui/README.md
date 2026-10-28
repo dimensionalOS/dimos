@@ -303,7 +303,7 @@ export class StreamGetCard implements ToolCard {
         const result = this.result;
         if (result === null) return ["", head, ...this.loader.render(width).filter(Boolean)];
         const state = movedToBackground(result)
-            ? muted("moved to the background")
+            ? muted("in the background")
             : result.isError
               ? amber("failed")
               : muted("done");
