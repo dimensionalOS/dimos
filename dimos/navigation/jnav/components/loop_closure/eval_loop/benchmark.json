@@ -165,10 +165,12 @@
       "mount": "mid360",
       "db": "~/repos/dimos/data/china_office.db (LFS data/.lfs/china_office.db.tar.gz; 35699 poses, ~35 cm tag drift)",
       "gt": {
-        "candidates": "gt_pointlio_odometry_v4tags (tags 2.5 cm) / pointlio_odometry_corrected (5.6 cm) / v5 ICP (building); the old gt_pointlio_odometry (odom->base_link) is junk (50 cm)",
-        "tags": "april_tags_raw"
+        "stream": "gt_pointlio_odometry_v5",
+        "tags": "april_tags_raw",
+        "validated": "tag spread 1.9 cm (raw 35.3, tags-only 2.4, pointlio_odometry_corrected 5.5); map consistency median cross-pass gap 8.6 cm / 26.9% within 5 cm (raw 12.3 / 22.3%)",
+        "built_by": "make_gt_mid360.py: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans, 5 nearest revisit partners per keyframe)"
       },
-      "status": "no_gt"
+      "status": "ready"
     },
     {
       "name": "office555",
