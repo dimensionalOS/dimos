@@ -411,7 +411,8 @@ pub struct Config {
     /// closure's innovation against the raw odometry, which no solve's verdict filters: alongside each solve the
     /// right/wrong mixture over them is fitted (`odometry_noise::fit_mixture`), and where the residual estimate lies
     /// outside the mixture's region at `closure_gnc_inlier_probability` (its posterior ratio against chi-square with
-    /// four degrees of freedom) the mixture's estimate and spread replace it. An overtrusted odometry (reported more
+    /// four degrees of freedom) and the solve kept too few closures for its residuals to identify the six variance
+    /// components (under six redundant residuals), the mixture's estimate and spread replace it. An overtrusted odometry (reported more
     /// accurate than it is) makes the solve reject the very closures that would show it (none kept, no residual
     /// evidence), so without this the residuals can never raise it; with it the disagreeing closures build up until
     /// the estimate must move.
@@ -1325,7 +1326,12 @@ impl GscPgo {
             );
             let cutoff =
                 crate::landmarks::chi2_inverse(self.config.closure_gnc_inlier_probability, 4);
-            if excess > cutoff {
+            // six variance components (four odometry, two closure) need six redundant residuals to be identified: with
+            // fewer, the solve kept too little to say anything, and where it kept more the residuals are trusted over the
+            // mixture, which wrong closures that agree with each other (one floor apart) can widen without bound
+            let residual_redundancy: f64 =
+                evidence.map_or(0.0, |e| e.iter().map(|(_, r)| r.max(0.0)).sum());
+            if excess > cutoff && residual_redundancy < 6.0 {
                 ln_odometry = mixture.odometry;
                 self.odometry_noise_ln_sd = mixture.odometry_sd.map(Some);
                 self.odometry_noise_from_mixture = true;
