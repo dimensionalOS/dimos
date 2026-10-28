@@ -1,5 +1,5 @@
 import type { AssistantMessage, ToolCall, UserMessage } from "@earendil-works/pi-ai";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { DimosInput } from "../../../shared/protocol/conversation/input.ts";
 import type { InputOutcome, ToolResult, TranscriptItem } from "../../../shared/protocol/conversation/state.ts";
 import type { QueuedRow } from "../../../shared/view-models/conversation/queue.ts";
@@ -137,8 +137,8 @@ export class TranscriptView implements Component {
   /** Every rendering shown, oldest first, for `/panel`. */
   private galleries: Gallery[] = [];
   private lines: string[] = [];
-  /** The last layout: each part's key and height in order, for scrolling to a selected message. */
-  private layout: readonly { readonly key: string; readonly height: number }[] = [];
+  /** The last layout: each part's key, component and height in order, for scrolling to a message and routing clicks. */
+  private layout: readonly { readonly key: string; readonly component: Component; readonly height: number }[] = [];
   private lastItem: string | null = null;
   private selected: string | null = null;
   private expanded = false;
@@ -208,7 +208,7 @@ export class TranscriptView implements Component {
         ? component.render(Math.max(1, width - SELECTED_GUTTER.length)).map((text) => accent(SELECTED_GUTTER) + text)
         : component.render(width);
       this.lines.push(...lines);
-      return { key, height: lines.length };
+      return { key, component, height: lines.length };
     });
     return this.layout;
   }
@@ -268,6 +268,25 @@ export class TranscriptView implements Component {
     if (source === null) return [];
     this.show(source, width);
     return this.lines;
+  }
+
+  /** Passes a mouse event to the part under it, such as a click on a gallery's tab row. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    let top = 0;
+    for (const { key, component, height } of this.layout) {
+      if (event.y < top + height) {
+        const gutter = key === this.selected ? SELECTED_GUTTER.length : 0;
+        return component.handleMouse?.({
+          ...event,
+          x: event.x - gutter,
+          y: event.y - top,
+          width: event.width - gutter,
+          height,
+        });
+      }
+      top += height;
+    }
+    return undefined;
   }
 
   invalidate(): void {

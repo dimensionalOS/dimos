@@ -407,6 +407,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     const focused: Component = {
       render: (width) => component.render(width),
       invalidate: () => component.invalidate(),
+      handleMouse: (event) => component.handleMouse?.(event),
       handleInput: (data) => {
         if (closesOnEscape && matchesKey(data, "escape")) close();
         else component.handleInput?.(data);
