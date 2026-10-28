@@ -39,6 +39,7 @@ function panelFor(view: RenderedView, changed: () => void): ViewPanel<RenderedVi
 export class Gallery implements Component {
   readonly details: RenderDetails;
   private readonly changed: () => void;
+  private readonly openPanel: (index: number) => void;
   private overview: TerminalImage | null = null;
   private overviewError: string | null = null;
   private focused: ViewPanel<RenderedView["kind"]> | null = null;
@@ -46,9 +47,10 @@ export class Gallery implements Component {
   private tabs: { readonly start: number; readonly end: number; readonly index: number }[] = [];
   private disposed = false;
 
-  constructor(details: RenderDetails, changed: () => void) {
+  constructor(details: RenderDetails, changed: () => void, openPanel: (index: number) => void) {
     this.details = details;
     this.changed = changed;
+    this.openPanel = openPanel;
     if (details.views.length > 0) {
       Promise.all(details.views.map((view) => readVerified(previewOf(view))))
         .then(overviewOf)
@@ -89,7 +91,7 @@ export class Gallery implements Component {
     if (event.type !== "press" || event.y !== 0) return undefined;
     const tab = this.tabs.find((candidate) => event.x >= candidate.start && event.x < candidate.end);
     if (tab === undefined) return undefined;
-    this.select(tab.index);
+    this.openPanel(tab.index);
     return { handled: true, render: true };
   }
 

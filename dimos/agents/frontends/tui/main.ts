@@ -6,6 +6,7 @@ import { ConversationContract } from "../../shared/protocol/conversation/contrac
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "../../shared/protocol/time.ts";
+import type { Gallery } from "./views/gallery.ts";
 import type { ImageAddress } from "../../shared/protocol/conversation/images.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Outcome } from "../../shared/protocol/outcome.ts";
@@ -201,8 +202,11 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     requestRender();
   };
 
-  const transcript = new TranscriptView(tui, cwd, () =>
-    showing === null ? null : { rows: rows(), omitted: showing.conversation.transcript.value.omitted },
+  const transcript = new TranscriptView(
+    tui,
+    cwd,
+    () => (showing === null ? null : { rows: rows(), omitted: showing.conversation.transcript.value.omitted }),
+    (gallery, index) => openPanel(gallery, index),
   );
   const chatScroll = new ScrollView(transcript, { follow: "end", primary: true });
   const editor = new PromptEditor(
@@ -422,6 +426,12 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     );
     tui.setFocus(focused);
     tui.requestRender();
+  };
+
+  const openPanel = (gallery: Gallery, index: number) => {
+    gallery.select(index);
+    if (gallery.interactive)
+      fullScreen(gallery.details.views[index - 1]?.label ?? "view", gallery, true, () => gallery.select(0));
   };
 
   /** The unsent text of each conversation that is not shown; it returns to the editor when its conversation shows. */
@@ -680,9 +690,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       const gallery = transcript.latestGallery;
       if (gallery === null) throw new Error("No rendering yet.");
       if (index > gallery.details.views.length) throw new Error(`Choose /panel 0–${gallery.details.views.length}.`);
-      gallery.select(index);
-      if (gallery.interactive)
-        fullScreen(gallery.details.views[index - 1]?.label ?? "view", gallery, true, () => gallery.select(0));
+      openPanel(gallery, index);
     },
     exit: (code) => resolveExit(code),
   };

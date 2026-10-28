@@ -132,6 +132,7 @@ export class TranscriptView implements Component {
   private readonly tui: TUI;
   private readonly cwd: () => string;
   private readonly source: () => TranscriptSource | null;
+  private readonly openPanel: (gallery: Gallery, index: number) => void;
   private readonly views = new Map<string, RowView>();
   private notes: Note[] = [];
   /** Every rendering shown, oldest first, for `/panel`. */
@@ -145,10 +146,16 @@ export class TranscriptView implements Component {
   private readonly banner = new Container();
   private readonly omittedLine = line("");
 
-  constructor(tui: TUI, cwd: () => string, source: () => TranscriptSource | null) {
+  constructor(
+    tui: TUI,
+    cwd: () => string,
+    source: () => TranscriptSource | null,
+    openPanel: (gallery: Gallery, index: number) => void,
+  ) {
     this.tui = tui;
     this.cwd = cwd;
     this.source = source;
+    this.openPanel = openPanel;
     this.banner.addChild(line(muted("  Ask about this workspace, or what the running DimOS system can do.")));
     this.banner.addChild(new Spacer(1));
   }
@@ -469,7 +476,11 @@ export class TranscriptView implements Component {
   }
 
   private gallery(block: Container, details: RenderDetails): Gallery {
-    const gallery = new Gallery(details, () => this.tui.requestRender());
+    const gallery = new Gallery(
+      details,
+      () => this.tui.requestRender(),
+      (index) => this.openPanel(gallery, index),
+    );
     this.galleries.push(gallery);
     block.addChild(gallery);
     return gallery;
