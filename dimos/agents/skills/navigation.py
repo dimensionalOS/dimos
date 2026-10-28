@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import threading
 import time
 from typing import Any
@@ -76,9 +75,7 @@ class NavigationSkillContainer(Module):
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
-        # Unconnected when the blueprint's planner publishes no goal_reached.
-        if self.goal_reached.transport is not None:
-            self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self._skill_started = True
 
     @rpc
@@ -228,9 +225,7 @@ class NavigationSkillContainer(Module):
             if odom is None:
                 where = "robot position unknown"
             else:
-                distance = math.dist(
-                    (goal.position.x, goal.position.y), (odom.position.x, odom.position.y)
-                )
+                distance = goal.position.distance(odom.position)
                 where = (
                     f"robot at ({odom.position.x:.2f}, {odom.position.y:.2f}), "
                     f"{distance:.2f} m from it"
