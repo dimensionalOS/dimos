@@ -60,7 +60,7 @@ blueprint does not download or generate assets.
 ## Physical CAN setup
 
 Both arms reuse `MakerModsMetalAdapter` with the shared custom firmware profiles
-from `can-motor-control>=0.0.10`. Each arm uses its own CAN bus because motor
+from `can-motor-control>=0.0.11`. Each arm uses its own CAN bus because motor
 IDs 1-7 are repeated. Run `dimos hardware can list`, identify and label both
 adapter serials, and supply **both distinct** selectors:
 
