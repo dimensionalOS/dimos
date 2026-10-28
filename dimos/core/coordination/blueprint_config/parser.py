@@ -30,12 +30,14 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticUndefined
 
+from dimos.core.config_secrets import SECRET_CONFIG_FIELDS
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
     format_validation_error,
 )
 from dimos.core.coordination.blueprint_config.fields import (
     display_annotation,
+    field_descriptions,
     field_has_required_parent,
     field_is_required,
     leaf_fields,
@@ -162,6 +164,7 @@ class BlueprintConfigParser:
         """
         schema = self._get_schema()
         self._validate_structure(schema)
+        tokens = tuple(cli_tokens)
 
         module_values = {
             module.atom.name: {
@@ -178,17 +181,18 @@ class BlueprintConfigParser:
         global_values: dict[str, Any] = {}
         deep_merge(global_values, plain_mapping(self.blueprint.global_config_overrides))
         transport_values: dict[str, Any] = {}
+        # The file and CLI merged a second time, alone, is what a hosted run sends its Hosts.
+        file_cli_modules: dict[str, dict[str, Any]] = {m.atom.name: {} for m in schema.modules}
+        file_cli_globals: dict[str, Any] = {}
+        file_cli_transports: dict[str, Any] = {}
 
         if config_path is not None:
             config_values = read_config_file(Path(config_path))
-            merge_root_source(
-                module_values,
-                global_values,
-                transport_values,
-                config_values,
-                source="config file",
-                schema=schema,
-            )
+            for sections in (
+                (module_values, global_values, transport_values),
+                (file_cli_modules, file_cli_globals, file_cli_transports),
+            ):
+                merge_root_source(*sections, config_values, source="config file", schema=schema)
 
         merge_environment(
             module_values,
@@ -208,13 +212,13 @@ class BlueprintConfigParser:
                 schema=schema,
             )
 
-        merge_cli(
-            module_values,
-            global_values,
-            transport_values,
-            tuple(cli_tokens),
-            schema,
-        )
+        merge_cli(module_values, global_values, transport_values, tokens, schema)
+        merge_cli(file_cli_modules, file_cli_globals, file_cli_transports, tokens, schema)
+        file_and_cli = {
+            **file_cli_modules,
+            "g": file_cli_globals,
+            "transports": file_cli_transports,
+        }
 
         if global_overrides is not None:
             deep_merge(global_values, plain_mapping(global_overrides))
@@ -238,6 +242,7 @@ class BlueprintConfigParser:
             _global_explicit_values=snapshot_mapping(explicit_global),
             _transport_config_values=snapshot_mapping(parsed_transports),
             _blueprint=self.blueprint,
+            _file_and_cli_values=snapshot_mapping({k: v for k, v in file_and_cli.items() if v}),
         )
 
     def format_help(self, reserved_options: Collection[str] = ()) -> str:
@@ -268,6 +273,12 @@ class BlueprintConfigParser:
 
             annotation = display_annotation(target.annotations)
             default = self._help_default(target, schema)
+            if (
+                target.path[-1] in SECRET_CONFIG_FIELDS
+                and default is not PydanticUndefined
+                and default is not None
+            ):
+                default = "***"
             parent_required = self._target_has_required_parent(target, schema)
             suffix = ""
             if default is not PydanticUndefined:
@@ -281,6 +292,8 @@ class BlueprintConfigParser:
             if len(aliases) > 1:
                 option_names = [f"--{target.qualified_name}"]
             lines.append(f"  {', '.join(option_names)} <{annotation}>{suffix}")
+            for description in field_descriptions(self._target_model(target, schema), target.path):
+                lines.extend(f"    {line}" for line in description.splitlines())
 
         return "\n".join(lines)
 

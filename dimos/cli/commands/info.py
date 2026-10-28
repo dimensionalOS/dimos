@@ -18,14 +18,13 @@ from __future__ import annotations
 
 import typer
 
-from dimos.core.global_config import SECRET_CONFIG_FIELDS, global_config
+from dimos.core.config_secrets import without_secret_values
+from dimos.core.global_config import global_config
 
 
 def show_config() -> None:
     """Show current config settings and their values."""
-    for field_name, value in global_config.model_dump().items():
-        if field_name in SECRET_CONFIG_FIELDS and value is not None:
-            value = "***"
+    for field_name, value in without_secret_values(global_config.model_dump()).items():
         typer.echo(f"{field_name}: {value}")
 
 

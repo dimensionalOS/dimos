@@ -27,6 +27,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
+from pydantic import Field
 from reactivex import Observable, operators as ops
 from reactivex.disposable import Disposable
 import requests
@@ -47,16 +48,12 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def typesafe_api_key() -> str | None:
-    """Blueprint requirement: the key comes from `TYPESAFE_API_KEY` / global config."""
-    from dimos.core.global_config import global_config
-
-    if global_config.typesafe_api_key:
-        return None
-    return "TYPESAFE_API_KEY is not set. Create a key at https://console.typesafe.ai/settings/keys"
-
-
 class TypeSafeAgentConfig(ModuleConfig):
+    api_key: str = Field(
+        min_length=1,
+        repr=False,
+        description="Create a TypeSafe API key at https://console.typesafe.ai/settings/keys",
+    )
     model: str = DEFAULT_MODEL
     max_hz: float | None = None  # None: infer on every trigger update
     timeout_s: float = REQUEST_TIMEOUT_S
@@ -93,7 +90,7 @@ class TypeSafeAgent(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._session.headers["Authorization"] = f"Bearer {self.config.g.typesafe_api_key or ''}"
+        self._session.headers["Authorization"] = f"Bearer {self.config.api_key}"
         source = self.trigger()
         if self.config.max_hz:
             source = source.pipe(ops.sample(1.0 / self.config.max_hz))

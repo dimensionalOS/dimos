@@ -52,7 +52,13 @@ CLOUD = PointCloud2.from_numpy(
 @pytest.fixture(scope="module")
 def map3d_page_url(serve_channel: Callable[..., str]) -> str:
     return serve_channel(
-        cockpit(layout=Map3D(pose=None, res=16.0)),
+        cockpit(
+            layout=Map3D(pose=None, res=16.0),
+            pages=[
+                Map3D(pose=None, res=16.0, title="Map"),
+                Map3D(pose="odom", res=16.0, title="Map with pose"),
+            ],
+        ),
         stream="global_map",
         topic="/map3d_e2e/global_map",
         message=CLOUD,
@@ -77,3 +83,21 @@ def test_voxel_map_renders(map3d_page_url: str, chromium_page: Page) -> None:
     assert image is not None
     bright = int((image.max(axis=2) > 128).sum())
     assert bright > 0, "no bright pixel on the canvas: the voxels were clipped or not drawn"
+
+
+def test_switching_between_map_pages_renders_fresh_contexts(
+    map3d_page_url: str, chromium_page: Page
+) -> None:
+    chromium_page.goto(map3d_page_url)
+    for panel_id in ("p1", "p2", "p1"):
+        chromium_page.get_by_test_id(f"tab-page-{panel_id}").click()
+        canvas = chromium_page.locator(f'{CANVAS}[aria-label="{panel_id}"]')
+        expect(canvas).to_have_attribute("data-voxels", "3", timeout=120_000)
+        expect(chromium_page.locator('[role="alert"]')).to_have_count(0)
+        assert canvas.evaluate("el => !el.getContext('webgl2').isContextLost()")
+        png = canvas.screenshot(
+            mask=[chromium_page.get_by_test_id("map3d-global_map-follow")], mask_color="#000000"
+        )
+        image = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        assert image is not None
+        assert (image.max(axis=2) > 128).any(), f"{panel_id} has no rendered voxels"

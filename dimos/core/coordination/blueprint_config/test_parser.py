@@ -31,7 +31,7 @@ from dimos.core.stream import Stream, Transport
 
 
 class NestedConfig(BaseModel):
-    enabled: bool = True
+    enabled: bool = Field(default=True, description="Enable nested processing.")
     mode: str = "auto"
 
 
@@ -189,7 +189,7 @@ def test_global_short_name_is_reserved_when_module_field_collides() -> None:
             "--collisionmodule.robot-ip",
             "module-value",
             "--replay=false",
-            "--no-obstacle-avoidance",
+            "--no-zenoh-scouting",
             "--record",
             "sqlite",
             "--record-topics",
@@ -202,7 +202,7 @@ def test_global_short_name_is_reserved_when_module_field_collides() -> None:
     assert parsed.global_config_values()["record"] == "sqlite"
     assert parsed.global_config_values()["record_topics"] == "lidar,odom"
     assert parsed.global_config_values()["replay"] is False
-    assert parsed.global_config_values()["obstacle_avoidance"] is False
+    assert parsed.global_config_values()["zenoh_scouting"] is False
     assert parsed.module_kwargs("collisionmodule") == {"robot_ip": "module-value"}
 
 
@@ -489,7 +489,8 @@ def test_format_help_does_not_call_default_factories_and_hides_reserved_shorthan
 
     class HelpConfig(ModuleConfig):
         daemon: str = "module"
-        generated: str = Field(default_factory=create_value)
+        generated: str = Field(default_factory=create_value, description="Generated on startup.")
+        nested: NestedConfig = Field(default_factory=NestedConfig)
 
     class HelpModule(Module):
         config: HelpConfig
@@ -502,6 +503,8 @@ def test_format_help_does_not_call_default_factories_and_hides_reserved_shorthan
     assert "--helpmodule.daemon <str>" in output
     assert "  --daemon," not in output
     assert "--generated, --helpmodule.generated <str>" in output
+    assert "    Generated on startup." in output
+    assert "    Enable nested processing." in output
     assert "rpc-transport" not in output
 
 
@@ -591,3 +594,23 @@ def test_split_run_arguments_requires_leading_blueprint_names() -> None:
     )
     with pytest.raises(BlueprintConfigError, match="must precede"):
         split_run_arguments(("--map-file", "map"))
+
+
+def test_module_secret_defaults_are_hidden_in_help() -> None:
+    class SecretConfig(ModuleConfig):
+        api_key: str
+        aes_128_key: str | None = None
+
+    class SecretModule(Module):
+        config: SecretConfig
+
+    parser = BlueprintConfigParser(
+        SecretModule.blueprint(api_key="private-api-key", aes_128_key="private-aes-key")
+    )
+    help_text = parser.format_help()
+
+    assert "--secretmodule.api-key" in help_text
+    assert "--secretmodule.aes-128-key" in help_text
+    assert "private-api-key" not in help_text
+    assert "private-aes-key" not in help_text
+    assert parser.parse(environ={}).module_kwargs("secretmodule")["api_key"] == "private-api-key"

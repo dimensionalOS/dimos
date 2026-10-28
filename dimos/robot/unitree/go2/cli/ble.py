@@ -271,11 +271,14 @@ async def provision_wifi(
     password: str,
     country_code: str = "US",
     *,
+    ap: bool = False,
     timeout: float = 30.0,
     connect_retries: int = 3,
     on_progress: Callable[[str], None] | None = None,
 ) -> str | None:
     """Provision a Unitree robot's wifi over BLE. Returns the serial number on success.
+
+    With `ap=True` the robot hosts its own hotspot named `ssid` instead of joining one.
 
     Retries the BLE connection step up to `connect_retries` times. Once connected,
     handshake/SSID/password/country failures are not retried — those indicate a
@@ -307,8 +310,10 @@ async def provision_wifi(
             pass
         session.event.clear()
 
-        progress("init STA mode")
-        await session.write_validated(build_packet(INST_INIT_STA, bytes([2])), INST_INIT_STA)
+        progress(f"init {'AP' if ap else 'STA'} mode")
+        await session.write_validated(
+            build_packet(INST_INIT_STA, bytes([1 if ap else 2])), INST_INIT_STA
+        )
 
         progress(f"set SSID: {ssid}")
         await session.send_chunked(INST_SSID, ssid.encode("utf-8"))

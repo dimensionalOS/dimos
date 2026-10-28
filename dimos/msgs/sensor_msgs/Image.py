@@ -26,7 +26,7 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-from turbojpeg import TJPF_RGB
+from turbojpeg import TJPF_BGR, TJPF_RGB
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
@@ -58,6 +58,10 @@ class AgentImageMessage(TypedDict):
     source_type: Literal["base64"]
     mime_type: Literal["image/jpeg", "image/png"]
     data: str  # Base64 encoded image data
+
+
+# Pixel layouts TurboJPEG encodes directly (to_jpeg_bytes); the rest convert.
+_TJPF_BY_FORMAT = {ImageFormat.BGR: TJPF_BGR, ImageFormat.RGB: TJPF_RGB}
 
 
 @dataclass
@@ -544,9 +548,16 @@ class Image(Timestamped):
         Returns:
             Raw JPEG bytes.
         """
-        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
-        rgb_array = self.to_rgb().data
-        return get_turbojpeg().encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+        # BGR and RGB go to TurboJPEG as they are (it converts to YCbCr
+        # itself, so the bytes match whichever of the two holds the pixels);
+        # a to_rgb() round trip would copy or cvtColor every frame first.
+        pixel_format = _TJPF_BY_FORMAT.get(self.format)
+        if pixel_format is None:
+            pixel_format = TJPF_RGB
+            array = self.to_rgb().data
+        else:
+            array = np.ascontiguousarray(self.data)
+        return get_turbojpeg().encode(array, quality=quality, pixel_format=pixel_format)  # type: ignore[no-any-return]
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.

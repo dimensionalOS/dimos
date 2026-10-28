@@ -1263,7 +1263,10 @@ Deno.test({
     assertEquals(relay.quicPort, relay.httpPort);
     const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
     const info = await res.json();
-    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+    assertEquals(info, {
+      wtUrl: `https://127.0.0.1:${relay.httpPort}`,
+      v: PROTOCOL_VERSION,
+    });
 
     // The QUIC listener serves the given certificate: pin its locally
     // computed hash (the relay never advertised one) and complete a hello.
@@ -1278,6 +1281,60 @@ Deno.test({
   } finally {
     client.close();
     await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "a relay with --cert/--key retries when an ephemeral TCP port is occupied on UDP",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  const serve = Deno.serve;
+  let occupied: Deno.DatagramConn | undefined;
+  let bindCount = 0;
+  let firstPort: number | undefined;
+  Deno.serve = new Proxy(serve, {
+    apply(target, thisArg, args) {
+      const server = Reflect.apply(target, thisArg, args) as Deno.HttpServer<Deno.NetAddr>;
+      bindCount++;
+      if (bindCount === 1) {
+        firstPort = server.addr.port;
+        // A TCP port picked by the OS may already be in use on UDP.
+        try {
+          occupied = Deno.listenDatagram({
+            hostname: "127.0.0.1",
+            port: server.addr.port,
+            transport: "udp",
+          });
+        } catch (e) {
+          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+        }
+      }
+      return server;
+    },
+  });
+  let relay: Awaited<ReturnType<typeof startRelay>> | undefined;
+  try {
+    relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+    assert(bindCount >= 2);
+    assert(firstPort !== undefined);
+    assert(relay.httpPort !== firstPort);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: firstPort });
+    probe.close();
+    const client = Deno.createHttpClient({ caCerts: [cert.certPem] });
+    try {
+      const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+    } finally {
+      client.close();
+    }
+  } finally {
+    Deno.serve = serve;
+    occupied?.close();
+    await relay?.shutdown();
   }
 });
 

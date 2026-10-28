@@ -26,10 +26,12 @@ from pytest_mock import MockerFixture
 
 from dimos.core.coordination.process_lifecycle import (
     DIMOS_RUN_ID_ENV,
+    is_pid_alive,
     kill_run_processes,
     spawn_watchdog,
     wait_for_pid_exit,
 )
+from dimos.utils.testing.waiting import wait_until
 
 
 def _wait_gone(proc: subprocess.Popen, timeout: float = 3.0) -> bool:
@@ -162,6 +164,26 @@ def test_wait_for_pid_exit_returns_when_pid_gone():
     start = time.monotonic()
     wait_for_pid_exit(proc.pid, poll_interval=0.1)
     assert time.monotonic() - start < 0.5
+
+
+def test_wait_for_pid_exit_does_not_wait_for_parent_to_reap_child(mocker):
+    with subprocess.Popen([sys.executable, "-c", "raise SystemExit(23)"]) as child:
+        wait_until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, timeout=5)
+        mocker.patch(
+            "dimos.core.coordination.process_lifecycle.time.sleep",
+            side_effect=AssertionError("A zombie has already exited"),
+        )
+
+        wait_for_pid_exit(child.pid)
+
+        assert not is_pid_alive(child.pid)
+        assert child.wait(timeout=1) == 23
+
+
+def test_is_pid_alive_treats_inaccessible_process_as_alive(mocker):
+    mocker.patch("psutil.Process", side_effect=psutil.AccessDenied(pid=123))
+
+    assert is_pid_alive(123)
 
 
 def test_spawn_watchdog_sweeps_on_parent_death(spawn_tagged, run_id):
