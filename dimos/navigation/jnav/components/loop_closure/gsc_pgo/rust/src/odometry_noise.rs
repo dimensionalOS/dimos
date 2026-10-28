@@ -121,7 +121,7 @@ pub fn fit(
 }
 
 /// The right/wrong mixture over closure innovations at its most probable point (`fit_mixture`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Mixture {
     /// The ln ratios of the four odometry variances to the reported ones, and the ln closure scale.
     pub odometry: [f64; COMPONENTS],
@@ -133,6 +133,8 @@ pub struct Mixture {
     pub odometry_sd: [f64; COMPONENTS],
     /// The cost (-2 ln posterior) at that point.
     pub cost: f64,
+    /// Per innovation (in order), its probability of being a right closure.
+    pub right: Vec<f64>,
 }
 
 /// The mixture's cost, -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c r_c^2 / sd_c^2 + 1.5 k^2, at ln
@@ -144,6 +146,32 @@ struct MixtureCost<'a> {
 }
 
 impl MixtureCost<'_> {
+    /// Each innovation's probability of being a right closure at the given parameters.
+    fn right(&self, odometry: &[f64; COMPONENTS], closure: f64, logit: f64) -> Vec<f64> {
+        self.innovations
+            .iter()
+            .map(|n| {
+                let single = MixtureCost {
+                    innovations: std::slice::from_ref(n),
+                    prior_sd: self.prior_sd,
+                    ln_outlier: self.ln_outlier,
+                };
+                // -2 ln of the mixture density, and of its wrong part alone
+                let both = single.cost(odometry, closure, logit) - single.prior(odometry, closure);
+                let share = 1.0 / (1.0 + (-logit).exp());
+                let wrong = -2.0 * ((1.0 - share).ln() + self.ln_outlier);
+                (1.0 - (0.5 * (both - wrong)).exp()).clamp(0.0, 1.0)
+            })
+            .collect()
+    }
+
+    fn prior(&self, odometry: &[f64; COMPONENTS], closure: f64) -> f64 {
+        (0..COMPONENTS)
+            .map(|c| odometry[c] * odometry[c] * prior_weight(c, self.prior_sd[c]))
+            .sum::<f64>()
+            + 1.5 * closure * closure
+    }
+
     fn cost(&self, odometry: &[f64; COMPONENTS], closure: f64, logit: f64) -> f64 {
         let ln_two_pi = (2.0 * std::f64::consts::PI).ln();
         let variances: [f64; COMPONENTS] = std::array::from_fn(|c| odometry[c].exp());
@@ -317,6 +345,7 @@ pub fn fit_mixture(
         share: 1.0 / (1.0 + (-logit).exp()),
         odometry_sd,
         cost: model.cost(&odometry, closure, logit),
+        right: model.right(&odometry, closure, logit),
     })
 }
 

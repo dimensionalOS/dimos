@@ -411,11 +411,12 @@ pub struct Config {
     /// closure's innovation against the raw odometry, which no solve's verdict filters: alongside each solve the
     /// right/wrong mixture over them is fitted (`odometry_noise::fit_mixture`), and where the residual estimate lies
     /// outside the mixture's region at `closure_gnc_inlier_probability` (its posterior ratio against chi-square with
-    /// four degrees of freedom) and the solve kept too few closures for its residuals to identify the six variance
-    /// components (under six redundant residuals), the mixture's estimate and spread replace it. An overtrusted odometry (reported more
-    /// accurate than it is) makes the solve reject the very closures that would show it (none kept, no residual
-    /// evidence), so without this the residuals can never raise it; with it the disagreeing closures build up until
-    /// the estimate must move.
+    /// four degrees of freedom) while the solve kept significantly fewer closures than the mixture calls right (a
+    /// one-sided normal test on that count at the same probability), the mixture's estimate and spread replace it. An
+    /// overtrusted odometry (reported more accurate than it is) makes the solve reject the very closures that would show
+    /// it (none kept, no residual evidence), so without this the residuals can never raise it; with it the disagreeing
+    /// closures build up until the estimate must move. Where the solve keeps as many as the mixture calls right, the
+    /// residuals stand, so wrong closures that agree with each other cannot widen the noise through the mixture.
     pub odometry_noise_innovation_check: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
@@ -1183,6 +1184,7 @@ impl GscPgo {
         let count = self.closure_innovations.len();
         let (start, closure_start) = self
             .odometry_noise_mixture
+            .as_ref()
             .map_or(([0.0; 4], 0.0), |(m, _)| (m.odometry, m.closure));
         Some((
             self.mixture_innovations(count),
@@ -1195,7 +1197,7 @@ impl GscPgo {
     }
 
     fn mixture_diagnostics(&self, diag: &mut ClosureCandidateDiag) {
-        if let Some((m, _)) = self.odometry_noise_mixture {
+        if let Some((m, _)) = &self.odometry_noise_mixture {
             diag.odometry_noise_mixture = m.odometry.map(f64::exp);
             diag.odometry_noise_mixture_share = m.share;
         }
@@ -1314,7 +1316,7 @@ impl GscPgo {
         self.odometry_noise_from_mixture = false;
         if let (true, Some((mixture, count))) = (
             fit_odometry && self.config.odometry_noise_innovation_check,
-            self.odometry_noise_mixture,
+            self.odometry_noise_mixture.clone(),
         ) {
             let excess = crate::odometry_noise::mixture_excess(
                 &self.mixture_innovations(count),
@@ -1326,12 +1328,33 @@ impl GscPgo {
             );
             let cutoff =
                 crate::landmarks::chi2_inverse(self.config.closure_gnc_inlier_probability, 4);
-            // six variance components (four odometry, two closure) need six redundant residuals to be identified: with
-            // fewer, the solve kept too little to say anything, and where it kept more the residuals are trusted over the
-            // mixture, which wrong closures that agree with each other (one floor apart) can widen without bound
-            let residual_redundancy: f64 =
-                evidence.map_or(0.0, |e| e.iter().map(|(_, r)| r.max(0.0)).sum());
-            if excess > cutoff && residual_redundancy < 6.0 {
+            // the solve's verdicts against the mixture's: kept far fewer than the closures the innovations call right (a
+            // one-sided normal test on that count, its spread from each closure's chance of being right) means a noise
+            // too low has rejected them. Kept as many, the residuals stand: wrong closures that agree with each other
+            // (one floor apart) can widen the mixture without bound, but the solve does not then lose right ones
+            let kept = self.committed_closures[..count]
+                .iter()
+                .zip(&self.closure_innovations[..count])
+                .filter(|(_, n)| {
+                    n.v.iter()
+                        .chain(n.pieces.iter().flatten().flatten())
+                        .all(|x| x.is_finite())
+                })
+                .filter(|(c, _)| c.gnc_weight > 0.5)
+                .count() as f64;
+            let expected: f64 = mixture.right.iter().sum();
+            let spread: f64 = mixture
+                .right
+                .iter()
+                .map(|r| r * (1.0 - r))
+                .sum::<f64>()
+                .sqrt();
+            let z = crate::landmarks::chi2_inverse(
+                2.0 * self.config.closure_gnc_inlier_probability - 1.0,
+                1,
+            )
+            .sqrt();
+            if excess > cutoff && kept < expected - z * spread {
                 ln_odometry = mixture.odometry;
                 self.odometry_noise_ln_sd = mixture.odometry_sd.map(Some);
                 self.odometry_noise_from_mixture = true;

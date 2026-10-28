@@ -126,7 +126,7 @@ fn run(reported_over_true: f64, innovation_check: bool) -> (f64, f64) {
                 pgo.committed_closures.len(),
                 pgo.odometry_noise().map(|v| (v * reported_over_true * 1000.0).round() / 1000.0),
                 pgo.odometry_noise_for_solve().map(|v| (v * reported_over_true * 1000.0).round() / 1000.0),
-                pgo.odometry_noise_mixture.map(|(m, _)| m.odometry.map(|v| (v.exp() * reported_over_true * 1000.0).round() / 1000.0)),
+                pgo.odometry_noise_mixture.as_ref().map(|(m, _)| m.odometry.map(|v| (v.exp() * reported_over_true * 1000.0).round() / 1000.0)),
                 pgo.odometry_noise_from_mixture
             );
         }
