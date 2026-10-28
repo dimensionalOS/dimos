@@ -37,3 +37,4 @@ pub mod proportional_confidence;
 pub mod records;
 pub mod similarity_discovery;
 pub mod uniqueness;
+pub mod world_positions;
