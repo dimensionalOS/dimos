@@ -17,8 +17,7 @@
 
 from __future__ import annotations
 
-from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
+from dimos.navigation.embodiment.base import ControllerConfig, Embodiment
 
 ALFRED = Embodiment(
     # alfred_v1.urdf collision bounds, lift at its top stop: the hanging arms set the width.

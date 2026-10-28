@@ -13,11 +13,10 @@
 // limitations under the License.
 
 //! The room hint's cases, and the proof that its grid never disagrees with brute force.
-//! Brute force is the definition; `control/test_rust_parity.py` pins the same answer against scipy.
 
-use dimos_trajectory_follower::clearance::path_clearance;
+use dimos_local_planner::clearance::path_clearance;
 
-/// Seeded LCG: the crate's dependencies stay at pyo3/numpy.
+/// Seeded LCG, so the tests need no rand dependency.
 struct Rng(u64);
 
 impl Rng {
