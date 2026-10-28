@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from operator import attrgetter
 import time
 from typing import TYPE_CHECKING, Generic, TypeVar
 
@@ -27,9 +28,8 @@ if TYPE_CHECKING:
 
     from reactivex.observable import Observable
 
-    from dimos.types.timestamped import Timestamped
 
-T = TypeVar("T", bound="Timestamped")
+T = TypeVar("T")
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -38,8 +38,11 @@ class TimeSeriesStore(Generic[T], ABC):
     Implement abstract methods for your backend (in-memory, pickle, sqlite, etc.).
     All iteration, streaming, and seek logic comes free from the base class.
 
-    T must be a Timestamped subclass — timestamps are taken from .ts attribute.
+    The default timestamp is item.ts; in-memory stores may select an explicit timestamp key.
     """
+
+    def _timestamp(self, item: T) -> float:
+        return float(attrgetter("ts")(item))
 
     @abstractmethod
     def _save(self, timestamp: float, data: T) -> None:
@@ -149,7 +152,7 @@ class TimeSeriesStore(Generic[T], ABC):
     def save(self, *data: T) -> None:
         """Save one or more Timestamped items."""
         for item in data:
-            self._save(item.ts, item)
+            self._save(self._timestamp(item), item)
 
     def pipe_save(self, source: Observable[T]) -> Observable[T]:
         """Operator for Observable.pipe() — saves items using .ts.
@@ -159,7 +162,7 @@ class TimeSeriesStore(Generic[T], ABC):
         """
 
         def _save_and_return(data: T) -> T:
-            self._save(data.ts, data)
+            self._save(self._timestamp(data), data)
             return data
 
         return source.pipe(ops.map(_save_and_return))
@@ -170,7 +173,7 @@ class TimeSeriesStore(Generic[T], ABC):
         Usage:
             disposable = store.consume_stream(observable)
         """
-        return observable.subscribe(on_next=lambda data: self._save(data.ts, data))
+        return observable.subscribe(on_next=lambda data: self._save(self._timestamp(data), data))
 
     def load(self, timestamp: float) -> T | None:
         """Load data at exact timestamp."""

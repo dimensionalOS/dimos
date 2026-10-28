@@ -171,7 +171,7 @@ def validate_boundary_streams(run_id: str, payload: PythonFragmentPayload) -> No
         if not isinstance(transport, TransportSpec):
             raise ValueError(f"Boundary stream {boundary.name!r} has no pinned transport")
 
-        if getattr(boundary.message_type, "lcm_encode", None) is None:
+        if getattr(boundary.message_type, "__msgtype__", None) is None:
             valid = transport.cls is pZenohTransport and transport.args == (expected_key,)
         else:
             expected_base = run_stream_base_topic(run_id, boundary.name)

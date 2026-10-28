@@ -33,3 +33,41 @@ def write_cmake_toolchain(prefix: Path, destination: Path) -> Path:
                     output.write("list(APPEND CMAKE_PREFIX_PATH " + json.dumps(str(sdk)) + ")\n")
                 break
     return result
+
+
+def stage_rust_module_source(
+    project_root: Path,
+    module_relative_path: str,
+    destination: Path,
+    *,
+    message_source: Path | None = None,
+) -> Path:
+    """Stage a standalone crate with the SDK and prepared generated dependencies.
+
+    Keep repository-relative Cargo paths intact. Preparation is explicit and
+    separate; this function never downloads sources or installs build tools.
+    """
+    import shutil
+    from tempfile import TemporaryDirectory
+
+    module_path = Path(module_relative_path)
+    if module_path.is_absolute() or not module_path.parts or ".." in module_path.parts:
+        raise ValueError("Module path must be relative to the project root")
+    project_root = project_root.resolve()
+    module = project_root / module_path
+    sdk = project_root / "native/rust"
+    generated = message_source or project_root / "build/message-source/rust"
+    for source in [module, sdk / "dimos-module", sdk / "dimos-module-macros", generated]:
+        if not (source / "Cargo.toml").is_file():
+            raise FileNotFoundError(f"Missing prepared Rust source: {source}")
+    if destination.exists():
+        raise FileExistsError(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    ignore = shutil.ignore_patterns("target", ".git", "__pycache__", "result")
+    with TemporaryDirectory(prefix=".native-source-", dir=destination.parent) as temporary:
+        stage = Path(temporary) / "source"
+        shutil.copytree(sdk, stage / "native/rust", ignore=ignore)
+        shutil.copytree(generated, stage / "build/message-source/rust", ignore=ignore)
+        shutil.copytree(module, stage / module_path, ignore=ignore, dirs_exist_ok=True)
+        stage.rename(destination)
+    return destination

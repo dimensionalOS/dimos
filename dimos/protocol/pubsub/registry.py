@@ -25,7 +25,7 @@ URI grammar::
 - ``<proto>``: registry key: ``zenoh``, ``pzenoh``, ``lcm``, ``jpeg_lcm``, ``plcm``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
 - ``<msg_type>``: optional ``module.ClassName`` resolved via
-  ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
+  ``dimos.protocol.pubsub.message_types.resolve_message_type`` (e.g. ``sensor_msgs.Image``).
 
 Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
 the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``)
@@ -136,9 +136,9 @@ def make_pubsub_transport(
     proto, topic, msg_type_name = parse_pubsub_uri(uri)
     resolved = msg_type
     if msg_type_name is not None:
-        from dimos.msgs.helpers import resolve_msg_type
+        from dimos.protocol.pubsub.message_types import resolve_message_type
 
-        resolved = resolve_msg_type(msg_type_name)
+        resolved = resolve_message_type(msg_type_name)
         if resolved is None:
             raise ValueError(f"Could not resolve message type {msg_type_name!r} from URI {uri!r}")
     transport: PubSubTransport[Any] = _REGISTRY[proto](topic, resolved)

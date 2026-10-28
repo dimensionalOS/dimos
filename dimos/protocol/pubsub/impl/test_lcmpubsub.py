@@ -18,9 +18,9 @@ from typing import Any
 
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.core.transport import LCMTransport
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos.messages.std_msgs.msg import Int32, String
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
@@ -54,34 +54,14 @@ def lcm(lcm_url: str) -> Iterator[LCM]:
     lcm.stop()
 
 
-class MockLCMMessage:
-    """Mock LCM message for testing"""
-
-    msg_name = "geometry_msgs.Mock"
-
-    def __init__(self, data: Any) -> None:
-        self.data = data
-
-    def lcm_encode(self) -> bytes:
-        return str(self.data).encode("utf-8")
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> "MockLCMMessage":
-        return cls(data.decode("utf-8"))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, MockLCMMessage) and self.data == other.data
-
-
 def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     lcm = lcm_pub_sub_base
     collector = CallbackCollector(1)
 
-    topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
-    test_message = MockLCMMessage("test_data")
+    topic = Topic(topic="/test_topic", lcm_type=String)
 
     lcm.subscribe(topic, collector)
-    lcm.publish(topic, test_message.lcm_encode())
+    lcm.publish(topic, b"test_data")
     collector.wait()
 
     assert len(collector.results) == 1
@@ -96,25 +76,11 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     assert received_topic == topic
 
 
-def test_subscribe_calls_lcm_warmup(lcm: LCM) -> None:
-    warmup_threads = []
-
-    class WarmupMessage(MockLCMMessage):
-        @classmethod
-        def lcm_warmup(cls) -> None:
-            warmup_threads.append(threading.current_thread())
-
-    lcm.subscribe(Topic(topic="/warmup", lcm_type=WarmupMessage), lambda msg, topic: None)
-
-    # Warmed synchronously on the subscriber's thread, not the LCM handler thread.
-    assert warmup_threads == [threading.current_thread()]
-
-
 def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     collector = CallbackCollector(1)
 
-    topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
-    test_message = MockLCMMessage("test_data")
+    topic = Topic(topic="/test_topic", lcm_type=String)
+    test_message = String("test_data")
 
     lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
@@ -125,7 +91,7 @@ def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     received_data = collector.results[0][0]
     received_topic = collector.results[0][1]
 
-    assert isinstance(received_data, MockLCMMessage)
+    assert isinstance(received_data, String)
     assert received_data == test_message
 
     assert isinstance(received_topic, Topic)
@@ -135,7 +101,7 @@ def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
 test_msgs = [
     (Vector3(1, 2, 3)),
     (Quaternion(1, 2, 3, 4)),
-    (Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))),
+    (Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))),
 ]
 
 
@@ -184,3 +150,28 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
+
+
+def test_generated_message_transport_and_unsubscribe():
+    transport = LCMTransport("codec-check", Int32, url="memq://")
+    received = []
+    delivered = threading.Event()
+
+    def receive(value):
+        received.append(value)
+        delivered.set()
+
+    try:
+        unsubscribe = transport.subscribe(receive)
+        LCMPubSubBase.publish(transport.lcm, transport.topic, b"broken")
+        transport.broadcast(None, Int32(42))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+        unsubscribe()
+        delivered.clear()
+        transport.subscribe(lambda value: delivered.set())
+        transport.broadcast(None, Int32(43))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+    finally:
+        transport.stop()

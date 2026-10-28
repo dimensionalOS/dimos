@@ -5,7 +5,7 @@ Transports connect **module streams** across **process boundaries** and/or **net
 * **Module**: a running component (e.g., camera, mapping, nav).
 * **Stream**: a unidirectional flow of messages owned by a module (one broadcaster → many receivers).
 * **Topic**: the name/identifier used by a transport or pubsub backend.
-* **Message**: payload carried on a stream (often `dimos.msgs.*`, but can be bytes / images / pointclouds / etc.).
+* **Message**: payload carried on a stream (generated messages, or explicitly untyped Python data).
 
 Each edge in the graph is a **transported stream** (potentially different protocols). Each node is a **module**:
 
@@ -29,8 +29,8 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ## Choosing a backend
 
-* `zenoh`: is our default. Reliable delivery and the same typed message model through `LCM` binary encoding of messages
-* `lcm`: the legacy path, opt-in. Fast and simple, but UDP multicast is best-effort.
+* `zenoh`: is our default. Reliable delivery and CDR payloads for registered generated messages
+* `lcm`: an opt-in UDP multicast carrier. Typed messages use CDR, and delivery is best-effort.
 
 At the CLI level, you can select the stream transport globally with:
 
@@ -40,6 +40,30 @@ dimos --transport=zenoh run unitree-go2
 ```
 
 Generally LCM is legacy and we suggest using zenoh (the default) going forward
+
+## Typed payloads and wildcard subscriptions
+
+Typed transports encode registered generated message classes as standalone
+XCDR1 bytes. The backend may be LCM, Zenoh, or WebRTC. Publishers and subscribers
+must agree on one message schema for each channel; the CDR payload does not
+carry a type name or the old LCM message fingerprint.
+
+This changes the old fingerprint-based multiplexing behavior. Two different
+message types cannot share one typed channel. WebRTC rejects conflicting local
+type registrations before message flow. Remote producers must use the schema
+configured by their consumers.
+
+A wildcard reader supplies an explicit `message_types` map from canonical
+channel names to generated classes. Known channels decode with that schema;
+unknown channels remain bytes. A malformed known payload is discarded. This
+preserves raw observers, but does not provide implicit schema discovery from
+arbitrary CDR bytes. The module coordinator supplies the graph's declared types
+to the default Rerun bridge, including modules loaded after startup.
+
+Historical recording readers still accept old LCM and JPEG-in-LCM artifacts.
+New recordings use `cdr`, `lz4+cdr`, or `cdrjpeg`; `cdrjpeg` stores JPEG pixels
+inside a generated `CompressedImage` CDR envelope and exposes generated `Image`
+values when read. The old `lcm` and `jpeg` storage codecs are read-only.
 
 ## Zenoh
 
@@ -179,7 +203,8 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.message_utils import image as image_utils, time as message_time
 
 class TickerCameraConfig(ModuleConfig):
     frequency_hz: float = 2.0
@@ -195,10 +220,10 @@ class TickerCameraModule(Module):
         super().start()
 
         def emit(_: int) -> None:
-            img = Image.from_numpy(
+            img = image_utils.from_array(
                 np.zeros((480, 640, 3), dtype=np.uint8),
-                format=ImageFormat.RGB,
-                frame_id="synthetic",
+                encoding="rgb8",
+                header=message_time.header_now("synthetic"),
             )
             self.color_image.publish(img)
 
@@ -267,12 +292,13 @@ dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 
 ![dimos spy](../assets/lcmspy.png)
 
-`dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
+`dimos topic echo /topic` listens on typed channels such as `/topic#pkg/msg/Message` and decodes automatically:
 
 ```sh skip
-Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
+dimos topic echo /camera/rgb
 ```
+
+The command resolves the registered message type from the channel suffix and displays the generated message fields, including `header`, image dimensions, and encoding.
 
 ## Implementing a transport
 
@@ -288,11 +314,11 @@ Your `Transport.__init__` args can be anything meaningful for your backend:
 * a filesystem path
 * a Redis channel
 
-Encoding is an implementation detail, but we encourage using LCM-compatible message types when possible.
+Use registered generated message types for typed streams. The selected carrier and the message encoding are separate choices.
 
 ### Encoding helpers
 
-Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/usage/lcm.md).
+Generated messages use `dimos_cdrgen.registry.encode(message)` and `decode(payload, MessageType)` for standalone CDR serialization. Typed transports select this codec automatically. See [LCM and message encoding](/docs/usage/lcm.md) for the carrier and explicit foreign-wire codecs.
 
 ## PubSub transports
 
@@ -330,7 +356,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or registered [generated message types](/docs/development/messages-external-project.md). We also have pickle-based transports for arbitrary Python objects.
 
 ### LCM (UDP multicast)
 
@@ -338,7 +364,7 @@ LCM is UDP multicast. It’s very fast on a robot LAN, but it’s **best-effort*
 For local emission it autoconfigures system in a way in which it's more robust and faster then other more common protocols like ROS, DDS
 
 ```python
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
 lcm = LCM()
@@ -439,10 +465,10 @@ Transports often need to serialize messages before sending and deserialize after
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
 | `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
-| `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
-| `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
+| `MessageEncoderMixin` | CDR or an explicit topic codec | Registered generated messages |
+| `JpegEncoderMixin`   | JPEG in a CDR CompressedImage | Color images |
 
-`LCMEncoderMixin` is especially useful: you can use LCM message definitions with *any* transport (not just UDP multicast). See [LCM](/docs/usage/lcm.md) for details.
+`MessageEncoderMixin` uses the registered message class or the topic's explicit codec. CDR works with both LCM and Zenoh carriers. See [LCM and message encoding](/docs/usage/lcm.md) for details.
 
 ### Creating a custom mixin
 

@@ -41,7 +41,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, Stream
 from dimos.core.transport import PubSubTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,19 +68,19 @@ class CompressedCodec(PubSubTransport[T]):
         return (CompressedCodec, (self.inner, self.quality))
 
     def broadcast(self, stream: Out[T] | None, msg: T) -> None:
-        from dimos.msgs.sensor_msgs.CompressedImage import (
+        from dimos.messages.sensor_msgs.msg import (
             CompressedImage,
         )  # deferred to avoid pulling in cv2/rerun
 
         if not isinstance(msg, CompressedImage):
-            msg = CompressedImage.from_image(msg, quality=self.quality)  # type: ignore[assignment, arg-type]
+            msg = image.to_compressed(msg, format="jpeg", quality=self.quality)  # type: ignore[assignment, arg-type]
         self.inner.broadcast(stream, msg)
 
     def subscribe(
         self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
     ) -> Callable[[], None]:
         return self.inner.subscribe(  # type: ignore[no-any-return]
-            lambda m: callback(m.decode()), selfstream
+            lambda m: callback(image.from_compressed(m)), selfstream
         )
 
     def start(self) -> None:
@@ -90,7 +91,7 @@ class CompressedCodec(PubSubTransport[T]):
 
 
 class BenchSink(Module):
-    """Records (recv_time, msg.ts, age) per frame; burns work_ms of real cpu."""
+    """Records (recv_time, message_time.to_seconds(msg.header.stamp), age) per frame; burns work_ms of real cpu."""
 
     color_image: In[Image]
 
@@ -116,13 +117,18 @@ class BenchSink(Module):
     def _on_image(self, msg: Image) -> None:
         now = time.time()
         self._count += 1
-        rec = {"t": now, "ts": msg.ts, "age": now - msg.ts, "i": self._count}
+        rec = {
+            "t": now,
+            "ts": message_time.to_seconds(msg.header.stamp),
+            "age": now - message_time.to_seconds(msg.header.stamp),
+            "i": self._count,
+        }
         if self._work_ms > 0:
             import cv2
 
             deadline = time.perf_counter() + self._work_ms / 1000
             while time.perf_counter() < deadline:
-                cv2.GaussianBlur(msg.data, (31, 31), 5)
+                cv2.GaussianBlur(image.view(msg), (31, 31), 5)
         rec["done_t"] = time.time()
         with self._lock:
             self._buf.append(json.dumps(rec))
@@ -202,7 +208,7 @@ def main() -> None:
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+    from dimos.messages.sensor_msgs.msg import CompressedImage
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
     bp = get_blueprint_by_name(args.blueprint)

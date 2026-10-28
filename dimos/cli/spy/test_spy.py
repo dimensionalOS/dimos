@@ -39,13 +39,14 @@ from dimos.cli.spy.core import (
     default_sources,
     split_type_suffix,
 )
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.protocol.pubsub import codec
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 VEC = Vector3(1.0, 2.0, 3.0)
-VEC_BYTES = VEC.lcm_encode()
+VEC_BYTES = codec.describe_message(Vector3).codec.encode(VEC)
 
 
 # TopicStats: pure, deterministic (injected timestamps, no sleeps)
@@ -198,7 +199,7 @@ def _assert_no_decode(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("spy decoded a payload on the hot path")
 
-    monkeypatch.setattr(Vector3, "lcm_decode", staticmethod(boom))
+    monkeypatch.setattr(codec, "decode", boom)
 
 
 @pytest.fixture

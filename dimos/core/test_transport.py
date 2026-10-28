@@ -21,7 +21,7 @@ from dimos.core.transport import (
     LCMTransport,
     pLCMTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 
 @pytest.mark.parametrize("transport_class", [pLCMTransport, LCMTransport, JpegLcmTransport])

@@ -17,10 +17,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 import pickle
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
-from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,8 +33,6 @@ EncodingT = TypeVar("EncodingT")
 
 class DecodingError(Exception):
     """Raised by decode() to skip a message without calling the callback."""
-
-    pass
 
 
 class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
@@ -62,6 +61,9 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
     @abstractmethod
     def decode(self, msg: EncodingT, topic: TopicT) -> MsgT: ...
 
+    def decode_received(self, payload: EncodingT, declared: TopicT, received: TopicT) -> MsgT:
+        return self.decode(payload, received)
+
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
         encoded_message = self.encode(message, topic)
@@ -74,9 +76,11 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
     ) -> Callable[[], None]:
         """Subscribe with automatic decoding."""
 
+        declared_topic = topic
+
         def wrapper_cb(encoded_data: EncodingT, topic: TopicT) -> None:
             try:
-                decoded_message = self.decode(encoded_data, topic)
+                decoded_message = self.decode_received(encoded_data, declared_topic, topic)
             except DecodingError:
                 return
             callback(decoded_message, topic)
@@ -95,32 +99,118 @@ class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
 
 
 class LCMTopicProto(Protocol):
-    """Protocol for topics usable with LCM encoders."""
+    """Compatibility interface for legacy encoders such as JPEG."""
 
-    topic: str  # At decode time, always concrete string
-    lcm_type: type[DimosMsg] | None
+    topic: str
+    lcm_type: type[Any] | None
 
 
-class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
-    """Encoder mixin for DimosMsg using LCM binary encoding."""
+class MessageTopic(Protocol):
+    @property
+    def message(self) -> MessageDescriptor[Any] | None: ...
 
-    def subscribe(
-        self, topic: LCMTopicProto, callback: Callable[[DimosMsg, LCMTopicProto], None]
+
+class MessageEncoderMixin(PubSubEncoderMixin[MessageTopic, Any, bytes]):
+    """Apply the topic's bound codec without changing transport behavior."""
+
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, MessageTopic], Any],
+        *,
+        message_types: Mapping[str, type] | None = None,
+        **kwargs: Any,
     ) -> Callable[[], None]:
-        # Import the type's heavy decode dependencies now, on the subscriber's
-        # thread. Left to the first decode, the import would run on the LCM
-        # handler thread and block it for seconds, dropping messages meanwhile.
-        warmup = getattr(topic.lcm_type, "lcm_warmup", None)
-        if warmup is not None:
-            warmup()
-        return super().subscribe(topic, callback)
+        """Read declared topics as generated messages and unknown topics as bytes.
 
-    def encode(self, msg: DimosMsg | bytes, _: LCMTopicProto) -> bytes:
-        if isinstance(msg, bytes):
+        CDR does not identify its schema. Callers supply canonical channel names
+        and registered types rather than guessing a decoder from payload bytes.
+        """
+        declarations = message_types if message_types is not None else {}
+        descriptors: dict[str, MessageDescriptor[Any]] = {
+            name: describe_message(kind) for name, kind in declarations.items()
+        }
+
+        def descriptor_for(name: str) -> MessageDescriptor[Any] | None:
+            kind = declarations.get(name)
+            if kind is None:
+                return None
+            cached = descriptors.get(name)
+            if cached is not None:
+                if cached.message_type is not kind:
+                    raise TypeError(f"Message type changed for subscribed channel {name!r}")
+                return cached
+            resolved: MessageDescriptor[Any] = describe_message(kind)
+            descriptors[name] = resolved
+            return resolved
+
+        keyed = kwargs.get("keyed")
+        if keyed:
+            converted = {}
+            for name, key in keyed.items():
+                descriptor = descriptor_for(name) or descriptor_for("dimos/" + name)
+                if descriptor is None:
+                    raise TypeError(f"Keyed topic {name!r} requires an explicit message type")
+                converted[name] = lambda payload, key=key, codec=descriptor.codec: key(
+                    codec.decode(payload)
+                )
+            kwargs["keyed"] = converted
+
+        def receive(payload: bytes, topic: MessageTopic) -> None:
+            name = getattr(topic, "topic", str(topic))
+            descriptor = descriptor_for(name)
+            if descriptor is None:
+                callback(payload, topic)
+                return
+            if (
+                topic.message is not None
+                and topic.message.message_type is not descriptor.message_type
+            ):
+                return
+            try:
+                value = descriptor.codec.decode(payload)
+            except ValueError:
+                return
+            topic_factory: Any = type(topic)
+            typed_topic = topic_factory(name, message_type=descriptor.message_type)
+            callback(value, typed_topic)
+
+        return super().subscribe_all(receive, **kwargs)  # type: ignore[misc,no-any-return]
+
+    def decode_received(
+        self, payload: bytes, declared: MessageTopic, received: MessageTopic
+    ) -> Any:
+        descriptor = declared.message
+        if descriptor is None:
+            return payload
+        actual = received.message
+        if descriptor is not None and descriptor.encoding == "cdr":
+            if (
+                actual is None
+                or actual.encoding != "cdr"
+                or actual.message_type is not descriptor.message_type
+            ):
+                raise DecodingError("Message metadata does not match the declared type")
+            return self.decode(payload, declared)
+        if descriptor is not None and actual is not None and actual.encoding != descriptor.encoding:
+            raise DecodingError("Message encoding does not match the declared type")
+        return self.decode(payload, received)
+
+    def encode(self, msg: Any, topic: MessageTopic) -> bytes:
+        descriptor = topic.message
+        if isinstance(msg, bytes) and (descriptor is None or descriptor.encoding == "lcm"):
             return msg
-        return msg.lcm_encode()
+        if descriptor is None:
+            raise TypeError("Typed publication requires a declared message type")
+        return descriptor.codec.encode(msg)
 
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg:
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return topic.lcm_type.lcm_decode(msg)
+    def decode(self, msg: bytes, topic: MessageTopic) -> Any:
+        if topic.message is None:
+            raise DecodingError("Typed subscription requires a declared message type")
+        try:
+            return topic.message.codec.decode(msg)
+        except ValueError as error:
+            raise DecodingError(str(error)) from error
+
+
+# Keep existing imports working while callers migrate to the generic name.
+LCMEncoderMixin = MessageEncoderMixin

@@ -18,7 +18,9 @@ import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import (
+    DDSTransport,
     LCMTransport,
+    ROSTransport,
     ZenohTransport,
     pLCMTransport,
     pZenohTransport,
@@ -31,10 +33,9 @@ from dimos.core.transport_factory import (
     session_config,
     transport_topic,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.sensor_msgs.msg import Image, Image as CdrImage, PointCloud2
+from dimos.messages.std_msgs.msg import Int32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -82,8 +83,9 @@ def test_make_transport_zenoh_pickled() -> None:
     assert t.topic == "dimos/human_input"
 
 
-def test_default_zenoh_qos_high_rate_sensor_types_drop() -> None:
-    assert default_zenoh_qos("/camera/color", Image) == QOS_LATEST_WINS
+@pytest.mark.parametrize("message_type", [Image, CdrImage])
+def test_default_zenoh_qos_high_rate_sensor_types_drop(message_type) -> None:
+    assert default_zenoh_qos("/camera/color", message_type) == QOS_LATEST_WINS
 
 
 def test_default_zenoh_qos_agent_channels_never_drop() -> None:
@@ -155,3 +157,40 @@ def test_apply_transport_arg_bad_value_exits(argv: list[str]) -> None:
         apply_transport_arg(argv, g=g)
     assert exc.value.code == 2
     assert g.transport == "lcm"  # config left untouched
+
+
+@pytest.mark.parametrize("config", [LCM, ZENOH])
+def test_factory_binds_generated_messages(config):
+    transport = make_transport("generated", Int32, g=config)
+    assert transport.topic.message.encoding == "cdr"
+    assert transport.topic.message.message_type is Int32
+
+
+@pytest.mark.parametrize("config", [LCM, ZENOH])
+@pytest.mark.parametrize("message_type", [dict, int, str, bool])
+def test_factory_preserves_pickle_for_python_types(config, message_type):
+    transport = make_transport("python", message_type, g=config)
+    expected = pLCMTransport if config.transport == "lcm" else pZenohTransport
+    assert isinstance(transport, expected)
+
+
+def test_generated_messages_require_dds_type_adapter():
+    with pytest.raises(TypeError, match="type adapter"):
+        DDSTransport("generated", Int32)
+
+
+@pytest.mark.parametrize("config", [LCM, ZENOH])
+def test_factory_does_not_pickle_unregistered_cdr_types(config):
+    class Unregistered:
+        __msgtype__ = "test_msgs/msg/Unregistered"
+
+    with pytest.raises(TypeError):
+        make_transport("invalid", Unregistered, g=config)
+
+
+@pytest.mark.parametrize("message_type", [Int32, PointCloud2])
+def test_generated_ros_transport_is_constructible_without_starting_ros(message_type):
+    transport = ROSTransport("lidar", message_type)
+    assert transport.topic.msg_type is message_type
+    assert transport.topic.topic == "lidar"
+    assert transport._ros is None

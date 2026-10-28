@@ -14,13 +14,30 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sdkSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        sharedArchive = pkgs.fetchurl {
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/a9365487b4323151ea85041c6a944b509c0c3268";
+          sha256 = "e339487dd2281980fcde7ab03c46dfd2e274491e0f73e66d9c6cbcaeea8902b2";
+        };
+        sharedSource = pkgs.runCommand "dimos-native-message-inputs" {
+          nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+        } ''
+          mkdir -p $out
+          tar -xzf ${sharedArchive} --strip-components=1 -C $out
+        '';
+        messageSource = (import "${sharedSource}/native/message-source.nix" { inherit pkgs; }).source;
+        src = pkgs.runCommand "dimos-native-sdk-source" { } ''
+          mkdir -p $out/native/rust $out/build/message-source
+          cp -r ${sdkSource}/. $out/native/rust/
+          cp ${sdkSource}/crate-hashes.json $out/crate-hashes.json
+          cp -r ${messageSource}/rust $out/build/message-source/rust
+        '';
 
         crateOf = name:
           let
             generated = crate2nix.tools.${system}.generatedCargoNix {
               inherit name src;
-              cargoToml = "${name}/Cargo.toml";
+              cargoToml = "native/rust/${name}/Cargo.toml";
             };
             callWith = mode: import generated {
               inherit pkgs;

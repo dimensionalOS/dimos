@@ -31,10 +31,10 @@ impl TfListener {
                 ticker.tick().await;
                 match tf.get_latest("a", "d") {
                     Some(t) => {
-                        let p = t.translation();
+                        let p = t.transform.translation;
                         tracing::info!(
-                            parent = %t.parent,
-                            child = %t.child,
+                            parent = %t.header.frame_id,
+                            child = %t.child_frame_id,
                             x = p.x,
                             y = p.y,
                             z = p.z,

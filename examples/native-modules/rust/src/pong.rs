@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{Twist, Vector3};
+use dimos_generated_messages::geometry_msgs::msg::{twist::Twist, vector3::Vector3};
 
 #[native_config]
 struct PongConfig {
@@ -23,10 +23,10 @@ struct PongConfig {
 
 #[derive(Module)]
 struct Pong {
-    #[input(decode = Twist::decode)]
+    #[input(decode = dimos_module::cdr::decode::<Twist>)]
     data: Input<Twist>,
 
-    #[output(encode = Twist::encode)]
+    #[output(encode = dimos_module::cdr::encode::<Twist>)]
     confirm: Output<Twist>,
 
     #[config]

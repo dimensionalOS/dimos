@@ -23,7 +23,7 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.messages.std_msgs.msg import Int32
 from dimos.spec.utils import Spec
 
 

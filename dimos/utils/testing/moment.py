@@ -17,16 +17,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from dimos.core.resource import Resource
-from dimos.types.timestamped import Timestamped
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 if TYPE_CHECKING:
     from dimos.core.stream import Transport
 
-T = TypeVar("T", bound=Timestamped)
+T = TypeVar("T")
 
 
 class SensorMoment(Generic[T], Resource):
+    """A recorded snapshot selected by the archive clock, independent of payload fields."""
+
     value: T | None = None
 
     def __init__(self, name: str, transport: Transport[T]) -> None:
@@ -49,6 +50,8 @@ class SensorMoment(Generic[T], Resource):
 
 
 class OutputMoment(Generic[T], Resource):
+    """A publishable snapshot; the transport owns the message contract."""
+
     value: T | None = None
     transport: Transport[T]
 

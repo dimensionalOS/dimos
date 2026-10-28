@@ -39,21 +39,14 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
     Topic as ZenohTopic,
 )
 from dimos.protocol.service.zenohservice import ZenohSessionPool
-
-
-class TypedMsg:
-    """A fake typed message with lcm_encode for testing."""
-
-    @staticmethod
-    def lcm_encode() -> bytes:
-        return b""
 
 
 class UntypedMsg:
@@ -63,12 +56,12 @@ class UntypedMsg:
 
 
 class ProducerModule(Module):
-    typed_data: Out[TypedMsg]
+    typed_data: Out[Image]
     untyped_data: Out[UntypedMsg]
 
 
 class ConsumerModule(Module):
-    typed_data: In[TypedMsg]
+    typed_data: In[Image]
     untyped_data: In[UntypedMsg]
 
 
@@ -147,7 +140,7 @@ def test_invalid_transport_is_rejected_on_update() -> None:
 
 
 def test_lcm_transport_returned_when_transport_is_lcm(use_lcm, blueprint) -> None:
-    transport = _get_transport_for(blueprint, "typed_data", TypedMsg)
+    transport = _get_transport_for(blueprint, "typed_data", Image)
     assert isinstance(transport, LCMTransport)
 
 
@@ -157,7 +150,7 @@ def test_lcm_pickle_transport_returned_for_untyped_when_lcm(use_lcm, blueprint) 
 
 
 def test_zenoh_transport_returned_when_transport_is_zenoh(use_zenoh, blueprint) -> None:
-    transport = _get_transport_for(blueprint, "typed_data", TypedMsg)
+    transport = _get_transport_for(blueprint, "typed_data", Image)
     assert isinstance(transport, ZenohTransport)
 
 
@@ -189,7 +182,7 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
     t.start()
     t.subscribe(collector.callback)
 
-    test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
+    test_img = image.from_array(np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8")
     retry_until(collector.event, lambda: t.broadcast(None, test_img))
     assert isinstance(collector.received[0], Image)
     t.stop()

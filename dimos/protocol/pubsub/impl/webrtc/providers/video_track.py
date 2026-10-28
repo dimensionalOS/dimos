@@ -29,17 +29,18 @@ from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTr
 import av
 import numpy as np
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 _AV_FORMAT_MAP = {
-    ImageFormat.BGR: "bgr24",
-    ImageFormat.RGB: "rgb24",
-    ImageFormat.BGRA: "bgra",
-    ImageFormat.RGBA: "rgba",
-    ImageFormat.GRAY: "gray",
+    "bgr8": "bgr24",
+    "rgb8": "rgb24",
+    "bgra8": "bgra",
+    "rgba8": "rgba",
+    "mono8": "gray",
 }
 
 
@@ -78,7 +79,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._armed = False
         self._first_mono: float | None = None
         self._new_frame = asyncio.Event()
-        self._dropped: set[ImageFormat] = set()
+        self._dropped: set[str] = set()
 
     def arm(self) -> None:
         """Discard buffered frames; start delivering from now.
@@ -111,20 +112,30 @@ class CameraVideoTrack(VideoStreamTrack):
         av takes (DEPTH float32, a malformed array). Never raises: recv() runs
         in aiortc's sender task, which ends the track on an exception."""
         try:
-            frame = img if img.format in _AV_FORMAT_MAP else img.to_rgb()
-            data = frame.data
+            if img.encoding in ("mono16", "16UC1"):
+                gray = (image.view(img) / 256).astype(np.uint8)
+                frame = image.from_array(
+                    np.repeat(gray[:, :, None], 3, axis=2), encoding="rgb8", header=img.header
+                )
+            else:
+                frame = (
+                    img
+                    if img.encoding in _AV_FORMAT_MAP
+                    else image.from_array(image.to_rgb(img), encoding="rgb8", header=img.header)
+                )
+            data = image.view(frame)
             h, w = data.shape[:2]
             if h % 2 or w % 2:
                 # libx264 takes yuv420p, whose chroma planes are half-size: an
                 # odd width or height fails avcodec_open2 in aiortc's sender
                 # task, past this guard. The last row/column is cropped.
                 data = np.ascontiguousarray(data[: h - h % 2, : w - w % 2])
-            return av.VideoFrame.from_ndarray(data, format=_AV_FORMAT_MAP[frame.format])
+            return av.VideoFrame.from_ndarray(data, format=_AV_FORMAT_MAP[frame.encoding])
         except Exception as e:
-            if img.format not in self._dropped:
-                self._dropped.add(img.format)
+            if img.encoding not in self._dropped:
+                self._dropped.add(img.encoding)
                 logger.warning(
-                    "video track: dropping %s/%s frames: %s", img.format.value, img.data.dtype, e
+                    "video track: dropping %s/%s frames: %s", img.encoding, img.data.dtype, e
                 )
             return None
 

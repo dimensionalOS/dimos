@@ -407,7 +407,7 @@ def _boundary_stream(run_id: str, stream_key: StreamKey) -> BoundaryStream:
 
 
 def _boundary_transport(run_id: str, boundary: BoundaryStream) -> TransportSpec:
-    if getattr(boundary.message_type, "lcm_encode", None) is None:
+    if getattr(boundary.message_type, "__msgtype__", None) is None:
         return pZenohTransport.spec(boundary.key_expr)
     return ZenohTransport.spec(
         run_stream_base_topic(run_id, boundary.name),

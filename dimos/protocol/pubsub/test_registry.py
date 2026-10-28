@@ -30,8 +30,10 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image, time as message_time
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.registry import (
     make_pubsub_transport,
     parse_pubsub_uri,
@@ -131,7 +133,7 @@ def test_make_pubsub_transport_zenoh_matches_default_image_channel() -> None:
     default = make_transport("color_image", Image, g=GlobalConfig(transport="zenoh"))
 
     assert isinstance(t, ZenohTransport)
-    assert t.channel == default.channel == "dimos/color_image/sensor_msgs.Image"
+    assert t.channel == default.channel == "dimos/color_image"
 
 
 def test_make_pubsub_transport_pzenoh_ignores_msg_type() -> None:
@@ -185,11 +187,10 @@ def test_subscribe_pubsub_uri_returns_transport_and_unsubscribe(mocker) -> None:
     [("zenoh:dimos/registry_image", Image), ("pzenoh:dimos/registry_image", None)],
 )
 def test_zenoh_uri_receives_image_from_standard_publisher(uri, msg_type, session_pool) -> None:
-    message = Image(
-        data=np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8),
-        format=ImageFormat.RGB,
-        ts=12.5,
-        frame_id="camera",
+    message = image.from_array(
+        np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(message_time.time_from_seconds(12.5), "camera"),
     )
     received: list[Image] = []
     arrived = threading.Event()
@@ -210,6 +211,6 @@ def test_zenoh_uri_receives_image_from_standard_publisher(uri, msg_type, session
         assert arrived.wait(timeout=5.0)
         assert len(received) == 1
         np.testing.assert_array_equal(received[0].data, message.data)
-        assert received[0].format == ImageFormat.RGB
-        assert received[0].ts == 12.5
-        assert received[0].frame_id == "camera"
+        assert received[0].encoding == "rgb8"
+        assert message_time.to_seconds(received[0].header.stamp) == 12.5
+        assert received[0].header.frame_id == "camera"

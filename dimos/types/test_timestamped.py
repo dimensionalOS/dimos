@@ -21,10 +21,12 @@ import pytest
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image
+from dimos.message_utils.time import to_seconds
 from dimos.types.timestamped import (
     Timestamped,
     TimestampedBufferCollection,
+    TimestampedData,
     align_timestamped,
     to_datetime,
     to_ros_stamp,
@@ -301,10 +303,15 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
+    def rgb_frame(pixels):
+        bgr = image.from_array(pixels, encoding="bgr8")
+        rgb = image.from_array(image.to_rgb(bgr), encoding="rgb8", header=bgr.header)
+        return TimestampedData(rgb, to_seconds(rgb.header.stamp))
+
     # sensor reply of raw video frames
     video_raw = (
         LegacyPickleStore(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+            "unitree_office_walk/video", autocast=rgb_frame
         )
         .stream(speed)
         .pipe(ops.take(30))

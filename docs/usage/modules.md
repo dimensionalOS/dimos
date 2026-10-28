@@ -166,7 +166,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.messages.std_msgs.msg import Int32
 
 
 class Counter(Module):
@@ -201,7 +201,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.messages.std_msgs.msg import Int32
 from dimos.spec.utils import Spec
 
 
@@ -277,8 +277,8 @@ For every declared `x: In[T]`, if the module defines `async def handle_x(self, m
 ```python
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.messages.geometry_msgs.msg import PointStamped
+from dimos.messages.geometry_msgs.msg import Twist
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -471,7 +471,7 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 import time
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 camera = CameraModule()
 camera.color_image.transport = LCMTransport("/camera/rgb", Image)
@@ -486,7 +486,7 @@ camera.stop()
 ```python skip
 import time
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.module2D import Detection2DModule
 
 detector = Detection2DModule()
@@ -498,7 +498,7 @@ time.sleep(10)
 detector.stop()
 ```
 
-Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs/msg/Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
 
 Available transports live in `dimos.core.transport` (`ZenohTransport`, `LCMTransport`, `ROSTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
 
@@ -508,7 +508,7 @@ A transport works on its own. Init one and send/receive from a plain script, no 
 
 ```python skip
 from dimos.core.transport import LCMTransport
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import String
 
 chat = LCMTransport("/chat", String)
 
@@ -535,7 +535,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import String
 
 class Dyn(Module):
     @rpc
@@ -575,11 +575,11 @@ Externally attached output: Out words[String] @ Dyn
 
 Inputs:
 {'echo': <dimos.core.stream.In object at 0x7f03b4bb32c0>}
-In echo[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+In echo[String] @ Dyn via LCMTransport(/words#std_msgs/msg/String)
 
 Outputs:
 {'words': <dimos.core.stream.Out object at 0x7f03b4b7f860>}
-Out words[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+Out words[String] @ Dyn via LCMTransport(/words#std_msgs/msg/String)
 \Send/Receive Test:
-<dimos.msgs.std_msgs.String.String object at 0x7f03eb2d10d0>
+std_msgs__msg__String(data='loopback over LCM', __msgtype__='std_msgs/msg/String')
 ```

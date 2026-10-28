@@ -27,8 +27,10 @@ pytest.importorskip("zenoh")
 
 import zenoh
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.core.transport import ZenohTransport
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Int32
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic,
@@ -452,7 +454,7 @@ class TestTopicKeyExprConversion:
     def test_typed_topic_to_key_expr(self) -> None:
         topic = Topic("dimos/cmd_vel", lcm_type=Twist)
         key = _topic_to_key_expr(topic)
-        assert key == "dimos/cmd_vel/geometry_msgs.Twist"
+        assert key == "dimos/cmd_vel"
 
     def test_untyped_topic_to_key_expr(self) -> None:
         topic = Topic("dimos/data")
@@ -483,7 +485,7 @@ class TestTopicKeyExprConversion:
     def test_round_trip_typed(self) -> None:
         original = Topic("dimos/color_image", lcm_type=Image)
         key = _topic_to_key_expr(original)
-        reconstructed = _key_expr_to_topic(key)
+        reconstructed = _key_expr_to_topic(key, default_lcm_type=Image)
         assert reconstructed.topic == original.topic
         assert reconstructed.lcm_type is original.lcm_type
 
@@ -493,3 +495,40 @@ class TestTopicKeyExprConversion:
         reconstructed = _key_expr_to_topic(key)
         assert reconstructed.topic == original.topic
         assert reconstructed.lcm_type is None
+
+
+def test_generated_message_transport_qos_and_unsubscribe():
+    pool = ZenohSessionPool()
+    qos = ZenohQoS(reliability="reliable", congestion_control="block")
+    transport = ZenohTransport(
+        Topic("codec-check", message_type=Int32, qos=qos),
+        session_pool=pool,
+        connect=[],
+        listen=[LOOPBACK_LISTEN],
+        scouting=False,
+        multicast=False,
+        gossip=False,
+    )
+    received = []
+    delivered = threading.Event()
+
+    def receive(value):
+        received.append(value)
+        delivered.set()
+
+    try:
+        unsubscribe = transport.subscribe(receive)
+        assert transport.publish_qos == qos.to_wire()
+        ZenohPubSubBase.publish(transport.zenoh, transport.topic, b"broken")
+        transport.broadcast(None, Int32(42))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+        unsubscribe()
+        delivered.clear()
+        transport.subscribe(lambda value: delivered.set())
+        transport.broadcast(None, Int32(43))
+        assert delivered.wait(3)
+        assert received == [Int32(42)]
+    finally:
+        transport.stop()
+        pool.close_all()

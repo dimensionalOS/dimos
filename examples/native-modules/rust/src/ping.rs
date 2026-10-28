@@ -13,16 +13,16 @@
 // limitations under the License.
 
 use dimos_module::{run_with_transport, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{Twist, Vector3};
+use dimos_generated_messages::geometry_msgs::msg::{twist::Twist, vector3::Vector3};
 use tokio::time::{interval, Duration};
 
 #[derive(Module)]
 #[module(setup = start_publisher)]
 struct Ping {
-    #[input(decode = Twist::decode)]
+    #[input(decode = dimos_module::cdr::decode::<Twist>)]
     confirm: Input<Twist>,
 
-    #[output(encode = Twist::encode)]
+    #[output(encode = dimos_module::cdr::encode::<Twist>)]
     data: Output<Twist>,
 }
 

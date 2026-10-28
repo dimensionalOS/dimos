@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -27,8 +28,7 @@ from dimos.hosted.fragment import (
     run_stream_key,
 )
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import Bool, String
 
 
 class SourceModule(Module):

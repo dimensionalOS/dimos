@@ -16,7 +16,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lcm_msgs::std_msgs::Time;
+use crate::tf::Time;
 
 /// The wall clock as a message stamp.
 pub fn now() -> Time {
@@ -25,14 +25,6 @@ pub fn now() -> Time {
         .unwrap_or_default();
     Time {
         sec: dur.as_secs().min(i32::MAX as u64) as i32,
-        nsec: dur.subsec_nanos() as i32,
+        nanosec: dur.subsec_nanos(),
     }
-}
-
-/// The wall clock in seconds.
-pub(crate) fn now_secs() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
 }

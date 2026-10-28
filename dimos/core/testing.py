@@ -20,15 +20,14 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
-from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.testing.replay import SensorReplay
 
 
 class MockRobotClient(Module):
-    odometry: Out[Odometry]
+    odometry: Out[PoseStamped]
     lidar: Out[PointCloud2]
     mov: In[Vector3]
 
@@ -59,7 +58,9 @@ class MockRobotClient(Module):
         super().stop()
 
     def odomloop(self) -> None:
-        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+        from dimos.robot.unitree.type.odometry import pose_from_message
+
+        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=pose_from_message)
         lidardata = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
 
         lidariter = lidardata.iterate()
@@ -69,7 +70,6 @@ class MockRobotClient(Module):
                 if self._stop_event.is_set():
                     return
                 print(odom)
-                odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
 
                 lidarmsg = next(lidariter)

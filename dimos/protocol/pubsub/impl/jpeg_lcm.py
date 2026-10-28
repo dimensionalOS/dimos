@@ -12,37 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JPEG-encoded LCM PubSub.
+"""JPEG image transport with a standalone CDR CompressedImage envelope."""
 
-Split from lcmpubsub.py so that importing PickleLCM / LCM does not
-transitively pull in ``dimos.msgs.sensor_msgs.Image`` (and its heavy
-cv2 / rerun dependencies).
-"""
+from collections.abc import Callable
+from typing import Any
 
-from __future__ import annotations
-
-from typing import cast
-
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.encoders import DecodingError, LCMTopicProto, PubSubEncoderMixin
-from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
+from dimos.message_utils import image
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos.protocol.pubsub.codec import CDRCodec
+from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin
+from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
-    """Encoder mixin for DimosMsg using JPEG encoding (for images)."""
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Image, bytes]):
+    def encode(self, msg: Image, _: Topic) -> bytes:
+        return CDRCodec(CompressedImage).encode(image.to_compressed(msg, format="jpeg"))
 
-    def encode(self, msg: Image, _: LCMTopicProto) -> bytes:
-        return msg.lcm_jpeg_encode()
-
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> Image:
+    def decode(self, msg: bytes, topic: Topic) -> Image:
         if topic.topic == "LCM_SELF_TEST":
             raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return cast("type[Image]", topic.lcm_type).lcm_jpeg_decode(msg)
+        if topic.lcm_type is not Image:
+            raise DecodingError("JPEG transport requires generated sensor_msgs/Image")
+        return image.from_compressed(CDRCodec(CompressedImage).decode(msg))
 
 
-class JpegLCM(  # type: ignore[misc]
-    JpegEncoderMixin,
-    LCMPubSubBase,
-): ...
+class JpegLCM(LCMPubSubBase):
+    """Adapt generated images at the byte-oriented LCM boundary."""
+
+    _codec = JpegEncoderMixin()
+
+    def publish(self, topic: Topic | str, message: Any) -> None:
+        if isinstance(topic, str):
+            topic = Topic(topic, Image)
+        if not isinstance(message, Image):
+            raise TypeError("JPEG transport requires a generated Image")
+        super().publish(topic, self._codec.encode(message, topic))
+
+    def subscribe(self, topic: Topic, callback: Callable[[Any, Topic], None]) -> Callable[[], None]:
+        def receive(payload: bytes, received: Topic) -> None:
+            try:
+                message = self._codec.decode(payload, received)
+            except (DecodingError, ValueError):
+                return
+            callback(message, received)
+
+        return super().subscribe(topic, receive)

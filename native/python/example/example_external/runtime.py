@@ -17,7 +17,7 @@ from typing import Any
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.experimental.isolated_python.example.contract import ExampleExternal
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.messages.std_msgs.msg import Int32
 
 
 class ExampleExternalRuntime(ExampleExternal):

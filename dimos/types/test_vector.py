@@ -14,7 +14,8 @@
 import numpy as np
 import pytest
 
-from dimos.types.vector import Vector
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.types.vector import Vector, to_list, to_tuple
 
 
 def test_vector_default_init() -> None:
@@ -382,3 +383,9 @@ def test_vector_add_dim_mismatch() -> None:
 
     # Using + operator
     v1 + v2
+
+
+def test_generated_vector_converts_to_plain_coordinates():
+    value = Vector3(1.25, -2.5, 3.75)
+    assert to_list(value) == [1.25, -2.5, 3.75]
+    assert to_tuple(value) == (1.25, -2.5, 3.75)

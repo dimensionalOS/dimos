@@ -39,8 +39,14 @@ You can read more about [sensor storage here](/docs/usage/data_streams/storage_r
 from reactivex import Subject
 from dimos.utils.testing.replay import TimedSensorReplay
 from dimos.types.timestamped import Timestamped, align_timestamped
+from dimos.message_utils import time as message_time
+
 from reactivex import operators as ops
 import reactivex as rx
+
+
+def source_time(message):
+    return message_time.to_seconds(message.header.stamp)
 
 # Load recorded Go2 sensor streams
 video_replay = TimedSensorReplay("go2_sf_office/video")
@@ -89,7 +95,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 # Show a matched pair
 if aligned_pairs:
     img, pc = aligned_pairs[0]
-    dt = abs(img.ts - pc.ts)
+    dt = abs(source_time(img) - source_time(pc))
     print(f"\nFirst matched pair: Δ{dt*1000:.1f}ms")
 ```
 
@@ -112,33 +118,33 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
     matplotlib.use('Agg')
     plt.style.use('dark_background')
 
-    # Get base timestamp for relative times (frames have .ts attribute)
-    base_ts = video_frames[0].ts
-    video_ts = [f.ts - base_ts for f in video_frames]
-    lidar_ts = [s.ts - base_ts for s in lidar_scans]
+    # Get base timestamp for relative times (generated frames carry header.stamp)
+    base_ts = source_time(video_frames[0])
+    video_ts = [source_time(f) - base_ts for f in video_frames]
+    lidar_ts = [source_time(s) - base_ts for s in lidar_scans]
 
     # Find matched timestamps
-    matched_video_ts = set(img.ts for img, _ in aligned_pairs)
-    matched_lidar_ts = set(pc.ts for _, pc in aligned_pairs)
+    matched_video_ts = set(source_time(img) for img, _ in aligned_pairs)
+    matched_lidar_ts = set(source_time(pc) for _, pc in aligned_pairs)
 
     fig, ax = plt.subplots(figsize=(12, 2.5))
 
     # Video markers above axis (y=0.3) - circles, cyan when matched
     for frame in video_frames:
-        rel_ts = frame.ts - base_ts
-        matched = frame.ts in matched_video_ts
+        rel_ts = source_time(frame) - base_ts
+        matched = source_time(frame) in matched_video_ts
         ax.plot(rel_ts, 0.3, 'o', color='cyan' if matched else '#688', markersize=8)
 
     # Lidar markers below axis (y=-0.3) - squares, orange when matched
     for scan in lidar_scans:
-        rel_ts = scan.ts - base_ts
-        matched = scan.ts in matched_lidar_ts
+        rel_ts = source_time(scan) - base_ts
+        matched = source_time(scan) in matched_lidar_ts
         ax.plot(rel_ts, -0.3, 's', color='orange' if matched else '#a86', markersize=8)
 
     # Green lines connecting matched pairs
     for img, pc in aligned_pairs:
-        img_rel = img.ts - base_ts
-        pc_rel = pc.ts - base_ts
+        img_rel = source_time(img) - base_ts
+        pc_rel = source_time(pc) - base_ts
         ax.plot([img_rel, pc_rel], [0.3, -0.3], '-', color='lime', alpha=0.6, linewidth=1)
 
     # Axis styling
@@ -192,14 +198,16 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 More on [quality filtering here](/docs/usage/data_streams/quality_filter.md).
 
 ```python skip session=align
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.message_utils import image as image_utils
+from dimos.utils.reactive import quality_barrier
 
 # Lists to collect items as they flow through streams
 video_frames = []
 lidar_scans = []
 
 video_stream = video_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
-    sharpness_barrier(3.0),
+    quality_barrier(image_utils.sharpness, 3.0),
     ops.do_action(lambda x: video_frames.append(x))
 )
 

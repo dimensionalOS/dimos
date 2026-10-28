@@ -454,20 +454,33 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             FieldKind::Tf => want_input,
             _ => false,
         })
-        .map(|f| PortDecl {
-            name: f.name.to_string(),
-            // `Tf` carries no generic payload. The port is TFMessage by
-            // construction.
-            // An explicit `msg` wins: a view type's wire payload and the dimos
-            // message it stands for are allowed to differ.
-            ty: match f.kind {
-                FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
-                _ => f
-                    .msg
-                    .clone()
-                    .or_else(|| port_payload_type(f.ty))
-                    .unwrap_or_default(),
-            },
+        .flat_map(|f| {
+            let port = PortDecl {
+                name: f.name.to_string(),
+                // `Tf` carries no generic payload. The port is TFMessage by
+                // construction.
+                // An explicit `msg` wins: a view type's wire payload and the dimos
+                // message it stands for are allowed to differ.
+                ty: match f.kind {
+                    FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
+                    _ => f
+                        .msg
+                        .clone()
+                        .or_else(|| port_payload_type(f.ty))
+                        .unwrap_or_default(),
+                },
+            };
+            if matches!(f.kind, FieldKind::Tf) {
+                vec![
+                    port,
+                    PortDecl {
+                        name: "tf_static".into(),
+                        ty: TF_PAYLOAD_TYPE.into(),
+                    },
+                ]
+            } else {
+                vec![port]
+            }
         })
         .collect()
 }
@@ -537,7 +550,7 @@ fn check_port_table(entry: &toml::Value, kind: &str, declared: &[PortDecl]) -> R
         let msg = msg
             .as_str()
             .ok_or_else(|| format!("`{kind}.{}` must be a string", port.name))?;
-        let want = msg.rsplit('.').next().unwrap_or(msg);
+        let want = msg.rsplit(['.', '/']).next().unwrap_or(msg);
         if want != port.ty {
             return Err(format!(
                 "port `{}` is declared `{msg}` in `{kind}` but the struct field carries `{}`",
@@ -649,6 +662,12 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
+            if !matches!(&attr.meta, syn::Meta::Path(_)) {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "#[tf] uses standard ROS TF messages and takes no codec arguments",
+                ));
+            }
             found = Some(FieldKind::Tf);
         }
     }
@@ -737,6 +756,36 @@ mod tests {
     use syn::parse_quote;
 
     #[test]
+    fn tf_accepts_legacy_or_explicit_codec_pair_and_keeps_registry_type() {
+        for field in [parse_quote!(#[tf] tf: Tf)] {
+            let attr = super::classify_field(&field, &parse_quote!(tf)).expect("valid TF field");
+            let ty: syn::Type = parse_quote!(Tf);
+            let name = parse_quote!(tf);
+            let fields = [ClassifiedField {
+                name: &name,
+                ty: &ty,
+                kind: attr.kind,
+                msg: attr.msg,
+            }];
+            let ports = super::port_decls(&fields, true);
+            assert_eq!(ports.len(), 2);
+            assert_eq!(ports[0].ty, "TFMessage");
+            assert_eq!(ports[1].name, "tf_static");
+        }
+    }
+
+    #[test]
+    fn tf_rejects_partial_or_unknown_codec_settings() {
+        for field in [
+            parse_quote!(#[tf(decode = wire::decode)] tf: Tf),
+            parse_quote!(#[tf(encode = wire::encode)] tf: Tf),
+            parse_quote!(#[tf(codec = wire::codec)] tf: Tf),
+        ] {
+            assert!(super::classify_field(&field, &parse_quote!(tf)).is_err());
+        }
+    }
+
+    #[test]
     fn io_ports_are_rejected_by_the_registry_check() {
         let name: syn::LitStr = parse_quote!("demo");
         let ident: syn::Ident = parse_quote!(cmd);
@@ -788,6 +837,29 @@ mod tests {
             &[port("global_map", "PointCloud2")],
         )
         .expect("matching ports should pass");
+    }
+
+    #[test]
+    fn accepts_canonical_cdr_names_and_still_rejects_type_mismatch() {
+        let manifest = MANIFEST.replace("sensor_msgs.PointCloud2", "sensor_msgs/msg/PointCloud2");
+        check_manifest_ports(
+            &manifest,
+            "demo",
+            &[port("lidar", "PointCloud2")],
+            &[port("global_map", "PointCloud2")],
+        )
+        .expect("canonical ROS message names match their imported Rust type");
+        let err = check_manifest_ports(
+            &manifest,
+            "demo",
+            &[port("lidar", "Image")],
+            &[port("global_map", "PointCloud2")],
+        )
+        .expect_err("canonical names must still enforce the payload type");
+        assert!(
+            err.contains("sensor_msgs/msg/PointCloud2") && err.contains("Image"),
+            "{err}"
+        );
     }
 
     #[test]

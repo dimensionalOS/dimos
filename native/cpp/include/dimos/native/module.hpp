@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "dimos/native/config.hpp"
-#include "dimos/native/lcm_codec.hpp"
+#include "dimos/native/cdr_codec.hpp"
 #include "dimos/native/log.hpp"
 #include "dimos/native/transport.hpp"
 
@@ -277,14 +277,14 @@ public:
     /// Handlers run serialized, so they touch module state without locks.
     template <class T, class Self>
     void input(const std::string& port, void (Self::*handler)(const T&), Self* self,
-               DecodeFn<T> decode = lcm_decode<T>) {
+               DecodeFn<T> decode = cdr_decode<T>) {
         input<T>(port, std::move(decode),
                  [self, handler](T msg) { (self->*handler)(msg); });
     }
 
     /// publish() hands off to a per-channel worker, so it never blocks.
     template <class T>
-    Output<T> output(const std::string& port, EncodeFn<T> encode = lcm_encode<T>) {
+    Output<T> output(const std::string& port, EncodeFn<T> encode = cdr_encode<T>) {
         std::string topic = topic_for(port);
         auto queue = std::make_shared<PublishQueue>(topic);
         publish_queues_.push_back(queue);

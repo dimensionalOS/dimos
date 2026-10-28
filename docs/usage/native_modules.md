@@ -2,13 +2,13 @@
 
 Prerequisite for this is to understand dimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM or zenoh.
+Native modules wrap executables that use the configured LCM or Zenoh transport and the declared message schemas.
 
 Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on the transport.
 
-Python module **never touches the pubsub data**. It just passes configuration and the topics to use via CLI args to your executable.
+For native SDK modules, Python passes configuration and exact channel names to the executable. The executable encodes generated messages as CDR and publishes directly on the selected transport.
 
-To learn how to communicate with the rest of dimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
+To learn how to communicate with the rest of dimOS over LCM, read the [LCM transport and generated message guide](/docs/usage/lcm.md).
 
 An experimental Python runtime with an isolated dependency environment is
 available in [`dimos/experimental/isolated_python/README.md`](/dimos/experimental/isolated_python/README.md).
@@ -17,14 +17,14 @@ available in [`dimos/experimental/isolated_python/README.md`](/dimos/experimenta
 
 Python side native module is just a definition of a **config** dataclass and **module** class specifying pubsub I/O.
 
-Both the config dataclass and pubsub topics get converted to CLI args passed down to your executable once the module is started.
+By default, NativeModule passes config fields and port channels as CLI arguments. SDK modules set `stdin_config=True` to receive one JSON line instead.
 
 ```python no-result session=nativemodule
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.sensor_msgs.msg import Imu
 import time
 
 class MyLidarConfig(NativeModuleConfig):
@@ -55,8 +55,8 @@ For the example above, the launched command would look like:
 
 ```sh skip
 ./build/my_lidar \
-    --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
-    --imu '/imu#sensor_msgs.Imu' \
+    --pointcloud '/pointcloud' \
+    --imu '/imu' \
     --host_ip 192.168.1.5 \
     --frequency 10.0
 ```
@@ -68,11 +68,9 @@ mylidar.imu.transport = LCMTransport("/imu", Imu)
 mylidar.start()
 ```
 
-```results
-2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
-```
-
-Topic strings use the format `/<name>#<msg_type>`, which is the LCM channel name that Python `LCMTransport` subscribers use. The native binary publishes on these exact channels.
+The binary uses the exact channel strings supplied by the transport. CDR payloads
+carry no message type name, so the native and Python ports must agree on their
+generated schema. Do not append an old LCM message-type suffix.
 
 When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 10), it gets SIGKILL.
 
@@ -143,7 +141,7 @@ autoconnect(
 ).build().loop()
 ```
 
-`autoconnect` matches ports by `(name, type)`, assigns LCM topics, and passes them to the native binary as CLI args. You can override transports as usual:
+`autoconnect` matches ports by `(name, type)`, assigns transports, and passes the selected channel names to the native binary. You can override transports as usual:
 
 ```python skip
 blueprint = autoconnect(
@@ -185,13 +183,13 @@ The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config:
 
 ```cpp
 #include "dimos/native.hpp"
-#include "geometry_msgs/Twist.hpp"
+#include <geometry_msgs/msg/twist.hpp>
 
 using dimos::native::Builder;
 using dimos::native::Config;
 using dimos::native::Module;
 using dimos::native::Output;
-using geometry_msgs::Twist;
+using geometry_msgs::msg::Twist;
 
 struct PongConfig {
     std::int64_t sample_config;
@@ -228,6 +226,23 @@ The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects ov
 
 A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
 
+### Generated native build inputs
+
+The C++ SDK's default input and output codecs use CDR. Its CMake dependency is
+`dimos_generated::messages`, supplied by the prepared generated message prefix.
+The Rust SDK uses the prepared `dimos-generated-messages` crate and its CDR
+callbacks. Both consume the same `.msg` definitions as Python.
+
+A wheel packages native message source code. Installing that wheel does not
+compile or validate a native module. Build the C++ or Rust consumer with its
+matching SDK and generated sources, then run its interoperability tests. See
+[message source packages](/docs/development/message-source-packages.md#run-c-and-rust)
+for the file-based native example and dependency preparation.
+
+External message packages use cdrgen's dependency declarations and provider
+registration. Their native consumers must link the matching generated sources.
+A Python message registration alone does not compile the external native code.
+
 ## Examples
 
 For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
@@ -239,14 +254,15 @@ The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors
 ```python skip
 from dimos.core.stream import Out
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.sensor_msgs.msg import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
-    executable: str = "../../../../../../target/release/mid360_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mid360_native"
+    build_command: str | None = "nix build -L path:."
+    stdin_config: bool = True
     host_ip: str | None = None  # auto-detected on the lidar's subnet
     lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0

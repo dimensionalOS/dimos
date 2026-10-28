@@ -37,8 +37,13 @@ import os
 import time
 import urllib.request
 
+from dimos_cdrgen.registry import decode, encode
 import pytest
 
+from dimos.message_utils import image, time as message_time
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
 
 
@@ -86,8 +91,7 @@ def test_operator_to_transport_e2e() -> None:
     import numpy as np
 
     from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport
-    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.messages.geometry_msgs.msg import TwistStamped
     from dimos.protocol.pubsub.impl.webrtc.providers.spec import wait_connected, wait_open
 
     # The TELEOP_* env fallback inside BrokerProvider was removed when
@@ -128,7 +132,11 @@ def test_operator_to_transport_e2e() -> None:
         # from flowing RTP, so (as with a real camera stream) frames must be
         # arriving before the operator bridges, or the pull offer comes back
         # without a usable video m-line.
-        frame = Image(data=np.full((120, 160, 3), 128, dtype=np.uint8), format=ImageFormat.BGR)
+        frame = image.from_array(
+            np.full((120, 160, 3), 128, dtype=np.uint8),
+            encoding="bgr8",
+            header=Header(message_time.time_from_seconds(time.time()), ""),
+        )
         feeding = True
 
         async def _feed() -> None:
@@ -230,16 +238,25 @@ def test_operator_to_transport_e2e() -> None:
 
         # Robot → operator: telemetry through the broker-bridged back channel.
         for i in range(10):
-            back_transport.broadcast(None, TwistStamped(linear=[0.0, 0.0, 1.0 + i]))
+            back_transport.broadcast(
+                None,
+                TwistStamped(
+                    header=Header(stamp=Time(0, 0), frame_id=""),
+                    twist=Twist(linear=Vector3(0.0, 0.0, 1.0 + i), angular=Vector3(0.0, 0.0, 0.0)),
+                ),
+            )
             await asyncio.sleep(0.05)
         await _wait_for(lambda: bool(back_bytes), 5.0, "robot->operator telemetry")
-        back_msg = TwistStamped.lcm_decode(back_bytes[-1])
-        assert back_msg.linear.z >= 1.0, back_msg.linear
+        back_msg = decode(back_bytes[-1], TwistStamped)
+        assert back_msg.twist.linear.z >= 1.0, back_msg.twist.linear
 
         sent = 0
         for i in range(40):
-            msg = TwistStamped(linear=[0.5, 0.0, 0.0], angular=[0.0, 0.0, i * 0.01])
-            ch.send(msg.lcm_encode())
+            msg = TwistStamped(
+                header=Header(stamp=Time(0, 0), frame_id=""),
+                twist=Twist(linear=Vector3(0.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, i * 0.01)),
+            )
+            ch.send(encode(msg))
             sent += 1
             await asyncio.sleep(0.05)
         # Unreliable channel: wait for the pass condition itself (early exit),
@@ -261,7 +278,7 @@ def test_operator_to_transport_e2e() -> None:
         assert len(received) >= sent * 0.8, f"sent={sent} received={len(received)}"
         sample = received[-1]
         assert isinstance(sample, TwistStamped)
-        assert abs(sample.linear.x - 0.5) < 1e-9
+        assert abs(sample.twist.linear.x - 0.5) < 1e-9
     finally:
         transport.stop()
         back_transport.stop()
