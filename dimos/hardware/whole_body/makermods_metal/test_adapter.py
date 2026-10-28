@@ -94,7 +94,7 @@ def test_topology_uses_metal_firmware_profiles(adapter, mocker) -> None:
 def test_missing_profiles_fail_before_opening_usb(adapter, mocker) -> None:
     mocker.patch.object(damiao, "MotorProfile", None, create=True)
     bus = mocker.spy(adapter, "_make_can_bus")
-    with pytest.raises(RuntimeError, match="requires can-motor-control>=0.0.10"):
+    with pytest.raises(RuntimeError, match="requires can-motor-control>=0.0.11"):
         adapter._build_robot()
     bus.assert_not_called()
 

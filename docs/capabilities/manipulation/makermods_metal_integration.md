@@ -22,8 +22,9 @@ corroborated by its [LeRobot profiles](https://github.com/makermods-robotics/ler
 and [joint mapping](https://github.com/makermods-robotics/lerobot/blob/a86385a0f381fa81e227c41d2774fbb94c2610fc/src/lerobot/robots/metal_follower/metal_follower.py).
 The adapter defines these profiles with the shared driver's custom `MotorProfile`
 API and registers them on its own `DamiaoCodec`; no Metal-specific library enum
-or profile table is needed. The dependency minimum is `can-motor-control>=0.0.10`. Physical use requires
-that release to contain the custom profile API and per-motor feedback fix.
+or profile table is needed. The dependency minimum is `can-motor-control>=0.0.11`. Physical use requires
+the custom profile API, per-motor feedback fix, and macOS shutdown TX drain
+included in 0.0.11.
 Version 0.0.8 lacks the API;
 this adapter fails before opening USB rather than substituting stock profiles.
 
