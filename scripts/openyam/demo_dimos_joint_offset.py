@@ -3,12 +3,17 @@
 Run with the modified /home/dimos/dimos checkout's Python environment. This
 script commands real arm motors only when --execute is supplied. It never
 commands grippers, changes motor zero, or writes motor firmware.
+
+For a nonzero teleop pose, leave the dual OpenYAM DimOS teleop blueprint
+running. The script pauses its command loop, takes over the enabled arms, then
+resumes teleop with a hold at the measured pose. Use the same CAN ports for both.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from importlib.metadata import version
 import importlib.util
 import json
 import math
@@ -31,6 +36,7 @@ from dimos.hardware.whole_body.dual_openyam_damiao.adapter import (
     _arm_motors,
 )
 from dimos.hardware.whole_body.spec import MotorCommand
+from dimos.porcelain.dimos import Dimos
 
 HERE = Path(__file__).absolute().parent
 SESSION = HERE.parent
@@ -60,6 +66,36 @@ class ArmOnlyDimOSAdapter(DualOpenYamDamiaoAdapter):
             .add_arm("right_arm", bus="right", motors=_arm_motors("right"))
             .build()
         )
+
+    def _discard_robot_without_disable(self, robot: can_motor_control.Robot) -> None:
+        self._arms.clear()
+        self._grippers.clear()
+        if hasattr(self, "_robot") and self._robot is robot:
+            del self._robot
+        self._connected = False
+        self._active = False
+        self._has_state = False
+        self._reset_tracking()
+
+    def _release_robot(self, robot: can_motor_control.Robot) -> None:
+        if self._active:
+            super()._release_robot(robot)
+        else:
+            self._discard_robot_without_disable(robot)
+
+    def disconnect_preserving_enable(self) -> None:
+        """Drop this script's CAN handles without disabling teleop's motors."""
+        if self._connected:
+            self._discard_robot_without_disable(self._robot)
+
+    def adopt_enabled_motors(self) -> None:
+        """Take over already enabled motors without an enable/disable cycle."""
+        self._preflight_gravity()
+        for arm in self._arms.values():
+            arm.set_mode("mit")
+        self._active = True
+        self.read_motor_states()
+
 
 class RawMonitor:
     """Independent SocketCAN encoder/status/temperature observation."""
@@ -141,6 +177,25 @@ class RawMonitor:
                 side: {joint: row.copy() for joint, row in rows.items()}
                 for side, rows in self.latest.items()
             }
+
+    def refresh(self, timeout: float = 1.0) -> None:
+        """Request current feedback from all arm motors without changing enable state."""
+        requested_at = time.monotonic()
+        for sock in self.sockets.values():
+            for joint in range(1, 7):
+                query = bytes([joint, 0, 0xCC, 0, 0, 0, 0, 0])
+                sock.send(struct.pack("=IB3x8s", 0x7FF, 8, query))
+        deadline = requested_at + timeout
+        while time.monotonic() < deadline:
+            snapshot = self.snapshot()
+            if all(
+                snapshot[side].get(joint, {}).get("mono", 0.0) >= requested_at
+                for side in self.sockets
+                for joint in range(1, 7)
+            ):
+                return
+            time.sleep(0.01)
+        raise RuntimeError("Could not read current feedback from all twelve arm motors")
 
     def close(self) -> None:
         self.stop.set()
@@ -250,24 +305,10 @@ class Runner:
         self.last_sample_at: float | None = None
 
     def preflight(self) -> np.ndarray:
-        probe = ArmOnlyDimOSAdapter(
-            runtime_config=DamiaoRuntimeConfig(
-                bus_devices={"left": self.args.left_can, "right": self.args.right_can},
-                gravity_comp=True,
-                tracking_comp=False,
-            )
-        )
-        try:
-            if not probe.connect():
-                raise RuntimeError("Read-only DimOS preflight connection failed")
-            for _ in range(10):
-                probe.read_motor_states()
-                time.sleep(0.01)
-            raw_q, temperature = raw_vectors(self.monitor, enabled=False)
-        finally:
-            probe.disconnect()
-        # if temperature >= TEMPERATURE_MARGIN_C:
-        #     raise RuntimeError(f"Motor is too warm to start ({temperature} C)")
+        self.monitor.refresh()
+        raw_q, _temperature = raw_vectors(self.monitor)
+        # if _temperature >= TEMPERATURE_MARGIN_C:
+        #     raise RuntimeError(f"Motor is too warm to start ({_temperature} C)")
         check_path(self.checker, raw_q, raw_q)
         for side, port in (("left", self.args.left_can), ("right", self.args.right_can)):
             for joint in range(1, 7):
@@ -280,7 +321,7 @@ class Runner:
                     raise RuntimeError(f"Unexpected protocol limits or MIT mode: {side} J{joint}")
         return raw_q
 
-    def connect(self, mode: str, expected_q: np.ndarray) -> None:
+    def connect(self, mode: str) -> None:
         self.adapter = ArmOnlyDimOSAdapter(
             runtime_config=DamiaoRuntimeConfig(
                 bus_devices={"left": self.args.left_can, "right": self.args.right_can},
@@ -291,25 +332,48 @@ class Runner:
         )
         if not self.adapter.connect():
             raise RuntimeError("DimOS adapter failed to connect")
-        for _ in range(10):
-            states = self.adapter.read_motor_states()
-            time.sleep(0.01)
+        self.adapter.read_motor_states()
         # library_q = np.array([state.q for state in states])
-        raw_q, _ = raw_vectors(self.monitor, enabled=False)
+
+    def activate(self, *, already_enabled: bool) -> None:
+        if self.adapter is None:
+            raise RuntimeError("Adapter is not connected")
+        self.monitor.refresh()
+        raw_q, _ = raw_vectors(self.monitor, enabled=already_enabled)
+        check_path(self.checker, raw_q, raw_q)
         # if np.max(np.abs(raw_q - expected_q)) > 0.04:
         #     raise RuntimeError("Starting pose changed since path preflight")
         # if np.max(np.abs(raw_q - library_q)) > 0.003:
         #     raise RuntimeError("DimOS and raw encoder positions disagree")
         self.reference = raw_q.copy()
         self.last_command = raw_q.copy()
-        if not self.adapter.activate():
+        if already_enabled:
+            self.adapter.adopt_enabled_motors()
+        elif not self.adapter.activate():
             raise RuntimeError("DimOS adapter failed to activate")
-        # Activation sends mode, enable, and refresh frames in quick succession.
+        # Activation or takeover sends mode and refresh frames in quick succession.
         # Let the SocketCAN transmit queue drain before the first trial refresh.
         time.sleep(0.01)
         self.activated_at = time.monotonic()
         self.last_sample_at = None
         self.next_tick = time.monotonic()
+        self.sample(self.reference, "handoff:hold")
+
+    def switch_mode(self, mode: str) -> None:
+        if self.adapter is None or not self.adapter._active:
+            raise RuntimeError("Adapter is inactive")
+        if mode == "candidate" and tuple(
+            int(part) for part in version("can-motor-control").split(".")[:2]
+        ) < (0, 1):
+            raise RuntimeError("Install the tested can-motor-control 0.1.0 parity build")
+        self.adapter._reset_tracking()
+        self.adapter._runtime_config = DamiaoRuntimeConfig(
+            bus_devices={"left": self.args.left_can, "right": self.args.right_can},
+            gravity_comp=True,
+            tracking_comp=(mode == "candidate"),
+            openyam_anvil_parity=(mode == "candidate"),
+        )
+        self.last_sample_at = None
 
     def sample(self, target: np.ndarray, phase: str) -> dict[str, Any]:
         if self.adapter is None or self.reference is None:
@@ -430,13 +494,17 @@ class Runner:
         self.hold(center, 3.0, label + ":return_settle")
         return summary
 
-    def close(self) -> None:
+    def close(self, *, preserve_enabled: bool = False) -> None:
         if self.adapter is None:
             return
         try:
-            self.adapter.deactivate()
+            if not preserve_enabled and self.adapter._active:
+                self.adapter.deactivate()
         finally:
-            self.adapter.disconnect()
+            if preserve_enabled:
+                self.adapter.disconnect_preserving_enable()
+            else:
+                self.adapter.disconnect()
             self.adapter = None
 
 
@@ -492,9 +560,27 @@ def main() -> int:
     results: list[dict[str, Any]] = []
     error: str | None = None
     final_disabled: bool | None = None
+    start_enabled = False
+    teleop_client: Dimos | None = None
+    teleop: Any = None
+    teleop_paused = False
+    handed_back_to_teleop = False
     try:
         time.sleep(0.2)
         initial = runner.preflight()
+        snapshot = monitor.snapshot()
+        statuses = [snapshot[side][joint]["status"] for side in SIDES for joint in range(1, 7)]
+        if len(set(statuses)) != 1 or statuses[0] not in (0, 1):
+            raise RuntimeError(f"Arm motors have mixed or faulted states: {statuses}")
+        start_enabled = statuses[0] == 1
+        if start_enabled:
+            teleop_client = Dimos.connect()
+            teleop = teleop_client.get_module("ControlCoordinator")
+            if not all(
+                callable(getattr(teleop, name, None))
+                for name in ("pause_for_joint_offset_test", "resume_after_joint_offset_test")
+            ):
+                raise RuntimeError("Running DimOS teleop must expose the joint-offset handoff RPCs")
         selected = [
             (side, joint)
             for side in SIDES
@@ -531,15 +617,23 @@ def main() -> int:
                         for (side, joint), direction in directions.items()
                     },
                     "can_motor_control": str(can_motor_control.__file__),
+                    "started_with_motors_enabled": start_enabled,
                 },
                 indent=2,
             )
         )
         modes = ("baseline", "candidate") if args.mode == "both" else (args.mode,)
-        for mode in modes:
-            runner.preflight()
-            runner.connect(mode, initial)
-            try:
+        runner.connect(modes[0])
+        if start_enabled:
+            if not teleop.pause_for_joint_offset_test():
+                raise RuntimeError("DimOS teleop did not pause its command loop")
+            teleop_paused = True
+            print("DimOS teleop paused; joint-offset test is taking control.", flush=True)
+        runner.activate(already_enabled=start_enabled)
+        try:
+            for mode_index, mode in enumerate(modes):
+                if mode_index:
+                    runner.switch_mode(mode)
                 for side, joint in selected:
                     if stop_requested:
                         raise InterruptedError("Stop requested")
@@ -549,37 +643,49 @@ def main() -> int:
                 if runner.reference is not None:
                     runner.move(runner.reference, mode + ":final_return", speed=0.025)
                     runner.hold(runner.reference, 3.0, mode + ":final_hold")
-            finally:
-                if runner.adapter is not None:
-                    try:
-                        if runner.reference is not None:
-                            runner.recovering = True
-                            runner.move(runner.reference, mode + ":guarded_return", speed=0.02)
-                            runner.hold(runner.reference, 2.0, mode + ":guarded_hold")
-                    except Exception as recovery_error:
-                        print(f"Guarded return failed: {recovery_error!r}", flush=True)
-                    runner.close()
-                    runner.recovering = False
-            wait_disabled(monitor)
-            # if np.max(np.abs(returned - initial)) > 0.04:
-            #     raise RuntimeError("Return pose differs from initial by more than 0.04 rad")
+        finally:
+            if runner.adapter is not None and runner.reference is not None:
+                try:
+                    runner.recovering = True
+                    runner.move(runner.reference, "guarded_return", speed=0.02)
+                    runner.hold(runner.reference, 2.0, "guarded_hold")
+                except Exception as recovery_error:
+                    print(f"Guarded return failed: {recovery_error!r}", flush=True)
+                runner.recovering = False
     except BaseException as exc:
         traceback.print_exc()
         error = repr(exc)
         print(f"Test stopped: {error}", flush=True)
     finally:
+        if teleop_paused:
+            try:
+                if not teleop.resume_after_joint_offset_test():
+                    raise RuntimeError("DimOS teleop did not resume its command loop")
+                handed_back_to_teleop = True
+                print(
+                    "DimOS teleop resumed and holding the arm until teleop takes over.", flush=True
+                )
+            except Exception as resume_error:
+                if error is None:
+                    error = repr(resume_error)
         try:
-            runner.close()
+            runner.close(preserve_enabled=start_enabled)
         except Exception as close_error:
             if error is None:
                 error = repr(close_error)
         try:
-            wait_disabled(monitor)
-            final_disabled = True
-        except RuntimeError as verify_error:
-            final_disabled = False
+            if start_enabled:
+                monitor.refresh()
+                raw_vectors(monitor, enabled=True)
+                final_disabled = False
+            else:
+                wait_disabled(monitor)
+                final_disabled = True
+        except Exception as verify_error:
             if error is None:
                 error = repr(verify_error)
+        if teleop_client is not None:
+            teleop_client.stop()
         samples.close()
         monitor.close()
         (args.output_dir / "results.json").write_text(
@@ -588,6 +694,7 @@ def main() -> int:
                     "finished": error is None,
                     "error": error,
                     "all_arm_motors_disabled": final_disabled,
+                    "handed_back_to_teleop": handed_back_to_teleop,
                     "trials": results,
                 },
                 indent=2,

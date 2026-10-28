@@ -25,6 +25,37 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCo
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 
+def test_joint_offset_handoff_pauses_and_resumes_without_deactivating_hardware(mocker):
+    coordinator = DualOpenYamCoordinator(publish_joint_state=False)
+    loop = mocker.Mock()
+    loop.is_running = True
+    loop._tick_thread.is_alive.return_value = False
+    loop.stop.side_effect = lambda: setattr(loop, "is_running", False)
+    loop.start.side_effect = lambda: setattr(loop, "is_running", True)
+    coordinator._tick_loop = loop
+    hardware = mocker.Mock()
+    coordinator._hardware["dual_openyam"] = hardware
+    positions = {name: 0.2 for name in DUAL_OPENYAM_ARM_JOINTS}
+    mocker.patch.object(coordinator, "get_joint_positions", return_value=positions)
+
+    try:
+        assert coordinator.pause_for_joint_offset_test()
+        loop.stop.assert_called_once_with()
+        hardware.adapter.deactivate.assert_not_called()
+
+        assert coordinator.resume_after_joint_offset_test()
+        loop.start.assert_called_once_with()
+        hardware.adapter.deactivate.assert_not_called()
+        left = coordinator._tasks["joint_offset_handoff_left"]
+        right = coordinator._tasks["joint_offset_handoff_right"]
+        assert left.is_active() and right.is_active()
+        assert left.compute(mocker.Mock()).positions == [0.2] * 6
+        left.on_preempted("teleop_dual_openyam_left", frozenset({"left_joint1"}))
+        assert not left.is_active() and right.is_active()
+    finally:
+        coordinator.stop()
+
+
 @pytest.mark.parametrize("ports", [{}, {"left_can_port": "left", "right_can_port": "right"}])
 def test_setup_supplies_model_limits_to_hardware(mocker, ports):
     names = DUAL_OPENYAM_ARM_JOINTS
