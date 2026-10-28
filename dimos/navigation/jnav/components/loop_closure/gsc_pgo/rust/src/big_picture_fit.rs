@@ -347,6 +347,7 @@ pub(crate) fn solve_core(
     // and its verdict replaces TLS's only where the closures it keeps prove the odometry's noise understated
     // only when TLS voted a closure out: with every one kept, GM has nothing to add
     let least_squares = least_squares.filter(|_| weights.iter().any(|&w| w < 0.5));
+    let mut gm_taken = false;
     if let Some((mut gm_state, mut r2, mut u2, mut s2)) = least_squares {
         let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
         // Remark 5: mu0 = 2 r_max^2 / cutoff over the residuals the least-squares solve leaves
@@ -465,6 +466,7 @@ pub(crate) fn solve_core(
         {
             (state, weights, unary_weights, sighting_weights) =
                 (gm_state, gm_weights, gm_unary, gm_sightings);
+            gm_taken = true;
         }
     }
     let kept: Vec<f64> = weights
@@ -528,12 +530,41 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
+    // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
+    // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the odometry edges carry)
+    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
+    let evidence_weights: Vec<f64> = if gm_taken {
+        let kept_closures: Vec<(usize, Edge)> = closures
+            .iter()
+            .zip(&huber)
+            .enumerate()
+            .filter(|(_, (_, &w))| w > 0.0)
+            .map(|(i, (e, _))| (i, *e))
+            .collect();
+        let step_variance =
+            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64;
+        let pcm = SolveConfig {
+            pcm_odometry_translation_variance: step_variance,
+            ..config.clone()
+        };
+        let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
+        let consistent = consistent_closures(&state, &edges, &pcm);
+        let mut weights = vec![0.0; closures.len()];
+        for ((i, _), held) in kept_closures.iter().zip(consistent) {
+            if held {
+                weights[*i] = huber[*i];
+            }
+        }
+        weights
+    } else {
+        huber.clone()
+    };
     let odometry_noise_evidence = odometry_noise_evidence(
         &state,
         &pattern,
         odometry,
         closures,
-        &huber,
+        &evidence_weights,
         unary,
         &unary_kept,
         sightings,
