@@ -96,3 +96,29 @@ firmware; passing a tty path to the existing native backend will not work.
 This is source-level alignment, not a hardware certification. Adapter firmware,
 USB identity, zero offsets, profile registers, gripper behavior, round-trip
 latency, fault handling, and reconnect behavior remain physical bring-up checks.
+
+## Planning and Viser
+
+Run the coordinator together with `ManipulationModule` and its Viser UI:
+
+```bash
+uv sync --extra planning --inexact
+uv run dimos run makermods-metal-planner-coordinator
+```
+
+Open [the local Viser UI](http://127.0.0.1:8095). Without a CAN selector the
+blueprint uses mock hardware. The coordinator streams actual joint state to
+ManipulationModule; planned trajectories execute through its `joint_trajectory`
+task, and the UI controls the independent normalized `metal_gripper` task.
+Use the panel to set joint/pose targets, plan, preview, then execute. Initial
+planning speed scale is 0.2; the panel can change it.
+
+The pose target is the official `gripper_base` mount frame, not a calibrated
+fingertip TCP. The planner fixes the finger joints and does not visualize their
+opening. A renamed fixed mount joint avoids a joint/link frame-name collision
+in the official URDF. Model checkout and mesh loading occur at startup.
+
+For commissioned physical Metal hardware, the same blueprint accepts
+`--can-port`, `--gripper-opening-direction`, and `--gripper-current` as described
+above. Selecting it activates motors and moves the gripper for calibration;
+first verify the model, firmware profile, motor zero pose, and gripper settings.

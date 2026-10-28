@@ -762,7 +762,13 @@ class ViserPanelGui:
         return self._state_values_by_name(state)
 
     def _remove_panel_handles(self) -> None:
-        for key, handle in list(self._handles.items()):
+        # Children are registered after their folders; remove them first.
+        for key, handle in reversed(list(self._handles.items())):
+            if key.startswith("ee_control:") and self.scene is not None:
+                # Scene owns these handles and must forget them before its close.
+                self.scene.remove_target_controls(key.removeprefix("ee_control:"))
+                self._handles.pop(key, None)
+                continue
             remove = getattr(handle, "remove", None)
             if callable(remove):
                 remove()

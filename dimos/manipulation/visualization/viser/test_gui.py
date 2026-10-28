@@ -868,3 +868,17 @@ def test_zero_preset_validates_selected_targets_without_motion(
     assert gui.state.error == expected_error
     assert operations == []
     execute.assert_not_called()
+
+
+def test_panel_cleanup_removes_scene_owned_controls_through_scene(mocker) -> None:
+    gui = make_gui()
+    gui.scene = mocker.Mock()
+    control = mocker.Mock()
+    gui._handles["ee_control:arm"] = control
+    try:
+        gui._remove_panel_handles()
+        gui.scene.remove_target_controls.assert_called_once_with("arm")
+        control.remove.assert_not_called()
+        assert not gui._handles
+    finally:
+        gui.close()

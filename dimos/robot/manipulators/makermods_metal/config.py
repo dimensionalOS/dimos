@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed Metal Arm model and mock-default hardware configuration."""
+"""MakerMods Metal Arm model and mock-default hardware configuration."""
 
 from __future__ import annotations
 
