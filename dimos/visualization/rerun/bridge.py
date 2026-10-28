@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
-import functools
-from operator import attrgetter
 import os
 import shutil
 import signal
@@ -35,7 +33,6 @@ from typing import (
     Protocol,
     TypeAlias,
     TypeGuard,
-    TypeVar,
     cast,
     get_args,
     runtime_checkable,
@@ -134,31 +131,6 @@ else:
     # out of them - importing rerun here would defeat the lazy import below.
     BlueprintFactory = Callable[..., Any]
     VisualOverride = Callable[..., Any] | None
-
-
-@runtime_checkable
-class KeyedRenderer(Protocol):
-    """A renderer whose entities are keyed by the message's header seq."""
-
-    keyed_by_seq: bool
-
-    def __call__(self, *args: object, **kwargs: object) -> object: ...
-
-
-RendererT = TypeVar("RendererT", bound=Callable[..., object])
-
-
-def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
-    renderer.keyed_by_seq = True  # type: ignore[attr-defined]
-    return renderer
-
-
-def is_keyed_by_seq(renderer: object) -> bool:
-    """Whether a renderer, or the function under a partial, is marked keyed."""
-    while isinstance(renderer, functools.partial):
-        renderer = renderer.func
-    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -418,15 +390,6 @@ class RerunBridgeModule(Module):
         self._override_cache[entity_path] = composed
         return composed
 
-    def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every seq must arrive."""
-        prefix = f"{self.config.entity_prefix}/"
-        return [
-            str(path).removeprefix(prefix)
-            for path, renderer in self.config.visual_override.items()
-            if is_keyed_by_seq(renderer)
-        ]
-
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
@@ -602,9 +565,6 @@ class RerunBridgeModule(Module):
         A zenoh key is `dimos/<topic>/<Type>`, so one wildcard per name needs no type; LCM cannot do this.
         """
         if not self.config.topics:
-            if isinstance(pubsub, Zenoh):
-                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
-                return pubsub.subscribe_all(self._on_message, keyed=keyed)
             return pubsub.subscribe_all(self._on_message)
 
         if not isinstance(pubsub, Zenoh):

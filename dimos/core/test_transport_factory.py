@@ -98,6 +98,13 @@ def test_default_zenoh_qos_seed_channels_never_drop_despite_their_types() -> Non
     assert default_zenoh_qos("/seed_bounds", PoseStamped) == QOS_NEVER_DROP
 
 
+def test_default_zenoh_qos_region_and_mesh_channels_never_drop() -> None:
+    assert default_zenoh_qos("/map_regions", PointCloud2) == QOS_NEVER_DROP
+    assert default_zenoh_qos("/surface_map", PointCloud2) == QOS_NEVER_DROP
+    assert default_zenoh_qos("/node_edges") == QOS_NEVER_DROP
+    assert default_zenoh_qos("/mesh") == QOS_NEVER_DROP
+
+
 def test_default_zenoh_qos_everything_else_uses_zenoh_defaults() -> None:
     assert default_zenoh_qos("/cmd_vel", Twist) is None
     assert default_zenoh_qos("/tool_stream") is None

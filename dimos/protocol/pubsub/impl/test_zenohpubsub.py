@@ -21,6 +21,7 @@ from contextlib import ExitStack
 from functools import partial
 import threading
 
+import numpy as np
 import pytest
 
 pytest.importorskip("zenoh")
@@ -29,9 +30,12 @@ import zenoh
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
+    QOS_NEVER_DROP,
     Topic,
+    Zenoh,
     ZenohPubSubBase,
     ZenohQoS,
     _key_expr_to_topic,
@@ -323,82 +327,52 @@ class TestZenohPubSubBase:
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert b"wildcard" in received
 
-    def test_subscribe_all_hears_a_domain_and_keys_its_channel(self, pubsub, retry_until) -> None:
-        topic = Topic("dimos-domains/r1/test/domain/cells")
-        keyed: list[bytes] = []
+    def test_subscribe_all_marks_a_never_drop_topic_of_a_domain(self, pubsub, retry_until) -> None:
+        topic = Topic("dimos-domains/r1/test/domain/cells", qos=QOS_NEVER_DROP)
+        seen: list[Topic] = []
         event = threading.Event()
-
-        def key(msg: bytes) -> bytes:
-            keyed.append(msg)
-            return msg
 
         def callback(msg: bytes, t: Topic) -> None:
             if t.topic == topic.topic:
+                seen.append(t)
                 event.set()
 
-        pubsub.subscribe_all(callback, keyed={"test/domain/cells": key})
+        pubsub.subscribe_all(callback)
         retry_until(event, lambda: pubsub.publish(topic, b"cell"))
-        assert b"cell" in keyed
+        assert seen[0].qos is not None and seen[0].qos.congestion_control == "block"
 
-    def test_subscribe_all_keeps_every_key_of_a_keyed_channel(
+    def test_subscribe_all_keeps_every_message_of_a_never_drop_topic_behind_a_held_drain(
         self, pubsub, retry_until, wait_until
     ) -> None:
-        keyed = Topic("dimos/test/keyed/cells")
-        plain = Topic("dimos/test/keyed/plain")
-        probe = Topic("dimos/test/keyed/probe")
-        got: dict[str, list[bytes]] = {keyed.topic: [], plain.topic: []}
-        live = threading.Event()
-
-        def callback(msg: bytes, t: Topic) -> None:
-            if t.topic == probe.topic:
-                live.set()
-            elif t.topic in got:
-                got[t.topic].append(msg)
-
-        pubsub.subscribe_all(callback, keyed={"test/keyed/cells": lambda msg: msg[:1]})
-        retry_until(live, lambda: pubsub.publish(probe, b"probe"))
-        sent = [bytes([i]) for i in range(30)]
-        for msg in sent:
-            pubsub.publish(keyed, msg)
-            pubsub.publish(plain, msg)
-        wait_until(lambda: len(got[keyed.topic]) == len(sent), timeout=5.0, interval=0.01)
-        wait_until(lambda: got[plain.topic][-1:] == sent[-1:], timeout=5.0, interval=0.01)
-
-        assert got[keyed.topic] == sent
-
-    def test_subscribe_all_keeps_the_latest_per_key_behind_a_held_drain(
-        self, pubsub, retry_until, wait_until
-    ) -> None:
-        keyed = Topic("dimos/test/held/cells")
+        cells = Topic("dimos/test/held/cells", qos=QOS_NEVER_DROP)
+        plain = Topic("dimos/test/held/plain")
         probe = Topic("dimos/test/held/probe")
-        got: list[bytes] = []
+        got: dict[str, list[bytes]] = {cells.topic: [], plain.topic: []}
         blocked = threading.Event()
         release = threading.Event()
 
         def callback(msg: bytes, t: Topic) -> None:
             if t.topic == probe.topic:
-                # Hold the drain here so the keyed channel piles up behind it.
+                # Hold the drain here so both channels pile up behind it.
                 blocked.set()
                 release.wait(timeout=10.0)
-            elif t.topic == keyed.topic:
-                got.append(msg)
+            elif t.topic in got:
+                got[t.topic].append(msg)
 
-        pubsub.subscribe_all(callback, keyed={"test/held/cells": lambda msg: msg[:2]})
+        pubsub.subscribe_all(callback)
         retry_until(blocked, lambda: pubsub.publish(probe, b"probe"))
-        cells = [i.to_bytes(2, "big") for i in range(1000)]
+        sent = [i.to_bytes(2, "big") for i in range(1000)]
         try:
-            for version in (b"a", b"b"):
-                for cell in cells:
-                    pubsub.publish(keyed, cell + version)
+            for msg in sent:
+                pubsub.publish(cells, msg)
+                pubsub.publish(plain, msg)
         finally:
             release.set()
-        newest = {cell: b"b" for cell in cells}
 
-        def last_values() -> dict[bytes, bytes]:
-            return {msg[:2]: msg[2:] for msg in list(got)}
-
-        wait_until(lambda: last_values() == newest, timeout=5.0, interval=0.01)
-        assert len(got) < 2 * len(cells)
+        wait_until(lambda: len(got[cells.topic]) == len(sent), timeout=5.0, interval=0.01)
+        wait_until(lambda: got[plain.topic][-1:] == sent[-1:], timeout=5.0, interval=0.01)
+        assert got[cells.topic] == sent
+        assert len(got[plain.topic]) < len(sent)
 
     def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
         # Models the declare/stop race: once stopped, a newly declared subscriber
@@ -510,3 +484,33 @@ class TestTopicKeyExprConversion:
         reconstructed = _key_expr_to_topic(key)
         assert reconstructed.topic == original.topic
         assert reconstructed.lcm_type is None
+
+
+def test_subscribe_all_decodes_every_chunk_of_a_never_drop_mesh(retry_until, wait_until) -> None:
+    # The live mesh once died here: chunks have a key, not a seq, and the keying raised.
+    pool = ZenohSessionPool()
+    ps = Zenoh(session_pool=pool)
+    ps.start()
+    try:
+        mesh = Topic("dimos/mesh", TriangleMesh, qos=QOS_NEVER_DROP)
+        probe = Topic("dimos/test/mesh_probe", Twist)
+        got: list[TriangleMesh] = []
+        live = threading.Event()
+
+        def callback(msg: object, t: Topic) -> None:
+            if t.topic == probe.topic:
+                live.set()
+            elif isinstance(msg, TriangleMesh):
+                got.append(msg)
+
+        ps.subscribe_all(callback)
+        retry_until(live, lambda: ps.publish(probe, Twist()))
+        tri = np.eye(3, dtype=np.float32)
+        keys = [(i, 0, 0) for i in range(20)]
+        for key in keys:
+            ps.publish(mesh, TriangleMesh(tri, np.array([[0, 1, 2]], dtype=np.uint32), key=key))
+        wait_until(lambda: len(got) == len(keys), timeout=5.0, interval=0.01)
+        assert [m.key for m in got] == keys
+    finally:
+        ps.stop()
+        pool.close_all()

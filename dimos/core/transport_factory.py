@@ -66,8 +66,8 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
 # turn of agent/human conversation, a one-shot robot action verb, a push-to-talk
-# chunk where one gap discards the whole utterance, or a region of a seeded map
-# that is sent once.
+# chunk where one gap discards the whole utterance, or a region, tile or mesh
+# chunk that is sent once.
 _NEVER_DROP_CHANNELS = (
     "human_input",
     "agent",
@@ -77,6 +77,10 @@ _NEVER_DROP_CHANNELS = (
     "loaded_map",
     "seed_map",
     "seed_bounds",
+    "map_regions",
+    "surface_map",
+    "node_edges",
+    "mesh",
 )
 
 

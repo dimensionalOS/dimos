@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 import re
@@ -75,6 +75,8 @@ class ZenohQoS:
 # publisher defaults (reliable, drop under congestion).
 QOS_NEVER_DROP = ZenohQoS(reliability="reliable", congestion_control="block")
 QOS_LATEST_WINS = ZenohQoS(reliability="best_effort", congestion_control="drop")
+# What a received sample says about its publisher: only congestion control travels.
+_RECEIVED_NEVER_DROP = ZenohQoS(congestion_control="block")
 
 
 @dataclass
@@ -108,8 +110,12 @@ def _topic_to_key_expr(topic: LCMTopic) -> str:
 
 
 @lru_cache(maxsize=1024)
-def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> Topic:
+def _key_expr_to_topic(
+    key_expr: str, default_lcm_type: type | None = None, never_drop: bool = False
+) -> Topic:
     """Reconstruct a Topic from a Zenoh key expression.
+
+    `never_drop` marks the topic as published with congestion control block.
 
     Parses the last '/' segment and attempts to resolve it as a DimosMsg
     type via resolve_msg_type(). If resolution succeeds, the segment is
@@ -122,14 +128,15 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
         "dimos/data"                        -> Topic("dimos/data", default_lcm_type)
         "dimos/data/unknown.Foo"            -> Topic("dimos/data/unknown.Foo", default_lcm_type)
     """
+    qos = _RECEIVED_NEVER_DROP if never_drop else None
     # Try to resolve the last segment as a message type
     parts = key_expr.rsplit("/", 1)
     if len(parts) == 2:
         base, maybe_type = parts
         lcm_type = resolve_msg_type(maybe_type)
         if lcm_type is not None:
-            return Topic(topic=base, lcm_type=lcm_type)
-    return Topic(topic=key_expr, lcm_type=default_lcm_type)
+            return Topic(topic=base, lcm_type=lcm_type, qos=qos)
+    return Topic(topic=key_expr, lcm_type=default_lcm_type, qos=qos)
 
 
 class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
@@ -214,12 +221,14 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 logger.error(f"Error reading payload from {key_expr}", exc_info=True)
                 return
             # Concrete subscriptions only ever receive their own key, so the
-            # subscribed topic can be passed through without re-parsing.
+            # subscribed topic can be passed through without re-parsing. A wildcard
+            # match is rebuilt and carries the publisher's congestion control.
             sample_key = str(sample.key_expr)
             if sample_key == key_expr:
                 recv_topic = topic
             else:
-                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
+                never_drop = sample.congestion_control == zenoh.CongestionControl.BLOCK
+                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type, never_drop)
             callback(data, recv_topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
@@ -241,31 +250,26 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     def subscribe_all(
         self,
         callback: Callable[[bytes, Topic], Any],
-        keyed: Mapping[str, Callable[[bytes], Hashable]] | None = None,
     ) -> Callable[[], None]:
         """Subscribe to all dimos topics of every domain, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
-        A channel in `keyed` delivers the latest message per key instead, in the order
-        each key first arrived, so a burst of distinct keys loses none of them.
+        A topic published never-drop (congestion control block) delivers every message, in order.
         """
         latest: dict[str, tuple[bytes, Topic]] = {}
-        pending: dict[tuple[str, Hashable], tuple[bytes, Topic]] = {}
-        key_of = {name.strip("/"): key for name, key in (keyed or {}).items()}
+        pending: list[tuple[bytes, Topic]] = []
         lock = threading.Lock()
         wake = threading.Event()
         stop = threading.Event()
 
         def collect(msg: bytes, topic: Topic) -> None:
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
-            # or per key on a keyed channel.
-            name = topic.topic
-            key = key_of.get(KEY_PREFIX.sub("", name)) if isinstance(name, str) else None
+            # or every message of a never-drop topic.
             with lock:
-                if key is None:
-                    latest[str(topic)] = (msg, topic)
+                if topic.qos is not None and topic.qos.congestion_control == "block":
+                    pending.append((msg, topic))
                 else:
-                    pending[(str(topic), key(msg))] = (msg, topic)
+                    latest[str(topic)] = (msg, topic)
             wake.set()
 
         def drain() -> None:
@@ -273,7 +277,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 wake.wait()
                 wake.clear()
                 with lock:
-                    batch = list(pending.values())
+                    batch = list(pending)
                     pending.clear()
                     batch.extend(latest.values())
                     latest.clear()
