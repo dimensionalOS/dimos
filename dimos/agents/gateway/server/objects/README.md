@@ -542,5 +542,3 @@ viewer's methods. [lib/conversations.test.ts](lib/conversations.test.ts) covers 
 - [sdk/README.md](../../../sdk/README.md) for the client side that holds these objects.
 - [harness/README.md](../../../harness/README.md) for the `Agent` the executors call.
 - [Attach to a conversation](../../../../../docs/usage/agent.md#attach-to-a-conversation) for `--view`.
-- [How the pieces run](../../../../../docs/development/agent-design.md#how-the-pieces-run) for the gateway's place on
-  the robot.

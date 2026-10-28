@@ -6,7 +6,6 @@ This directory holds two things. The Python agent tooling that DimOS blueprints 
 gateway process that hosts every conversation, a terminal that attaches to it, and the harness that runs the model with
 its tools. This README is about the TypeScript agent and names the Python parts at the end.
 [The on-robot agent](../../docs/usage/agent.md) says how to run it.
-[On-robot agent: design and migration plan](../../docs/development/agent-design.md) says why it is built this way.
 
 ## How the on-robot agent runs
 

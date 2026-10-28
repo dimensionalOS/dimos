@@ -2,7 +2,7 @@
 
 `dimos agent` runs Dimensional's on-robot agent. It discovers the modules, streams and RPCs of the running dimOS system, reads sensors, writes Python against the dimOS API, and deploys agent modules that keep working after its turn ends. Events from those modules and from cron jobs wake it.
 
-The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when dimOS restarts. HarnessRuntime is a dimOS module that the gateway loads into each running system and reaches through McpServer. [On-robot agent design](/docs/development/agent-design.md) explains why it is built this way.
+The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when dimOS restarts. HarnessRuntime is a dimOS module that the gateway loads into each running system and reaches through McpServer.
 
 ## Set up and start the agent
 
