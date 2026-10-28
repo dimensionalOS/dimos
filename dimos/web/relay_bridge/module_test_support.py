@@ -148,6 +148,9 @@ class FakeClient:
         self.writers[ch] = writer
         return writer
 
+    def stop_latest_writer(self, ch: str) -> None:
+        self.writers.pop(ch, None)
+
     def send_frame(
         self,
         ch: str,

@@ -923,6 +923,70 @@ Deno.test({
     assertEquals(await within(nextControl(), "pong after junk"), { t: "pong", n: 7, ts: 77.5 });
   });
 
+  await t.step(
+    "live manifests add usable channels, remove them, and ignore stale updates",
+    async () => {
+      const added = {
+        ...MANIFEST,
+        channels: [...CHANNELS, {
+          ch: "new_sensor",
+          encoding: "json.v1",
+          delivery: "reliable",
+          maxHz: 10,
+        }],
+      };
+      const update = (seq: number, manifest: RobotManifest) =>
+        sendRobotFrame(
+          robot,
+          { ch: CONTROL_CHANNEL, seq, ts: 1, delivery: "reliable" },
+          encodeDatagram({ t: "manifest", robotId: ROBOT.id, manifest }),
+        );
+      await update(2, added);
+      assertEquals(await nextOfType(nextControl, "manifest", "updated manifest"), {
+        t: "manifest",
+        robotId: ROBOT.id,
+        manifest: added,
+      });
+      await controlWriter.write(encodeControlFrame({ t: "sub", ch: "new_sensor" }));
+      let subs: Msg;
+      do {
+        subs = await within(robotCtrl(), "new subscription");
+      } while (subs.t !== "subs" || !subs.chs.includes("new_sensor"));
+      await sendRobotFrame(
+        robot,
+        { ch: "new_sensor", seq: 1, ts: 1, delivery: "reliable" },
+        new TextEncoder().encode("42"),
+      );
+      const frame = await within(viewerFrames(), "new sensor frame");
+      assertEquals(frame.header.ch, "new_sensor");
+      assertEquals(new TextDecoder().decode(frame.payload), "42");
+      await update(4, added);
+      await nextOfType(nextControl, "manifest", "unchanged inventory");
+      const refreshed = await nextOfType(robotCtrl, "subs", "refreshed subscriptions");
+      assert(refreshed.t === "subs" && refreshed.chs.includes("new_sensor"));
+      await update(3, MANIFEST);
+      await update(5, MANIFEST);
+      assertEquals(await nextOfType(nextControl, "manifest", "removed sensor"), {
+        t: "manifest",
+        robotId: ROBOT.id,
+        manifest: MANIFEST,
+      });
+      await update(2, added);
+      await sendRobotHello(robot, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: ROBOT,
+        manifest: MANIFEST,
+      });
+      await nextOfType(robotDatagrams, "welcome", "original hello retry");
+      await controlWriter.write(encodeControlFrame({ t: "sub", ch: "new_sensor" }));
+      const error = await nextOfType(nextControl, "error", "removed channel rejected");
+      assert(error.t === "error");
+      assertEquals(error.code, "unknown_channel");
+    },
+  );
+
   // The steps below register extra short-lived robots, whose robots pushes
   // land in the main viewer's control queue; they run last so the queue- and
   // stats-sensitive steps above stay deterministic.
