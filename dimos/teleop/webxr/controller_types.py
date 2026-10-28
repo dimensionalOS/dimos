@@ -19,8 +19,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar
 
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.messages.sensor_msgs.msg import Joy
 
 
 class Hand(IntEnum):
@@ -76,8 +75,8 @@ class WebXRControllerState:
         Raises:
             ValueError: If Joy message doesn't have expected WebXR controller format.
         """
-        buttons = joy.buttons or []
-        axes = joy.axes or []
+        buttons = joy.buttons
+        axes = joy.axes
 
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
@@ -97,7 +96,7 @@ class WebXRControllerState:
         )
 
 
-class Buttons(UInt32):
+class Buttons:
     """Packed button states for both controllers in a single UInt32.
 
     Digital buttons are collapsed to bools. Analog trigger values are packed
@@ -111,6 +110,9 @@ class Buttons(UInt32):
         Bits 23-29:         right trigger analog (7-bit, 0=0.0 … 127=1.0)
         Bits 30-31:         unused (kept clear so LCM signed int32 never overflows)
     """
+
+    def __init__(self, data: int = 0) -> None:
+        self.data = data
 
     # Bit positions for digital buttons
     BITS = {

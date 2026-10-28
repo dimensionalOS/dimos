@@ -32,6 +32,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
     HardwareComponent,
@@ -64,11 +66,14 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Twist,
+)
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Float32, Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -361,8 +366,17 @@ class ControlCoordinator(Module):
             f"port — add `{name}: Out[JointState]` to your coordinator subclass"
         )
 
+    def _publish_joint_state_message(self, msg: JointState) -> None:
+        self.coordinator_joint_state.publish(msg)
+
+    def _publish_joint_command_message(self, msg: JointState) -> None:
+        self.coordinator_joint_command.publish(msg)
+
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
         self._robot_joint_port(hardware_id).publish(msg)
+
+    def _publish_frame_pose_message(self, msg: TFMessage) -> None:
+        self._frame_pose_port().publish(msg)
 
     @rpc
     def add_hardware(
@@ -743,7 +757,13 @@ class ControlCoordinator(Module):
                     velocities.append(value)
 
         if names:
-            joint_state = JointState(name=names, velocity=velocities)
+            joint_state = JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray(velocities, dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
             self._dispatch("joint_command", joint_state)
 
     @rpc
@@ -935,9 +955,7 @@ class ControlCoordinator(Module):
             self._setup_from_config()
 
         # Create and start tick loop
-        publish_cb = (
-            self.coordinator_joint_state.publish if self.config.publish_joint_state else None
-        )
+        publish_cb = self._publish_joint_state_message if self.config.publish_joint_state else None
         publish_robot_cb = (
             self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
         )
@@ -949,9 +967,9 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
-            publish_command_callback=self.coordinator_joint_command.publish,
+            publish_command_callback=self._publish_joint_command_message,
             publish_robot_callback=publish_robot_cb,
-            publish_tf_callback=self._frame_pose_port().publish
+            publish_tf_callback=self._publish_frame_pose_message
             if self.config.publish_frame_poses
             else None,
             frame_pose_hz=self.config.frame_pose_hz,

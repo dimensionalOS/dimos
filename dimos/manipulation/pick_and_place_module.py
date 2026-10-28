@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
+import time
 from typing import Any, Literal
 
 import numpy as np
@@ -38,12 +40,11 @@ from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud as pointcloud_utils, time as message_time
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
 # The one box a pick leaves out of the planner's map.
@@ -92,11 +93,15 @@ class TargetBox:
 
 def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
     """The axis-aligned bounds of an object's points, or None for an empty cloud."""
-    points = np.asarray(pointcloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    points = np.asarray(
+        pointcloud_utils.xyz(pointcloud).astype(np.float32), dtype=np.float64
+    ).reshape((-1, 3))
     if not len(points) or not np.isfinite(points).all():
         return None
     low, high = points.min(axis=0), points.max(axis=0)
-    return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
+    return TargetBox(
+        geometry.vector_from_array((low + high) / 2.0), geometry.vector_from_array(high - low)
+    )
 
 
 class PickAndPlaceModule(Module):
@@ -112,7 +117,9 @@ class PickAndPlaceModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, dict[str, Any]] = {}
-        self._grasp_candidates = GraspCandidateArray()
+        self._grasp_candidates = GraspCandidateArray(
+            header=message_time.header_now(), candidates=[]
+        )
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
@@ -141,7 +148,7 @@ class PickAndPlaceModule(Module):
         ]
         self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
         return SkillResult(
-            f"Detected {detections.detections_length} object(s)",
+            f"Detected {len(detections.detections)} object(s)",
             metadata={"prompts": prompts, "objects": list(self._objects.values())},
         )
 
@@ -191,7 +198,14 @@ class PickAndPlaceModule(Module):
         # refuses the approach into it, and the held object blocks every move after.
         box = _target_box(pointcloud)
         if box is not None:
-            self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
+            self._leave_out(
+                Pose(
+                    position=geometry.point_from_array(geometry.vector_array(box.center)),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+                box.size,
+                pointcloud.header.frame_id or None,
+            )
         try:
             return self._pick_from(candidates, object_id, box, group)
         finally:
@@ -220,10 +234,12 @@ class PickAndPlaceModule(Module):
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
             grasp = self._apply_yaw_policy(
                 PoseStamped(
-                    ts=candidates.header.timestamp,
-                    frame_id=candidates.header.frame_id,
-                    position=candidate.pose.position,
-                    orientation=candidate.pose.orientation,
+                    header=Header(
+                        stamp=deepcopy(candidates.header.stamp), frame_id=candidates.header.frame_id
+                    ),
+                    pose=Pose(
+                        position=candidate.pose.position, orientation=candidate.pose.orientation
+                    ),
                 ),
                 group,
             )
@@ -256,10 +272,20 @@ class PickAndPlaceModule(Module):
             if box is not None:
                 # The box in the tool tip's frame, as it is at the grasp pose:
                 # it rides with the tip from here.
-                inverse = grasp.orientation.inverse()
+                inverse = geometry.quaternion_inverse(grasp.pose.orientation)
                 self._leave_out(
                     Pose(
-                        position=inverse.rotate_vector(box.center - grasp.position),
+                        position=geometry.point_from_array(
+                            geometry.vector_array(
+                                geometry.rotate_vector(
+                                    inverse,
+                                    geometry.vector_from_array(
+                                        geometry.vector_array(box.center)
+                                        - geometry.vector_array(grasp.pose.position)
+                                    ),
+                                )
+                            )
+                        ),
                         orientation=inverse,
                     ),
                     box.size,
@@ -309,9 +335,11 @@ class PickAndPlaceModule(Module):
             )
         group = self._gripper_group(planning_group)
         place = PoseStamped(
-            frame_id=self.config.planning_frame,
-            position=Vector3(x, y, z),
-            orientation=self._selected_grasp.orientation,
+            header=Header(
+                stamp=message_time.time_from_seconds(time.time()),
+                frame_id=self.config.planning_frame,
+            ),
+            pose=Pose(position=Point(x, y, z), orientation=self._selected_grasp.pose.orientation),
         )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
         if blocked := self._move(preplace, group):
@@ -329,8 +357,12 @@ class PickAndPlaceModule(Module):
         return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:
-        self._grasp_candidates = GraspCandidateArray()
-        self._manipulation.show_grasp_proposals(GraspCandidateArray())
+        self._grasp_candidates = GraspCandidateArray(
+            header=message_time.header_now(), candidates=[]
+        )
+        self._manipulation.show_grasp_proposals(
+            GraspCandidateArray(header=message_time.header_now(), candidates=[])
+        )
         self._selected_object_id = None
         self._selected_grasp = None
 
@@ -407,22 +439,35 @@ class PickAndPlaceModule(Module):
         current = self._manipulation.get_state().groups[group].end_effector_pose
         if current is None:
             return pose
-        euler = pose.orientation.to_euler()
-        current_euler = current.orientation.to_euler()
+        euler = geometry.quaternion_euler(pose.pose.orientation)
+        current_euler = geometry.quaternion_euler(current.pose.orientation)
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position,
-            orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
+            header=Header(
+                stamp=message_time.time_from_seconds(message_time.to_seconds(pose.header.stamp)),
+                frame_id=pose.header.frame_id,
+            ),
+            pose=Pose(
+                position=pose.pose.position,
+                orientation=geometry.quaternion_from_euler(euler[0], euler[1], current_euler[2]),
+            ),
         )
 
     @staticmethod
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
-            orientation=pose.orientation,
+            header=Header(
+                stamp=message_time.time_from_seconds(message_time.to_seconds(pose.header.stamp)),
+                frame_id=pose.header.frame_id,
+            ),
+            pose=Pose(
+                position=geometry.point_from_array(
+                    geometry.vector_array(pose.pose.position)
+                    + geometry.vector_array(
+                        geometry.rotate_vector(pose.pose.orientation, Vector3(0.0, 0.0, -offset))
+                    )
+                ),
+                orientation=pose.pose.orientation,
+            ),
         )
 
     def _servo(
@@ -438,9 +483,9 @@ class PickAndPlaceModule(Module):
         when the arm arrived.
         """
         result = self._manipulation.move_linear(
-            end.position.x - start.position.x,
-            end.position.y - start.position.y,
-            end.position.z - start.position.z,
+            end.pose.position.x - start.pose.position.x,
+            end.pose.position.y - start.pose.position.y,
+            end.pose.position.z - start.pose.position.z,
             planning_group,
             check_collision=False,
         )

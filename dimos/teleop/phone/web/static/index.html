@@ -164,8 +164,12 @@
     <!-- Teleop Button -->
     <button id="teleop-btn">HOLD TO TELEOP</button>
 
+    <script type="importmap">{"imports":{"@foxglove/rosmsg":"https://esm.sh/@foxglove/rosmsg@5.0.5","@foxglove/rosmsg2-serialization":"https://esm.sh/@foxglove/rosmsg2-serialization@3.1.2"}}</script>
     <script type="module">
-        import { geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+        import { CommandEncoder } from "/command-assets/command_codec.mjs";
+        const response = await fetch("/teleop/schema");
+        if (!response.ok) throw new Error("Could not load phone command schemas");
+        const commandEncoder = new CommandEncoder(await response.json());
 
         // ============================================
         // State
@@ -269,7 +273,7 @@
         }
 
         // ============================================
-        // WebSocket + LCM Encoding
+        // WebSocket + CDR Encoding
         // ============================================
         function connectWS() {
             if (wsConnected) { disconnectWS(); return; }
@@ -316,37 +320,10 @@
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             const nowMs = Date.now();
-            const header = new std_msgs.Header({
-                stamp: new std_msgs.Time({
-                    sec: Math.floor(nowMs / 1000),
-                    nsec: (nowMs % 1000) * 1_000_000
-                }),
-                frame_id: "phone"
-            });
-
-            // --- Send raw sensors as TwistStamped ---
-            // linear = orientation (roll, pitch, yaw) in degrees
-            // angular = gyro rates (pitch, roll, yaw) in deg/s
-            const twistStamped = new geometry_msgs.TwistStamped({
-                header: header,
-                twist: new geometry_msgs.Twist({
-                    linear: new geometry_msgs.Vector3({
-                        x: orientation.roll,
-                        y: orientation.pitch,
-                        z: orientation.yaw
-                    }),
-                    angular: new geometry_msgs.Vector3({
-                        x: gyro.x,
-                        y: gyro.y,
-                        z: gyro.z
-                    })
-                })
-            });
-            ws.send(twistStamped.encode());
-
-            // --- Send teleop button as Bool ---
-            const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
-            ws.send(boolMsg.encode());
+            const header = {stamp:{sec:Math.floor(nowMs/1000),nanosec:(nowMs%1000)*1_000_000},frame_id:"phone"};
+            const sensors={header,twist:{linear:{x:orientation.roll,y:orientation.pitch,z:orientation.yaw},angular:{x:gyro.x,y:gyro.y,z:gyro.z}}};
+            ws.send(commandEncoder.encode("sensors",sensors));
+            ws.send(commandEncoder.encode("button",{data:teleopActive}));
 
             updateDisplay();
         }

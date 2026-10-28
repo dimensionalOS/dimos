@@ -27,9 +27,12 @@ splitting coordination logic from module wrapper.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import threading
 import time
 from typing import TYPE_CHECKING, NamedTuple
+
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
@@ -41,9 +44,11 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -52,7 +57,7 @@ if TYPE_CHECKING:
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.whole_body.spec import IMUState
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
 logger = setup_logger()
 
@@ -462,12 +467,14 @@ class TickLoop:
             try:
                 self._publish_command_callback(
                     JointState(
-                        ts=time.time(),
-                        frame_id=self._frame_id,
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()),
+                            frame_id=self._frame_id,
+                        ),
                         name=list(joint_commands),
-                        position=list(joint_commands.values()),
-                        velocity=[],
-                        effort=[],
+                        position=np.asarray(list(joint_commands.values()), dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
                     )
                 )
             except Exception:
@@ -477,12 +484,17 @@ class TickLoop:
         """Publish aggregated JointState for external consumers."""
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
-            ts=snapshot.timestamp,
-            frame_id=self._frame_id,
+            header=Header(
+                stamp=message_time.time_from_seconds(snapshot.timestamp), frame_id=self._frame_id
+            ),
             name=names,
-            position=[snapshot.joint_positions[n] for n in names],
-            velocity=[snapshot.joint_velocities.get(n, 0.0) for n in names],
-            effort=[snapshot.joint_efforts.get(n, 0.0) for n in names],
+            position=np.asarray([snapshot.joint_positions[n] for n in names], dtype=np.float64),
+            velocity=np.asarray(
+                [snapshot.joint_velocities.get(n, 0.0) for n in names], dtype=np.float64
+            ),
+            effort=np.asarray(
+                [snapshot.joint_efforts.get(n, 0.0) for n in names], dtype=np.float64
+            ),
         )
         if self._publish_callback:
             self._publish_callback(msg)
@@ -499,18 +511,19 @@ class TickLoop:
         ts = state.joints.timestamp
         self._publish_tf_callback(
             TFMessage(
-                *(
-                    Transform(
-                        translation=pose.position,
-                        rotation=pose.orientation,
-                        # IK solvers return world coordinates (base pose applied), but
-                        # stamp them with the base link's name.
-                        frame_id="world",
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
                         child_frame_id=frame,
-                        ts=ts,
+                        transform=Transform(
+                            translation=Vector3(
+                                pose.pose.position.x, pose.pose.position.y, pose.pose.position.z
+                            ),
+                            rotation=deepcopy(pose.pose.orientation),
+                        ),
                     )
                     for frame, pose in poses.items()
-                )
+                ]
             )
         )
 
@@ -526,12 +539,11 @@ class TickLoop:
         for hw_id, state in per_hardware.items():
             names = list(state.keys())
             msg = JointState(
-                ts=timestamp,
-                frame_id=hw_id,
+                header=Header(stamp=message_time.time_from_seconds(timestamp), frame_id=hw_id),
                 name=names,
-                position=[state[n].position for n in names],
-                velocity=[state[n].velocity for n in names],
-                effort=[state[n].effort for n in names],
+                position=np.asarray([state[n].position for n in names], dtype=np.float64),
+                velocity=np.asarray([state[n].velocity for n in names], dtype=np.float64),
+                effort=np.asarray([state[n].effort for n in names], dtype=np.float64),
             )
             try:
                 publish(hw_id, msg)

@@ -47,15 +47,14 @@ from dimos.imitation.dataprep.schema import (
     SyncConfig,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import image, time as message_time
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
     pytest.mark.self_hosted,
     pytest.mark.skipif_aarch64,
-    pytest.mark.skipif_no_turbojpeg,
 ]
 
 
@@ -187,22 +186,20 @@ def _record_session(db_path: Path) -> None:
                 pixel = int(base + frame) * 4
                 publish(
                     "color_image",
-                    Image(
-                        data=np.full((16, 16, 3), pixel, dtype=np.uint8),
-                        format=ImageFormat.RGB,
-                        frame_id="camera",
-                        ts=ts,
+                    image.from_array(
+                        np.full((16, 16, 3), pixel, dtype=np.uint8),
+                        encoding="rgb8",
+                        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="camera"),
                     ),
                 )
                 publish(
                     "coordinator_joint_state",
                     JointState(
-                        ts=ts,
-                        frame_id="arm",
+                        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="arm"),
                         name=["joint_0", "joint_1"],
-                        position=[base + frame, base + 100.0 + frame],
-                        velocity=[0.0, 0.0],
-                        effort=[0.0, 0.0],
+                        position=np.asarray([base + frame, base + 100.0 + frame], dtype=np.float64),
+                        velocity=np.asarray([0.0, 0.0], dtype=np.float64),
+                        effort=np.asarray([0.0, 0.0], dtype=np.float64),
                     ),
                 )
             if success:
@@ -260,7 +257,7 @@ def recorded_session(
             (108.0, 110.0, True, "place"),
         ]
         recorded_images: dict[float, np.ndarray[Any, Any]] = {
-            observation.ts: observation.data.data
+            observation.ts: image.view(observation.data)
             for observation in store.stream("color_image", Image).to_list()
         }
 

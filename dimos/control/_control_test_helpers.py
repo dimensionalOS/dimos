@@ -52,9 +52,8 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 
 

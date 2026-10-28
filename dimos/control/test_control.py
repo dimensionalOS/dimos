@@ -23,6 +23,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -63,12 +64,12 @@ from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 @pytest.fixture
@@ -115,17 +116,22 @@ def trajectory_task():
 def simple_trajectory():
     """Create a simple 2-point trajectory."""
     return JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         points=[
-            TrajectoryPoint(
-                positions=[0.0, 0.0, 0.0],
-                velocities=[0.0, 0.0, 0.0],
-                time_from_start=0.0,
+            JointTrajectoryPoint(
+                positions=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
             ),
-            TrajectoryPoint(
-                positions=[1.0, 0.5, 0.25],
-                velocities=[0.0, 0.0, 0.0],
-                time_from_start=1.0,
+            JointTrajectoryPoint(
+                positions=np.asarray([1.0, 0.5, 0.25], dtype=np.float64),
+                velocities=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(1.0),
             ),
         ],
     )
@@ -384,14 +390,14 @@ class TestControlCoordinatorLifecycle:
         dispatch = mocker.patch.object(coordinator, "_dispatch")
 
         coordinator._map_twist_to_base_joints(
-            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+            Twist(linear=Vector3(1.0, 2.0, 0.0), angular=Vector3(0.0, 0.0, 3.0))
         )
 
         stream, joint_state = dispatch.call_args.args
         assert stream == "joint_command"
         assert isinstance(joint_state, JointState)
         assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
-        assert joint_state.velocity == [1.0, 2.0, 3.0]
+        assert list(joint_state.velocity) == [1.0, 2.0, 3.0]
 
     def test_reset_runtime_state_calls_task_hooks(self, make_coordinator):
         class ResettableTask(BaseControlTask):
@@ -531,7 +537,13 @@ class TestControlCoordinatorTrajectoryExecution:
     def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
         coordinator = make_coordinator()
 
-        execute_result = coordinator.execute_trajectory(JointTrajectory())
+        execute_result = coordinator.execute_trajectory(
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=[],
+                points=[],
+            )
+        )
         cancel_result = coordinator.cancel_trajectory()
 
         assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
@@ -596,8 +608,11 @@ class TestJointTrajectoryTask:
     def test_joint_command_handler_converts_claimed_positions(self, trajectory_task):
         accepted = trajectory_task.on_joint_command(
             JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 name=["arm/joint2", "other/joint"],
-                position=[0.25, 9.0],
+                position=np.asarray([0.25, 9.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
             t_now=1.0,
         )
@@ -605,14 +620,32 @@ class TestJointTrajectoryTask:
         assert accepted
         assert trajectory_task._trajectory is not None
         assert trajectory_task._trajectory.joint_names == ["arm/joint2"]
-        assert trajectory_task._trajectory.points[-1].positions == [0.25]
+        assert list(trajectory_task._trajectory.points[-1].positions) == [0.25]
 
     @pytest.mark.parametrize(
         "command",
         [
-            JointState(name=["arm/joint1"], velocity=[0.5]),
-            JointState(name=["arm/joint1", "arm/joint2"], position=[0.5]),
-            JointState(name=["other/joint"], position=[0.5]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["arm/joint1"],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([0.5], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["arm/joint1", "arm/joint2"],
+                position=np.asarray([0.5], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["other/joint"],
+                position=np.asarray([0.5], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         ],
     )
     def test_joint_command_handler_ignores_non_position_commands(self, trajectory_task, command):
@@ -635,10 +668,23 @@ class TestJointTrajectoryTask:
 
     def test_execute_partial_subset_and_claims_full_configuration(self, trajectory_task):
         trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint2", "arm/joint3"],
             points=[
-                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.5, 1.0], velocities=[0.0, 0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.5, 1.0], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
 
@@ -684,41 +730,106 @@ class TestJointTrajectoryTask:
         "trajectory",
         [
             JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 joint_names=[],
-                points=[TrajectoryPoint(time_from_start=0.0, positions=[], velocities=[])],
-            ),
-            JointTrajectory(
-                joint_names=["arm/joint1", "arm/joint1"],
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0, positions=[0.0, 0.0], velocities=[0.0, 0.0]
+                    JointTrajectoryPoint(
+                        positions=np.asarray([], dtype=np.float64),
+                        velocities=np.asarray([], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
                     )
                 ],
             ),
             JointTrajectory(
-                joint_names=["arm/missing"],
-                points=[TrajectoryPoint(time_from_start=0.0, positions=[0.0], velocities=[0.0])],
-            ),
-            JointTrajectory(joint_names=["arm/joint1"], points=[]),
-            JointTrajectory(
-                joint_names=["arm/joint1"],
-                points=[TrajectoryPoint(time_from_start=0.0, positions=[], velocities=[0.0])],
-            ),
-            JointTrajectory(
-                joint_names=["arm/joint1"],
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/joint1", "arm/joint1"],
                 points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[float("nan")], velocities=[0.0])
+                    JointTrajectoryPoint(
+                        positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                        velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    )
                 ],
             ),
             JointTrajectory(
-                joint_names=["arm/joint1"],
-                points=[TrajectoryPoint(time_from_start=0.1, positions=[0.0], velocities=[0.0])],
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/missing"],
+                points=[
+                    JointTrajectoryPoint(
+                        positions=np.asarray([0.0], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    )
+                ],
             ),
             JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/joint1"],
+                points=[],
+            ),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 joint_names=["arm/joint1"],
                 points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[0.0], velocities=[0.0]),
-                    TrajectoryPoint(time_from_start=0.0, positions=[1.0], velocities=[0.0]),
+                    JointTrajectoryPoint(
+                        positions=np.asarray([], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    )
+                ],
+            ),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/joint1"],
+                points=[
+                    JointTrajectoryPoint(
+                        positions=np.asarray([float("nan")], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    )
+                ],
+            ),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/joint1"],
+                points=[
+                    JointTrajectoryPoint(
+                        positions=np.asarray([0.0], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.1),
+                    )
+                ],
+            ),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=["arm/joint1"],
+                points=[
+                    JointTrajectoryPoint(
+                        positions=np.asarray([0.0], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    ),
+                    JointTrajectoryPoint(
+                        positions=np.asarray([1.0], dtype=np.float64),
+                        velocities=np.asarray([0.0], dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    ),
                 ],
             ),
         ],
@@ -737,10 +848,23 @@ class TestJointTrajectoryTask:
 
     def test_compute_emits_active_subset_and_retains_final_target(self, trajectory_task):
         trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint2"],
             points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[1.0], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([1.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
         assert (
@@ -751,7 +875,7 @@ class TestJointTrajectoryTask:
         output = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.5, dt=0.01))
         assert output is not None
         assert output.joint_names == ["arm/joint2"]
-        assert output.positions == [pytest.approx(0.5)]
+        assert list(output.positions) == [pytest.approx(0.5)]
 
         final = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
         assert final is not None
@@ -764,17 +888,43 @@ class TestJointTrajectoryTask:
 
     def test_replacement_reset_and_cancel_clear_active_subset(self, trajectory_task):
         first = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1"],
             points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[1.0], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([1.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
         second = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint3"],
             points=[
-                TrajectoryPoint(positions=[2.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[3.0], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([2.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([3.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
         assert (
@@ -846,7 +996,7 @@ class TestJointTrajectoryTask:
 
         # On completion, returns final position (not None) to hold at goal
         assert output is not None
-        assert output.positions == [1.0, 0.5, 0.25]  # Final trajectory point
+        assert list(output.positions) == [1.0, 0.5, 0.25]  # Final trajectory point
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
 
@@ -858,8 +1008,17 @@ class TestJointTrajectoryTask:
             )
         )
         target = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1"],
-            points=[TrajectoryPoint(positions=[1.0])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([1.0], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([1.0])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                )
+            ],
         )
         state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0})
 
@@ -868,9 +1027,9 @@ class TestJointTrajectoryTask:
         second = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
 
         assert first is not None
-        assert first.positions == [pytest.approx(0.05)]
+        assert list(first.positions) == [pytest.approx(0.05)]
         assert second is not None
-        assert second.positions == [pytest.approx(0.1)]
+        assert list(second.positions) == [pytest.approx(0.1)]
         assert task.get_status(1.1).progress == 0.0
 
     @pytest.mark.parametrize("limit", [0.0, -1.0, float("inf"), float("nan")])
@@ -901,28 +1060,55 @@ class TestJointTrajectoryTask:
         )
         state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0})
         first = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1"],
-            points=[TrajectoryPoint(positions=[1.0])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([1.0], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([1.0])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                )
+            ],
         )
         other = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint2"],
-            points=[TrajectoryPoint(positions=[-1.0])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([-1.0], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([-1.0])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                )
+            ],
         )
         replacement = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1"],
-            points=[TrajectoryPoint(positions=[-1.0])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([-1.0], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([-1.0])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                )
+            ],
         )
 
         task.execute(first, {})
         task.execute(other, {})
         before = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
         assert before is not None
-        assert before.positions == [pytest.approx(0.1), pytest.approx(-0.1)]
+        assert list(before.positions) == [pytest.approx(0.1), pytest.approx(-0.1)]
 
         assert task.execute(replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
         after = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
         assert after is not None
-        assert after.positions == [pytest.approx(0.0), pytest.approx(-0.2)]
+        assert list(after.positions) == [pytest.approx(0.0), pytest.approx(-0.2)]
 
     def test_partial_replacement_status_includes_untouched_joint_run(self):
         task = JointTrajectoryTask(
@@ -933,21 +1119,43 @@ class TestJointTrajectoryTask:
         )
         state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0})
         long_trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1", "arm/joint2"],
             points=[
-                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0]),
-                TrajectoryPoint(
-                    positions=[10.0, 10.0],
-                    velocities=[0.0, 0.0],
-                    time_from_start=10.0,
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([10.0, 10.0], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(10.0),
                 ),
             ],
         )
         replacement = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1"],
             points=[
-                TrajectoryPoint(positions=[2.5], velocities=[0.0]),
-                TrajectoryPoint(positions=[3.5], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([2.5], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([3.5], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
 
@@ -965,8 +1173,8 @@ class TestJointTrajectoryTask:
 
         assert status.state is TrajectoryState.EXECUTING
         assert status.progress == pytest.approx(0.35)
-        assert status.time_elapsed == pytest.approx(3.5)
-        assert status.time_remaining == pytest.approx(6.5)
+        assert message_time.to_seconds(status.time_elapsed) == pytest.approx(3.5)
+        assert message_time.to_seconds(status.time_remaining) == pytest.approx(6.5)
 
     def test_cancel_trajectory(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
@@ -1191,10 +1399,23 @@ class TestTickLoop:
             limits=[(0.0, 1.0)],
         )
         trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=["arm/joint1", "arm/joint2"],
             points=[
-                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.5, 0.5], velocities=[0.0, 0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.5, 0.5], dtype=np.float64),
+                    velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         )
         tick_loop = TickLoop(
@@ -1332,17 +1553,22 @@ class TestIntegration:
         )
 
         trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             points=[
-                TrajectoryPoint(
-                    positions=[0.0] * 6,
-                    velocities=[0.0] * 6,
-                    time_from_start=0.0,
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0] * 6, dtype=np.float64),
+                    velocities=np.asarray([0.0] * 6, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
                 ),
-                TrajectoryPoint(
-                    positions=[0.5] * 6,
-                    velocities=[0.0] * 6,
-                    time_from_start=0.5,
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.5] * 6, dtype=np.float64),
+                    velocities=np.asarray([0.0] * 6, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.5),
                 ),
             ],
         )

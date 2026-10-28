@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import threading
 from typing import TYPE_CHECKING
 
@@ -33,14 +34,13 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to_numpy
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
-    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 logger = setup_logger()
 
@@ -89,7 +89,9 @@ class EEFTwistTask(PoseTargetIKTask):
         return False
 
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
-        values = twist_to_numpy(twist)
+        values = np.concatenate(
+            (geometry.vector_array(twist.twist.linear), geometry.vector_array(twist.twist.angular))
+        )
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)
             return False
@@ -193,16 +195,13 @@ def create_task(
 
 
 def _integrate_twist(pose: PoseStamped, twist: TwistStamped, dt: float) -> PoseStamped:
-    matrix = np.asarray(pose_to_matrix(pose), dtype=np.float64)
-    values = twist_to_numpy(twist)
+    matrix = np.asarray(geometry.pose_matrix(pose.pose), dtype=np.float64)
+    values = np.concatenate(
+        (geometry.vector_array(twist.twist.linear), geometry.vector_array(twist.twist.angular))
+    )
     matrix[:3, 3] += values[:3] * dt
     angular_step = values[3:] * dt
     if np.linalg.norm(angular_step) > 0.0:
         matrix[:3, :3] = pinocchio.exp3(angular_step) @ matrix[:3, :3]
-    integrated = matrix_to_pose(matrix)
-    return PoseStamped(
-        ts=pose.ts,
-        frame_id=pose.frame_id,
-        position=integrated.position,
-        orientation=integrated.orientation,
-    )
+    integrated = geometry.pose_from_matrix(matrix)
+    return PoseStamped(header=deepcopy(pose.header), pose=integrated)

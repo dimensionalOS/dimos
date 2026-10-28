@@ -16,6 +16,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+import time
 from typing import Any, Protocol, cast
 from unittest.mock import DEFAULT, MagicMock
 
@@ -32,7 +33,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -55,7 +59,14 @@ def _mock_control_coordinator() -> MagicMock:
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         return DEFAULT
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=TrajectoryState.IDLE,
+        progress=0.0,
+        time_elapsed=message_time.duration_from_seconds(0.0),
+        time_remaining=message_time.duration_from_seconds(0.0),
+        error="",
+    )
     coordinator.task_invoke.side_effect = invoke
     return coordinator
 

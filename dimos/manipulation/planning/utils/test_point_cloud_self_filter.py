@@ -18,11 +18,12 @@ from collections.abc import Iterator
 
 import numpy as np
 from numpy.typing import NDArray
-from open3d.core import Tensor
 import pytest
 
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
+from dimos.messages.std_msgs.msg import Header
 
 
 class _PositiveXFilter(PointCloudSelfFilter):
@@ -40,23 +41,31 @@ def point_filter() -> Iterator[_PositiveXFilter]:
 
 
 def test_backend_mask_preserves_fields_and_capture_metadata(point_filter: _PositiveXFilter) -> None:
-    cloud = PointCloud2.from_numpy(
+    cloud = pointcloud.from_xyz(
         np.asarray([[-1, 0, 0], [1, 2, 3]], dtype=np.float32),
-        frame_id="camera",
-        timestamp=2.0,
+        header=Header(stamp=message_time.time_from_seconds(2.0), frame_id="camera"),
     )
-    cloud.seq = 7
-    cloud.pointcloud_tensor.point["intensity"] = Tensor(np.asarray([[10], [20]], dtype=np.float32))
+    records = np.zeros(2, dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("intensity", "<f4")])
+    for index, name in enumerate(("x", "y", "z")):
+        records[name] = pointcloud.xyz(cloud)[:, index]
+    records["intensity"] = [10, 20]
+    cloud.fields.append(PointField("intensity", 12, PointField.FLOAT32, 1))
+    cloud.point_step = 16
+    cloud.row_step = 32
+    cloud.data = np.frombuffer(records.tobytes(), dtype=np.uint8).copy()
 
     result = point_filter.filter_cloud(cloud)
 
     assert result is not None
-    assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
-    np.testing.assert_array_equal(result.points_f32(), [[1, 2, 3]])
-    np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    assert (result.header.frame_id, message_time.to_seconds(result.header.stamp)) == ("camera", 2.0)
+    np.testing.assert_array_equal(pointcloud.xyz(result).astype(np.float32), [[1, 2, 3]])
+    np.testing.assert_array_equal(pointcloud.view(result)["intensity"].reshape(-1, 1), [[20]])
     assert (
         point_filter.filter_cloud(
-            PointCloud2.from_numpy(np.asarray([[1, 0, 0]], dtype=np.float32), timestamp=1.0)
+            pointcloud.from_xyz(
+                np.asarray([[1, 0, 0]], dtype=np.float32),
+                header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
+            )
         )
         is None
     )

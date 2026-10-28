@@ -24,6 +24,7 @@ import dataclasses
 import pickle
 from types import MappingProxyType
 
+import numpy as np
 import pytest
 
 from dimos.control.contract.description import (
@@ -42,7 +43,7 @@ from dimos.control.contract.validate import (
     validate_description,
     validate_state,
 )
-from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.messages.dimos_msgs.msg import ControlValues
 
 
 def errors_of(desc: ControlDescription) -> list[str]:
@@ -57,12 +58,12 @@ def errors_of(desc: ControlDescription) -> list[str]:
 def command(source: str, values: dict[str, float], *, sequence: int = 1) -> ControlValues:
     """A command frame carrying ``values``."""
     return ControlValues(
-        source=source,
         source_ts=0.0,
         epoch=0,
         sequence=sequence,
         interface_names=list(values),
-        values=list(values.values()),
+        values=np.asarray(list(values.values()), dtype=np.float64),
+        source=source,
     )
 
 
@@ -70,12 +71,12 @@ def full_state(desc: ControlDescription) -> ControlValues:
     """A complete, well-formed state frame for ``desc``."""
     keys = list(desc.state_keys())
     return ControlValues(
-        source=desc.source,
         source_ts=0.0,
         epoch=0,
         sequence=1,
         interface_names=keys,
-        values=[0.0] * len(keys),
+        values=np.asarray([0.0] * len(keys), dtype=np.float64),
+        source=desc.source,
     )
 
 
@@ -271,7 +272,14 @@ def test_mismatched_array_lengths_are_caught_by_both_validators(
     Both paths still check it, because validate_command is specified never to
     raise and a ragged zip would break that promise.
     """
-    frame = ControlValues("arm", 0.0, 0, 1, ["arm/joint1/position"], [0.1])
+    frame = ControlValues(
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=["arm/joint1/position"],
+        values=np.asarray([0.1], dtype=np.float64),
+        source="arm",
+    )
     frame.values = [0.1, 0.2]
 
     with pytest.raises(FrameRejectedError, match="shape"):
@@ -302,7 +310,14 @@ def test_state_includes_the_imu(g1: ControlDescription) -> None:
 
 def test_state_from_the_wrong_source(xarm: ControlDescription) -> None:
     keys = list(xarm.state_keys())
-    frame = ControlValues("somebody_else", 0.0, 0, 1, keys, [0.0] * len(keys))
+    frame = ControlValues(
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=keys,
+        values=np.asarray([0.0] * len(keys), dtype=np.float64),
+        source="somebody_else",
+    )
 
     with pytest.raises(FrameRejectedError, match="source"):
         validate_state(xarm, frame)
@@ -311,7 +326,14 @@ def test_state_from_the_wrong_source(xarm: ControlDescription) -> None:
 def test_state_missing_a_key(xarm: ControlDescription) -> None:
     """A state frame is a full report: a partial one is a bug, not a sparse update."""
     keys = list(xarm.state_keys())[:-1]
-    frame = ControlValues("arm", 0.0, 0, 1, keys, [0.0] * len(keys))
+    frame = ControlValues(
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=keys,
+        values=np.asarray([0.0] * len(keys), dtype=np.float64),
+        source="arm",
+    )
 
     with pytest.raises(FrameRejectedError, match="missing_key"):
         validate_state(xarm, frame)
@@ -319,7 +341,14 @@ def test_state_missing_a_key(xarm: ControlDescription) -> None:
 
 def test_state_with_an_unknown_key(xarm: ControlDescription) -> None:
     keys = [*xarm.state_keys(), "arm/joint1/surprise"]
-    frame = ControlValues("arm", 0.0, 0, 1, keys, [0.0] * len(keys))
+    frame = ControlValues(
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=keys,
+        values=np.asarray([0.0] * len(keys), dtype=np.float64),
+        source="arm",
+    )
 
     with pytest.raises(FrameRejectedError, match="unknown_key"):
         validate_state(xarm, frame)
@@ -327,7 +356,14 @@ def test_state_with_an_unknown_key(xarm: ControlDescription) -> None:
 
 def test_state_with_a_duplicate_key(xarm: ControlDescription) -> None:
     keys = [*xarm.state_keys(), xarm.state_keys()[0]]
-    frame = ControlValues("arm", 0.0, 0, 1, keys, [0.0] * len(keys))
+    frame = ControlValues(
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=keys,
+        values=np.asarray([0.0] * len(keys), dtype=np.float64),
+        source="arm",
+    )
 
     with pytest.raises(FrameRejectedError, match="duplicate_key"):
         validate_state(xarm, frame)
@@ -402,7 +438,12 @@ def test_command_rejects_an_undeclared_key(xarm: ControlDescription) -> None:
 
 def test_command_rejects_duplicate_keys(xarm: ControlDescription) -> None:
     frame = ControlValues(
-        "c", 0.0, 0, 1, ["arm/joint1/position", "arm/joint1/position"], [0.1, 0.2]
+        source_ts=0.0,
+        epoch=0,
+        sequence=1,
+        interface_names=["arm/joint1/position", "arm/joint1/position"],
+        values=np.asarray([0.1, 0.2], dtype=np.float64),
+        source="c",
     )
 
     result = validate_command(xarm, frame, last_sequence=None)

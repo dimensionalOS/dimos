@@ -31,9 +31,13 @@ Trapezoidal Profile:
 """
 
 import math
+import time
 
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+import numpy as np
+
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class JointTrajectoryGenerator:
@@ -112,15 +116,17 @@ class JointTrajectoryGenerator:
         if not waypoints or len(waypoints) < 2:
             raise ValueError("Need at least 2 waypoints")
 
-        all_points: list[TrajectoryPoint] = []
+        all_points: list[JointTrajectoryPoint] = []
         current_time = 0.0
 
         # Add first waypoint
         all_points.append(
-            TrajectoryPoint(
-                time_from_start=0.0,
-                positions=list(waypoints[0]),
-                velocities=[0.0] * self.num_joints,
+            JointTrajectoryPoint(
+                positions=np.asarray(list(waypoints[0]), dtype=np.float64),
+                velocities=np.asarray([0.0] * self.num_joints, dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
             )
         )
 
@@ -136,14 +142,18 @@ class JointTrajectoryGenerator:
             all_points.extend(segment_points[1:])
             current_time += segment_duration
 
-        return JointTrajectory(points=all_points)
+        return JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            joint_names=[],
+            points=all_points,
+        )
 
     def _generate_segment(
         self,
         start: list[float],
         end: list[float],
         start_time: float,
-    ) -> tuple[list[TrajectoryPoint], float]:
+    ) -> tuple[list[JointTrajectoryPoint], float]:
         """
         Generate trajectory points for a single segment using trapezoidal profile.
 
@@ -153,7 +163,7 @@ class JointTrajectoryGenerator:
             start_time: Time offset for this segment
 
         Returns:
-            Tuple of (list of TrajectoryPoints, segment duration)
+            Tuple of (list of JointTrajectoryPoints, segment duration)
         """
         # Calculate displacement for each joint
         displacements = [end[j] - start[j] for j in range(self.num_joints)]
@@ -172,7 +182,7 @@ class JointTrajectoryGenerator:
         segment_duration = max(segment_duration, 0.01)
 
         # Generate points along the segment
-        points: list[TrajectoryPoint] = []
+        points: list[JointTrajectoryPoint] = []
 
         for i in range(self.points_per_segment + 1):
             # Normalized time [0, 1]
@@ -204,10 +214,12 @@ class JointTrajectoryGenerator:
                 velocities.append(vel)
 
             points.append(
-                TrajectoryPoint(
-                    time_from_start=t,
-                    positions=positions,
-                    velocities=velocities,
+                JointTrajectoryPoint(
+                    positions=np.asarray(positions, dtype=np.float64),
+                    velocities=np.asarray(velocities, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(t),
                 )
             )
 
@@ -429,7 +441,7 @@ class JointTrajectoryGenerator:
         lines = [
             "Trajectory Preview",
             "=" * 60,
-            f"Duration: {trajectory.duration:.3f}s",
+            f"Duration: {trajectory_utils.duration(trajectory):.3f}s",
             f"Points: {len(trajectory.points)}",
             "",
             "Waypoints (time -> positions):",

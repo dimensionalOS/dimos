@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import dataclass
 from threading import Condition, Event, RLock, Thread, current_thread
 import time
@@ -44,10 +45,10 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     RolloutStatus,
 )
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, UInt32
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -217,35 +218,46 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         }
 
     def _on_color_image(self, image: Image) -> None:
-        if image.format != ImageFormat.RGB or image.data.dtype != np.uint8:
+        if image.encoding != "rgb8":
             logger.warning("Ignoring non-uint8 RGB policy image", image=str(image))
             return
+        try:
+            pixels = image_utils.view(image)
+        except ValueError as error:
+            logger.warning("Ignoring malformed policy image", error=str(error))
+            return
         expected_shape = (self.config.image_height, self.config.image_width, 3)
-        if image.data.shape != expected_shape:
+        if pixels.shape != expected_shape:
             logger.warning(
                 "Ignoring policy image with unexpected shape",
-                shape=image.data.shape,
+                shape=pixels.shape,
                 expected=expected_shape,
             )
             return
         with self._lock:
-            self._latest_image = (np.ascontiguousarray(image.data), image.ts)
+            self._latest_image = (
+                np.ascontiguousarray(pixels),
+                message_time.to_seconds(image.header.stamp),
+            )
 
     def _on_joint_state(self, state: JointState) -> None:
         with self._observation_changed:
-            self._latest_joint_state = JointState(state)
+            self._latest_joint_state = deepcopy(state)
             self._observation_changed.notify_all()
 
-    def _on_teleop_buttons(self, buttons: Buttons) -> None:
+    def _on_teleop_buttons(self, buttons: UInt32) -> None:
         with self._observation_changed:
-            self._manual_control = buttons.left_grip or buttons.right_grip
+            self._manual_control = bool(
+                buttons.data
+                & ((1 << Buttons.BITS["left_grip"]) | (1 << Buttons.BITS["right_grip"]))
+            )
             if self._manual_control and self._active:
                 self._stop_event.set()
                 self._observation_changed.notify_all()
 
-    def _on_button_pressed(self, buttons: Buttons) -> None:
+    def _on_button_pressed(self, buttons: UInt32) -> None:
         button = BUTTON_ALIASES.get(self.config.rollout_button, self.config.rollout_button)
-        if not bool(getattr(buttons, button)):
+        if not (buttons.data & (1 << Buttons.BITS[button])):
             return
         with self._lock:
             active = self._active
@@ -267,8 +279,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         max_age = self.config.max_observation_age_s
         if now - image_ts > max_age:
             raise RuntimeError(f"camera image is stale by {now - image_ts:.2f}s")
-        if now - state.ts > max_age:
-            raise RuntimeError(f"joint state is stale by {now - state.ts:.2f}s")
+        state_ts = message_time.to_seconds(state.header.stamp)
+        if now - state_ts > max_age:
+            raise RuntimeError(f"joint state is stale by {now - state_ts:.2f}s")
 
         positions = dict(zip(state.name, state.position, strict=False))
         missing = [name for name in self.config.joint_names if name not in positions]
@@ -280,7 +293,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         )
         if not np.all(np.isfinite(vector)):
             raise RuntimeError("joint state contains non-finite positions")
-        return image.copy(), vector, state.ts
+        return image.copy(), vector, state_ts
 
     def _load_policy(self) -> _LoadedPolicy:
         register_third_party_plugins()
@@ -497,29 +510,38 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     ) -> JointTrajectory:
         zeros = [0.0] * len(self.config.joint_names)
         points = [
-            TrajectoryPoint(
-                positions=[float(value) for value in state],
-                velocities=zeros,
-                time_from_start=0.0,
+            JointTrajectoryPoint(
+                positions=np.asarray(state, dtype=np.float64),
+                velocities=np.asarray(zeros, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
             )
         ]
         points.extend(
-            TrajectoryPoint(
-                positions=[float(value) for value in action],
-                velocities=zeros,
-                time_from_start=(index + 1) / self.config.fps,
+            JointTrajectoryPoint(
+                positions=np.asarray(action, dtype=np.float64),
+                velocities=np.asarray(zeros, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds((index + 1) / self.config.fps),
             )
             for index, action in enumerate(actions)
         )
-        return JointTrajectory(joint_names=list(self.config.joint_names), points=points)
+        return JointTrajectory(
+            header=Header(message_time.time_from_seconds(0.0), ""), joint_names=list(self.config.joint_names), points=points
+        )
 
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:
         with self._observation_changed:
             self._observation_changed.wait_for(
-                lambda: self._stop_event.is_set()
-                or (
-                    self._latest_joint_state is not None
-                    and self._latest_joint_state.ts > previous_ts
+                lambda: (
+                    self._stop_event.is_set()
+                    or (
+                        self._latest_joint_state is not None
+                        and message_time.to_seconds(self._latest_joint_state.header.stamp)
+                        > previous_ts
+                    )
                 )
             )
 

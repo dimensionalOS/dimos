@@ -41,7 +41,7 @@ import math
 from dimos.control.contract.description import ControlDescription, ResourceKind
 from dimos.control.contract.keys import SEPARATOR, is_valid_segment
 from dimos.control.contract.sequence import is_newer
-from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.messages.dimos_msgs.msg import ControlValues
 
 
 class DescriptionError(Exception):
@@ -194,6 +194,8 @@ def validate_state(desc: ControlDescription, frame: ControlValues) -> dict[str, 
             "shape",
             f"{len(frame.interface_names)} names against {len(frame.values)} values",
         )
+    if any(not math.isfinite(value) for value in frame.values):
+        raise FrameRejectedError("non-finite", "state contains a non-finite value")
     if frame.source != desc.source:
         raise FrameRejectedError(
             "source", f"frame is from {frame.source!r}, expected {desc.source!r}"
@@ -251,6 +253,8 @@ def validate_command(
         return Rejected(
             "shape", f"{len(frame.interface_names)} names against {len(frame.values)} values"
         )
+    if any(not math.isfinite(value) for value in frame.values):
+        return Rejected("non-finite", "command contains a non-finite value")
     if not is_newer(frame.sequence, last_sequence):
         return Rejected(
             "sequence", f"frame sequence {frame.sequence} not newer than {last_sequence}"

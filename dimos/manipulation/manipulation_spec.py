@@ -23,10 +23,10 @@ from typing import Protocol
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
+from dimos.message_utils import trajectory as trajectory_utils
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray, TrajectoryStatus
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.spec.utils import Spec
 
 
@@ -153,7 +153,7 @@ class PlanResult:
             return f"PlanResult({self.status.name}, message={self.message!r})"
         return (
             f"PlanResult({self.status.name}, groups={self.plan.group_ids!r}, "
-            f"waypoints={len(self.plan.path)}, duration={self.plan.trajectory.duration:.3g}s, "
+            f"waypoints={len(self.plan.path)}, duration={trajectory_utils.duration(self.plan.trajectory):.3g}s, "
             f"path_length={self.plan.path_length:.3g}, planning_time={self.plan.planning_time:.3g}s, "
             f"iterations={self.plan.iterations}, message={self.message!r})"
         )

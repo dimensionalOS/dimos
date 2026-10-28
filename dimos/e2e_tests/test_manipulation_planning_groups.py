@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import time
 
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -36,7 +37,7 @@ from dimos.manipulation.manipulation_spec import (
     ManipulationSnapshot,
     PlanningGroupInfo,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
 
 pytestmark = [pytest.mark.self_hosted]
 
@@ -139,8 +140,11 @@ def _offset_target(snapshot: ManipulationSnapshot, group_id: str, delta: float) 
     current = snapshot.groups[group_id].joints
     assert current is not None
     return JointState(
+        header=current.header,
+        velocity=np.asarray(np.array([], dtype=np.float64), dtype=np.float64),
+        effort=np.asarray(np.array([], dtype=np.float64), dtype=np.float64),
         name=current.name,
-        position=[position + delta for position in current.position],
+        position=np.asarray([position + delta for position in current.position], dtype=np.float64),
     )
 
 

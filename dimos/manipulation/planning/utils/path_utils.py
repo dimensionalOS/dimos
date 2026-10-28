@@ -28,11 +28,14 @@ These functions are stateless and can be used by any planner implementation.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -82,7 +85,17 @@ def interpolate_path(
             for step in range(1, num_steps + 1):
                 alpha = step / num_steps
                 q_interp = q_start + alpha * diff
-                interpolated.append(JointState(name=joint_names, position=q_interp.tolist()))
+                interpolated.append(
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=joint_names,
+                        position=np.asarray(q_interp.tolist(), dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    )
+                )
 
     return interpolated
 
@@ -128,7 +141,15 @@ def interpolate_segment(
     for i in range(num_steps + 1):
         alpha = i / num_steps
         q_interp = q_start + alpha * diff
-        segment.append(JointState(name=joint_names, position=q_interp.tolist()))
+        segment.append(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=joint_names,
+                position=np.asarray(q_interp.tolist(), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
 
     return segment
 
@@ -248,7 +269,15 @@ def clip_path_to_limits(
     for state in path:
         q = np.array(state.position, dtype=np.float64)
         q_clipped = np.clip(q, lower_limits, upper_limits)
-        clipped.append(JointState(name=state.name, position=q_clipped.tolist()))
+        clipped.append(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=state.name,
+                position=np.asarray(q_clipped.tolist(), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
     return clipped
 
 

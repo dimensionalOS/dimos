@@ -41,8 +41,9 @@ from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -408,7 +409,9 @@ def _success(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
+        joint_state=joint_state_utils.from_mapping(
+            {"name": joint_names, "position": joint_positions.tolist()}
+        ),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,
@@ -429,7 +432,7 @@ def _selected_result(result: IKResult, selected_names: Sequence[str]) -> IKResul
         )
     return IKResult(
         status=result.status,
-        joint_state=JointState(
+        joint_state=joint_state_utils.from_mapping(
             {
                 "name": list(selected_names),
                 "position": [float(positions[name]) for name in selected_names],

@@ -4,7 +4,21 @@ window.onerror = (msg, url, line, col, error) => {
     document.getElementById('status').textContent = `Error: ${msg}`;
 };
 
-import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+import { CommandEncoder } from "./command_codec.mjs";
+
+let commandEncoder;
+
+async function loadCommandSchemas() {
+    const response = await fetch("/teleop/schema");
+    if (!response.ok) throw new Error("Could not load teleop schemas");
+    commandEncoder = new CommandEncoder(await response.json());
+}
+
+function sendCommand(channel, message) {
+    if (commandEncoder && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(commandEncoder.encode(channel, message));
+    }
+}
 import { captureBody } from "./webxr_body.mjs";
 
 // WebSocket and WebXR state
@@ -452,39 +466,20 @@ function sendPose(handedness, pose) {
     const pos = pose.transform.position;
     const rot = pose.transform.orientation;
     const nowMs = Date.now();
-    const poseStamped = new geometry_msgs.PoseStamped({
-        header: new std_msgs.Header({
-            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
-            frame_id: handedness
-        }),
-        pose: new geometry_msgs.Pose({
-            position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
-            orientation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w })
-        })
+    sendCommand("pose", {
+        header: { stamp: { sec: Math.floor(nowMs / 1000), nanosec: (nowMs % 1000) * 1_000_000 }, frame_id: handedness },
+        pose: { position: { x: pos.x, y: pos.y, z: pos.z }, orientation: { x: rot.x, y: rot.y, z: rot.z, w: rot.w } }
     });
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(poseStamped.encode());
-    }
 }
 
 function sendJoy(handedness, axes, buttons) {
     const nowMs = Date.now();
-    const joyMsg = new sensor_msgs.Joy({
-        header: new std_msgs.Header({
-            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
-            frame_id: handedness
-        }),
-        axes_length: axes.length,
-        buttons_length: buttons.length,
-        axes: axes,
-        buttons: buttons
+    sendCommand("joy", {
+        header: { stamp: { sec: Math.floor(nowMs / 1000), nanosec: (nowMs % 1000) * 1_000_000 }, frame_id: handedness },
+        axes, buttons
     });
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(joyMsg.encode());
-    }
 }
 
-// Send raw controller and wrist tracking data (no processing - done in Python)
 function processTracking(time, frame) {
     // Rate limit tracking data
     if (time - lastSendTime < sendInterval) {
@@ -709,6 +704,7 @@ window.connect = async function() {
         await startWebXRSession(webXRClientConfig);
 
         // Connect the data channel after the browser grants the XR session.
+        await loadCommandSchemas();
         await setupWebSocket();
 
         // Update UI

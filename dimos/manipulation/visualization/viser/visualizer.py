@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.animation import (
@@ -30,9 +31,10 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 try:
@@ -54,7 +56,7 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
 logger = setup_logger()
 
@@ -233,7 +235,7 @@ class ViserManipulationVisualizer:
         if self._scene is None:
             return
         if frame.joint_state is not None:
-            self._current_state = JointState(frame.joint_state)
+            self._current_state = deepcopy(frame.joint_state)
             self._scene.update_current_model(frame.joint_state)
         if self._gui is not None:
             self._gui.refresh()
@@ -249,7 +251,10 @@ class ViserManipulationVisualizer:
         preview = self._raw_preview_animation(trajectory)
         if preview is not None:
             self._scene.animate_preview(
-                preview, duration if duration is not None else max(float(trajectory.duration), 0.0)
+                preview,
+                duration
+                if duration is not None
+                else max(float(trajectory_utils.duration(trajectory)), 0.0),
             )
 
     def cancel_preview_animation(self) -> None:
@@ -280,7 +285,11 @@ class ViserManipulationVisualizer:
         for point in trajectory.points:
             selected = {name: float(point.positions[index]) for name, index in indices.items()}
             positions = [float(selected.get(name, baseline[name])) for name in config.joint_names]
-            frames.append(PreviewFrame(float(point.time_from_start), tuple(positions)))
+            frames.append(
+                PreviewFrame(
+                    float(message_time.to_seconds(point.time_from_start)), tuple(positions)
+                )
+            )
         return PreviewAnimation(tuple(config.joint_names), tuple(frames)) if frames else None
 
     @staticmethod

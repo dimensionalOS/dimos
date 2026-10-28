@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from pathlib import Path
 import sys
+import time
 from types import ModuleType
 from typing import Any
 from unittest.mock import ANY
@@ -50,9 +51,9 @@ from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
     TrajectoryParametrizationConfig,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -75,7 +76,10 @@ def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
 def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        base_pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[
             PlanningGroupDefinition(

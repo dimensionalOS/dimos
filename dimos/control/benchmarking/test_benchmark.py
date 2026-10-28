@@ -19,6 +19,7 @@ driven against the FOPDT sim plant -> benchmark records odom -> completion fires
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -44,17 +45,19 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
 
 def _pose(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, y, 0.0), orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(
+            position=Point(x, y, 0.0), orientation=geometry.quaternion_from_euler(0.0, 0.0, yaw)
+        ),
     )
 
 
@@ -174,12 +177,12 @@ def test_battery_registry_selects_fullpose_paths():
     }
     # The point of the battery: commanded yaw decoupled from the tangent.
     strafe = fullpose["strafe_left_2m"]
-    assert all(abs(p.orientation.euler[2]) < 1e-9 for p in strafe.poses)
-    assert strafe.poses[-1].position.y > 1.0  # travel is +y while yaw is 0
+    assert all(abs(geometry.quaternion_euler(p.pose.orientation)[2]) < 1e-9 for p in strafe.poses)
+    assert strafe.poses[-1].pose.position.y > 1.0  # travel is +y while yaw is 0
     # square_crab: square geometry, one held heading through all corners.
     crab = fullpose["square_crab"]
-    assert all(abs(p.orientation.euler[2]) < 1e-9 for p in crab.poses)
-    assert max(p.position.y for p in crab.poses) > 1.0
+    assert all(abs(geometry.quaternion_euler(p.pose.orientation)[2]) < 1e-9 for p in crab.poses)
+    assert max(p.pose.position.y for p in crab.poses) > 1.0
     # "all" = tangent-heading battery + full-pose battery.
     assert set(BATTERIES["all"]()) == set(path_set()) | set(fullpose)
 
@@ -187,7 +190,7 @@ def test_battery_registry_selects_fullpose_paths():
 def test_anchor_shifts_path_to_pose():
     ref = straight_line(length=2.0)
     anchored = shift_path_to_start_at_pose(ref, _pose(5.0, 3.0, 0.0))
-    p0 = anchored.poses[0].position
+    p0 = anchored.poses[0].pose.position
     assert p0.x == 5.0 and p0.y == 3.0
 
 
@@ -256,7 +259,9 @@ def test_completion_does_not_fire_prematurely_on_closed_path():
     # path yet -> not complete.
     done = False
     for i in range(10):
-        done = mon.update(ref.poses[0].position.x, ref.poses[0].position.y, 0.0, 0.0, i * 0.1)
+        done = mon.update(
+            ref.poses[0].pose.position.x, ref.poses[0].pose.position.y, 0.0, 0.0, i * 0.1
+        )
     assert not done
 
 

@@ -23,15 +23,16 @@ import subprocess
 import sys
 from typing import Any
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.message_utils import time as message_time
+from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 
 def config(**overrides: Any) -> GraspGenXConfig:
@@ -68,18 +69,21 @@ def test_public_adapter_import_does_not_load_optional_runtime() -> None:
 
 
 def test_messages_round_trip_empty_and_score() -> None:
-    value = GraspCandidateArray(Header(3.0, "camera"), [GraspCandidate(Pose(1, 2, 3), 0.25)])
-    decoded = GraspCandidateArray.decode(value.encode())
+    value = GraspCandidateArray(
+        Header(stamp=message_time.time_from_seconds(3.0), frame_id="camera"),
+        [
+            GraspCandidate(
+                Pose(position=Point(1, 2, 3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)), 0.25
+            )
+        ],
+    )
+    decoded = decode(encode(value), GraspCandidateArray)
 
     assert decoded.header.frame_id == "camera"
-    assert decoded.header.timestamp == pytest.approx(3.0)
+    assert message_time.to_seconds(decoded.header.stamp) == pytest.approx(3.0)
     assert decoded.candidates[0].score == pytest.approx(0.25)
-    assert (
-        GraspCandidateArray.decode(
-            GraspCandidateArray(Header(3.0, "camera"), []).encode()
-        ).candidates
-        == []
-    )
+    empty = GraspCandidateArray(Header(message_time.time_from_seconds(3.0), "camera"), [])
+    assert decode(encode(empty), GraspCandidateArray).candidates == []
 
 
 def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
@@ -92,7 +96,10 @@ def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
         "scene_pointcloud",
     ]
     assert list(signature.parameters) == ["self", "object_pointcloud"]
-    assert signature.parameters["object_pointcloud"].annotation.__name__ == "PointCloud2"
+    assert (
+        signature.parameters["object_pointcloud"].annotation.__msgtype__
+        == "sensor_msgs/msg/PointCloud2"
+    )
     assert signature.return_annotation is GraspCandidateArray
 
 

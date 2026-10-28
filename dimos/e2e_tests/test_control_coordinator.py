@@ -22,6 +22,8 @@ import os
 import platform
 import time
 
+from dimos_cdrgen.registry import decode
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -31,10 +33,11 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.core.rpc_client import RPCClient
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.message_utils.time import duration_from_seconds, time_from_seconds
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 pytestmark = pytest.mark.self_hosted
 
@@ -103,17 +106,22 @@ class TestControlCoordinatorE2E:
             trajectory = JointTrajectory(
                 joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0,
-                        positions=[0.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
-                    TrajectoryPoint(
-                        time_from_start=0.5,
-                        positions=[0.1] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.5),
+                        positions=np.asarray([0.1] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
                 ],
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
             )
 
             # Execute through the coordinator's trajectory RPC (it injects
@@ -170,7 +178,7 @@ class TestControlCoordinatorE2E:
         with lcm_spy._messages_lock:
             raw_msg = lcm_spy.messages[joint_state_topic][0]
 
-        joint_state = JointState.lcm_decode(raw_msg)
+        joint_state = decode(raw_msg, JointState)
         assert len(joint_state.name) == 7
         assert len(joint_state.position) == 7
         assert "arm/joint1" in joint_state.name
@@ -192,17 +200,22 @@ class TestControlCoordinatorE2E:
             trajectory = JointTrajectory(
                 joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=0.0,
-                        positions=[0.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
-                    TrajectoryPoint(
-                        time_from_start=5.0,
-                        positions=[1.0] * 7,
-                        velocities=[0.0] * 7,
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(5.0),
+                        positions=np.asarray([1.0] * 7, dtype=np.float64),
+                        velocities=np.asarray([0.0] * 7, dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
                     ),
                 ],
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
             )
 
             # Start trajectory
@@ -250,9 +263,22 @@ class TestControlCoordinatorE2E:
                 joint_names=[f"left_arm/joint{i + 1}" for i in range(7)]
                 + [f"right_arm/joint{i + 1}" for i in range(6)],
                 points=[
-                    TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 13),
-                    TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7 + [0.3] * 6),
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.0),
+                        positions=np.asarray([0.0] * 13, dtype=np.float64),
+                        velocities=np.array([], dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
+                    JointTrajectoryPoint(
+                        time_from_start=duration_from_seconds(0.5),
+                        positions=np.asarray([0.2] * 7 + [0.3] * 6, dtype=np.float64),
+                        velocities=np.array([], dtype=np.float64),
+                        accelerations=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
                 ],
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
             )
 
             result = client.execute_trajectory(trajectory)

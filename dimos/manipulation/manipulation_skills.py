@@ -16,6 +16,10 @@
 
 from __future__ import annotations
 
+import time
+
+import numpy as np
+
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
@@ -28,10 +32,10 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
 )
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 
 def _status(result: PlanResult | ExecutionResult | CommandResult) -> str:
@@ -184,20 +188,17 @@ class ManipulationSkills(Module):
         if current is None:
             raise RuntimeError(f"End-effector pose for planning group {group_id!r} is unavailable")
         if roll is None and pitch is None and yaw is None:
-            orientation = current.orientation
+            orientation = current.pose.orientation
         else:
-            euler = current.orientation.to_euler()
-            orientation = Quaternion.from_euler(
-                Vector3(
-                    euler.x if roll is None else roll,
-                    euler.y if pitch is None else pitch,
-                    euler.z if yaw is None else yaw,
-                )
+            euler = geometry.quaternion_euler(current.pose.orientation)
+            orientation = geometry.quaternion_from_euler(
+                euler[0] if roll is None else roll,
+                euler[1] if pitch is None else pitch,
+                euler[2] if yaw is None else yaw,
             )
         target = PoseStamped(
-            frame_id="world",
-            position=Vector3(x, y, z),
-            orientation=orientation,
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(position=Point(x, y, z), orientation=orientation),
         )
         plan = self.manipulation.plan_to_poses({group_id: target})
         if no_plan := self._planning_result(plan):
@@ -231,7 +232,15 @@ class ManipulationSkills(Module):
                 f"got {len(values)}"
             )
         plan = self.manipulation.plan_to_joints(
-            {group_id: JointState(name=list(group.joint_names), position=values)}
+            {
+                group_id: JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=list(group.joint_names),
+                    position=np.asarray(values, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
         )
         if no_plan := self._planning_result(plan):
             return no_plan

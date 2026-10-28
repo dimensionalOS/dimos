@@ -36,12 +36,9 @@ from dimos.control.contract.ports import (
 )
 from dimos.control.contract.presets import GripperSpec
 from dimos.control.contract.validate import DescriptionError, validate_description
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.robot.assets.model import RobotModel
 
 JOINTS = ("j1", "j2", "j3")
@@ -237,7 +234,11 @@ def test_a_twist_port_drives_one_base_with_clamped_symmetric_limits() -> None:
 
 
 def test_a_twist_range_must_be_zero_or_more() -> None:
-    config = BaseConfig(cmd_vel=TwistPort(range=Twist(linear=Vector3(-1.0, 0.0, 0.0))))
+    config = BaseConfig(
+        cmd_vel=TwistPort(
+            range=Twist(linear=Vector3(-1.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+        )
+    )
     with pytest.raises(ValueError, match="range for vx must be 0 or more"):
         control_description(config, {"cmd_vel": Twist}, {})
 

@@ -170,11 +170,11 @@ Use `arm.rpc` for explicit planning, preview, nonblocking execution, and
 cancellation. Use `app.find_module_by_spec(ManipulationSpec)` for direct typed discovery.
 
 ```python skip
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state
 
 motion = arm.rpc
 planned = motion.plan_to_joints({
-    arm.info.id: JointState(position=arm.joints() + 0.01),
+    arm.info.id: joint_state.from_mapping({"position": arm.joints() + 0.01}),
 }, speed_scale=0.2)
 if planned.succeeded and planned.plan is not None:
     print(motion.preview_plan(planned.plan))

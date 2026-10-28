@@ -16,6 +16,12 @@
     <canvas id="canvas"></canvas>
     <img id="videoFeed" style="display:none" crossorigin="anonymous"/>
 
+    <script type="importmap">
+    {"imports": {
+        "@foxglove/rosmsg": "https://esm.sh/@foxglove/rosmsg@5.0.5",
+        "@foxglove/rosmsg2-serialization": "https://esm.sh/@foxglove/rosmsg2-serialization@3.1.2"
+    }}
+    </script>
     <script type="module" src="/static/teleop.js"></script>
 </body>
 </html>

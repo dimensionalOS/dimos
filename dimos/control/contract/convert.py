@@ -35,16 +35,17 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 import math
+import time
+
+import numpy as np
 
 from dimos.control.contract.description import ControlDescription, ResourceKind
 from dimos.control.contract.keys import SEPARATOR, Interface
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.message_utils import time as message_time
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos.messages.std_msgs.msg import Header
 
 #: The JointState fields, each named after the interface it carries.
 JOINT_STATE_FIELDS: tuple[Interface, ...] = (
@@ -144,7 +145,7 @@ def joint_state_to_values(msg: JointState, fields: Collection[str]) -> dict[str,
         if field not in JOINT_STATE_FIELDS:
             raise ValueError(f"JointState has no {field!r} field")
         column = getattr(msg, field)
-        if not column:
+        if len(column) == 0:
             continue
         if len(column) != len(msg.name):
             raise ValueError(f"JointState has {len(msg.name)} names but {len(column)} {field}")
@@ -182,11 +183,13 @@ def joint_state_from_values(
     if not columns:
         raise ValueError(f"no position, velocity or effort for {list(joints)}")
     return JointState(
-        ts=ts,
+        header=Header(
+            stamp=message_time.time_from_seconds(time.time() if ts is None else ts), frame_id=""
+        ),
         name=list(joints),
-        position=columns.get(Interface.POSITION),
-        velocity=columns.get(Interface.VELOCITY),
-        effort=columns.get(Interface.EFFORT),
+        position=np.asarray(columns.get(Interface.POSITION, []), dtype=np.float64),
+        velocity=np.asarray(columns.get(Interface.VELOCITY, []), dtype=np.float64),
+        effort=np.asarray(columns.get(Interface.EFFORT, []), dtype=np.float64),
     )
 
 
@@ -201,7 +204,7 @@ def motor_command_to_values(msg: MotorCommandArray, joints: Sequence[str]) -> di
     Raises:
         ValueError: If the message is not one entry per joint.
     """
-    if msg.num_joints != len(joints) or len(msg.q) != len(joints):
+    if len(msg.q) != len(joints):
         raise ValueError(f"MotorCommandArray has {len(msg.q)} joints, expected {len(joints)}")
     columns = (msg.q, msg.dq, msg.tau, msg.kp, msg.kd)
     return {
@@ -218,17 +221,26 @@ def motor_command_from_values(
     and kd, in the order of ``joints`` (from ``motor_joints``)."""
     _require(values, joints, MOTOR_INTERFACES)
     q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in MOTOR_INTERFACES)
-    return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
+    return MotorCommandArray(
+        header=Header(
+            stamp=message_time.time_from_seconds(time.time() if ts is None else ts), frame_id=""
+        ),
+        q=np.asarray(q, dtype=np.float64),
+        dq=np.asarray(dq, dtype=np.float64),
+        kp=np.asarray(kp, dtype=np.float64),
+        kd=np.asarray(kd, dtype=np.float64),
+        tau=np.asarray(tau, dtype=np.float64),
+    )
 
 
 def pose_to_values(pose: PoseStamped, base: str) -> dict[str, float]:
     """Where a base is (``x``, ``y`` in m) and which way it faces (``yaw`` in
     rad, 0 along x, growing to the left), from a PoseStamped."""
-    q = pose.orientation
+    q = pose.pose.orientation
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     return {
-        _key(base, Interface.X): pose.position.x,
-        _key(base, Interface.Y): pose.position.y,
+        _key(base, Interface.X): pose.pose.position.x,
+        _key(base, Interface.Y): pose.pose.position.y,
         _key(base, Interface.YAW): yaw,
     }
 
@@ -241,7 +253,11 @@ def pose_from_values(
     x, y, yaw = _take(values, base, POSE_INTERFACES)
     orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
     return PoseStamped(
-        ts=ts, frame_id=frame_id, position=Vector3(x, y, 0.0), orientation=orientation
+        header=Header(
+            stamp=message_time.time_from_seconds(time.time() if ts is None else ts),
+            frame_id=frame_id,
+        ),
+        pose=Pose(position=Point(x, y, 0.0), orientation=orientation),
     )
 
 
@@ -262,8 +278,13 @@ def imu_from_values(
         orientation=Quaternion(qx, qy, qz, qw),
         angular_velocity=Vector3(gx, gy, gz),
         linear_acceleration=Vector3(ax, ay, az),
-        frame_id=frame_id,
-        ts=ts,
+        header=Header(
+            stamp=message_time.time_from_seconds(time.time() if ts is None else ts),
+            frame_id=frame_id,
+        ),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 

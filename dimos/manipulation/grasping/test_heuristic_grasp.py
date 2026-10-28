@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from collections.abc import Iterator
 import math
 
@@ -20,15 +21,26 @@ import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.spec.utils import spec_annotation_compliance
 
 
 def _cloud(
     points: np.ndarray, *, frame_id: str = "world", timestamp: float | None = 1.0
 ) -> PointCloud2:
-    return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame_id, timestamp=timestamp)
+    header = Header(Time(1, 0), frame_id)
+    cloud = pointcloud.from_xyz(points.astype(np.float32), header=header)
+    if timestamp is None:
+        cloud.header.stamp = None
+    elif not math.isfinite(timestamp):
+        cloud.header.stamp.sec = timestamp
+    else:
+        cloud.header.stamp = message_time.time_from_seconds(timestamp)
+    return cloud
 
 
 @pytest.fixture
@@ -58,12 +70,12 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
 
     assert len(proposals.candidates) == 1
     assert proposals.header.frame_id == "world"
-    assert proposals.header.timestamp == pytest.approx(1.0)
+    assert message_time.to_seconds(proposals.header.stamp) == pytest.approx(1.0)
     pose = proposals.candidates[0].pose
     assert pose.position.x == pytest.approx(0.0)
     assert pose.position.y == pytest.approx(0.0)
     assert pose.position.z == pytest.approx(0.15)
-    approach = pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0))
+    approach = geometry.rotate_vector(pose.orientation, Vector3(0.0, 0.0, 1.0))
     assert approach.z == pytest.approx(-1.0)
     assert proposals.candidates[0].score == pytest.approx(1.0)
 
@@ -82,7 +94,9 @@ def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGrasp
         )
     )
 
-    jaw_axis = proposals.candidates[0].pose.orientation.rotate_vector(Vector3(0.0, 1.0, 0.0))
+    jaw_axis = geometry.rotate_vector(
+        proposals.candidates[0].pose.orientation, Vector3(0.0, 1.0, 0.0)
+    )
     assert abs(jaw_axis.x) == pytest.approx(1.0)
     assert jaw_axis.y == pytest.approx(0.0, abs=1e-6)
     assert jaw_axis.z == pytest.approx(0.0, abs=1e-6)
@@ -128,3 +142,16 @@ def test_heuristic_grasp_rejects_invalid_pointclouds(
 ) -> None:
     with pytest.raises(ValueError, match=error):
         module.propose_grasps(_cloud(points, frame_id=frame_id, timestamp=timestamp))
+
+
+def test_proposal_retains_exact_capture_header_without_sharing(
+    module: HeuristicGraspModule,
+) -> None:
+    cloud = _cloud(np.asarray([[0.0, 0.0, 0.0], [0.1, 0.0, 0.1], [0.0, 0.1, 0.2]]))
+    cloud.header.stamp = Time(1700000000, 123456789)
+    proposals = module.propose_grasps(cloud)
+    assert proposals.header.stamp == Time(1700000000, 123456789)
+    cloud.header.stamp.nanosec = 0
+    cloud.header.frame_id = "changed"
+    assert proposals.header.stamp == Time(1700000000, 123456789)
+    assert proposals.header.frame_id == "world"

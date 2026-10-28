@@ -44,8 +44,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
 
 logger = setup_logger()
 
@@ -211,8 +210,9 @@ class PinocchioIK:
 def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
     """Convert Pose or PoseStamped to pinocchio SE3"""
 
-    position = np.array([pose.x, pose.y, pose.z])
-    quat = pose.orientation
+    value = pose.pose if isinstance(pose, PoseStamped) else pose
+    position = np.array([value.position.x, value.position.y, value.position.z])
+    quat = value.orientation
     rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
     return pinocchio.SE3(rotation, position)
 

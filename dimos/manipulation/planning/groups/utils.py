@@ -15,12 +15,15 @@
 """Planning-group selection and canonical joint-state projection."""
 
 from collections.abc import Sequence
+import time
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 
 def filter_joint_state_to_selected_joints(
@@ -32,8 +35,13 @@ def filter_joint_state_to_selected_joints(
     if missing:
         raise ValueError(f"Joint state is missing selected joints: {missing}")
     return JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         name=list(joint_names),
-        position=[float(positions_by_name[name]) for name in joint_names],
+        position=np.asarray(
+            [float(positions_by_name[name]) for name in joint_names], dtype=np.float64
+        ),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
 
 
@@ -45,7 +53,13 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
                 f"Target for '{group.id}' has {len(target.position)} positions, "
                 f"expected {len(group.joint_names)}"
             )
-        return JointState(name=list(group.joint_names), position=list(target.position))
+        return JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(group.joint_names),
+            position=np.asarray(list(target.position), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
     if len(target.name) != len(target.position):
         raise ValueError(
             f"Target for '{group.id}' has {len(target.name)} names but "
@@ -59,8 +73,13 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
     if extra:
         raise ValueError(f"Target for '{group.id}' has extra joints: {sorted(extra)}")
     return JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         name=list(group.joint_names),
-        position=[float(positions[name]) for name in group.joint_names],
+        position=np.asarray(
+            [float(positions[name]) for name in group.joint_names], dtype=np.float64
+        ),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
 
 

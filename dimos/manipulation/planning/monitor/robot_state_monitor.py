@@ -26,12 +26,14 @@ Example:
 
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -147,10 +149,13 @@ class RobotStateMonitor:
                 try:
                     # Create JointState for world sync (API uses JointState)
                     joint_state = JointState(
-                        ts=msg.ts,
+                        header=Header(stamp=deepcopy(msg.header.stamp), frame_id=""),
                         name=self._joint_names,
-                        position=positions.tolist(),
-                        velocity=velocities.tolist() if velocities is not None else [],
+                        position=np.asarray(positions.tolist(), dtype=np.float64),
+                        velocity=np.asarray(
+                            velocities.tolist() if velocities is not None else [], dtype=np.float64
+                        ),
+                        effort=np.asarray([], dtype=np.float64),
                     )
                     self._world.sync_from_joint_state(joint_state)
                 except Exception as e:
@@ -198,7 +203,7 @@ class RobotStateMonitor:
 
         Uses the same canonical-name lookup as _extract_positions.
         """
-        if not msg.velocity or len(msg.velocity) == 0:
+        if len(msg.velocity) == 0:
             return None
 
         name_to_idx = {name: i for i, name in enumerate(msg.name)}

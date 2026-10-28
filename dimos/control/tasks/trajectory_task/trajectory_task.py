@@ -23,11 +23,14 @@ is compute-only and relies on the coordinator for timing.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
+import time
 from typing import TYPE_CHECKING, Annotated, Any
 
+import numpy as np
 from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -38,10 +41,12 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -231,7 +236,7 @@ class JointTrajectoryTask(BaseControlTask):
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
         """Convert streamed joint positions into a velocity-bounded trajectory target."""
-        if not msg.position or len(msg.name) != len(msg.position):
+        if len(msg.position) == 0 or len(msg.name) != len(msg.position):
             return False
         selected = [
             (name, position)
@@ -241,8 +246,19 @@ class JointTrajectoryTask(BaseControlTask):
         if not selected:
             return False
         trajectory = JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=[name for name, _ in selected],
-            points=[TrajectoryPoint(positions=[position for _, position in selected])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([position for _, position in selected], dtype=np.float64),
+                    velocities=np.asarray(
+                        np.zeros(len([position for _, position in selected])), dtype=np.float64
+                    ),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                )
+            ],
         )
         return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
 
@@ -274,7 +290,7 @@ class JointTrajectoryTask(BaseControlTask):
                     self._pending_start = False
             elapsed = max(0.0, state.t_now - run.start_time)
             self._last_elapsed = max(self._last_elapsed, elapsed)
-            desired = run.trajectory.sample(elapsed)[0][index]
+            desired = trajectory_utils.sample(run.trajectory, elapsed)[0][index]
             current = self._commanded_positions.get(joint_name)
             if current is None:
                 current = state.joints.get_position(joint_name)
@@ -287,7 +303,7 @@ class JointTrajectoryTask(BaseControlTask):
             self._commanded_positions[joint_name] = commanded
 
             final_position = run.trajectory.points[-1].positions[index]
-            nominal_complete = elapsed >= run.trajectory.duration
+            nominal_complete = elapsed >= trajectory_utils.duration(run.trajectory)
             reached = math.isclose(commanded, final_position, abs_tol=1e-9)
             if nominal_complete and reached:
                 del self._motions[joint_name]
@@ -370,17 +386,20 @@ class JointTrajectoryTask(BaseControlTask):
                     "Trajectory point %d for %s has non-finite velocities", index, self._name
                 )
                 return False
-            if not math.isfinite(point.time_from_start):
+            if not math.isfinite(message_time.to_seconds(point.time_from_start)):
                 logger.warning("Trajectory point %d for %s has non-finite time", index, self._name)
                 return False
-            if index == 0 and point.time_from_start != 0.0:
+            if index == 0 and message_time.to_seconds(point.time_from_start) != 0.0:
                 logger.warning("Trajectory for %s must start at t=0", self._name)
                 return False
-            if previous_time is not None and point.time_from_start <= previous_time:
+            if (
+                previous_time is not None
+                and message_time.to_seconds(point.time_from_start) <= previous_time
+            ):
                 logger.warning("Trajectory for %s has non-increasing timestamps", self._name)
                 return False
-            previous_time = point.time_from_start
-        if len(trajectory.points) > 1 and trajectory.duration <= 0.0:
+            previous_time = message_time.to_seconds(point.time_from_start)
+        if len(trajectory.points) > 1 and trajectory_utils.duration(trajectory) <= 0.0:
             logger.warning("Trajectory for %s has nonpositive duration", self._name)
             return False
         return True
@@ -446,16 +465,20 @@ class JointTrajectoryTask(BaseControlTask):
 
         if anchored:
             trajectory = JointTrajectory(
+                header=deepcopy(trajectory.header),
                 joint_names=list(trajectory.joint_names),
                 points=[
-                    TrajectoryPoint(
-                        time_from_start=trajectory.points[0].time_from_start,
-                        positions=first_positions,
-                        velocities=list(trajectory.points[0].velocities),
+                    JointTrajectoryPoint(
+                        positions=np.asarray(first_positions, dtype=np.float64),
+                        velocities=np.asarray(
+                            list(trajectory.points[0].velocities), dtype=np.float64
+                        ),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=deepcopy(trajectory.points[0].time_from_start),
                     ),
                     *trajectory.points[1:],
                 ],
-                timestamp=trajectory.timestamp,
             )
 
         run = _TrajectoryRun(trajectory)
@@ -464,14 +487,14 @@ class JointTrajectoryTask(BaseControlTask):
             if len(trajectory.points) > 1 and joint_name not in self._commanded_positions:
                 self._commanded_positions[joint_name] = current_positions[joint_name]
         self._trajectory = trajectory
-        self._last_duration = trajectory.duration
+        self._last_duration = trajectory_utils.duration(trajectory)
         self._last_elapsed = 0.0
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
         logger.info(
             f"Executing trajectory on {self._name}: "
-            f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
+            f"{len(trajectory.points)} points, duration={trajectory_utils.duration(trajectory):.3f}s"
         )
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
@@ -528,7 +551,7 @@ class JointTrajectoryTask(BaseControlTask):
         remaining_times: list[float] = []
         for run in runs:
             elapsed = 0.0 if run.start_time is None else max(0.0, t_now - run.start_time)
-            duration = run.trajectory.duration
+            duration = trajectory_utils.duration(run.trajectory)
             progress = 0.0 if duration <= 0.0 else min(1.0, elapsed / duration)
             progresses.append(progress)
             elapsed_times.append(elapsed)
@@ -543,17 +566,23 @@ class JointTrajectoryTask(BaseControlTask):
         if self._state == TrajectoryState.EXECUTING:
             progress, elapsed, remaining = self._active_run_status(t_now)
             return TrajectoryStatus(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 state=self._state,
                 progress=progress,
-                time_elapsed=elapsed,
-                time_remaining=remaining,
+                time_elapsed=message_time.duration_from_seconds(elapsed),
+                time_remaining=message_time.duration_from_seconds(remaining),
+                error="",
             )
         completed = self._state == TrajectoryState.COMPLETED
         return TrajectoryStatus(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             state=self._state,
             progress=1.0 if completed else 0.0,
-            time_elapsed=self._last_duration if completed else self._last_elapsed,
-            time_remaining=0.0,
+            time_elapsed=message_time.duration_from_seconds(
+                self._last_duration if completed else self._last_elapsed
+            ),
+            time_remaining=message_time.duration_from_seconds(0.0),
+            error="",
         )
 
 

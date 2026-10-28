@@ -69,11 +69,9 @@ from dimos.control.contract.presets import (
     model_joints,
 )
 from dimos.control.contract.validate import validate_description
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
@@ -186,7 +184,7 @@ def reading_ports(outputs: Mapping[str, type]) -> dict[type, str]:
             continue
         if message in found:
             raise ValueError(
-                f"output ports {found[message]!r} and {name!r} both report {message.__name__}; "
+                f"output ports {found[message]!r} and {name!r} both report {message.__name__.rsplit('__', 1)[-1]}; "
                 f"a module reports each kind of reading on one port"
             )
         found[message] = name
@@ -304,12 +302,12 @@ def _check_input(field: str, spec: PortSpec, inputs: Mapping[str, type]) -> None
     if carried is None:
         raise ValueError(
             f"config field {field!r} is a {kind}, but the module has no input port called "
-            f"{field!r}; declare `{field}: In[{spec.message.__name__}]`"
+            f"{field!r}; declare `{field}: In[{spec.message.__name__.rsplit('__', 1)[-1]}]`"
         )
     if carried is not spec.message:
         raise ValueError(
             f"config field {field!r} is a {kind}, so input port {field!r} must carry "
-            f"{spec.message.__name__}, not {getattr(carried, '__name__', carried)}"
+            f"{spec.message.__name__.rsplit('__', 1)[-1]}, not {getattr(carried, '__name__', str(carried)).rsplit('__', 1)[-1]}"
         )
 
 

@@ -26,6 +26,7 @@ Example:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 import time
 from typing import TYPE_CHECKING, Any
@@ -36,16 +37,16 @@ from dimos.manipulation.planning.spec.models import (
     CollisionObjectMessage,
     Obstacle,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.msgs.vision_msgs.Detection3D import Detection3D
+    from dimos.messages.vision_msgs.msg import Detection3D
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -56,7 +57,7 @@ class WorldObstacleMonitor:
 
     This class handles updates from:
     - Explicit collision objects (CollisionObjectMessage)
-    - Perception detections (Detection3D from dimos.msgs.vision_msgs)
+    - Perception detections (Detection3D from dimos.messages.vision_msgs.msg)
 
     ## Thread Safety
 
@@ -267,7 +268,7 @@ class WorldObstacleMonitor:
         - Removes obstacles for detections that are no longer present
 
         Args:
-            detections: List of Detection3D messages from dimos.msgs.vision_msgs
+            detections: List of Detection3D messages from dimos.messages.vision_msgs.msg
         """
         if not self._running:
             return
@@ -315,8 +316,8 @@ class WorldObstacleMonitor:
         """Convert Detection3D bbox.center to PoseStamped."""
         center = detection.bbox.center
         return PoseStamped(
-            position=center.position,
-            orientation=center.orientation,
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=center.position, orientation=center.orientation),
         )
 
     def _detection_to_obstacle(self, detection: Detection3D) -> Obstacle:
@@ -644,7 +645,7 @@ class WorldObstacleMonitor:
                     pointcloud_to_convex_hull_obj,
                 )
 
-                points, _ = obj.pointcloud.as_numpy()
+                points = pointcloud.xyz(obj.pointcloud)
                 if points is not None and points.shape[0] >= 4:
                     # Keyed on the object's stable unique id: rescans overwrite
                     # in place, and no two objects share a file.
@@ -658,10 +659,14 @@ class WorldObstacleMonitor:
                             name=name,
                             obstacle_type=ObstacleType.MESH,
                             pose=PoseStamped(
-                                ts=obj.pose.ts,
-                                frame_id=obj.pose.frame_id,
-                                position=Vector3(hull.centroid),
-                                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                                header=Header(
+                                    stamp=deepcopy(obj.pose.header.stamp),
+                                    frame_id=obj.pose.header.frame_id,
+                                ),
+                                pose=Pose(
+                                    position=geometry.point_from_array(hull.centroid),
+                                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                                ),
                             ),
                             color=(0.2, 0.8, 0.2, 0.6),
                             mesh_path=hull.path,
@@ -673,7 +678,14 @@ class WorldObstacleMonitor:
         return Obstacle(
             name=name,
             obstacle_type=ObstacleType.BOX,
-            pose=obj.pose or PoseStamped(position=obj.center),
+            pose=obj.pose
+            or PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(
+                    position=geometry.point_from_array(geometry.vector_array(obj.center)),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            ),
             dimensions=(float(obj.size.x), float(obj.size.y), float(obj.size.z)),
             color=(0.2, 0.8, 0.2, 0.6),
         )

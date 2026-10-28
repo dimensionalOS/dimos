@@ -27,16 +27,23 @@ import math
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+import numpy as np
 from reactivex.disposable import Disposable
 from unitree_webrtc_connect.constants import SPORT_CMD
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+)
+from dimos.messages.std_msgs.msg import Bool
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
@@ -358,7 +365,8 @@ class Go2CommandModule(Module):
             self._send_ack(nonce, False)
             return
         pose = PoseStamped(
-            ts=time.time(), frame_id="world", position=[x, y, 0.0], orientation=[0, 0, 0, 1]
+            header=message_time.header_now("world"),
+            pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
         try:
             self.goal_request.publish(pose)
@@ -376,8 +384,7 @@ class Go2CommandModule(Module):
 
     def _cancel_nav(self) -> None:
         try:
-            msg = Bool()
-            msg.data = True
+            msg = Bool(data=True)
             self.stop_movement.publish(msg)
         except Exception:
             logger.warning("nav cancel publish failed", exc_info=True)
@@ -388,9 +395,11 @@ class Go2CommandModule(Module):
         """Guard raw operator drive, republish on tele_cmd_vel for MovementManager."""
         if self._estopped:
             return
-        ts = float(twist.ts)
+        try:
+            ts = message_time.to_seconds(twist.header.stamp)
+        except (ValueError, TypeError):
+            return
         if not math.isfinite(ts):
-            # NaN ts passes every comparison below and would poison _last_cmd_ts.
             return
         age = time.time() - ts
         if age > self.config.cmd_stale_after_sec:
@@ -401,23 +410,34 @@ class Go2CommandModule(Module):
             return
         self._last_cmd_ts = ts
 
-        if not _all_finite(twist):
+        value = twist.twist
+        if not _all_finite(value):
             logger.warning("dropping non-finite cmd_vel")
             return
         lin_max = self.config.max_linear_mps
         ang_max = self.config.max_angular_rps
-        twist.linear.x = _clamp(twist.linear.x, -lin_max, lin_max)
-        twist.linear.y = _clamp(twist.linear.y, -lin_max, lin_max)
-        twist.angular.z = _clamp(twist.angular.z, -ang_max, ang_max)
+        value.linear.x = _clamp(value.linear.x, -lin_max, lin_max)
+        value.linear.y = _clamp(value.linear.y, -lin_max, lin_max)
+        value.angular.z = _clamp(value.angular.z, -ang_max, ang_max)
 
         # Idle zeros would make MovementManager cancel the nav plan, so forward a
         # zero only as the release edge (prev frame moving), then stay silent.
-        moving = not twist.is_zero()
+        moving = not np.allclose(
+            [
+                value.linear.x,
+                value.linear.y,
+                value.linear.z,
+                value.angular.x,
+                value.angular.y,
+                value.angular.z,
+            ],
+            0.0,
+        )
         if not moving and not self._last_cmd_nonzero:
             return
         self._last_cmd_nonzero = moving
 
-        self.tele_cmd_vel.publish(Twist(linear=twist.linear, angular=twist.angular))
+        self.tele_cmd_vel.publish(value)
 
     # ─── robot-authoritative state → stats module ─────────────────────
 

@@ -16,8 +16,10 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+import time
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -36,10 +38,11 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 
@@ -69,10 +72,23 @@ def _plan() -> GeneratedPlan:
         group_ids=("tool",),
         status=PlanningStatus.SUCCESS,
         trajectory=JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=names,
             points=[
-                TrajectoryPoint(positions=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.1], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([0.0])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.1], dtype=np.float64),
+                    velocities=np.asarray(np.zeros(len([0.1])), dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(1.0),
+                ),
             ],
         ),
     )
@@ -103,10 +119,11 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert result.succeeded
     targets, config = generate.call_args.args
     start, relative = targets["tool"]
-    assert start == Transform.identity()
-    assert relative.translation.x == pytest.approx(0.02)
-    assert relative.translation.y == pytest.approx(0.0)
-    assert relative.translation.z == pytest.approx(-0.01)
+    assert start.header.frame_id == relative.header.frame_id == "world"
+    assert start.transform == Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+    assert relative.transform.translation.x == pytest.approx(0.02)
+    assert relative.transform.translation.y == pytest.approx(0.0)
+    assert relative.transform.translation.z == pytest.approx(-0.01)
     assert generate.call_args.kwargs["check_collision"] is False
     assert generate.call_args.kwargs["speed_scale"] == pytest.approx(0.5)
     execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)
@@ -115,9 +132,19 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
     _set_groups(module, _model(gripper=True, home=[0.3]))
-    module._init_joints = JointState(name=["j0"], position=[-0.2])
+    module._init_joints = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["j0"],
+        position=np.asarray([-0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     module._world_monitor.current_group_joint_state.return_value = JointState(
-        name=["j0"], position=[0.1]
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["j0"],
+        position=np.asarray([0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     module._world_monitor.get_group_ee_pose.return_value = None
     module._control_coordinator.task_invoke.return_value = [0.04]
@@ -125,10 +152,14 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     snapshot = module.get_state()
 
     group = snapshot.groups["tool"]
-    assert group.joints == JointState(name=["j0"], position=[0.1])
+    expected = module._world_monitor.current_group_joint_state.return_value
+    assert group.joints.header == expected.header
+    assert group.joints.name == ["j0"]
+    np.testing.assert_array_equal(group.joints.position, [0.1])
+
     assert group.gripper_position == pytest.approx(0.04)
-    assert group.joint_presets["home"].position == [0.3]
-    assert group.joint_presets["init"].position == [-0.2]
+    assert list(group.joint_presets["home"].position) == [0.3]
+    assert list(group.joint_presets["init"].position) == [-0.2]
     module._control_coordinator.task_invoke.assert_called_once_with(
         "arm_gripper", "get_normalized", {}
     )
@@ -138,7 +169,11 @@ def test_get_state_skips_gripper_telemetry_without_control_hardware(module_facto
     module = module_factory()
     _set_groups(module, _model(gripper=False))
     module._world_monitor.current_group_joint_state.return_value = JointState(
-        name=["j0"], position=[0.1]
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["j0"],
+        position=np.asarray([0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     module._world_monitor.get_group_ee_pose.return_value = None
 
@@ -250,5 +285,5 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
     assert "COMPLETED" in result.message
     target = manipulation.plan_to_joints.call_args.args[0]["tool"]
     assert target.name == ["j0"]
-    assert target.position == [0.25]
+    assert list(target.position) == [0.25]
     manipulation.execute.assert_called_once_with(blocking=True)

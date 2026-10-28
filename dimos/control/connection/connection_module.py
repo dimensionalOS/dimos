@@ -34,6 +34,7 @@ import time
 from typing import Any, ClassVar
 import uuid
 
+import numpy as np
 from reactivex import operators as ops
 from reactivex.abc import DisposableBase
 
@@ -68,11 +69,9 @@ from dimos.control.contract.validate import (
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.control_msgs.ControlValues import ControlValues
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.dimos_msgs.msg import ControlValues
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -372,7 +371,12 @@ class ConnectionModule(Module, ABC):
             # validate_state takes a ControlValues; this one never leaves the
             # process.
             frame = ControlValues(
-                description.source, now, 0, 0, list(values), list(values.values())
+                source_ts=now,
+                epoch=0,
+                sequence=0,
+                interface_names=list(values),
+                values=np.asarray(list(values.values()), dtype=np.float64),
+                source=description.source,
             )
             checked = validate_state(description, frame)
         except (ValueError, FrameRejectedError) as error:
@@ -467,7 +471,12 @@ class ConnectionModule(Module, ABC):
             # process. Typed messages carry no sequence number, so order is
             # not checked.
             frame = ControlValues(
-                description.source, None, 0, 0, list(values), list(values.values())
+                source_ts=time.time(),
+                epoch=0,
+                sequence=0,
+                interface_names=list(values),
+                values=np.asarray(list(values.values()), dtype=np.float64),
+                source=description.source,
             )
         except ValueError as error:
             self._report(str(error), rejection=True)

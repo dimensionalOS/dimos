@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 import math
 import threading
 import time
@@ -32,9 +33,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -249,7 +250,7 @@ class PlanExecutionManager:
             ExecutionStatus.FAULT,
         }:
             return latest
-        if status.state is TrajectoryState.IDLE:
+        if status.state == TrajectoryState.IDLE:
             result = ExecutionResult(ExecutionStatus.NO_EXECUTION, cancellation.message)
             self._store(result, active=False)
             return result
@@ -306,7 +307,7 @@ class PlanExecutionManager:
                 other
                 for other, other_status in statuses.items()
                 if other != task
-                and other_status.state is TrajectoryState.EXECUTING
+                and other_status.state == TrajectoryState.EXECUTING
                 and not self._cancel_task(other)
             ]
             if failed:
@@ -317,7 +318,7 @@ class PlanExecutionManager:
                 )
             mapped = self._result_from_status(status).status
             return ExecutionResult(mapped, f"{task}: {status.error}", trajectory_status=primary)
-        if all(status.state is TrajectoryState.COMPLETED for status in statuses.values()):
+        if all(status.state == TrajectoryState.COMPLETED for status in statuses.values()):
             return ExecutionResult(ExecutionStatus.COMPLETED, trajectory_status=primary)
         return ExecutionResult(ExecutionStatus.EXECUTING, trajectory_status=primary)
 
@@ -409,7 +410,7 @@ class PlanExecutionManager:
             TrajectoryState.COMPLETED: ExecutionStatus.COMPLETED,
             TrajectoryState.ABORTED: ExecutionStatus.ABORTED,
             TrajectoryState.FAULT: ExecutionStatus.FAULT,
-        }[status.state]
+        }[TrajectoryState(status.state)]
         return ExecutionResult(mapped, status.error, trajectory_status=status)
 
     def _store(self, result: ExecutionResult, *, active: bool, run_id: int | None = None) -> None:
@@ -474,14 +475,18 @@ def _resolve_bindings(
 
 def _columns(trajectory: JointTrajectory, columns: list[int]) -> JointTrajectory:
     return JointTrajectory(
+        header=deepcopy(trajectory.header),
         joint_names=[trajectory.joint_names[index] for index in columns],
         points=[
-            TrajectoryPoint(
-                time_from_start=point.time_from_start,
-                positions=[point.positions[index] for index in columns],
-                velocities=[point.velocities[index] for index in columns],
+            JointTrajectoryPoint(
+                time_from_start=deepcopy(point.time_from_start),
+                positions=point.positions[columns].copy(),
+                velocities=point.velocities[columns].copy(),
+                accelerations=point.accelerations[columns].copy()
+                if len(point.accelerations)
+                else point.accelerations.copy(),
+                effort=point.effort[columns].copy() if len(point.effort) else point.effort.copy(),
             )
             for point in trajectory.points
         ],
-        timestamp=trajectory.timestamp,
     )

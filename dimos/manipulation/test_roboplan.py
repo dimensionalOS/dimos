@@ -22,6 +22,7 @@ import importlib
 from pathlib import Path
 import sys
 import threading
+import time
 from types import ModuleType
 from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
@@ -45,11 +46,18 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS, prepare_robot_model
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry, joint_state as joint_state_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -514,7 +522,10 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
     return RobotModelConfig(
         model=RobotModel.from_file(model_path).with_default_joint_acceleration_limit(2.0),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        base_pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
         planning_groups=[
@@ -540,8 +551,11 @@ def _make_world(
     world.finalize()
     world.sync_from_joint_state(
         JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             name=list(robot_config.joint_names),
-            position=[0.0] * len(robot_config.joint_names),
+            position=np.asarray([0.0] * len(robot_config.joint_names), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
         ),
     )
     planner_module = _import_roboplan_planner(fake_roboplan)
@@ -601,16 +615,22 @@ def _selection(
     )
 
 
-def _relative_target(*waypoints: Transform) -> tuple[Transform, ...]:
-    return (Transform.identity(), *waypoints)
+def _relative_target(*waypoints: TransformStamped) -> tuple[TransformStamped, ...]:
+    return (
+        TransformStamped(
+            header=message_time.header_now("world"),
+            child_frame_id="",
+            transform=Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        *waypoints,
+    )
 
 
 def _absolute_target(*waypoints: PoseStamped) -> tuple[PoseStamped, ...]:
     return (
         PoseStamped(
-            frame_id="world",
-            position=Vector3(),
-            orientation=Quaternion(),
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         ),
         *waypoints,
     )
@@ -695,17 +715,32 @@ def test_context_cloning_and_joint_state_round_trip(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    live_state = JointState(name=["joint1", "joint2"], position=[0.1, 0.2])
+    live_state = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.1, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     world.sync_from_joint_state(live_state)
 
     with world.scratch_context() as scratch:
         scratch_state = world.get_joint_state(scratch)
         assert scratch_state.name == ["joint1", "joint2"]
-        assert scratch_state.position == [0.1, 0.2]
-        world.set_joint_state(scratch, JointState(name=["joint1", "joint2"], position=[0.3, 0.4]))
+        assert list(scratch_state.position) == [0.1, 0.2]
+        world.set_joint_state(
+            scratch,
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint1", "joint2"],
+                position=np.asarray([0.3, 0.4], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
 
     live_round_trip = world.get_joint_state(world.get_live_context())
-    assert live_round_trip.position == [0.1, 0.2]
+    assert list(live_round_trip.position) == [0.1, 0.2]
 
 
 def test_obstacle_mutation_updates_scene_and_stored_pose(
@@ -724,13 +759,19 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     assert world.add_obstacle(obstacle) == "box"
     assert add_box.call_args.args[2] == "dimos_world"
     assert "box" in world._scene.geometry
-    updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
+    updated_pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(1, 0, 0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
         "box",
         updated_pose,
@@ -754,7 +795,10 @@ def test_octree_obstacle_reaches_the_scene_as_occupied_cells(
     obstacle = Obstacle(
         name="voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         points=((0.0, 0.0, 0.0), (0.05, 0.0, 0.0)),
         octree_resolution=0.05,
     )
@@ -782,7 +826,10 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     obstacle = Obstacle(
         name="voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         points=((0.0, 0.0, 0.0),),
         octree_resolution=0.05,
     )
@@ -804,7 +851,12 @@ def test_octree_obstacle_rejects_geometry_it_cannot_build(
         base: dict[str, object] = {
             "name": "voxel-map",
             "obstacle_type": ObstacleType.OCTREE,
-            "pose": PoseStamped(position=Vector3(), orientation=Quaternion()),
+            "pose": PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            ),
             "points": ((0.0, 0.0, 0.0),),
             "octree_resolution": 0.05,
         }
@@ -833,7 +885,10 @@ def test_obstacle_operations_require_finalization(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
 
@@ -859,7 +914,10 @@ def test_failed_obstacle_add_rolls_back_and_can_be_retried(
     obstacle = Obstacle(
         name="retryable",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
     add_box = mocker.patch.object(
@@ -887,7 +945,10 @@ def test_concurrent_remove_waits_for_obstacle_add(
     obstacle = Obstacle(
         name="concurrent",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
     backend_add_started = threading.Event()
@@ -935,7 +996,10 @@ def test_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     unnamed = Obstacle(
         name="",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.1, 0.1),
     )
     named = replace(unnamed, name="world-owned")
@@ -955,7 +1019,10 @@ def test_complete_update_rejects_invalid_obstacle_values(
     valid = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     invalid_obstacles = [
@@ -970,8 +1037,10 @@ def test_complete_update_rejects_invalid_obstacle_values(
             replace(
                 valid,
                 pose=PoseStamped(
-                    position=[np.nan, 0.0, 0.0],
-                    orientation=[0.0, 0.0, 0.0, 1.0],
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    pose=Pose(
+                        position=Point(np.nan, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
                 ),
             ),
             "finite values",
@@ -992,7 +1061,10 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
     original = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
         color=(1.0, 0.0, 0.0, 1.0),
     )
@@ -1003,7 +1075,10 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
     replacement = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.SPHERE,
-        pose=PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(1, 2, 3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.4,),
         color=(0.0, 1.0, 0.0, 0.5),
     )
@@ -1016,9 +1091,9 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
 
     replacement.dimensions = (2.0,)
     stored.dimensions = (3.0,)
-    stored.pose.position.x = 99.0
+    stored.pose.pose.position.x = 99.0
     assert world.get_obstacles()[0].dimensions == (0.4,)
-    assert world.get_obstacles()[0].pose.position.x == pytest.approx(1.0)
+    assert world.get_obstacles()[0].pose.pose.position.x == pytest.approx(1.0)
     assert world.update_obstacle(replace(replacement, name="missing")) is False
 
 
@@ -1031,7 +1106,10 @@ def test_collision_query_blocks_during_obstacle_replacement(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1054,7 +1132,13 @@ def test_collision_query_blocks_during_obstacle_replacement(
     query_thread = threading.Thread(
         target=lambda: (
             world.check_config_collision_free(
-                JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+                JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=["joint1", "joint2"],
+                    position=np.asarray([0.0, 0.0], dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                ),
             ),
             query_finished.set(),
         )
@@ -1076,7 +1160,10 @@ def test_obstacle_replacement_blocks_during_collision_query(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1093,7 +1180,13 @@ def test_obstacle_replacement_blocks_during_collision_query(
     monkeypatch.setattr(world._scene, "hasCollisions", blocking_query)
     query_thread = threading.Thread(
         target=lambda: world.check_config_collision_free(
-            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint1", "joint2"],
+                position=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         )
     )
     query_thread.start()
@@ -1121,7 +1214,10 @@ def test_native_update_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1137,7 +1233,13 @@ def test_native_update_failure_invalidates_world(
         world.get_obstacles()
     with pytest.raises(RuntimeError, match="invalid"):
         world.check_config_collision_free(
-            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint1", "joint2"],
+                position=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         )
 
 
@@ -1150,7 +1252,10 @@ def test_native_pose_update_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1171,8 +1276,20 @@ def test_collision_config_and_edge_checks(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    safe = JointState(name=["joint1", "joint2"], position=[0.1, 0.2])
-    colliding = JointState(name=["joint1", "joint2"], position=[0.95, 0.2])
+    safe = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.1, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    colliding = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.95, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
 
     assert world.check_config_collision_free(safe)
     assert not world.check_config_collision_free(colliding)
@@ -1184,8 +1301,20 @@ def test_collision_check_uses_scene_queries(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    safe = JointState(name=["joint1", "joint2"], position=[0.1, 0.2])
-    colliding = JointState(name=["joint1", "joint2"], position=[0.95, 0.2])
+    safe = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.1, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    colliding = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.95, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
 
     assert world.check_config_collision_free(safe)
     assert not world.check_config_collision_free(colliding)
@@ -1197,8 +1326,20 @@ def test_generic_rrt_planner_uses_roboplan_world_collision_checks(
     world = _make_world(fake_roboplan, robot_config)
     planner = RRTConnectPlanner(step_size=0.5, connect_step_size=0.5, goal_tolerance=10.0)
 
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.2, 0.1])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    goal = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.2, 0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     result = planner.plan_joint_path(world, start, goal, timeout=1.0, max_iterations=3)
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1214,7 +1355,10 @@ def test_generic_planner_allows_update_between_collision_checks(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1234,8 +1378,20 @@ def test_generic_planner_allows_update_between_collision_checks(
     planner = RRTConnectPlanner(step_size=0.5, connect_step_size=0.5, goal_tolerance=10.0)
     result = planner.plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.2, 0.1]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.2, 0.1], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
         max_iterations=3,
     )
@@ -1250,10 +1406,19 @@ def test_fk_jacobian_and_explicit_min_distance_unsupported(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState(name=["joint1", "joint2"], position=[0.25, 0.5]))
+    world.set_joint_state(
+        ctx,
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.25, 0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
 
     pose = world.get_ee_pose(ctx)
-    assert pose.position.x == pytest.approx(0.75)
+    assert pose.pose.position.x == pytest.approx(0.75)
     assert world.get_jacobian(ctx).shape == (6, 2)
     with pytest.raises(NotImplementedError, match="get_min_distance"):
         world.get_min_distance(ctx)
@@ -1301,14 +1466,16 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
     ctx = world.get_live_context()
     world.set_joint_state(
         ctx,
-        JointState({"name": ["joint1", "joint2", "joint3"], "position": [1.0, 2.0, 3.0]}),
+        joint_state_utils.from_mapping(
+            {"name": ["joint1", "joint2", "joint3"], "position": [1.0, 2.0, 3.0]}
+        ),
     )
 
     pose = world.get_group_ee_pose(ctx, "wrist")
     jacobian = world.get_group_jacobian(ctx, "wrist")
 
     assert fk_frames == ["tcp"]
-    assert pose.position.x == pytest.approx(6.0)
+    assert pose.pose.position.x == pytest.approx(6.0)
     np.testing.assert_allclose(jacobian, np.arange(18, dtype=np.float64).reshape(6, 3)[:, [2, 0]])
 
 
@@ -1339,7 +1506,16 @@ def test_group_jacobian_validates_projection_shape(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
+    world.set_joint_state(
+        ctx,
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
 
     monkeypatch.setattr(
         FakeScene,
@@ -1403,12 +1579,24 @@ def test_group_lookup_rejects_unknown_group_id(
 def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotModelConfig) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    goal = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.4, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     result = _planner_for(world).plan_joint_path(world, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
@@ -1442,12 +1630,24 @@ def test_native_planner_shortcuts_path_with_configured_options(
 
     result = _planner_for(world).plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.4, 0.2]]
     options = FakePathShortcutter.instances[-1].options
     assert options.group_name == "__dimos_all_configured__"
     assert options.max_step_size == 0.02
@@ -1472,12 +1672,24 @@ def test_native_planner_can_disable_path_shortcutting(
 
     result = _planner_for(world).plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
     shortcut.assert_not_called()
 
 
@@ -1496,13 +1708,25 @@ def test_native_planner_uses_raw_path_when_shortcutting_fails(
 
     result = _planner_for(world).plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
 
 
 def test_native_planner_surfaces_unexpected_shortcutting_error(
@@ -1521,8 +1745,20 @@ def test_native_planner_surfaces_unexpected_shortcutting_error(
     with pytest.raises(TypeError, match="unexpected shortcut integration error"):
         _planner_for(world).plan_joint_path(
             world,
-            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-            JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint1", "joint2"],
+                position=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint1", "joint2"],
+                position=np.asarray([0.4, 0.2], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             timeout=1.0,
         )
 
@@ -1550,13 +1786,25 @@ def test_native_planner_uses_raw_path_when_shortcutting_changes_endpoint(
 
     result = _planner_for(world).plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
 
 
 def test_native_planner_uses_raw_path_when_shortcutting_returns_empty_path(
@@ -1574,13 +1822,25 @@ def test_native_planner_uses_raw_path_when_shortcutting_returns_empty_path(
 
     result = _planner_for(world).plan_joint_path(
         world,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
 
 
 def test_roboplan_planner_is_distinct_and_bound_to_world(
@@ -1616,7 +1876,10 @@ def test_native_planning_blocks_obstacle_replacement(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1635,8 +1898,20 @@ def test_native_planning_blocks_obstacle_replacement(
         return original_plan(self, q_start, q_goal)
 
     monkeypatch.setattr(FakeRRT, "plan", blocking_plan)
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.2, 0.1])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    goal = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.2, 0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     planning_thread = threading.Thread(
         target=lambda: _planner_for(world).plan_joint_path(world, start, goal, timeout=1.0)
     )
@@ -1661,8 +1936,20 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    start = JointState(name=[], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=[],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    goal = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.4, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     result = _planner_for(world).plan_joint_path(world, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1678,14 +1965,26 @@ def test_native_selected_planner_returns_canonical_selected_joint_names(
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
-        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         timeout=1.0,
     )
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [list(state.position) for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
 
 
 def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
@@ -1707,16 +2006,34 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
         return native_plan(planner, q_start, q_goal)
 
     mocker.patch.object(FakeRRT, "plan", autospec=True, side_effect=capture_scene_start)
-    start = JointState(name=list(selection.joint_names), position=[0.1, -0.1])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=list(selection.joint_names),
+        position=np.asarray([0.1, -0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     world.sync_from_joint_state(
-        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.3, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         start,
-        JointState(name=list(selection.joint_names), position=[0.4, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.4, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1741,8 +2058,20 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
     result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        JointState(name=list(selection.joint_names), position=[0.1, 0.1]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.1, 0.1], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -1778,12 +2107,22 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         {
             "manipulator": _relative_target(
-                Transform(
-                    translation=Vector3(0.1, 0.0, 0.0),
-                    rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2.0)),
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.1, 0.0, 0.0),
+                        rotation=geometry.quaternion_from_euler(0.0, 0.0, np.pi / 2.0),
+                    ),
                 )
             )
         },
@@ -1827,11 +2166,30 @@ def test_cartesian_zero_rotation_preserves_start_orientation(
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         {
             "manipulator": _relative_target(
-                Transform(translation=Vector3(0.05, 0.02, 0.0)),
-                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.05, 0.02, 0.0),
+                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.1, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
+                ),
             )
         },
         RoboPlanCartesianPathConfig(),
@@ -1849,16 +2207,38 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
     selection = _selection(robot_config, "manipulator")
-    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=list(selection.joint_names),
+        position=np.asarray([0.1, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     world.sync_from_joint_state(
-        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.3, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
 
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         start,
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.1, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
@@ -1885,8 +2265,24 @@ def test_cartesian_rejects_official_planner_failure(
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.1, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
@@ -1937,8 +2333,24 @@ def test_cartesian_postvalidation_checks_between_waypoints(
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(selection.joint_names),
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=message_time.header_now("world"),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(0.05, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
@@ -1959,8 +2371,20 @@ def test_native_planner_rejects_empty_path(
     monkeypatch.setattr(sys.modules["roboplan.rrt"], "RRT", EmptyPathRRT)
     world = _make_world(fake_roboplan, robot_config)
 
-    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
+    start = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+    goal = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.4, 0.2], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     result = _planner_for(world).plan_joint_path(world, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.NO_SOLUTION
@@ -2062,8 +2486,9 @@ def test_composed_model_fills_only_missing_acceleration_limits(
 def test_base_pose_is_written_to_composed_model(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    robot_config.base_pose = PoseStamped(  # type: ignore[call-arg]
-        position=Vector3(1, 0, 0), orientation=Quaternion()
+    robot_config.base_pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(1, 0, 0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
     world = _make_world(fake_roboplan, robot_config)
 
@@ -2071,3 +2496,29 @@ def test_base_pose_is_written_to_composed_model(
     origin = urdf_root.find("./joint[@name='dimos_world_joint']/origin")
     assert origin is not None
     assert origin.get("xyz") == "1 0 0"
+
+
+def test_cartesian_relative_waypoints_reject_nonworld_frame(fake_roboplan, robot_config):
+    world = _make_world(fake_roboplan, robot_config)
+    selection = _selection(robot_config, "manipulator")
+    start = JointState(
+        header=message_time.header_now(),
+        name=list(selection.joint_names),
+        position=np.zeros(len(selection.joint_names)),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
+    relative = TransformStamped(
+        header=message_time.header_now("base"),
+        child_frame_id="",
+        transform=Transform(Vector3(0.1, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+    result = _planner_for(world).plan_cartesian_path(
+        world,
+        selection,
+        start,
+        {"manipulator": _relative_target(relative)},
+        RoboPlanCartesianPathConfig(),
+    )
+    assert result.status is PlanningStatus.UNSUPPORTED
+    assert "world-frame" in result.message

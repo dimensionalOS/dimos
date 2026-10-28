@@ -25,9 +25,19 @@ from dimos.control.tasks.eef_twist_task.eef_twist_task import (
 )
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -41,11 +51,17 @@ def _robot_model() -> RobotModelConfig:
 def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
-        "tool": PoseStamped(frame_id="world", position=[0.0, 0.0, 0.0])
+        "tool": PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
     }
     solver.step.return_value = JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
         name=["arm/joint1", "arm/joint2"],
-        position=[0.01, 0.02],
+        position=np.asarray([0.01, 0.02], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     return solver
 
@@ -92,14 +108,19 @@ def _state(t_now: float = 1.0, *, dt: float = 0.01) -> CoordinatorState:
 
 
 def _twist(x: float = 0.1) -> TwistStamped:
-    return TwistStamped(frame_id="tool", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+    return TwistStamped(
+        Header(Time(0, 0), "tool"),
+        Twist(linear=Vector3(x, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
+    )
 
 
 def test_twist_integrates_target_and_uses_shared_persistent_command(
     mocker: MockerFixture,
 ) -> None:
     task, solver = _task(mocker)
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    message = _twist()
+
+    assert task.on_ee_twist_command(message, t_now=1.0)
 
     first = task.compute(_state(1.01))
     second = task.compute(_state(1.02))
@@ -108,8 +129,8 @@ def test_twist_integrates_target_and_uses_shared_persistent_command(
     assert second is not None
     first_target = solver.step.call_args_list[0].args[0]["tool"]
     second_target = solver.step.call_args_list[1].args[0]["tool"]
-    assert first_target.position.x == pytest.approx(0.001)
-    assert second_target.position.x == pytest.approx(0.002)
+    assert first_target.pose.position.x == pytest.approx(0.001)
+    assert second_target.pose.position.x == pytest.approx(0.002)
 
 
 def test_zero_twist_holds_the_integrated_target(mocker: MockerFixture) -> None:
@@ -121,7 +142,7 @@ def test_zero_twist_holds_the_integrated_target(mocker: MockerFixture) -> None:
     task.compute(_state(1.03))
 
     target = solver.step.call_args.args[0]["tool"]
-    assert target.position.x == pytest.approx(0.001)
+    assert target.pose.position.x == pytest.approx(0.001)
 
 
 def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -> None:
@@ -133,7 +154,7 @@ def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -
 
     assert output is not None
     target = solver.step.call_args.args[0]["tool"]
-    assert target.position.x == pytest.approx(0.001)
+    assert target.pose.position.x == pytest.approx(0.001)
 
 
 def test_estop_rejects_input_and_reanchors_after_clear(mocker: MockerFixture) -> None:
@@ -165,6 +186,6 @@ def test_preemption_discards_twist_target_and_command_state(mocker: MockerFixtur
 def test_invalid_twist_is_rejected(mocker: MockerFixture) -> None:
     task, _ = _task(mocker)
     invalid = _twist()
-    invalid.linear.x = np.nan
+    invalid.twist.linear.x = np.nan
 
     assert not task.on_ee_twist_command(invalid, t_now=1.0)

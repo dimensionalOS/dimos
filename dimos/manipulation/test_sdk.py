@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import atexit
 from dataclasses import replace
+import time
 
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
@@ -38,9 +40,11 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.sdk import Arm, MotionError
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.porcelain.dimos import Dimos
 
 
@@ -58,23 +62,66 @@ def rpc(mocker):
         execution_status=ExecutionStatus.IDLE,
         groups={
             "arm": PlanningGroupState(
-                joints=JointState(name=["j0", "j1"], position=[0.1, 0.2]),
+                joints=JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=["j0", "j1"],
+                    position=np.asarray([0.1, 0.2], dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                ),
                 end_effector_pose=PoseStamped(
-                    frame_id="world", position=[0.4, 0.0, 0.3], orientation=[0.0, 1.0, 0.0, 0.0]
+                    header=Header(
+                        stamp=message_time.time_from_seconds(time.time()), frame_id="world"
+                    ),
+                    pose=Pose(
+                        position=Point(0.4, 0.0, 0.3), orientation=Quaternion(0.0, 1.0, 0.0, 0.0)
+                    ),
                 ),
                 gripper_position=0.5,
                 joint_presets={
-                    "home": JointState(name=["j0", "j1"], position=[0.0, 0.5]),
-                    "init": JointState(name=["j0", "j1"], position=[0.1, 0.2]),
+                    "home": JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["j0", "j1"],
+                        position=np.asarray([0.0, 0.5], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                    "init": JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["j0", "j1"],
+                        position=np.asarray([0.1, 0.2], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
                 },
             ),
         },
     )
     proxy.plan_to_joints.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=[],
+                points=[],
+            ),
+        ),
     )
     proxy.plan_to_poses.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                joint_names=[],
+                points=[],
+            ),
+        ),
     )
     proxy.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
     proxy.move_linear.return_value = MoveResult(
@@ -205,7 +252,7 @@ def test_joint_inputs_plan_before_blocking_execution(arm, rpc):
 
     target = rpc.plan_to_joints.call_args.args[0]["arm"]
     assert target.name == ["j0", "j1"]
-    assert target.position == [0.3, 0.4]
+    assert list(target.position) == [0.3, 0.4]
     assert rpc.plan_to_joints.call_args.kwargs == {"speed_scale": 0.2}
     assert [call[0] for call in rpc.method_calls][-2:] == ["plan_to_joints", "execute"]
     rpc.execute.assert_called_once_with(
@@ -226,9 +273,9 @@ def test_pose_preserves_current_orientation(arm, rpc):
     arm.move_pose([0.5, 0.1, 0.4], speed_scale=0.3, timeout=20.0)
 
     target = rpc.plan_to_poses.call_args.args[0]["arm"]
-    assert target.frame_id == "world"
-    np.testing.assert_array_equal(target.position.to_numpy(), [0.5, 0.1, 0.4])
-    assert target.orientation.to_tuple() == (0.0, 1.0, 0.0, 0.0)
+    assert target.header.frame_id == "world"
+    np.testing.assert_array_equal(geometry.vector_array(target.pose.position), [0.5, 0.1, 0.4])
+    assert tuple(geometry.quaternion_array(target.pose.orientation)) == (0.0, 1.0, 0.0, 0.0)
     assert rpc.plan_to_poses.call_args.kwargs == {"speed_scale": 0.3}
     rpc.execute.assert_called_once_with(
         blocking=True, timeout=20.0, plan_id=rpc.plan_to_poses.return_value.plan.plan_id
@@ -239,7 +286,7 @@ def test_explicit_orientation_needs_no_state_read(arm, rpc):
     arm.move_pose([0.4, 0.0, 0.3], orientation=(0.0, 0.0, 0.0, 1.0))
 
     target = rpc.plan_to_poses.call_args.args[0]["arm"]
-    assert target.orientation.to_tuple() == (0.0, 0.0, 0.0, 1.0)
+    assert tuple(geometry.quaternion_array(target.pose.orientation)) == (0.0, 0.0, 0.0, 1.0)
     rpc.get_state.assert_not_called()
 
 
@@ -420,7 +467,13 @@ def test_home_uses_server_preset_and_preserves_names(arm, rpc):
 
 def test_init_preset_is_fetched_fresh_each_time(arm, rpc):
     first = rpc.get_state.return_value
-    new_target = JointState(name=["j1", "j0"], position=[0.7, 0.8])
+    new_target = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["j1", "j0"],
+        position=np.asarray([0.7, 0.8], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     second = replace(
         first, groups={"arm": replace(first.groups["arm"], joint_presets={"init": new_target})}
     )

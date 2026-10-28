@@ -39,6 +39,10 @@ from typing import Any
 
 import numpy as np
 
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose
+from dimos.messages.std_msgs.msg import Header
+
 try:
     import pygame
 except ImportError:
@@ -125,17 +129,14 @@ class JogState:
 
     def to_pose_stamped(self) -> Any:
         """Convert to PoseStamped for LCM publishing."""
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
 
         position = Vector3(self.x, self.y, self.z)
-        orientation = Quaternion.from_euler(Vector3(self.roll, self.pitch, self.yaw))
+        orientation = geometry.quaternion_from_euler(self.roll, self.pitch, self.yaw)
 
         return PoseStamped(
-            ts=time.time(),
-            position=position,
-            orientation=orientation,
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(position.x, position.y, position.z), orientation=orientation),
         )
 
 
@@ -172,7 +173,7 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
         ee_joint_id: End-effector joint ID in the model
     """
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
     # Use Piper model if not specified
     if model_path is None:

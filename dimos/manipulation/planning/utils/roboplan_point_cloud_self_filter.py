@@ -27,7 +27,8 @@ from dimos.manipulation.planning.utils.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
 )
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
@@ -54,17 +55,17 @@ class RoboPlanPointCloudSelfFilter(PointCloudSelfFilter):
     ) -> NDArray[np.bool_] | None:
         base_from_sensor = self.tfbuffer.get(
             self._base_link,
-            cloud.frame_id,
-            time_point=cloud.ts,
+            cloud.header.frame_id,
+            time_point=message_time.to_seconds(cloud.header.stamp),
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_forward_tolerance_s,
         )
-        q = self._capture_configuration(cloud.ts)
+        q = self._capture_configuration(message_time.to_seconds(cloud.header.stamp))
         if base_from_sensor is None or q is None:
             logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
             return None
         # This Scene is rooted at the URDF base, so its world is the base frame.
-        transform = base_from_sensor.to_matrix()
+        transform = geometry.transform_matrix(base_from_sensor.transform)
         base_points = np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)
         return ~np.asarray(self._body_filter.computeMask(q, base_points), dtype=bool)
 
@@ -104,7 +105,9 @@ class RoboPlanPointCloudSelfFilter(PointCloudSelfFilter):
                         self._neutral_q, joint.child_link, joint.parent_link
                     )
                 )
-                motion = np.linalg.inv(origin) @ parent_from_child.to_matrix()
+                motion = np.linalg.inv(origin) @ geometry.transform_matrix(
+                    parent_from_child.transform
+                )
                 pose = matrix_to_pose(motion)
                 if info.num_position_dofs == 4:
                     if not np.allclose(motion[2], [0, 0, 1, 0], atol=1e-6):

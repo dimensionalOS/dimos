@@ -16,6 +16,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -26,9 +27,10 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
 )
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -55,11 +57,22 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
     mocker: MockerFixture,
 ) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
+    solver.step.return_value = JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["arm/joint"],
+        position=np.asarray([0.01], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     task = CartesianIKTask("cartesian", _config(), solver=solver)
-    target = PoseStamped(position=Vector3(0.4, 0.2, 0.1), frame_id="world")
+    target = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(position=Point(0.4, 0.2, 0.1), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
 
-    task.on_cartesian_command(target, t_now=2.0)
+    message = target
+
+    task.on_cartesian_command(message, t_now=2.0)
     output = task.compute(
         CoordinatorState(
             joints=JointStateSnapshot(joint_positions={"arm/joint": 0.0}),
@@ -75,7 +88,13 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
 def test_cartesian_leaf_clears_after_timeout(mocker: MockerFixture) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     task = CartesianIKTask("cartesian", _config(), solver=solver)
-    task.on_cartesian_command(PoseStamped(), t_now=1.0)
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        t_now=1.0,
+    )
 
     output = task.compute(
         CoordinatorState(
@@ -92,19 +111,43 @@ def test_cartesian_leaf_clears_after_timeout(mocker: MockerFixture) -> None:
 
 def test_cartesian_clear_reseeds_command_from_feedback(mocker: MockerFixture) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.1])
+    solver.step.return_value = JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["arm/joint"],
+        position=np.asarray([0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     task = CartesianIKTask("cartesian", _config(), solver=solver)
     state = CoordinatorState(
         joints=JointStateSnapshot(joint_positions={"arm/joint": 0.0}),
         t_now=1.0,
         dt=0.01,
     )
-    task.on_cartesian_command(PoseStamped(), t_now=1.0)
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        t_now=1.0,
+    )
     assert task.compute(state) is not None
 
     task.clear()
-    task.on_cartesian_command(PoseStamped(), t_now=1.1)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        t_now=1.1,
+    )
+    solver.step.return_value = JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["arm/joint"],
+        position=np.asarray([0.01], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     assert task.compute(state) is not None
 
     assert solver.reset.call_count == 1

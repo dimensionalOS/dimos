@@ -42,17 +42,15 @@ from dimos.manipulation.planning.utils.kinematics_utils import (
     compute_pose_error,
     damped_pseudoinverse,
 )
+from dimos.message_utils import geometry, joint_state as joint_state_utils
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.geometry_msgs.msg import PoseStamped, Transform, Twist, Vector3
+from dimos.messages.sensor_msgs.msg import JointState
 
 logger = setup_logger()
 
@@ -148,7 +146,7 @@ class JacobianIK:
             else:
                 # Random seed within joint limits
                 random_positions = np.random.uniform(lower_limits, upper_limits)
-                current_seed = JointState(
+                current_seed = joint_state_utils.from_mapping(
                     {"name": joint_names, "position": random_positions.tolist()}
                 )
 
@@ -215,7 +213,7 @@ class JacobianIK:
         if request is None:
             return _create_failure_result(IKStatus.NO_SOLUTION, "Invalid pose target request")
 
-        full_seed = JointState(
+        full_seed = joint_state_utils.from_mapping(
             {"name": request.joint_names, "position": request.seed_positions.tolist()}
         )
         result = self.solve_iterative(
@@ -236,7 +234,7 @@ class JacobianIK:
             full_positions[request.group_indices] = np.asarray(
                 result.joint_state.position, dtype=np.float64
             )
-            full_state = JointState(
+            full_state = joint_state_utils.from_mapping(
                 {"name": request.joint_names, "position": full_positions.tolist()}
             )
             if not world.check_config_collision_free(full_state):
@@ -271,10 +269,14 @@ class JacobianIK:
             IKResult with solution or failure status
         """
         # Convert to internal representation
-        target_matrix = Transform(
-            translation=target_pose.position,
-            rotation=target_pose.orientation,
-        ).to_matrix()
+        target_matrix = geometry.transform_matrix(
+            Transform(
+                translation=geometry.vector_from_array(
+                    geometry.vector_array(target_pose.pose.position)
+                ),
+                rotation=target_pose.pose.orientation,
+            )
+        )
         current_joints = np.array(seed.position, dtype=np.float64)
         joint_names = seed.name
         active_joint_indices = active_joint_indices or list(range(len(joint_names)))
@@ -286,7 +288,7 @@ class JacobianIK:
         for iteration in range(max_iterations):
             with world.scratch_context() as ctx:
                 # Set current position (convert to JointState for API)
-                current_state = JointState(
+                current_state = joint_state_utils.from_mapping(
                     {"name": joint_names, "position": current_joints.tolist()}
                 )
                 world.set_joint_state(ctx, current_state)
@@ -345,7 +347,9 @@ class JacobianIK:
 
         # Compute final error
         with world.scratch_context() as ctx:
-            final_state = JointState({"name": joint_names, "position": current_joints.tolist()})
+            final_state = joint_state_utils.from_mapping(
+                {"name": joint_names, "position": current_joints.tolist()}
+            )
             world.set_joint_state(ctx, final_state)
             if group is None:
                 final_pose = pose_to_matrix(world.get_ee_pose(ctx))
@@ -416,7 +420,7 @@ class JacobianIK:
         if max_ratio > 1.0:
             q_dot = q_dot / max_ratio
 
-        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
+        return joint_state_utils.from_mapping({"name": joint_names, "velocity": q_dot.tolist()})
 
     def solve_differential_position_only(
         self,
@@ -462,7 +466,7 @@ class JacobianIK:
 
         # Compute joint velocities
         q_dot = J_pinv @ vel_array
-        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
+        return joint_state_utils.from_mapping({"name": joint_names, "velocity": q_dot.tolist()})
 
 
 # Result Helpers
@@ -478,7 +482,9 @@ def _create_success_result(
     """Create a successful IK result."""
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
+        joint_state=joint_state_utils.from_mapping(
+            {"name": joint_names, "position": joint_positions.tolist()}
+        ),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

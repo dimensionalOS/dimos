@@ -27,7 +27,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tick_loop import TickLoop
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.messages.std_msgs.msg import Float32
 
 JOINTS = make_twist_base_joints("go2")
 

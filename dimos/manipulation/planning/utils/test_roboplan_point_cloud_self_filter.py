@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from open3d.core import Tensor
 import pinocchio as pin
 import pytest
 import trimesh
@@ -27,11 +26,10 @@ import trimesh
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import JointState, PointCloud2, PointField
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
@@ -87,20 +85,21 @@ def _place_arm(
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
-            Transform(
-                translation=Vector3(*at),
-                frame_id=parent,
+            TransformStamped(
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id=parent),
                 child_frame_id="base",
-                ts=ts,
+                transform=Transform(
+                    translation=geometry.vector_from_array(at),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             )
         )
 
 
 def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
-    return PointCloud2.from_numpy(
+    return pointcloud.from_xyz(
         np.asarray(points, dtype=np.float32).reshape((-1, 3)),
-        frame_id="camera",
-        timestamp=ts,
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="camera"),
     )
 
 
@@ -114,7 +113,9 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
     assert result is not None
     filtered = result
-    np.testing.assert_allclose(filtered.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    np.testing.assert_allclose(
+        pointcloud.xyz(filtered).astype(np.float32), [[2.0, 0.0, 0.0]], atol=1e-6
+    )
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
@@ -137,23 +138,65 @@ def _joint_robot(kind: str) -> str:
 def test_capture_state_is_matched_by_timestamp_instead_of_latest(make_filter):
     module = make_filter(urdf_xml=_joint_robot("prismatic"), state_tolerance_s=0.001)
     _place_arm(module, (0, 0, 0), 1.0)
-    module.add_joint_state(JointState(ts=2.0, name=["shoulder"], position=[2.0]))
-    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
-    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.5]))
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([2.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
 
     result = module.filter_cloud(_cloud([[0.5, 0, 0], [2, 0, 0]], ts=1.0))
 
     assert result is not None
-    np.testing.assert_allclose(result.points_f32(), [[2, 0, 0]])
+    np.testing.assert_allclose(pointcloud.xyz(result).astype(np.float32), [[2, 0, 0]])
 
 
 @pytest.mark.parametrize(
     "state",
     [
         None,
-        JointState(ts=2.0, name=["shoulder"], position=[0.5]),
-        JointState(ts=1.0, name=["wrong"], position=[0.5]),
-        JointState(ts=1.0, name=["shoulder"], position=[float("nan")]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["wrong"],
+            position=np.asarray([0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([float("nan")], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     ],
 )
 def test_missing_late_or_invalid_state_drops_the_capture(make_filter, state):
@@ -170,12 +213,20 @@ def test_continuous_joint_uses_cos_sin_configuration(make_filter):
     urdf = urdf.replace("<collision><geometry>", '<collision><origin xyz="0.5 0 0"/><geometry>')
     module = make_filter(urdf_xml=urdf)
     _place_arm(module, (0, 0, 0), 1.0)
-    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[np.pi / 2]))
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([np.pi / 2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
 
     result = module.filter_cloud(_cloud([[0, 0.5, 0], [0.5, 0, 0]]))
 
     assert result is not None
-    np.testing.assert_allclose(result.points_f32(), [[0.5, 0, 0]])
+    np.testing.assert_allclose(pointcloud.xyz(result).astype(np.float32), [[0.5, 0, 0]])
 
 
 @pytest.mark.parametrize("kind", ["planar", "floating"])
@@ -187,55 +238,84 @@ def test_multidof_joints_use_capture_time_relative_tf(make_filter, kind):
     _place_arm(module, (0, 0, 0), 1.0)
     assert module.filter_cloud(_cloud([[0.5, 0, 0]])) is None
     module.tfbuffer.receive_transform(
-        Transform(translation=Vector3(0.5, 0, 0), frame_id="base", child_frame_id="arm", ts=1.0)
+        TransformStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="base"),
+            child_frame_id="arm",
+            transform=Transform(
+                translation=Vector3(0.5, 0, 0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        )
     )
 
     result = module.filter_cloud(_cloud([[0.5, 0, 0], [0, 0, 0]]))
 
     assert result is not None
-    np.testing.assert_allclose(result.points_f32(), [[0, 0, 0]])
+    np.testing.assert_allclose(pointcloud.xyz(result).astype(np.float32), [[0, 0, 0]])
 
 
 def test_narrowphase_retains_sphere_corner_obstacles_and_ancillary_fields(make_filter):
     urdf = _URDF.replace('<box size="0.2 0.2 0.2"/>', '<sphere radius="0.1"/>')
     module = make_filter(urdf_xml=urdf, padding_m=0.05)
     _place_arm(module, (0, 0, 0), 1.0)
-    cloud = PointCloud2.from_numpy(
-        np.array([[0.14, 0, 0], [0.12, 0.12, 0], [0.2, 0, 0]], dtype=np.float32),
-        frame_id="camera",
-        timestamp=1.0,
-        intensities=np.array([1, 2, 3], dtype=np.float32),
+    cloud = _cloud([[0.14, 0, 0], [0.12, 0.12, 0], [0.2, 0, 0]])
+    records = np.zeros(
+        3, dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("intensity", "<f4"), ("labels", "<i4")]
     )
-    cloud.seq = 42
-    cloud.pointcloud_tensor.point["labels"] = Tensor(np.array([[10], [20], [30]], dtype=np.int32))
+    for index, name in enumerate(("x", "y", "z")):
+        records[name] = pointcloud.xyz(cloud)[:, index]
+    records["intensity"] = [1, 2, 3]
+    records["labels"] = [10, 20, 30]
+    cloud.fields.extend(
+        [
+            PointField("intensity", 12, PointField.FLOAT32, 1),
+            PointField("labels", 16, PointField.INT32, 1),
+        ]
+    )
+    cloud.point_step = 20
+    cloud.row_step = cloud.width * 20
+    cloud.data = np.frombuffer(records.tobytes(), dtype=np.uint8).copy()
 
     result = module.filter_cloud(cloud)
 
     assert result is not None
     filtered = result
-    np.testing.assert_allclose(filtered.points_f32(), [[0.12, 0.12, 0], [0.2, 0, 0]])
-    np.testing.assert_array_equal(filtered.intensities_f32(), [2, 3])
-    np.testing.assert_array_equal(filtered.pointcloud_tensor.point["labels"].numpy(), [[20], [30]])
-    assert (filtered.frame_id, filtered.ts, filtered.seq) == ("camera", 1.0, 42)
+    np.testing.assert_allclose(
+        pointcloud.xyz(filtered).astype(np.float32), [[0.12, 0.12, 0], [0.2, 0, 0]]
+    )
+    np.testing.assert_array_equal(pointcloud.view(filtered)["intensity"].reshape(-1), [2, 3])
+    np.testing.assert_array_equal(pointcloud.view(filtered)["labels"].reshape(-1, 1), [[20], [30]])
+    assert (filtered.header.frame_id, message_time.to_seconds(filtered.header.stamp)) == (
+        "camera",
+        1.0,
+    )
 
 
 def test_rotated_base_aligns_camera_points(make_filter):
     module = make_filter()
-    module.tfbuffer.receive_transform(Transform(frame_id="world", child_frame_id="camera", ts=1.0))
     module.tfbuffer.receive_transform(
-        Transform(
-            translation=Vector3(-1, 0, 0),
-            rotation=Quaternion(0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)),
-            frame_id="world",
+        TransformStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
+            child_frame_id="camera",
+            transform=Transform(
+                translation=Vector3(0.0, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        )
+    )
+    module.tfbuffer.receive_transform(
+        TransformStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
             child_frame_id="base",
-            ts=1.0,
+            transform=Transform(
+                translation=Vector3(-1, 0, 0),
+                rotation=Quaternion(0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)),
+            ),
         )
     )
 
     result = module.filter_cloud(_cloud([[-1, 0.05, 0], [-1, 1, 0]]))
 
     assert result is not None
-    np.testing.assert_allclose(result.points_f32(), [[-1, 1, 0]])
+    np.testing.assert_allclose(pointcloud.xyz(result).astype(np.float32), [[-1, 1, 0]])
 
 
 def test_mesh_filter_removes_surfaces_without_classifying_solid_volume(make_filter, tmp_path):
@@ -248,14 +328,30 @@ def test_mesh_filter_removes_surfaces_without_classifying_solid_volume(make_filt
     result = module.filter_cloud(_cloud([[0.1, 0, 0], [0.105, 0, 0], [0, 0, 0], [0.2, 0, 0]]))
 
     assert result is not None
-    np.testing.assert_allclose(result.points_f32(), [[0, 0, 0], [0.2, 0, 0]])
+    np.testing.assert_allclose(pointcloud.xyz(result).astype(np.float32), [[0, 0, 0], [0.2, 0, 0]])
 
 
 def test_late_state_cannot_resurrect_expired_history(make_filter):
     module = make_filter(urdf_xml=_joint_robot("prismatic"), state_history_s=1.0)
     _place_arm(module, (0, 0, 0), 1.0)
-    module.add_joint_state(JointState(ts=3.0, name=["shoulder"], position=[0.5]))
-    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.5]))
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(3.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
+    module.add_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            name=["shoulder"],
+            position=np.asarray([0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
 
     assert module.filter_cloud(_cloud([[0.5, 0, 0]], ts=1.0)) is None
 
@@ -284,7 +380,15 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
     captures = []
     for stamp, shoulder in ((1.0, 0.0), (2.0, 0.5)):
         arm[0] = shoulder
-        module.add_joint_state(JointState(ts=stamp, name=config.joint_names, position=arm))
+        module.add_joint_state(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(stamp), frame_id=""),
+                name=config.joint_names,
+                position=np.asarray(arm, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
         data, gdata = model.createData(), pin.GeometryData(geoms)
         pin.updateGeometryPlacements(model, data, geoms, gdata, np.array(arm))
         surfaces = []
@@ -296,10 +400,9 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
             surfaces.append(local @ gdata.oMg[i].rotation.T + gdata.oMg[i].translation)
         assert surfaces
         captures.append(
-            PointCloud2.from_numpy(
+            pointcloud.from_xyz(
                 np.concatenate([*surfaces, controls]).astype(np.float32),
-                frame_id="world",
-                timestamp=stamp,
+                header=Header(stamp=message_time.time_from_seconds(stamp), frame_id="world"),
             )
         )
     # Both captures are processed after the newer state arrived.
@@ -308,5 +411,5 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
     second = module.filter_cloud(captures[1])
     assert second is not None
     for cloud, filtered in zip(captures, (first, second), strict=True):
-        np.testing.assert_allclose(filtered.points_f32(), controls)
+        np.testing.assert_allclose(pointcloud.xyz(filtered).astype(np.float32), controls)
         assert filtered.frame_id == "world" and filtered.ts == cloud.ts

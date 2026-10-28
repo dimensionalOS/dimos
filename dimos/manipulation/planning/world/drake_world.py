@@ -22,6 +22,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock, current_thread
+import time
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
@@ -39,6 +40,9 @@ from dimos.manipulation.planning.spec.validation import (
     validate_obstacle,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -47,11 +51,11 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import trajectory as trajectory_utils
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import PoseStamped, Transform
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -537,10 +541,12 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
         """Convert PoseStamped to Drake RigidTransform."""
-        pose_matrix = Transform(
-            translation=pose.position,
-            rotation=pose.orientation,
-        ).to_matrix()
+        pose_matrix = geometry.transform_matrix(
+            Transform(
+                translation=geometry.vector_from_array(geometry.vector_array(pose.pose.position)),
+                rotation=pose.pose.orientation,
+            )
+        )
         return RigidTransform(pose_matrix)
 
     def _create_shape(self, obstacle: Obstacle) -> Any:
@@ -559,10 +565,14 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
-        pose_matrix = Transform(
-            translation=obstacle.pose.position,
-            rotation=obstacle.pose.orientation,
-        ).to_matrix()
+        pose_matrix = geometry.transform_matrix(
+            Transform(
+                translation=geometry.vector_from_array(
+                    geometry.vector_array(obstacle.pose.pose.position)
+                ),
+                rotation=obstacle.pose.pose.orientation,
+            )
+        )
         validate_obstacle(obstacle, pose_matrix, allow_empty_name=allow_empty_name)
 
     def _remove_obstacle_geometry(self, obstacle_data: _ObstacleData) -> None:
@@ -896,7 +906,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
             full_positions = self._plant.GetPositions(plant_ctx)
             positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
-            return JointState(name=robot_data.config.joint_names, position=positions)
+            return JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=robot_data.config.joint_names,
+                position=np.asarray(positions, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
 
     # Collision Checking (context-based)
 
@@ -957,7 +973,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 for i in range(n_steps):
                     t = i / (n_steps - 1)
                     q = q_start + t * (q_end - q_start)
-                    interp_state = JointState(name=start.name, position=q.tolist())
+                    interp_state = JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=start.name,
+                        position=np.asarray(q.tolist(), dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    )
                     self.set_joint_state(ctx, interp_state)
                     if not self.is_collision_free(ctx):
                         return False
@@ -994,9 +1018,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         quat = X_WE.rotation().ToQuaternion()  # Drake returns [w, x, y, z]
 
         return PoseStamped(
-            frame_id="world",
-            position=[float(pos[0]), float(pos[1]), float(pos[2])],
-            orientation=[float(quat.x()), float(quat.y()), float(quat.z()), float(quat.w())],
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(
+                position=Point(float(pos[0]), float(pos[1]), float(pos[2])),
+                orientation=Quaternion(
+                    float(quat.x()), float(quat.y()), float(quat.z()), float(quat.w())
+                ),
+            ),
         )
 
     def get_link_pose(self, ctx: Context, link_name: str) -> NDArray[np.float64]:
@@ -1179,9 +1207,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         trajectory_indices = self._trajectory_indices(trajectory)
         playback_scale = 1.0
         if duration is not None:
-            if duration <= 0.0 or trajectory.duration <= 0.0:
+            if duration <= 0.0 or trajectory_utils.duration(trajectory) <= 0.0:
                 raise ValueError("preview duration must be positive")
-            playback_scale = duration / trajectory.duration
+            playback_scale = duration / trajectory_utils.duration(trajectory)
         with self._lock:
             assert self._plant_context is not None
             assert self._live_context is not None
@@ -1199,7 +1227,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             )
 
         try:
-            previous_time = trajectory.points[0].time_from_start
+            previous_time = message_time.to_seconds(trajectory.points[0].time_from_start)
             for frame_index, point in enumerate(trajectory.points):
                 with self._lock:
                     if self._preview_animation_generation != generation:
@@ -1213,7 +1241,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     self._set_preview_positions(self._plant_context, positions)
                     self._publish_visualization()
                 if frame_index < len(trajectory.points) - 1:
-                    next_time = trajectory.points[frame_index + 1].time_from_start
+                    next_time = message_time.to_seconds(
+                        trajectory.points[frame_index + 1].time_from_start
+                    )
                     time.sleep((next_time - previous_time) * playback_scale)
                     previous_time = next_time
         finally:

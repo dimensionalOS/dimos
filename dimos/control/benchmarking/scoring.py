@@ -16,7 +16,7 @@
 
 Source-agnostic: an :class:`ExecutedTrajectory` from sim and from hardware
 score identically. Scoring is purely geometric against the reference
-:class:`~dimos.msgs.nav_msgs.Path.Path` (cross-track error, heading error,
+:class:`~dimos.messages.nav_msgs.msg.Path` (cross-track error, heading error,
 arrival) — no time-parameterized reference is needed.
 
 Heading error is measured against the path's COMMANDED per-pose yaw,
@@ -34,9 +34,9 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.nav_msgs.msg import Path
 from dimos.utils.trigonometry import angle_diff
 
 
@@ -75,7 +75,7 @@ class ScoreResult:
 
 
 def _path_xy(path: Path) -> NDArray[np.float64]:
-    return np.array([[p.position.x, p.position.y] for p in path.poses], dtype=np.float64)
+    return np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses], dtype=np.float64)
 
 
 def nearest_segment(
@@ -146,7 +146,10 @@ def score_run(reference_path: Path, executed: ExecutedTrajectory) -> ScoreResult
     if len(path_xy) == 0:
         return ScoreResult(arrived=executed.arrived, n_ticks=len(executed.ticks))
     path_yaws = np.unwrap(
-        np.array([p.orientation.euler[2] for p in reference_path.poses], dtype=np.float64)
+        np.array(
+            [geometry.quaternion_euler(p.pose.orientation)[2] for p in reference_path.poses],
+            dtype=np.float64,
+        )
     ).astype(np.float64)
 
     cte_sq: list[float] = []
@@ -157,13 +160,13 @@ def score_run(reference_path: Path, executed: ExecutedTrajectory) -> ScoreResult
     ang_sq: list[float] = []
 
     for tick in executed.ticks:
-        pt = np.array([tick.pose.position.x, tick.pose.position.y], dtype=np.float64)
+        pt = np.array([tick.pose.pose.position.x, tick.pose.pose.position.y], dtype=np.float64)
         seg_idx, d, t_along = nearest_segment(pt, path_xy)
         cte_abs.append(d)
         cte_sq.append(d * d)
 
         path_yaw = _reference_yaw(path_yaws, seg_idx, t_along)
-        he = abs(angle_diff(tick.pose.orientation.euler[2], path_yaw))
+        he = abs(angle_diff(geometry.quaternion_euler(tick.pose.pose.orientation)[2], path_yaw))
         he_abs.append(he)
         he_sq.append(he * he)
 

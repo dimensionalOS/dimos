@@ -20,6 +20,9 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.std_msgs.msg import Header
+
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.visualization.viser.scene import (
@@ -27,12 +30,9 @@ from dimos.manipulation.visualization.viser.scene import (
     GRASP_PROPOSAL_EMPHASIS_COUNT,
     ViserManipulationScene,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Vector3
+from dimos.messages.std_msgs.msg import Header
 
 
 def _scene() -> ViserManipulationScene:
@@ -115,7 +115,9 @@ def test_an_empty_array_clears_the_markers() -> None:
     scene = _scene()
     scene.show_grasp_proposals(_proposals(4))
 
-    scene.show_grasp_proposals(GraspCandidateArray())
+    scene.show_grasp_proposals(
+        GraspCandidateArray(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[])
+    )
 
     assert scene._grasp_proposal_handles == []
 

@@ -22,13 +22,13 @@ deltas from an initial orientation captured on engage, converts to TwistStamped
 velocity commands via configurable gains, and publishes.
 """
 
+from copy import deepcopy
 from pathlib import Path
 import threading
 import time
 from typing import Any
 
-from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
-from dimos_lcm.std_msgs import Bool as LCMBool
+from dimos_cdrgen.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,11 +37,11 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.messages.std_msgs.msg import Bool, Header
+from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import decode_data_frame, peek_data_frame_lengths
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
@@ -88,11 +88,8 @@ class PhoneTeleopModule(Module):
         self._web_server = RobotWebInterface(port=self.config.server_port)
         self._web_server_thread: threading.Thread | None = None
 
-        # Fingerprint-based message dispatch table
-        self._decoders: dict[bytes, Any] = {
-            LCMTwistStamped._get_packed_fingerprint(): self._on_sensors_bytes,
-            LCMBool._get_packed_fingerprint(): self._on_button_bytes,
-        }
+        self._command_types: dict[str, type[Any]] = {"sensors": TwistStamped, "button": Bool}
+        self._decoders = {"sensors": self._on_sensors_bytes, "button": self._on_button_bytes}
 
         self._setup_routes()
 
@@ -103,6 +100,19 @@ class PhoneTeleopModule(Module):
         async def teleop_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
             return HTMLResponse(content=index_path.read_text())
+
+        @self._web_server.app.get("/teleop/schema")
+        async def command_schemas() -> dict[str, dict[str, str]]:
+            return {
+                channel: {"type": value.__msgtype__, "definition": cdr_schema(value.__msgtype__)}
+                for channel, value in self._command_types.items()
+            }
+
+        self._web_server.app.mount(
+            "/command-assets",
+            StaticFiles(directory=str(Path(__file__).parents[1] / "webxr/web/static")),
+            name="phone_command_assets",
+        )
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -116,16 +126,31 @@ class PhoneTeleopModule(Module):
             try:
                 while True:
                     data = await ws.receive_bytes()
-                    fingerprint = data[:8]
-                    decoder = self._decoders.get(fingerprint)
-                    if decoder:
-                        decoder(data)
-                    else:
-                        logger.warning(f"Unknown message fingerprint: {fingerprint.hex()}")
+                    self._dispatch_binary_message(data)
             except WebSocketDisconnect:
                 logger.info("Phone client disconnected")
             except Exception:
                 logger.exception("WebSocket error")
+
+    def _dispatch_binary_message(self, data: bytes) -> bool:
+        try:
+            lengths = peek_data_frame_lengths(data)
+            if lengths is None or lengths[2] != len(data):
+                return False
+            frame = decode_data_frame(data)
+            message_type = self._command_types.get(frame.header.ch)
+            metadata = frame.header.meta or {}
+            if (
+                message_type is None
+                or metadata.get("encoding") != "cdr"
+                or metadata.get("type") != message_type.__msgtype__
+            ):
+                return False
+            validate_cdr_payload(frame.payload)
+            self._decoders[frame.header.ch](frame.payload)
+            return True
+        except ValueError:
+            return False
 
     @rpc
     def start(self) -> None:
@@ -156,14 +181,14 @@ class PhoneTeleopModule(Module):
         logger.info("Phone teleop disengaged")
 
     def _on_sensors_bytes(self, data: bytes) -> None:
-        """Decode raw LCM bytes into TwistStamped and update sensor state."""
-        msg = TwistStamped.lcm_decode(data)
+        """Decode CDR bytes into TwistStamped and update sensor state."""
+        msg = cdr_decode(data, TwistStamped)
         with self._lock:
             self._current_sensors = msg
 
     def _on_button_bytes(self, data: bytes) -> None:
-        """Decode raw LCM bytes into Bool and update button state."""
-        msg = Bool.lcm_decode(data)
+        """Decode CDR bytes into Bool and update button state."""
+        msg = cdr_decode(data, Bool)
         with self._lock:
             self._teleop_button = bool(msg.data)
 
@@ -250,7 +275,18 @@ class PhoneTeleopModule(Module):
         if current is None or initial is None:
             return None
 
-        delta: Twist = Twist(current) - Twist(initial)
+        delta = Twist(
+            Vector3(
+                current.twist.linear.x - initial.twist.linear.x,
+                current.twist.linear.y - initial.twist.linear.y,
+                current.twist.linear.z - initial.twist.linear.z,
+            ),
+            Vector3(
+                current.twist.angular.x - initial.twist.angular.x,
+                current.twist.angular.y - initial.twist.angular.y,
+                current.twist.angular.z - initial.twist.angular.z,
+            ),
+        )
 
         # Handle yaw wraparound (linear.z = yaw, 0-360 degrees)
         d_yaw = delta.linear.z
@@ -261,17 +297,18 @@ class PhoneTeleopModule(Module):
 
         cfg = self.config
         return TwistStamped(
-            ts=current.ts,
-            frame_id="phone",
-            linear=Vector3(
-                x=-delta.linear.y * cfg.linear_gain,  # pitch forward -> drive forward
-                y=-delta.linear.x * cfg.linear_gain,  # roll right -> strafe right
-                z=d_yaw * cfg.linear_gain,  # yaw delta
-            ),
-            angular=Vector3(
-                x=current.angular.x * cfg.angular_gain,
-                y=current.angular.y * cfg.angular_gain,
-                z=current.angular.z * cfg.angular_gain,
+            header=Header(stamp=deepcopy(current.header.stamp), frame_id="phone"),
+            twist=Twist(
+                linear=Vector3(
+                    -delta.linear.y * cfg.linear_gain,
+                    -delta.linear.x * cfg.linear_gain,
+                    d_yaw * cfg.linear_gain,
+                ),
+                angular=Vector3(
+                    current.twist.angular.x * cfg.angular_gain,
+                    current.twist.angular.y * cfg.angular_gain,
+                    current.twist.angular.z * cfg.angular_gain,
+                ),
             ),
         )
 

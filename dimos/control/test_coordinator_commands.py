@@ -29,8 +29,10 @@ the command table exists.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import time
 from typing import Any
 
+import numpy as np
 import pytest
 
 import dimos.control.coordinator as coord_mod
@@ -41,8 +43,9 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 ARM_JOINTS = frozenset({"arm/joint1", "arm/joint2"})
 
@@ -126,10 +129,23 @@ class CommandRecordingTask(BaseControlTask):
 
 def _trajectory() -> JointTrajectory:
     return JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=["arm/joint1", "arm/joint2"],
         points=[
-            TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0]),
-            TrajectoryPoint(time_from_start=1.0, positions=[0.1, 0.2]),
+            JointTrajectoryPoint(
+                positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray(np.zeros(len([0.0, 0.0])), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
+            ),
+            JointTrajectoryPoint(
+                positions=np.asarray([0.1, 0.2], dtype=np.float64),
+                velocities=np.asarray(np.zeros(len([0.1, 0.2])), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(1.0),
+            ),
         ],
     )
 

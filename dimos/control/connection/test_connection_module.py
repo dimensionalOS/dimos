@@ -27,6 +27,7 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.control._control_test_helpers import FakeArm, FakeArmConfig
@@ -36,12 +37,11 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.ports import JointPort, MotorPort, TwistPort
 from dimos.control.contract.validate import DescriptionError
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.message_utils import time as message_time
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos.messages.std_msgs.msg import Header
 
 JOINT1 = "mock/joint1/position"
 DEADMAN_S = 0.05
@@ -96,7 +96,16 @@ class Rig:
     def move(self, **positions: float) -> None:
         """Send joint positions on ``position_command``, e.g. ``move(joint1=0.5)``."""
         names = [f"{self.module.config.source}/{joint}" for joint in positions]
-        self.send("position_command", JointState(name=names, position=list(positions.values())))
+        self.send(
+            "position_command",
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray(list(positions.values()), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
 
     def sent(self, port: str) -> list[Any]:
         return list(self.ports[port].sent)
@@ -212,7 +221,9 @@ class TwoJointStateOutputs(Watched):
 
 
 class TwoBasesConfig(BodyAndBaseConfig):
-    cmd_vel: TwistPort = TwistPort(range=Twist())
+    cmd_vel: TwistPort = TwistPort(
+        range=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+    )
 
 
 class TwoBases(BodyAndBase):
@@ -282,7 +293,7 @@ def test_readings_go_out_as_joint_states_at_about_the_state_rate(
     msg = r.sent("joint_state")[0]
     assert isinstance(msg, JointState)
     assert msg.name == [f"mock/joint{i}" for i in range(1, 8)]
-    assert msg.position == msg.velocity == msg.effort == [0.0] * 7
+    assert list(msg.position) == list(msg.velocity) == list(msg.effort) == [0.0] * 7
 
 
 def test_a_position_command_is_written_and_the_readings_follow(rig: Callable[..., Rig]) -> None:
@@ -297,7 +308,14 @@ def test_motor_base_and_position_commands_become_named_values(rig: Callable[...,
     r = rig(BodyAndBase)
     r.send(
         "motor_command",
-        MotorCommandArray(q=[0.1, 0.2], dq=[0.3, 0.4], kp=[30, 31], kd=[1, 2], tau=[5, 6]),
+        MotorCommandArray(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            q=np.asarray([0.1, 0.2], dtype=np.float64),
+            dq=np.asarray([0.3, 0.4], dtype=np.float64),
+            kp=np.asarray([30, 31], dtype=np.float64),
+            kd=np.asarray([1, 2], dtype=np.float64),
+            tau=np.asarray([5, 6], dtype=np.float64),
+        ),
     )
     assert wait_until(lambda: len(writes(r)) == 1)
     assert writes(r)[0] == {
@@ -315,7 +333,16 @@ def test_motor_base_and_position_commands_become_named_values(rig: Callable[...,
     r.send("base_command", Twist(linear=Vector3(0.5, 0.1, 0.0), angular=Vector3(0.0, 0.0, 0.2)))
     assert wait_until(lambda: len(writes(r)) == 2)
     assert writes(r)[1] == {"g1/base/vx": 0.5, "g1/base/vy": 0.1, "g1/base/wz": 0.2}
-    r.send("position_command", JointState(name=["g1/joint2"], position=[0.7]))
+    r.send(
+        "position_command",
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["g1/joint2"],
+            position=np.asarray([0.7], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
     assert wait_until(lambda: writes(r)[-1] == {"g1/joint2/position": 0.7})
 
 
@@ -328,7 +355,16 @@ def test_the_same_joint_on_a_position_and_a_velocity_port_takes_both(
     assert joint.command_interfaces == (Interface.POSITION, Interface.VELOCITY)
     assert r.module.description.limits["mock/joint1/velocity"] == Limits(-2.0, 2.0)
     # The velocity port reads only the velocity field.
-    r.send("velocity_command", JointState(name=["mock/joint1"], position=[9.0], velocity=[0.5]))
+    r.send(
+        "velocity_command",
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["mock/joint1"],
+            position=np.asarray([9.0], dtype=np.float64),
+            velocity=np.asarray([0.5], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
     assert wait_until(lambda: writes(r) == [{"mock/joint1/velocity": 0.5}])
     r.move(joint1=0.3)
     assert wait_until(lambda: writes(r)[-1] == {JOINT1: 0.3})
@@ -351,11 +387,11 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     r.module.publish_state(readings)
     [joints] = r.sent("joint_state")
     assert joints.name == ["g1/joint1", "g1/joint2"]
-    assert joints.position == joints.velocity == joints.effort == [0.1, 0.1]
+    assert list(joints.position) == list(joints.velocity) == list(joints.effort) == [0.1, 0.1]
     [odom] = r.sent("odom")
     assert isinstance(odom, PoseStamped)
-    assert (odom.position.x, odom.position.y) == (1.0, 2.0)
-    assert odom.orientation.z == pytest.approx(math.sin(0.25))
+    assert (odom.pose.position.x, odom.pose.position.y) == (1.0, 2.0)
+    assert odom.pose.orientation.z == pytest.approx(math.sin(0.25))
     [speed] = r.sent("base_velocity")
     assert isinstance(speed, Twist)
     assert (speed.linear.x, speed.linear.y, speed.angular.z) == (0.4, -0.1, 0.2)
@@ -363,8 +399,8 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     assert isinstance(imu, Imu)
     assert (imu.orientation.w, imu.angular_velocity.z, imu.linear_acceleration.z) == (1.0, 0.3, 9.8)
     # Frames: the module's own for the IMU, the odometry frame for the pose.
-    assert imu.frame_id == "PushedBodyAndBase"
-    assert odom.frame_id == "odom"
+    assert imu.header.frame_id == "PushedBodyAndBase"
+    assert odom.header.frame_id == "odom"
 
 
 def test_reading_frames_follow_the_module_config(rig: Callable[..., Rig]) -> None:
@@ -372,8 +408,8 @@ def test_reading_frames_follow_the_module_config(rig: Callable[..., Rig]) -> Non
     r.module.publish_state(BODY_AND_BASE_READINGS)
     [imu] = r.sent("imu")
     [odom] = r.sent("odom")
-    assert imu.frame_id == "r1/pelvis"
-    assert odom.frame_id == "r1/odom"
+    assert imu.header.frame_id == "r1/pelvis"
+    assert odom.header.frame_id == "r1/odom"
 
 
 def test_the_mock_base_reports_the_speed_it_was_last_told(rig: Callable[..., Rig]) -> None:
@@ -386,8 +422,26 @@ def test_the_mock_base_reports_the_speed_it_was_last_told(rig: Callable[..., Rig
 
 def test_joints_of_other_robots_are_ignored(rig: Callable[..., Rig]) -> None:
     r = rig()
-    r.send("position_command", JointState(name=["other/joint1"], position=[9.0]))
-    r.send("position_command", JointState(name=["other/joint1", "mock/joint1"], position=[9, 0.5]))
+    r.send(
+        "position_command",
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["other/joint1"],
+            position=np.asarray([9.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
+    r.send(
+        "position_command",
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["other/joint1", "mock/joint1"],
+            position=np.asarray([9, 0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
     assert wait_until(lambda: len(writes(r)) == 1)
     assert writes(r) == [{JOINT1: 0.5}]
     assert r.module.status().last_rejection is None
@@ -412,7 +466,7 @@ def test_only_the_newest_command_is_written_when_write_is_slow(
 
 def test_a_base_command_past_its_limit_is_pulled_back_to_it(rig: Callable[..., Rig]) -> None:
     r = rig(BodyAndBase)
-    r.send("base_command", Twist(linear=Vector3(5.0, 0.0, 0.0)))
+    r.send("base_command", Twist(linear=Vector3(5.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)))
     assert wait_until(lambda: len(writes(r)) == 1)
     assert writes(r)[0]["g1/base/vx"] == 1.0
 
@@ -430,11 +484,38 @@ def test_an_arm_command_past_its_limit_is_refused_and_shown(rig: Callable[..., R
     [
         (
             "position_command",
-            JointState(name=["mock/joint1", "mock/joint2"], position=[0.1]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["mock/joint1", "mock/joint2"],
+                position=np.asarray([0.1], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             "names",
         ),
-        ("position_command", JointState(name=["mock/joint1"], position=[math.nan]), "non-finite"),
-        ("motor_command", MotorCommandArray(q=[0.1]), "expected 2"),
+        (
+            "position_command",
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["mock/joint1"],
+                position=np.asarray([math.nan], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            "non-finite",
+        ),
+        (
+            "motor_command",
+            MotorCommandArray(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                q=np.asarray([0.1], dtype=np.float64),
+                dq=np.asarray([], dtype=np.float64),
+                kp=np.asarray([], dtype=np.float64),
+                kd=np.asarray([], dtype=np.float64),
+                tau=np.asarray([], dtype=np.float64),
+            ),
+            "expected 2",
+        ),
     ],
 )
 def test_a_malformed_message_is_refused_and_shown(
@@ -474,8 +555,26 @@ def test_commands_for_other_robots_do_not_feed_the_deadman(rig: Callable[..., Ri
     r.move(joint1=0.1)
     deadline = time.monotonic() + 1.0
     while r.module.halts == 0 and time.monotonic() < deadline:
-        r.send("position_command", JointState(name=["other/joint1"], position=[0.0]))
-        r.send("position_command", JointState())
+        r.send(
+            "position_command",
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["other/joint1"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
+        r.send(
+            "position_command",
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=[],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
         time.sleep(DEADMAN_S / 5)
     assert r.module.halts == 1
 
@@ -488,8 +587,15 @@ def test_any_accepted_command_feeds_the_one_deadman(rig: Callable[..., Rig], moc
     # Advance the timer's clock only after each command reaches the driver.
     # A slow producer thread must not turn this into a real deadline miss.
     clock = mocker.patch.object(loop, "time", return_value=loop.time())
-    body = MotorCommandArray(q=[0.1, 0.2], dq=[0, 0], kp=[1, 1], kd=[1, 1], tau=[0, 0])
-    forward = Twist(Vector3(0.1, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
+    body = MotorCommandArray(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        q=np.asarray([0.1, 0.2], dtype=np.float64),
+        dq=np.asarray([0, 0], dtype=np.float64),
+        kp=np.asarray([1, 1], dtype=np.float64),
+        kd=np.asarray([1, 1], dtype=np.float64),
+        tau=np.asarray([0, 0], dtype=np.float64),
+    )
+    forward = Twist(linear=Vector3(0.1, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
     r.send("motor_command", body)
     assert wait_until(lambda: len(writes(r)) == 1)
     for count in range(2, 7):

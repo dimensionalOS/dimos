@@ -21,12 +21,15 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_cdrgen.registry import encode
 import pytest
 
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
+from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
 @pytest.fixture
@@ -43,7 +46,19 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[HostedStatsModule]:
 
 
 def _cmd(vx: float = 0.3, ts: float = 123.0) -> bytes:
-    return TwistStamped(ts=ts, linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, 0)).lcm_encode()
+    message = TwistStamped(
+        Header(message_time.time_from_seconds(ts), ""), Twist(Vector3(vx, 0, 0), Vector3(0, 0, 0))
+    )
+    return encode_data_frame(
+        FrameHeader(
+            ch="twist",
+            seq=0,
+            ts=ts,
+            delivery="latest",
+            meta={"encoding": "cdr", "type": TwistStamped.__msgtype__},
+        ),
+        encode(message),
+    )
 
 
 def test_telemetry_without_go2(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,8 +79,8 @@ def test_cmd_raw_republishes_stamped_for_recorder(module: HostedStatsModule) -> 
     module._on_cmd_raw(_cmd(vx=0.5, ts=42.0))
     module.cmd_vel_stamped.publish.assert_called_once()
     published = module.cmd_vel_stamped.publish.call_args[0][0]
-    assert published.ts == 42.0
-    assert published.linear.x == 0.5
+    assert message_time.to_seconds(published.header.stamp) == 42.0
+    assert published.twist.linear.x == 0.5
 
 
 def test_cmd_raw_records_stats(module: HostedStatsModule) -> None:

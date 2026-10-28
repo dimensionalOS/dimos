@@ -14,8 +14,11 @@
 
 """Tests for ManipulationModule plan-execution result projection."""
 
+from copy import deepcopy
+import time
 from unittest.mock import DEFAULT, MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -30,27 +33,34 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.visualization.operator import ManipulationOperator
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition
 
 
 def _plan(final_position: float = 1.0, joint_name: str = "arm/j0") -> GeneratedPlan:
     names = [joint_name]
     trajectory = JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=names,
         points=[
-            TrajectoryPoint(
-                positions=[0.0],
-                velocities=[0.0],
-                time_from_start=0.0,
+            JointTrajectoryPoint(
+                positions=np.asarray([0.0], dtype=np.float64),
+                velocities=np.asarray([0.0], dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
             ),
-            TrajectoryPoint(
-                positions=[final_position],
-                velocities=[0.0],
-                time_from_start=1.0,
+            JointTrajectoryPoint(
+                positions=np.asarray([final_position], dtype=np.float64),
+                velocities=np.asarray([0.0], dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(1.0),
             ),
         ],
     )
@@ -58,8 +68,20 @@ def _plan(final_position: float = 1.0, joint_name: str = "arm/j0") -> GeneratedP
         group_ids=("manipulator",),
         trajectory=trajectory,
         path=[
-            JointState(name=names, position=[0.0]),
-            JointState(name=names, position=[final_position]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([final_position], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         ],
         status=PlanningStatus.SUCCESS,
     )
@@ -149,7 +171,14 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
     coordinator.task_invoke.side_effect = lambda task, method, args: (
         TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
         if method == "execute"
-        else TrajectoryStatus(state=state)
+        else TrajectoryStatus(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            state=state,
+            progress=0.0,
+            time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+            time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+            error="",
+        )
     )
     module = _module_with_coordinator(coordinator, module_factory)
     planar_base = PlanarBaseDefinition(
@@ -165,13 +194,38 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
     module._initialize_execution()
     names = ["arm/j0", *planar_base.joint_names]
     points = [
-        TrajectoryPoint(positions=[0.0] * 4, time_from_start=0.0),
-        TrajectoryPoint(positions=[1.0] * 4, time_from_start=1.0),
+        JointTrajectoryPoint(
+            positions=np.asarray([0.0] * 4, dtype=np.float64),
+            velocities=np.asarray(np.zeros(len([0.0] * 4)), dtype=np.float64),
+            accelerations=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+            time_from_start=message_time.duration_from_seconds(0.0),
+        ),
+        JointTrajectoryPoint(
+            positions=np.asarray([1.0] * 4, dtype=np.float64),
+            velocities=np.asarray(np.zeros(len([1.0] * 4)), dtype=np.float64),
+            accelerations=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+            time_from_start=message_time.duration_from_seconds(1.0),
+        ),
     ]
     module._last_plan = GeneratedPlan(
         group_ids=("manipulator",),
-        trajectory=JointTrajectory(joint_names=names, points=points),
-        path=[JointState(name=names, position=point.positions) for point in points],
+        trajectory=JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            joint_names=names,
+            points=points,
+        ),
+        path=[
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray(point.positions, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+            for point in points
+        ],
         status=PlanningStatus.SUCCESS,
     )
 
@@ -249,10 +303,24 @@ def test_status_refresh_observes_nonblocking_execution(module_factory, reader, t
         return module.get_state().operation_status.name
 
     assert operator.execute(_plan()) is True
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=TrajectoryState.EXECUTING,
+        progress=0.0,
+        time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+        time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+        error="",
+    )
     assert read_status() == "EXECUTING"
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=terminal)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=terminal,
+        progress=0.0,
+        time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+        time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+        error="",
+    )
     assert read_status() == operation
     assert module.get_state().execution_status.name == terminal.name
     coordinator.task_invoke.reset_mock()

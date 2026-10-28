@@ -30,7 +30,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 import pickle
+import time
 
+import numpy as np
 import pytest
 
 from dimos.control.contract.conftest import ARM_JOINTS, G1_JOINTS
@@ -50,7 +52,7 @@ from dimos.control.contract.validate import (
     validate_command,
     validate_description,
 )
-from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.messages.dimos_msgs.msg import ControlValues
 from dimos.robot.assets.model import RobotModel
 
 CHASSIS_LIMITS = {
@@ -124,11 +126,12 @@ def preset_chassis() -> ControlDescription:
 
 def command(values: dict[str, float]) -> ControlValues:
     return ControlValues(
-        source="coordinator",
+        source_ts=time.time(),
         epoch=0,
         sequence=1,
         interface_names=list(values),
-        values=list(values.values()),
+        values=np.asarray(list(values.values()), dtype=np.float64),
+        source="coordinator",
     )
 
 

@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
@@ -43,11 +44,10 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_INSTALL_HINT,
     VISER_URDF_INSTALL_HINT,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry
+from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -396,7 +396,10 @@ class ViserManipulationScene:
         )
         for rank in range(start, stop):
             pose = candidates[rank].pose
-            rotation = np.asarray(pose.orientation.to_rotation_matrix(), dtype=np.float32)
+            rotation = np.asarray(
+                Rotation.from_quat(geometry.quaternion_array(pose.orientation)).as_matrix(),
+                dtype=np.float32,
+            )
             origin = np.asarray(
                 [pose.position.x, pose.position.y, pose.position.z], dtype=np.float32
             )
@@ -448,12 +451,12 @@ class ViserManipulationScene:
     ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
         pose = obstacle.pose
         return (
-            (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            (float(pose.pose.position.x), float(pose.pose.position.y), float(pose.pose.position.z)),
             (
-                float(pose.orientation.w),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
+                float(pose.pose.orientation.w),
+                float(pose.pose.orientation.x),
+                float(pose.pose.orientation.y),
+                float(pose.pose.orientation.z),
             ),
         )
 
@@ -661,14 +664,14 @@ class ViserManipulationScene:
                 return
             self._ensure_robot_urdfs(config)
             current = self._urdfs.get("current")
-            self.set_urdf_joints(current, config.joint_names, joint_state.position)
+            self.set_urdf_joints(current, config.joint_names, joint_state.position.tolist())
             if self._target_tracks_current:
-                self._set_target_joints(config.joint_names, joint_state.position)
+                self._set_target_joints(config.joint_names, joint_state.position.tolist())
                 self._set_target_visibility(self._target_active)
         self.set_urdf_joints(
             self._collision_fallback_urdf,
             config.joint_names,
-            joint_state.position,
+            joint_state.position.tolist(),
         )
 
     def cancel_preview_animation(self) -> None:
@@ -980,7 +983,7 @@ class ViserManipulationScene:
         key = f"{kind}:base_pose"
         if key in self._root_frames:
             return
-        pose = config.base_pose
+        pose = config.base_pose.pose
         frame_name = {
             "current": "/robots/model/current/base_pose",
             "target": "/targets/model/target/base_pose",
@@ -1004,7 +1007,8 @@ class ViserManipulationScene:
 
     @staticmethod
     def _has_non_identity_base_pose(config: RobotModelConfig) -> bool:
-        pose = getattr(config, "base_pose", None)
+        stamped = getattr(config, "base_pose", None)
+        pose = stamped.pose if stamped is not None else None
         if pose is None:
             return False
         return any(

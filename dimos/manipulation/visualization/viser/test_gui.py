@@ -21,7 +21,13 @@ from pathlib import Path
 from threading import Barrier, Lock
 import time
 
+import numpy as np
 import pytest
+
+from dimos.message_utils import time as message_time
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
@@ -61,10 +67,10 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationWorker,
     TargetStatus,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
@@ -264,13 +270,35 @@ def executable_gui(monkeypatch, mocker):
         plan=GeneratedPlan(
             group_ids=gui.state.selected_group_ids,
             trajectory=JointTrajectory(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 joint_names=["arm/j0"],
                 points=[
-                    TrajectoryPoint(positions=[0.0], time_from_start=0.0),
-                    TrajectoryPoint(positions=[1.0], time_from_start=1.0),
+                    JointTrajectoryPoint(
+                        positions=np.asarray([0.0], dtype=np.float64),
+                        velocities=np.asarray(np.zeros(len([0.0])), dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(0.0),
+                    ),
+                    JointTrajectoryPoint(
+                        positions=np.asarray([1.0], dtype=np.float64),
+                        velocities=np.asarray(np.zeros(len([1.0])), dtype=np.float64),
+                        accelerations=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                        time_from_start=message_time.duration_from_seconds(1.0),
+                    ),
                 ],
             ),
-            path=[JointState(name=["arm/j0"], position=[value]) for value in (0.0, 1.0)],
+            path=[
+                JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=["arm/j0"],
+                    position=np.asarray([value], dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+                for value in (0.0, 1.0)
+            ],
             status=PlanningStatus.SUCCESS,
         ),
     )
@@ -353,7 +381,14 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     def invoke(task, method, args=None):
         if method == "execute":
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
-        return TrajectoryStatus(state=reported["state"])
+        return TrajectoryStatus(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            state=reported["state"],
+            progress=0.0,
+            time_elapsed=message_time.duration_from_seconds(0.0),
+            time_remaining=message_time.duration_from_seconds(0.0),
+            error="",
+        )
 
     mocker.patch.object(module._control_coordinator, "task_invoke", side_effect=invoke)
     cancel = mocker.spy(module, "cancel")
@@ -434,7 +469,11 @@ def test_planar_joint_controls_use_unbounded_translation_inputs_and_wrapped_yaw(
     )
     panel.state.selected_group_ids = (group.id,)
     panel.state.group_joint_targets[group.id] = JointState(
-        name=list(planar.joint_names), position=[6.0, -7.0, 4.0]
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=list(planar.joint_names),
+        position=np.asarray([6.0, -7.0, 4.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     controls = FakeJointGui()
 
@@ -606,8 +645,20 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            joint_names=[],
+            points=[],
+        ),
+        path=[
+            JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        ],
     )
 
     assert gui.state.can_execute() is True
@@ -643,8 +694,20 @@ def test_gui_selection_change_clears_invalidated_preview(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            joint_names=[],
+            points=[],
+        ),
+        path=[
+            JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        ],
     )
 
     gui._submit_preview()
@@ -679,8 +742,20 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            joint_names=[],
+            points=[],
+        ),
+        path=[
+            JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        ],
     )
 
     gui._submit_preview()

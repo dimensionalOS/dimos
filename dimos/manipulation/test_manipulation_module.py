@@ -21,9 +21,12 @@ They require Drake to be installed and will be skipped otherwise.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import importlib.util
+import time
 from unittest.mock import DEFAULT, MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -40,11 +43,12 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 pytestmark = pytest.mark.self_hosted
@@ -67,6 +71,7 @@ def xarm7_config():
 def joint_state_zeros():
     """Create a JointState message with zeros for XArm7."""
     return JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         name=[
             "joint1",
             "joint2",
@@ -76,9 +81,9 @@ def joint_state_zeros():
             "joint6",
             "joint7",
         ],
-        position=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        velocity=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        effort=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        position=np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        effort=np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
     )
 
 
@@ -96,7 +101,14 @@ def module(xarm7_config):
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         return DEFAULT
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=TrajectoryState.COMPLETED,
+        progress=0.0,
+        time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+        time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+        error="",
+    )
     coordinator.task_invoke.side_effect = invoke
     mod = ManipulationModule(
         model=xarm7_config,
@@ -148,7 +160,13 @@ class TestManipulationModuleIntegration:
         """Test planning to a joint configuration."""
         module._on_joint_state(joint_state_zeros)
 
-        target = JointState(position=[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        target = JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=[],
+            position=np.asarray([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
         result = module.plan_to_joints({"manipulator": target})
 
         assert result.succeeded, result.message
@@ -164,7 +182,17 @@ class TestManipulationModuleIntegration:
         """Test planning to an explicit planning-group joint target."""
         module._on_joint_state(joint_state_zeros)
 
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
 
         assert result.succeeded, result.message
         assert module._state == ManipulationState.COMPLETED
@@ -177,10 +205,7 @@ class TestManipulationModuleIntegration:
         """Test adding and removing obstacles."""
         module._on_joint_state(joint_state_zeros)
 
-        pose = Pose(
-            position=Vector3(0.5, 0.0, 0.3),
-            orientation=Quaternion(),  # default is identity (w=1)
-        )
+        pose = Pose(position=Point(0.5, 0.0, 0.3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
         obstacle_id = module.add_obstacle("test_box", pose, "box", [0.1, 0.1, 0.1])
 
         assert obstacle_id != ""
@@ -215,7 +240,17 @@ class TestManipulationModuleIntegration:
         """Test that execution preserves canonical model joint names."""
         module._on_joint_state(joint_state_zeros)
 
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
         assert result.succeeded, result.message
 
         assert module._last_plan is not None
@@ -233,7 +268,17 @@ class TestCoordinatorIntegration:
         """Test execute sends trajectory to coordinator."""
         module._on_joint_state(joint_state_zeros)
 
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
         assert result.succeeded, result.message
 
         result = module.execute()
@@ -252,7 +297,17 @@ class TestCoordinatorIntegration:
         """Test handling of coordinator rejection."""
         module._on_joint_state(joint_state_zeros)
 
-        plan_result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        plan_result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
         assert plan_result.succeeded, plan_result.message
 
         module._control_coordinator.execute_result = TrajectoryExecutionResult(
@@ -272,7 +327,17 @@ class TestCoordinatorIntegration:
         module._on_joint_state(joint_state_zeros)
 
         # Plan - should go through PLANNING -> COMPLETED
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
         assert result.succeeded, result.message
         assert module._state == ManipulationState.COMPLETED
 
@@ -281,7 +346,17 @@ class TestCoordinatorIntegration:
         assert module.execute().status is ExecutionStatus.NO_PLAN
 
         # Plan again
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=[],
+                    position=np.asarray([0.05] * 7, dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            }
+        )
         assert result.succeeded, result.message
 
         # Execute - should go to EXECUTING then COMPLETED

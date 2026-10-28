@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 from pathlib import Path as _FsPath
+import time
 from typing import Any, Literal
 
 from dimos.control.benchmarking.tuning import TuningConfig
@@ -42,11 +43,10 @@ from dimos.control.tasks.feedforward_gain_compensator import (
 from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import (
     ProgressPathReference,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Float32, Header
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -79,8 +79,11 @@ def _clamp(v: float, limit: float) -> float:
 
 def _pose_stamped(pose: tuple[float, float, float]) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(pose[0], pose[1], 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose[2])),
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(
+            position=Point(pose[0], pose[1], 0.0),
+            orientation=geometry.quaternion_from_euler(0.0, 0.0, pose[2]),
+        ),
     )
 
 
@@ -417,7 +420,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._reference = reference
         # Re-project onto the new path. _v_path deliberately carries over, so an
         # in-motion replan does not re-ramp from rest.
-        reference.advance(float(current_odom.position.x), float(current_odom.position.y))
+        reference.advance(float(current_odom.pose.position.x), float(current_odom.pose.position.y))
         self._last_t = None
         self._last_pose = None
         self._last_pose_t = None

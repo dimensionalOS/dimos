@@ -19,11 +19,15 @@ from dataclasses import replace
 from itertools import pairwise
 import math
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
+
+from dimos.message_utils import time as message_time
+from dimos.messages.std_msgs.msg import Header
 
 pytest.importorskip("roboplan.toppra")
 
@@ -53,7 +57,7 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted
@@ -150,12 +154,22 @@ def _selection_and_result(
         status=PlanningStatus.SUCCESS,
         path=[
             JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 name=list(names),
-                position=[positions_by_name[name][0] for name in names],
+                position=np.asarray(
+                    [positions_by_name[name][0] for name in names], dtype=np.float64
+                ),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
             JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 name=list(names),
-                position=[positions_by_name[name][1] for name in names],
+                position=np.asarray(
+                    [positions_by_name[name][1] for name in names], dtype=np.float64
+                ),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
         ],
     )
@@ -197,7 +211,7 @@ def test_roboplan_parametrizer_maps_composite_order_and_native_output(
     constructor.assert_called_once()
     native_path, options = native.generate.call_args.args
     assert native_path.joint_names == ["native_b", "native_a"]
-    assert [row.tolist() for row in native_path.positions] == [
+    assert [row.tolist() for row in list(native_path.positions)] == [
         [0.1, 0.0],
         [0.4, 0.3],
     ]
@@ -206,15 +220,15 @@ def test_roboplan_parametrizer_maps_composite_order_and_native_output(
     assert options.mode.name == "LinearBlend"
     assert options.max_blend_deviation == 0.0
     assert result.trajectory.joint_names == ["left/a", "right/b"]
-    assert [point.positions for point in result.trajectory.points] == [
+    assert [list(point.positions) for point in result.trajectory.points] == [
         [0.0, 0.1],
         [0.3, 0.4],
     ]
-    assert [point.velocities for point in result.trajectory.points] == [
+    assert [list(point.velocities) for point in result.trajectory.points] == [
         [0.0, 0.0],
         [0.2, 0.2],
     ]
-    assert [state.position for state in planning_result.path] == [
+    assert [list(state.position) for state in planning_result.path] == [
         [0.0, 0.1],
         [0.3, 0.4],
     ]
@@ -310,8 +324,20 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
     result = PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=[
-            JointState(name=list(selection.joint_names), position=start),
-            JointState(name=list(selection.joint_names), position=goal),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=list(selection.joint_names),
+                position=np.asarray(start, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=list(selection.joint_names),
+                position=np.asarray(goal, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         ],
     )
 

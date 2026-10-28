@@ -18,11 +18,16 @@ from pathlib import Path
 import pickle
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.message_utils import geometry
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -76,3 +81,51 @@ def test_partial_robot_model_overrides_preserve_pinned_settings(
     kwargs = parsed.module_kwargs(ManipulationModule.name)
     restored = RobotModelConfig(**kwargs["model"])
     assert restored.model == replace(model, **model_override)
+
+
+@pytest.mark.parametrize("payload_kind", ["flat", "generated", "canonical"])
+def test_nonzero_base_pose_survives_launcher_and_json_round_trip(tmp_path, payload_kind):
+    expected = PoseStamped(
+        Header(Time(123, 125000000), "map"),
+        Pose(Point(1.25, -2.5, 0.75), Quaternion(0.0, 0.0, 0.6, 0.8)),
+    )
+    payload = {
+        "flat": {
+            "position": [1.25, -2.5, 0.75],
+            "orientation": [0.0, 0.0, 0.6, 0.8],
+            "ts": 123.125,
+            "frame_id": "map",
+        },
+        "generated": expected,
+        "canonical": {
+            "header": {"stamp": {"sec": 123, "nanosec": 125000000}, "frame_id": "map"},
+            "pose": {
+                "position": {"x": 1.25, "y": -2.5, "z": 0.75},
+                "orientation": {"x": 0.0, "y": 0.0, "z": 0.6, "w": 0.8},
+            },
+        },
+    }[payload_kind]
+    config = RobotModelConfig(
+        model=RobotModel.from_file(tmp_path / "robot.urdf"), joint_names=[], base_pose=payload
+    )
+    parsed = BlueprintConfigParser(ManipulationModule.blueprint(model=config)).parse(environ={})
+    restored = RobotModelConfig(**parsed.module_kwargs(ManipulationModule.name)["model"])
+    restored = RobotModelConfig.model_validate_json(
+        restored.model_dump_json(exclude={"rpc_transport"})
+    )
+    assert (
+        restored.base_pose.header.frame_id,
+        restored.base_pose.header.stamp.sec,
+        restored.base_pose.header.stamp.nanosec,
+    ) == ("map", 123, 125000000)
+    assert restored.base_pose.pose == expected.pose
+    np.testing.assert_allclose(
+        geometry.pose_matrix(restored.base_pose.pose),
+        [
+            [0.28, -0.96, 0.0, 1.25],
+            [0.96, 0.28, 0.0, -2.5],
+            [0.0, 0.0, 1.0, 0.75],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        atol=1e-12,
+    )

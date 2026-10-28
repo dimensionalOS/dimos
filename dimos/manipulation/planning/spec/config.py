@@ -25,7 +25,9 @@ from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -48,7 +50,11 @@ class RobotModelConfig(ModuleConfig):
 
     model: RobotModel
     srdf_path: Path | None = None
-    base_pose: PoseStamped = Field(default_factory=PoseStamped)
+    base_pose: PoseStamped = Field(
+        default_factory=lambda: PoseStamped(
+            message_time.header_now(), Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+        )
+    )
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
@@ -68,7 +74,25 @@ class RobotModelConfig(ModuleConfig):
     @classmethod
     def _parse_base_pose(cls, value: Any) -> Any:
         """Accept a pose object or its JSON configuration across the launcher boundary."""
-        return PoseStamped(**value) if isinstance(value, dict) else value
+        if not isinstance(value, dict) or "pose" in value:
+            return value
+        position = value.get("position", (0.0, 0.0, 0.0))
+        orientation = value.get("orientation", (0.0, 0.0, 0.0, 1.0))
+        stamp = value.get("ts")
+        header = (
+            message_time.header_now(value.get("frame_id", ""))
+            if stamp is None
+            else Header(message_time.time_from_seconds(stamp), value.get("frame_id", ""))
+        )
+        return PoseStamped(
+            header=header,
+            pose=Pose(
+                position=Point(**position) if isinstance(position, dict) else Point(*position),
+                orientation=Quaternion(**orientation)
+                if isinstance(orientation, dict)
+                else Quaternion(*orientation),
+            ),
+        )
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""

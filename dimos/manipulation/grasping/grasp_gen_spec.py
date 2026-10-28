@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import PoseArray
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.spec.utils import Spec
 
 

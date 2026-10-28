@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+import time
 
 import numpy as np
 import pytest
@@ -27,10 +28,11 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
@@ -44,10 +46,23 @@ def requires_drake(test: Callable[..., None]) -> Callable[..., None]:
 
 def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
     return JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=names,
         points=[
-            TrajectoryPoint(time_from_start=0.0, positions=first, velocities=[0.0] * len(names)),
-            TrajectoryPoint(time_from_start=2.0, positions=second, velocities=[0.0] * len(names)),
+            JointTrajectoryPoint(
+                positions=np.asarray(first, dtype=np.float64),
+                velocities=np.asarray([0.0] * len(names), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
+            ),
+            JointTrajectoryPoint(
+                positions=np.asarray(second, dtype=np.float64),
+                velocities=np.asarray([0.0] * len(names), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(2.0),
+            ),
         ],
     )
 
@@ -127,7 +142,10 @@ def _config(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(path).with_default_joint_acceleration_limit(2.0),
-        base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        base_pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)),
+        ),
         joint_names=joints or ["joint1", "joint2"],
         base_link="base_link",
         planning_groups=groups,
@@ -218,7 +236,10 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=[2, 0, 0], orientation=[0, 0, 0, 1]),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(2, 0, 0), orientation=Quaternion(0, 0, 0, 1)),
+        ),
         dimensions=(0.1, 0.1, 0.1),
     )
     unnamed = replace(obstacle, name="")
@@ -237,14 +258,23 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     world.finalize()
     assert world.add_obstacle(unnamed) is None
     assert world.add_obstacle(obstacle) == "box"
-    joint_state = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    joint_state = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["joint1", "joint2"],
+        position=np.asarray([0.0, 0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     assert world.check_config_collision_free(joint_state)
     original_geometry_id = world._obstacles["box"].geometry_id
     assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("missing") is False
     assert world.update_obstacle(replace(obstacle, name="missing")) is False
     assert world.update_obstacle_pose("missing", obstacle.pose) is False
-    moved_pose = PoseStamped(position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    moved_pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
     assert world.update_obstacle_pose("box", moved_pose)
     assert world._obstacles["box"].geometry_id != original_geometry_id
     assert world.get_obstacles()[0].pose.position.x == pytest.approx(0.0)
@@ -276,7 +306,10 @@ def test_drake_obstacle_replacement_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)),
+        ),
         dimensions=(0.1, 0.1, 0.1),
     )
     world.add_obstacle(obstacle)
@@ -300,7 +333,9 @@ def test_drake_group_fk_uses_tip_link_and_unique_pose_group(tmp_path: Path) -> N
     _load(world, _config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
+    world.set_joint_state(
+        ctx, joint_state_utils.from_mapping({"name": ["joint1", "joint2"], "position": [0.0, 0.0]})
+    )
 
     group_pose = world.get_group_ee_pose(ctx, "arm")
     default_pose = world.get_ee_pose(ctx)
@@ -321,7 +356,10 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
         world,
         RobotModelConfig(
             model=RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0),
-            base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
+            base_pose=PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(position=Point(0, 0.5, 0), orientation=Quaternion(0, 0, 0, 1)),
+            ),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
             planning_groups=[_arm_group("joint1", "joint2")],
@@ -353,7 +391,10 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
                 .with_default_joint_acceleration_limit(2.0)
                 .with_planar_base(planar_base)
             ),
-            base_pose=PoseStamped(position=[0, 0, 0.5], orientation=[0, 0, 0, 1]),
+            base_pose=PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(position=Point(0, 0, 0.5), orientation=Quaternion(0, 0, 0, 1)),
+            ),
             joint_names=joint_names,
             base_link=planar_base.root_link,
             planning_groups=[
@@ -370,7 +411,13 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
     context = world.get_live_context()
     world.set_joint_state(
         context,
-        JointState(name=joint_names, position=[1.0, 2.0, np.pi / 2.0, 0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=joint_names,
+            position=np.asarray([1.0, 2.0, np.pi / 2.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
 
     original_root_pose = world.get_link_pose(context, "base_link")
@@ -399,7 +446,9 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
     )
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
+    world.set_joint_state(
+        ctx, joint_state_utils.from_mapping({"name": ["joint1", "joint2"], "position": [0.0, 0.0]})
+    )
 
     forward_jacobian = world.get_group_jacobian(ctx, "wrist_forward")
     reverse_jacobian = world.get_group_jacobian(ctx, "wrist_reverse")
@@ -456,7 +505,13 @@ def test_drake_animate_trajectory_projects_selected_joints_on_shared_ticks(
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.1, 0.2], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     updates: list[list[float]] = []
     visibility: list[bool] = []
@@ -489,7 +544,13 @@ def test_drake_animate_trajectory_validates_before_visibility_and_cleans_up(
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     visibility: list[bool] = []
     monkeypatch.setattr(world, "_set_preview_visibility", visibility.append)
@@ -520,7 +581,13 @@ def test_drake_cancel_preview_hides_model_before_animation_resumes(
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     visibility: list[bool] = []
     snapshots_during_sleep: list[list[bool]] = []
@@ -550,7 +617,13 @@ def test_drake_animate_trajectory_cancellation_stops_stale_frames(
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint1", "joint2"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     updates: list[list[float]] = []
     visibility: list[bool] = []
