@@ -1279,7 +1279,13 @@ fn log(r: &Mat3) -> Vec3 {
 /// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
 /// (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    handle: JoinHandle<(Solution, f64, Vec<u64>)>,
+    #[allow(clippy::type_complexity)]
+    handle: JoinHandle<(
+        Solution,
+        f64,
+        Vec<u64>,
+        Option<(crate::odometry_noise::Mixture, usize)>,
+    )>,
     keyframes: usize,
 }
 
@@ -1518,6 +1524,7 @@ impl GscPgo {
             },
         };
         let solved = self.solved.clone();
+        let mixture_job = self.mixture_job();
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
@@ -1543,11 +1550,26 @@ impl GscPgo {
                         &solve_config,
                     )
                 };
+                // the mixture over every committed closure's innovation needs no solve, so it is fitted beside it
+                let mixture = mixture_job.and_then(
+                    |(innovations, prior, density, start, closure_start, count)| {
+                        crate::odometry_noise::fit_mixture(
+                            &innovations,
+                            prior,
+                            true,
+                            true,
+                            density,
+                            start,
+                            closure_start,
+                        )
+                        .map(|m| (m, count))
+                    },
+                );
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids)
+                (solution, seconds, landmark_ids, mixture)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -1574,8 +1596,11 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let (solution, seconds, landmark_ids) =
+        let (solution, seconds, landmark_ids, mixture) =
             solving.handle.join().expect("pose graph solve panicked");
+        if mixture.is_some() {
+            self.odometry_noise_mixture = mixture;
+        }
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()

@@ -32,6 +32,8 @@ pub mod landmarks;
 pub mod loop_overlap;
 pub mod mat3;
 pub mod odometry_noise;
+#[cfg(test)]
+mod odometry_noise_overconfident;
 pub mod pointcloud;
 pub mod proportional_confidence;
 #[cfg(feature = "native")]

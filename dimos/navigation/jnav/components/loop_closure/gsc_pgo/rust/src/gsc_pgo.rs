@@ -120,6 +120,11 @@ pub struct ClosureCandidateDiag {
     pub odometry_noise: [f64; 4],
     /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_noise_for_gate`).
     pub odometry_noise_gate: [f64; 4],
+    /// The right/wrong mixture's odometry noise over every committed closure (`odometry_noise_innovation_check`; 1
+    /// before one), its share of right closures, and whether it replaced the residual estimate.
+    pub odometry_noise_mixture: [f64; 4],
+    pub odometry_noise_mixture_share: f64,
+    pub odometry_noise_from_mixture: bool,
     /// The closure noise scale when the search started (`GscPgo::closure_noise_scale`).
     pub closure_noise_scale: f64,
     /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
@@ -211,6 +216,9 @@ impl ClosureCandidateDiag {
             pressure: 0.0,
             odometry_noise: [1.0; 4],
             odometry_noise_gate: [1.0; 4],
+            odometry_noise_mixture: [1.0; 4],
+            odometry_noise_mixture_share: f64::NAN,
+            odometry_noise_from_mixture: false,
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
@@ -399,6 +407,14 @@ pub struct Config {
     /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
     /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
     pub odometry_noise_solve_lower_bound: bool,
+    /// When true (with `odometry_noise_from_closures`), the learned odometry noise must agree with every committed
+    /// closure's innovation against the raw odometry, which no solve's verdict filters: alongside each solve the
+    /// right/wrong mixture over them is fitted (`odometry_noise::fit_mixture`), and where the residual estimate lies
+    /// outside the mixture's region at `closure_gnc_inlier_probability` (its posterior ratio against chi-square with
+    /// four degrees of freedom) the mixture's estimate and spread replace it. An odometry stated too confident makes
+    /// the solve reject the very closures that would show it (none kept, no residual evidence), so without this the
+    /// residuals can never raise it; with it the disagreeing closures build up until the estimate must move.
+    pub odometry_noise_innovation_check: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -530,6 +546,7 @@ impl Default for Config {
             closure_uninformative_noise_upper_bound: false,
             closure_noise_from_residuals: false,
             odometry_noise_solve_lower_bound: false,
+            odometry_noise_innovation_check: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -593,6 +610,10 @@ pub struct GscPgo {
     pub(crate) odometry_noise_ln: [f64; 4],
     /// Each `odometry_noise_ln`'s posterior standard deviation once the residuals have measured it (the prior's before).
     pub(crate) odometry_noise_ln_sd: [Option<f64>; 4],
+    /// The newest right/wrong mixture over the first so many committed closures' innovations
+    /// (`odometry_noise_innovation_check`), and whether it replaced the residual estimate.
+    pub(crate) odometry_noise_mixture: Option<(crate::odometry_noise::Mixture, usize)>,
+    pub(crate) odometry_noise_from_mixture: bool,
     /// ln of the closure noise scale (0: a closure's variance is its ICP fitness).
     pub(crate) closure_noise_ln_scale: f64,
     /// ln of the closures' rotation variance scale apart from their translation's (`closure_noise_from_residuals`).
@@ -1106,6 +1127,79 @@ impl GscPgo {
         }
     }
 
+    /// The density of a wrong closure's innovation: uniform over the mapped box grown by a scan's mean reach (anywhere a
+    /// scan could have been matched to).
+    fn closure_outlier_density(&self) -> f64 {
+        let (reach_sum, reach_count) = self.keyframe_reach;
+        let reach = reach_sum / reach_count.max(1) as f64;
+        let volume: f64 = (0..3)
+            .map(|axis| {
+                let values = self.key_poses.iter().map(|k| k.translation_local[axis]);
+                let (low, high) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), v| {
+                    (l.min(v), h.max(v))
+                });
+                (high - low).max(0.0) + 2.0 * reach
+            })
+            .product();
+        1.0 / volume.max(f64::MIN_POSITIVE)
+    }
+
+    /// The first `count` committed closures' innovations against the raw odometry, whatever the solve made of them.
+    pub(crate) fn mixture_innovations(
+        &self,
+        count: usize,
+    ) -> Vec<crate::odometry_noise::Innovation> {
+        self.closure_innovations[..count.min(self.closure_innovations.len())]
+            .iter()
+            .filter(|n| {
+                n.v.iter()
+                    .chain(n.pieces.iter().flatten().flatten())
+                    .all(|x| x.is_finite())
+            })
+            .copied()
+            .collect()
+    }
+
+    /// The mixture fit to start a solve with (`odometry_noise_innovation_check`): every committed closure's innovation,
+    /// the prior spread, the wrong-closure density and the newest fit to start from; None when off.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn mixture_job(
+        &self,
+    ) -> Option<(
+        Vec<crate::odometry_noise::Innovation>,
+        [f64; 4],
+        f64,
+        [f64; 4],
+        f64,
+        usize,
+    )> {
+        if !(self.config.odometry_noise_from_closures
+            && self.config.odometry_noise_innovation_check)
+        {
+            return None;
+        }
+        let count = self.closure_innovations.len();
+        let (start, closure_start) = self
+            .odometry_noise_mixture
+            .map_or(([0.0; 4], 0.0), |(m, _)| (m.odometry, m.closure));
+        Some((
+            self.mixture_innovations(count),
+            self.odometry_noise_prior(),
+            self.closure_outlier_density(),
+            start,
+            closure_start,
+            count,
+        ))
+    }
+
+    fn mixture_diagnostics(&self, diag: &mut ClosureCandidateDiag) {
+        if let Some((m, _)) = self.odometry_noise_mixture {
+            diag.odometry_noise_mixture = m.odometry.map(f64::exp);
+            diag.odometry_noise_mixture_share = m.share;
+        }
+        diag.odometry_noise_from_mixture = self.odometry_noise_from_mixture;
+    }
+
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
     /// re-solve when either moved by more than its own standard error since the solve began, so the graph is solved at
     /// the noise its closures imply.
@@ -1134,17 +1228,7 @@ impl GscPgo {
             })
             .map(|(_, &n)| n)
             .collect();
-        let (reach_sum, reach_count) = self.keyframe_reach;
-        let reach = reach_sum / reach_count.max(1) as f64;
-        let volume: f64 = (0..3)
-            .map(|axis| {
-                let values = self.key_poses.iter().map(|k| k.translation_local[axis]);
-                let (low, high) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), v| {
-                    (l.min(v), h.max(v))
-                });
-                (high - low).max(0.0) + 2.0 * reach
-            })
-            .product();
+        let outlier_density = self.closure_outlier_density();
         // the closure scale from the closures' innovations (fitted with the odometry's noise held where it is)
         // the closures' rotation and translation scales from the same residuals (`closure_noise_from_residuals`)
         let mut closure_redundancy = [0.0; 2];
@@ -1184,7 +1268,7 @@ impl GscPgo {
                 self.odometry_noise_prior(),
                 false,
                 true,
-                1.0 / volume.max(f64::MIN_POSITIVE),
+                outlier_density,
             ) {
                 Some((_, ln_closure, _)) => ln_closure,
                 None => self.closure_noise_ln_scale,
@@ -1222,14 +1306,41 @@ impl GscPgo {
                 }
             }
         }
+        // the residual estimate against every committed closure's innovation (`odometry_noise_innovation_check`): outside
+        // the mixture's region, the solve's verdicts reached with too low a noise have hidden the closures that disagree
+        let mut mixture_spread = None;
+        self.odometry_noise_from_mixture = false;
+        if let (true, Some((mixture, count))) = (
+            fit_odometry && self.config.odometry_noise_innovation_check,
+            self.odometry_noise_mixture,
+        ) {
+            let excess = crate::odometry_noise::mixture_excess(
+                &self.mixture_innovations(count),
+                self.odometry_noise_prior(),
+                true,
+                outlier_density,
+                ln_odometry,
+                &mixture,
+            );
+            let cutoff =
+                crate::landmarks::chi2_inverse(self.config.closure_gnc_inlier_probability, 4);
+            if excess > cutoff {
+                ln_odometry = mixture.odometry;
+                self.odometry_noise_ln_sd = mixture.odometry_sd.map(Some);
+                self.odometry_noise_from_mixture = true;
+                mixture_spread = Some(mixture.odometry_sd);
+            }
+        }
         // what the next solve would use (the estimate, or its lower bound) against what the last one did
         let previous = std::mem::replace(&mut self.odometry_noise_ln, ln_odometry);
         let next_solve = self.odometry_noise_for_solve().map(f64::ln);
         self.odometry_noise_ln = previous;
         let moved = (0..4).any(|c| {
-            redundancy[c] > 0.5
-                && (next_solve[c] - self.odometry_noise_ln_dispatched[c]).abs()
-                    > (2.0 / redundancy[c]).sqrt()
+            let step = (next_solve[c] - self.odometry_noise_ln_dispatched[c]).abs();
+            match mixture_spread {
+                Some(sd) => step > sd[c],
+                None => redundancy[c] > 0.5 && step > (2.0 / redundancy[c]).sqrt(),
+            }
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
             > if self.config.closure_noise_from_residuals {
                 (2.0 / closure_redundancy[1].max(0.5)).sqrt()
@@ -1293,6 +1404,7 @@ impl GscPgo {
             diag.odometry_noise = self.odometry_noise();
             diag.odometry_noise_gate = self.odometry_noise_for_gate();
             diag.closure_noise_scale = self.closure_noise_scale();
+            self.mixture_diagnostics(&mut diag);
         }
         if diag.target_id >= 0 {
             let (source, target) = (diag.source_id, diag.target_id as usize);
@@ -1556,6 +1668,7 @@ impl GscPgo {
         diag.odometry_noise = self.odometry_noise();
         diag.odometry_noise_gate = self.odometry_noise_for_gate();
         diag.closure_noise_scale = self.closure_noise_scale();
+        self.mixture_diagnostics(&mut diag);
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
         // the doubling step that covers max keyframes x that chance
         let model = self.overlap_model(diag.source_id);
@@ -1764,7 +1877,7 @@ impl GscPgo {
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.
-    fn commit_closure(
+    pub(crate) fn commit_closure(
         &mut self,
         source_id: usize,
         target_id: usize,
