@@ -424,8 +424,8 @@ sidebar.test.ts drives a `Sidebar` through a real `TuiAltScreen` with an in-memo
 
 [menu/](menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](menu/base.ts). `MenuView` in
 view.ts is the full-screen view main.ts opens. Keys 1 to 9 pick a tab, Up and Down pick a row, Enter opens the row's
-detail, a row's own keys run its actions, and Esc closes the detail and then the view. A failed key action lands in
-`Feedback` as a refusal.
+detail, a row's own keys run its actions, and Esc closes the detail and then the view. A tab longer than the screen
+shows the rows around the selected one. A failed key action lands in `Feedback` as a refusal.
 
 | Key | Tab           | File                                         | Rows                                                                                                  |
 | --- | ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |

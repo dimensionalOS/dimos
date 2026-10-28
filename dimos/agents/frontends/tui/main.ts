@@ -626,6 +626,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         },
         close: () => closeFullScreen?.(),
         requestRender,
+        height: () => device.rows - 1,
       });
       menuView = view;
       fullScreen("menu", view, false, () => {

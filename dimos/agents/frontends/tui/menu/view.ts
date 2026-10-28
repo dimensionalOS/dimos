@@ -40,6 +40,8 @@ type MenuViewOptions = {
   readonly attach: (conversation: ConversationId) => void;
   readonly close: () => void;
   readonly requestRender: () => void;
+  /** The screen rows the menu fills below the status line. */
+  readonly height: () => number;
 };
 
 /**
@@ -110,18 +112,25 @@ export class MenuView implements Component {
     } else {
       const rows = this.rows();
       this.selected = Math.min(this.selected, Math.max(0, rows.length - 1));
-      if (rows.length === 0) lines.push(muted("None"));
-      rows.forEach((row, index) =>
-        lines.push((index === this.selected ? accent("› ") : "  ") + levelColor(row.level, row.text)),
-      );
       const newest = this.options.ui.actions.value.at(-1);
-      lines.push("");
+      const footer = [""];
       if (
         newest !== undefined &&
         !(TABS[this.tab] === overviewTab && (newest.status === "refused" || newest.status === "unknown"))
       )
-        lines.push(clean(actionLine(newest)));
-      lines.push(muted(this.hints(rows[this.selected])));
+        footer.push(clean(actionLine(newest)));
+      footer.push(muted(this.hints(rows[this.selected])));
+      if (rows.length > Math.max(1, this.options.height() - lines.length - footer.length))
+        footer.unshift(muted(`  (${this.selected + 1}/${rows.length})`));
+      const visible = Math.max(1, Math.min(rows.length, this.options.height() - lines.length - footer.length));
+      const start = Math.max(0, Math.min(this.selected - Math.floor(visible / 2), rows.length - visible));
+      if (rows.length === 0) lines.push(muted("None"));
+      rows
+        .slice(start, start + visible)
+        .forEach((row, offset) =>
+          lines.push((start + offset === this.selected ? accent("› ") : "  ") + levelColor(row.level, row.text)),
+        );
+      lines.push(...footer);
     }
     return lines.map((line) => truncateToWidth(line, width));
   }
