@@ -14,8 +14,6 @@
 
 """Two independently connected Metal arms, with canonical per-side names."""
 
-from typing import Literal
-
 from dimos.control.components import HardwareComponent
 from dimos.robot.manipulators.makermods_metal.config import METAL_ARM_JOINTS, metal_hardware
 
@@ -28,12 +26,6 @@ def dual_metal_hardware(
     *,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
-    left_gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
-        "increasing_position"
-    ),
-    right_gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
-        "increasing_position"
-    ),
 ) -> list[HardwareComponent]:
     """Require two distinct explicit CAN selectors before selecting physical arms."""
     ports = (left_can_port, right_can_port)
@@ -43,10 +35,8 @@ def dual_metal_hardware(
         if left_can_port == right_can_port:
             raise ValueError("dual Metal requires distinct left and right CAN selectors")
     components = []
-    for side, port, direction in zip(
-        SIDES, ports, (left_gripper_opening_direction, right_gripper_opening_direction), strict=True
-    ):
-        component = metal_hardware(can_port=port, gripper_opening_direction=direction)
+    for side, port in zip(SIDES, ports, strict=True):
+        component = metal_hardware(can_port=port)
         component.hardware_id = f"{side}_arm"
         # ConnectedWholeBody maps canonical component names to the adapter by index.
         component.joints = [*ARM_JOINTS[side], f"{side}_arm/gripper"]

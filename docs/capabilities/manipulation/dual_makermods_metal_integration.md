@@ -72,8 +72,7 @@ uv run dimos run dual-makermods-metal-planner-coordinator \
   --right-base-xyz '[0, -0.25, 0]'
 ```
 
-Both grippers default to `increasing_position`, with no direction CLI flags.
-Python integrations can override each direction through `dual_metal_hardware()`.
+Both grippers use the Metal topology's fixed `increasing_position` direction.
 The geometry in this example must match the commissioned rig.
 Linux selectors are configured SocketCAN interfaces such as `can0` and `can1`;
 macOS selectors are bare unique gs_usb USB serials. Partial, empty, and duplicate

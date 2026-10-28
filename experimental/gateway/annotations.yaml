@@ -626,6 +626,20 @@ robots:
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
+    dual_makermods_metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
+        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+      blueprints:
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Coordinated motion planning, execution, and Viser for two Metal arms.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.

@@ -58,8 +58,6 @@ def test_two_explicit_ports_preserve_single_arm_adapter_and_current_defaults() -
     arms = dual_metal_hardware(
         left_can_port="left",
         right_can_port="right",
-        left_gripper_opening_direction="increasing_position",
-        right_gripper_opening_direction="decreasing_position",
     )
     assert [arm.adapter_type for arm in arms] == ["makermods_metal"] * 2
     assert [arm.adapter_kwargs["runtime_config"].bus_devices for arm in arms] == [
@@ -164,14 +162,6 @@ def test_gripper_commands_route_to_selected_group_only() -> None:
     finally:
         m._world_monitor = None
         m.stop()
-
-
-def test_both_grippers_default_to_increasing_position() -> None:
-    components = dual_metal_hardware(left_can_port="left", right_can_port="right")
-    assert [component.adapter_kwargs["gripper_opening_direction"] for component in components] == [
-        "increasing_position",
-        "increasing_position",
-    ]
 
 
 @pytest.mark.parametrize("position", [(0.0, float("nan"), 0.0), (0.0, float("inf"), 0.0)])
