@@ -1322,7 +1322,7 @@ impl GscPgo {
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
     /// keyframe nearest in time (`solve_with_priors`).
-    pub fn add_world_position(
+    pub fn add_coordinate_factor(
         &mut self,
         time: f64,
         frame: u32,
@@ -1337,7 +1337,7 @@ impl GscPgo {
     /// landmark) seen at `time` at `position` in the body frame (through the sensor's mount), with its `covariance` there
     /// (m²; `bearing_and_range` makes one from a bearing and a rough range). It joins the next solve as a sighting from
     /// the keyframe nearest in time.
-    pub fn add_landmark_sighting(
+    pub fn add_landmark_factor(
         &mut self,
         time: f64,
         landmark: u64,

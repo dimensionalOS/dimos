@@ -162,11 +162,11 @@ struct Args {
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
     /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
     live: bool,
-    /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_world_position`), a CSV with one
+    /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_coordinate_factor`), a CSV with one
     /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
     /// (x, y, z). Lockstep replay only.
     world_positions: Option<PathBuf>,
-    /// Landmark sightings to feed the same way (`GscPgo::add_landmark_sighting`), a CSV with one per line: time,
+    /// Landmark sightings to feed the same way (`GscPgo::add_landmark_factor`), a CSV with one per line: time,
     /// landmark id, x, y, z in the body frame, the 3x3 covariance row-major (m²). Lockstep replay only.
     landmark_sightings: Option<PathBuf>,
 }
@@ -585,12 +585,12 @@ fn run() -> Result<(), String> {
             // the fixes up to this scan's time, as the module would have received them
             while next_fix < fixes.len() && fixes[next_fix].0 <= ts {
                 let (time, frame, lever, position, covariance) = fixes[next_fix];
-                pgo.add_world_position(time, frame, lever, position, covariance);
+                pgo.add_coordinate_factor(time, frame, lever, position, covariance);
                 next_fix += 1;
             }
             while next_sighting < sightings.len() && sightings[next_sighting].0 <= ts {
                 let (time, landmark, position, covariance) = sightings[next_sighting];
-                pgo.add_landmark_sighting(time, landmark, position, covariance);
+                pgo.add_landmark_factor(time, landmark, position, covariance);
                 next_sighting += 1;
             }
             let step_started = Instant::now();

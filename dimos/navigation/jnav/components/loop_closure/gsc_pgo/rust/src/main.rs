@@ -93,6 +93,7 @@ config! {
     odom_trans_z_var: f64,
     odom_noise_per_motion: bool,
     closure_informative_by_graph_covariance: bool,
+    closure_uninformative_gate: bool,
     odom_xy_var_per_m: f64,
     odom_xy_var_per_rad: f64,
     odom_z_var_per_m: f64,
@@ -148,7 +149,7 @@ struct OdomSample {
     translation: Vec3,
 }
 
-/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::add_landmark_sighting`).
+/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::add_landmark_factor`).
 struct LandmarkFix {
     ts: f64,
     landmark: u64,
@@ -156,7 +157,7 @@ struct LandmarkFix {
     covariance: Mat3,
 }
 
-/// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_world_position`).
+/// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_coordinate_factor`).
 struct WorldFix {
     ts: f64,
     frame: u32,
@@ -172,7 +173,7 @@ struct SharedState {
     /// Each world frame's name, its index the frame id the pose graph knows it by.
     world_frames: Vec<String>,
     /// Landmark sightings not yet handed to the pose graph, and each landmark's name (its index the id).
-    landmark_sightings: Vec<LandmarkFix>,
+    landmark_factors: Vec<LandmarkFix>,
     landmark_names: Vec<String>,
     latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
@@ -199,15 +200,15 @@ struct GscPgoModule {
     // A sensor's position in a fixed world frame (GPS, mocap, ...): header.frame_id names the world frame,
     // child_frame_id the sensor's mount (its offset from body_frame comes from tf), pose.covariance's xyz block (m²)
     // its uncertainty. Orientation and twist are ignored.
-    #[input(decode = Odometry::decode, handler = on_world_position)]
-    world_position: Input<Odometry>,
+    #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
+    coordinate_factor: Input<Odometry>,
 
     // A landmark seen by a sensor (a camera's bearing with a rough range, a reflector, another robot's landmark):
     // header.frame_id is the sensor (placed on the body through tf), child_frame_id names the landmark (every sighting
     // with that name is of the same fixed point), pose.position is where it was in the sensor's frame and
     // pose.covariance's xyz block its uncertainty there (m²). Orientation and twist are ignored.
-    #[input(decode = Odometry::decode, handler = on_landmark_sighting)]
-    landmark_sighting: Input<Odometry>,
+    #[input(decode = Odometry::decode, handler = on_landmark_factor)]
+    landmark_factor: Input<Odometry>,
 
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
@@ -299,7 +300,7 @@ impl GscPgoModule {
         });
     }
 
-    async fn on_world_position(&mut self, msg: Odometry) {
+    async fn on_coordinate_factor(&mut self, msg: Odometry) {
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
         let mount = &msg.child_frame_id;
         let body = &self.config.body_frame;
@@ -352,7 +353,7 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    async fn on_landmark_sighting(&mut self, msg: Odometry) {
+    async fn on_landmark_factor(&mut self, msg: Odometry) {
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
         let sensor = &msg.header.frame_id;
         let body = &self.config.body_frame;
@@ -400,7 +401,7 @@ impl GscPgoModule {
                 state.landmark_names.len() - 1
             }
         } as u64;
-        state.landmark_sightings.push(LandmarkFix {
+        state.landmark_factors.push(LandmarkFix {
             ts,
             landmark,
             position,
@@ -530,15 +531,15 @@ impl Worker {
                 let mut state = self.state.lock().expect("state");
                 (
                     std::mem::take(&mut state.world_fixes),
-                    std::mem::take(&mut state.landmark_sightings),
+                    std::mem::take(&mut state.landmark_factors),
                 )
             };
             if !fixes.is_empty() || !sightings.is_empty() {
                 for f in fixes {
-                    pgo.add_world_position(f.ts, f.frame, f.lever, f.position, f.covariance);
+                    pgo.add_coordinate_factor(f.ts, f.frame, f.lever, f.position, f.covariance);
                 }
                 for s in sightings {
-                    pgo.add_landmark_sighting(s.ts, s.landmark, s.position, s.covariance);
+                    pgo.add_landmark_factor(s.ts, s.landmark, s.position, s.covariance);
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
@@ -561,7 +562,7 @@ impl Worker {
                 if state.cloud_buffer.is_empty()
                     && !state.solve_finished
                     && state.world_fixes.is_empty()
-                    && state.landmark_sightings.is_empty()
+                    && state.landmark_factors.is_empty()
                 {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
