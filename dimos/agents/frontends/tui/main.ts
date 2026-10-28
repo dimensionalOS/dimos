@@ -569,11 +569,16 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     const offset = transcript.offsetOf(key);
     if (offset !== null) chatScroll.scrollTo(offset, { disableFollow: true });
   };
+  const attachForkIfShown =
+    (from: ConversationId) => async (result: Outcome<{ readonly conversation: ConversationId }>) => {
+      if (!result.ok) return;
+      const fork = result.value.conversation;
+      if (showing?.id === from) await switchTo(fork, "owner");
+      else transcript.note(muted(`Fork #${fork} of #${from} is ready; /resume ${fork} opens it.`));
+    };
   const act = (choice: SelectionChoice) => {
     if (showing === null || choice.kind === "cancel") return;
     const { conversation, id } = showing;
-    const attachResult = (result: Outcome<{ readonly conversation: ConversationId }>) =>
-      result.ok ? switchTo(result.value.conversation, "owner") : Promise.resolve();
     switch (choice.kind) {
       case "edit": {
         const position = selectables(conversation.transcript.value).findIndex(
@@ -597,7 +602,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
               owner(conversation).summarizeUpTo(args),
             ),
           )
-          .then(attachResult)
+          .then(attachForkIfShown(id))
           .catch(note);
         return;
       case "summarize_from":
@@ -608,7 +613,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
               owner(conversation).summarizeFrom(args),
             ),
           )
-          .then(attachResult)
+          .then(attachForkIfShown(id))
           .catch(note);
         return;
     }
@@ -714,7 +719,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
                 owner(conversation).edit(args),
               ),
             )
-            .then((result) => (result.ok ? switchTo(result.value.conversation, "owner") : undefined));
+            .then(attachForkIfShown(id));
         })
         .catch(note);
       return;
