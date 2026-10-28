@@ -37,10 +37,18 @@ def decode_audio_bytes(raw: bytes) -> AudioEvent | None:
     WhisperNode assumes), or None when FFmpeg cannot decode it."""
     try:
         with av.open(io.BytesIO(raw), "r", metadata_errors="ignore") as container:
+            stream = container.streams.audio[0]
             resampler = av.AudioResampler(format="s16", layout="mono", rate=16_000)
-            frames = [
-                out for frame in container.decode(audio=0) for out in resampler.resample(frame)
-            ]
+            frames: list[av.AudioFrame] = []
+            for packet in container.demux(stream):
+                try:
+                    decoded = stream.decode(packet)
+                except av.error.InvalidDataError as exc:
+                    # Keep good audio on either side of a damaged packet.
+                    logger.warning("skipping invalid audio packet", error=str(exc))
+                    continue
+                for frame in decoded:
+                    frames.extend(resampler.resample(frame))
             frames += resampler.resample(None)  # flush
     except Exception:
         logger.exception("audio decode failed")

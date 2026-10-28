@@ -67,5 +67,17 @@ def test_stereo_downmixes_to_the_channel_mean() -> None:
     assert np.allclose(event.data, 0.4, atol=1e-3)
 
 
+def test_truncated_wav_preserves_decoded_audio() -> None:
+    planes = np.full((1, 24_000), 0.25, dtype=np.float32)
+    raw = _encode("wav", "pcm_s16le", planes)
+
+    event = decode_audio_bytes(raw[:-1])
+
+    assert event is not None
+    assert event.sample_rate == 16_000
+    assert 6_400 <= event.data.size <= 8_000
+    assert np.allclose(event.data, 0.25, atol=1e-3)
+
+
 def test_garbage_returns_none() -> None:
     assert decode_audio_bytes(b"definitely not an audio container") is None
