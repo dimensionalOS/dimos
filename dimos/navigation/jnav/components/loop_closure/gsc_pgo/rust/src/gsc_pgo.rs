@@ -494,9 +494,10 @@ pub struct Config {
     /// the overtrusted graph had been screening out through: small_mid overtrust committed 150 wrong closures, 62 kept.)
     pub closure_disagreement_pressure: bool,
     /// When true, each solve also runs GNC with the Geman-McClure surrogate, which starts at least squares rather than
-    /// at TLS's odometry-dominated start, and takes its verdict when the odometry residuals of its solution reject the
-    /// odometry's stated noise as too small (`SolveConfig::gnc_overtrust_check`): an overtrusted odometry cannot vote out
-    /// closures that agree once heard, and an honest or undertrusted one keeps TLS's verdict.
+    /// at TLS's odometry-dominated start, and takes its verdict when it reaches the lower truncated-least-squares cost or
+    /// its odometry residuals reject the odometry's stated noise as too small (`SolveConfig::gnc_overtrust_check`): an
+    /// overtrusted odometry cannot vote out closures that agree once heard, and with `odometry_noise_from_closures` the
+    /// residuals of the closures it keeps raise the learned noise, so later solves and gates no longer need it.
     pub closure_gnc_overtrust_check: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.

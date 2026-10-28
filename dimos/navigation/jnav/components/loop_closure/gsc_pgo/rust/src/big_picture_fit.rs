@@ -57,8 +57,10 @@ pub struct SolveConfig {
     pub pcm_odometry_translation_variance: f64,
     /// When true, GNC also runs with the Geman-McClure surrogate (Black & Rangarajan 1996; Yang et al. 2020), which
     /// starts at least squares rather than at TLS's odometry-dominated mu near 0, keeping a factor whose whitened
-    /// residual at its solution is under the chi-square cutoff; its verdict replaces TLS's when the odometry residuals
-    /// of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`).
+    /// residual at its solution is under the chi-square cutoff. Its verdict replaces TLS's when its solution has the
+    /// lower truncated-least-squares cost (the objective both minimise: TLS's path missed it), or when the odometry
+    /// residuals of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`: the model, not
+    /// the path, is wrong, and the kept closures' residuals then teach the noise learner the larger noise).
     pub gnc_overtrust_check: bool,
 }
 
@@ -400,18 +402,47 @@ pub(crate) fn solve_core(
         for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
             *w = classify(r, 1.0);
         }
-        if odometry_overtrusted(
-            &mut gm_state,
-            &pattern,
-            odometry,
-            closures,
-            &gm_weights,
-            unary,
-            &gm_unary,
-            sightings,
-            &gm_sightings,
-            config.gnc_inlier_probability,
-        ) {
+        // the objective both GNCs minimise, truncated least squares, at each one's verdict: GM's path can find the lower
+        // minimum TLS's convex start missed (TLS voting out a consistent group from an odometry-dominated start)
+        let truncated_cost = |state: &State| {
+            let none = |n: usize| vec![0.0; n];
+            cost(
+                state,
+                odometry,
+                &scaled,
+                &none(closures.len()),
+                unary,
+                &none(unary.len()),
+                sightings,
+                &none(sightings.len()),
+            ) + residual(state)
+                .iter()
+                .map(|&r| r.min(threshold))
+                .sum::<f64>()
+                + unary_residuals(state)
+                    .iter()
+                    .map(|&r| r.min(unary_threshold))
+                    .sum::<f64>()
+                + sighting_residuals(state)
+                    .iter()
+                    .map(|&r| r.min(1.0))
+                    .sum::<f64>()
+        };
+        let lower = truncated_cost(&gm_state) < truncated_cost(&state);
+        if lower
+            || odometry_overtrusted(
+                &mut gm_state,
+                &pattern,
+                odometry,
+                closures,
+                &gm_weights,
+                unary,
+                &gm_unary,
+                sightings,
+                &gm_sightings,
+                config.gnc_inlier_probability,
+            )
+        {
             (state, weights, unary_weights, sighting_weights) =
                 (gm_state, gm_weights, gm_unary, gm_sightings);
         }
