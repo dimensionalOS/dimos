@@ -203,12 +203,15 @@
     {
       "name": "hotel_jog",
       "tier": "main",
-      "odometry": "TODO",
-      "lidar": "TODO",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
       "mount": "TODO",
       "db": "~/datasets/d455/hotel_jog/main.db",
-      "gt": null,
-      "status": "todo"
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      },
+      "status": "no_gt"
     },
     {
       "name": "grassy_field",
@@ -223,12 +226,12 @@
     {
       "name": "hotel_slow",
       "tier": "do_no_harm",
-      "odometry": "TODO",
-      "lidar": "TODO",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
       "mount": "TODO",
       "db": "~/datasets/d455/hotel_slow/main.db",
       "gt": null,
-      "status": "todo"
+      "status": "no_gt"
     },
     {
       "name": "sf_office1_pointlio",
@@ -240,7 +243,13 @@
       "name": "sf_office1_2_pointlio",
       "tier": "extra",
       "db": "~/datasets/d455/sf_office1_2/main.db",
-      "status": "todo"
+      "status": "no_gt",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      }
     },
     {
       "name": "hk_village",
@@ -307,12 +316,15 @@
     {
       "name": "hotel_regular",
       "tier": "extra",
-      "odometry": "TODO",
-      "lidar": "TODO",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
       "mount": "TODO",
       "db": "~/datasets/d455/hotel_normal/main.db",
-      "gt": null,
-      "status": "todo"
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      },
+      "status": "no_gt"
     }
   ],
   "todo": [
@@ -320,5 +332,10 @@
     "best odometry error correction we can get (over/under-start sweep: learner must beat both starts)",
     "standardize + upload the datasets (canonical dbs, dimos cloud upload; check with Jeff before uploading)",
     "recalibrate everything after those changes: huge_l1 and small_l1 must loop-close"
+  ],
+  "requirements": [
+    "each recording has a corrected odometry to score against, validated (AprilTag spread through the correct camera mount, and lidar map consistency)",
+    "lidar scans in the sensor frame, not world (audit 2026-10-28: all current lidar streams are: l1_link / mid360_link / livox_frame)",
+    "standardized copies uploaded to the dimos cloud (eventually MCAP with CDR encoding); ask Jeff before uploading"
   ]
 }
