@@ -137,9 +137,11 @@ def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
     pool = ZenohSessionPool()
     zenoh_pubsub = Zenoh(session_pool=pool)
     zenoh_pubsub.start()
-    yield zenoh_pubsub
-    zenoh_pubsub.stop()
-    pool.close_all()
+    try:
+        yield zenoh_pubsub
+    finally:
+        zenoh_pubsub.stop()
+        pool.close_all()
 
 
 testdata.append(
@@ -156,9 +158,11 @@ def zenoh_pickle_context() -> Generator[PickleZenoh, None, None]:
     pool = ZenohSessionPool()
     zenoh_pubsub = PickleZenoh(session_pool=pool)
     zenoh_pubsub.start()
-    yield zenoh_pubsub
-    zenoh_pubsub.stop()
-    pool.close_all()
+    try:
+        yield zenoh_pubsub
+    finally:
+        zenoh_pubsub.stop()
+        pool.close_all()
 
 
 testdata.append(

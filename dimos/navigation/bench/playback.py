@@ -148,7 +148,7 @@ def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
     for command in ("dimos-viewer", "rerun"):
         try:
             return subprocess.Popen(
-                [command, str(replay)], stdin=subprocess.DEVNULL, start_new_session=True
+                [command, "--new", str(replay)], stdin=subprocess.DEVNULL, start_new_session=True
             )
         except FileNotFoundError:
             continue
