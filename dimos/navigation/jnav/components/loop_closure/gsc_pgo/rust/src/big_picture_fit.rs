@@ -57,6 +57,10 @@ pub struct SolveConfig {
     /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
     /// cycles they close with the odometry is held in through GNC (`consistent_closures`); 0 odometry variance = off.
     pub pcm_odometry_translation_variance: f64,
+    /// When true, GNC uses the Geman-McClure surrogate instead of truncated least squares (Yang et al. 2020; Black &
+    /// Rangarajan 1996): it starts at least squares (every factor near weight 1) and tightens to GM, and a factor is
+    /// kept if its whitened residual at the GM solution is under the chi-square cutoff.
+    pub gnc_geman_mcclure: bool,
 }
 
 pub struct Solution {
@@ -241,7 +245,64 @@ pub(crate) fn solve_core(
     let mut r2 = residual(&state);
     let mut u2 = unary_residuals(&state);
     let mut s2 = sighting_residuals(&state);
-    if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
+    // TLS's convex start (mu near 0) weighs every closure at about cutoff x sqrt(mu) / residual against the always-in
+    // odometry, so how far the odometry is trusted, not what the closures say, decides the first steps: an overtrusted
+    // odometry takes the graph back before the closures are heard. GM's convex start is least squares itself
+    if config.gnc_geman_mcclure {
+        let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
+        // Remark 5: mu0 = 2 r_max^2 / cutoff, the residuals the least-squares solve leaves (the factors' conflict)
+        let mut mu = [
+            2.0 * max(&r2) / threshold,
+            2.0 * max(&u2) / unary_threshold,
+            2.0 * max(&s2),
+        ]
+        .into_iter()
+        .fold(1.0, f64::max);
+        let gm = |r: f64, threshold: f64, mu: f64| (mu * threshold / (r + mu * threshold)).powi(2);
+        loop {
+            for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
+                if !held {
+                    *w = gm(r, threshold, mu);
+                }
+            }
+            for (w, &r) in unary_weights.iter_mut().zip(&u2) {
+                *w = gm(r, unary_threshold, mu);
+            }
+            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+                *w = gm(r, 1.0, mu);
+            }
+            levenberg_marquardt(
+                &mut state,
+                &pattern,
+                odometry,
+                &scaled,
+                &weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+                1e-5,
+            );
+            r2 = residual(&state);
+            u2 = unary_residuals(&state);
+            s2 = sighting_residuals(&state);
+            if mu <= 1.0 {
+                break;
+            }
+            mu = (mu / 1.4).max(1.0);
+        }
+        // in or out by the chi-square test at the GM solution, as TLS's weights end
+        let classify = |r: f64, threshold: f64| if r < threshold { 1.0 } else { 0.0 };
+        for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
+            *w = if held { 1.0 } else { classify(r, threshold) };
+        }
+        for (w, &r) in unary_weights.iter_mut().zip(&u2) {
+            *w = classify(r, unary_threshold);
+        }
+        for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+            *w = classify(r, 1.0);
+        }
+    } else if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
         // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
         let start = |worst: f64, threshold: f64| {
             (worst > threshold).then(|| threshold / (2.0 * worst - threshold))
@@ -1516,6 +1577,7 @@ impl GscPgo {
             } else {
                 0.0
             },
+            gnc_geman_mcclure: config.closure_gnc_geman_mcclure,
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()

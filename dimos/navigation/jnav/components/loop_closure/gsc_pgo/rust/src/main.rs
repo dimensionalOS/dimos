@@ -123,6 +123,8 @@ config! {
     closure_alternative_places: bool,
     closure_skip_known: bool,
     closure_pcm: bool,
+    closure_disagreement_pressure: bool,
+    closure_gnc_geman_mcclure: bool,
     closure_hessian_observability: bool,
     closure_likelihood_visibility: bool,
     closure_likelihood_beam: bool,

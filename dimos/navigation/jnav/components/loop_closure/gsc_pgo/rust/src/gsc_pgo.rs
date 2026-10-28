@@ -126,6 +126,9 @@ pub struct ClosureCandidateDiag {
     /// world axes (m), and the graph's covariance of that offset at the odometry noise in use (m²); NaN before ICP.
     pub innovation: Vec3,
     pub innovation_covariance: Mat3,
+    /// The innovation's squared Mahalanobis distance against that covariance plus the closure's own (ICP fitness x the
+    /// closure noise scale, each axis): above the 3-DoF chi-square cutoff the graph disputes the closure. NaN before ICP.
+    pub disagreement_z2: f64,
     /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
     /// scales with.
     pub target_overlap: f64,
@@ -214,6 +217,7 @@ impl ClosureCandidateDiag {
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
+            disagreement_z2: f64::NAN,
             target_overlap: 0.0,
             keep_rate: f64::NAN,
             extension_budget: 0,
@@ -458,6 +462,14 @@ pub struct Config {
     /// When true, the solve holds the largest pairwise-consistent set of closures in through GNC (PCM; see
     /// `big_picture_fit::consistent_closures`), so a consistent group is not voted out by over-trusted odometry.
     pub closure_pcm: bool,
+    /// When true, a candidate the graph disputes (`ClosureCandidateDiag::disagreement_z2` beyond the 3-DoF chi-square
+    /// cutoff at `closure_gnc_inlier_probability`: outside the graph's and ICP's combined confidence region, so the
+    /// odometry is overtrusted or the match is wrong) is never called uninformative, and is measured on all the data:
+    /// every extended-ICP round up to `closure_extended_icp_max_keyframes`, the last that still clears the bar kept.
+    pub closure_disagreement_pressure: bool,
+    /// When true, GNC's surrogate is Geman-McClure instead of truncated least squares (`SolveConfig::gnc_geman_mcclure`):
+    /// its convex start is least squares, so an overtrusted odometry cannot vote out closures that agree once heard.
+    pub closure_gnc_geman_mcclure: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -556,6 +568,8 @@ impl Default for Config {
             closure_alternative_places: false,
             closure_skip_known: false,
             closure_pcm: false,
+            closure_disagreement_pressure: false,
+            closure_gnc_geman_mcclure: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -823,66 +837,6 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_score_thresh {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
-        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
-        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
-        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
-        // kept would count the same evidence twice
-        let gate_noise = diag.odometry_noise_gate;
-        let odometry_step = self.mean_step_xy_variance * gate_noise[0];
-        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let known = if (self.config.odom_noise_per_motion
-            || self.config.closure_informative_by_graph_covariance)
-            && diag
-                .innovation_covariance
-                .iter()
-                .flatten()
-                .all(|v| v.is_finite())
-        {
-            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
-            // closures included): the closure adds something only where it is surer than the graph in some direction.
-            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            // (at the upper bound: scaled by the most any component's bound exceeds its estimate)
-            let widen = (0..4)
-                .map(|c| gate_noise[c] / diag.odometry_noise[c])
-                .fold(1.0, f64::max);
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
-        } else {
-            self.kept_closures
-                .iter()
-                .fold(step(cur_idx, target_idx), |known, l| {
-                    let via = |a: usize, b: usize| {
-                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
-                    };
-                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
-                })
-        };
-        if self.config.closure_uninformative_gate && icp.fitness * diag.closure_noise_scale >= known
-        {
-            return rejected(diag, "uninformative", scored_yank, timing);
-        }
-        if self.config.closure_sharpness_half > 0.0 {
-            diag.sharpness = self.sharpness(&source_cloud, &target_tree, &icp);
-        }
-        if self.config.closure_likelihood_confidence {
-            let window: Vec<usize> = (target_idx.saturating_sub(half_range)
-                ..=(target_idx + half_range).min(self.key_poses.len() - 1))
-                .collect();
-            let (ratio, _, width) =
-                self.likelihood_ratio(&source_cloud, &target_cloud, &target_tree, &icp, &window);
-            diag.likelihood_ratio = ratio;
-            diag.likelihood_width = width;
-        }
-        if self.config.closure_overlap_score {
-            let overlap = self.overlap_score(&source_cloud, &target_cloud, &icp);
-            diag.overlap_points = overlap.points;
-            diag.overlap_quality = overlap.quality;
-            diag.overlap_score = overlap.score;
-        }
-
         let mut score = icp.fitness;
         let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[target_idx]);
         let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
@@ -922,6 +876,77 @@ impl ClosureSearch {
             &target.rotation_global,
             &mat3::sub(&translation_offset, &current_relative_translation),
         );
+
+        // a candidate the graph disputes: its innovation lands outside the graph's and the closure's combined confidence
+        // region (3 DoF, at the inlier probability GNC uses), so either it is wrong or the graph's noise is overtrusted
+        diag.disagreement_z2 = crate::proportional_confidence::innovation_z2(&diag);
+        let disputed = self.config.closure_disagreement_pressure
+            && diag.disagreement_z2
+                > crate::loop_overlap::chi2_inverse_3dof(
+                    self.config.closure_gnc_inlier_probability,
+                );
+        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
+        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
+        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
+        // kept would count the same evidence twice
+        let gate_noise = diag.odometry_noise_gate;
+        let odometry_step = self.mean_step_xy_variance * gate_noise[0];
+        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
+        let known = if (self.config.odom_noise_per_motion
+            || self.config.closure_informative_by_graph_covariance)
+            && diag
+                .innovation_covariance
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite())
+        {
+            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
+            // closures included): the closure adds something only where it is surer than the graph in some direction.
+            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
+            // (at the upper bound: scaled by the most any component's bound exceeds its estimate)
+            let widen = (0..4)
+                .map(|c| gate_noise[c] / diag.odometry_noise[c])
+                .fold(1.0, f64::max);
+            widen
+                * mat3::jacobi_eigen(diag.innovation_covariance)
+                    .0
+                    .into_iter()
+                    .fold(0.0, f64::max)
+        } else {
+            self.kept_closures
+                .iter()
+                .fold(step(cur_idx, target_idx), |known, l| {
+                    let via = |a: usize, b: usize| {
+                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
+                    };
+                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
+                })
+        };
+        // a disputed measurement is not redundant whatever its variance: it says the graph is wrong
+        if self.config.closure_uninformative_gate
+            && !disputed
+            && icp.fitness * diag.closure_noise_scale >= known
+        {
+            return rejected(diag, "uninformative", scored_yank, timing);
+        }
+        if self.config.closure_sharpness_half > 0.0 {
+            diag.sharpness = self.sharpness(&source_cloud, &target_tree, &icp);
+        }
+        if self.config.closure_likelihood_confidence {
+            let window: Vec<usize> = (target_idx.saturating_sub(half_range)
+                ..=(target_idx + half_range).min(self.key_poses.len() - 1))
+                .collect();
+            let (ratio, _, width) =
+                self.likelihood_ratio(&source_cloud, &target_cloud, &target_tree, &icp, &window);
+            diag.likelihood_ratio = ratio;
+            diag.likelihood_width = width;
+        }
+        if self.config.closure_overlap_score {
+            let overlap = self.overlap_score(&source_cloud, &target_cloud, &icp);
+            diag.overlap_points = overlap.points;
+            diag.overlap_quality = overlap.quality;
+            diag.overlap_score = overlap.score;
+        }
 
         scored_yank = Some(self.score_candidate(&mut diag));
         // the solve's record on closures that pulled about as hard as this one (within about one yank unit): rejected
@@ -989,7 +1014,13 @@ impl ClosureSearch {
                 .min(self.config.closure_extended_icp_max_keyframes);
         }
         diag.required_confidence = 1.0 - (-single_required).exp();
-        if evidence < single_required {
+        // a disputed closure will stand against the graph on its own evidence and on other closures' agreement, so it is
+        // measured on all the data there is: every extension round, the last that still clears the bar kept
+        if disputed {
+            diag.extension_budget = self.config.closure_extended_icp_max_keyframes;
+        }
+        let single_passed = evidence >= single_required;
+        if !single_passed || disputed {
             let t0 = std::time::Instant::now();
             let extended = self.extended_icp(
                 cur_idx,
@@ -998,15 +1029,22 @@ impl ClosureSearch {
                 &icp,
                 &mut diag,
                 &mut required,
+                disputed,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
-            let Some(extended) = extended else {
-                return rejected(diag, "yank_confidence_reject", scored_yank, timing);
+            let extended = match extended {
+                Some(extended) => Some(extended),
+                // the single scan cleared the bar by itself; a stack that could not be built or did not hold up
+                // leaves its alignment as the closure
+                None if single_passed => None,
+                None => return rejected(diag, "yank_confidence_reject", scored_yank, timing),
             };
-            // the closure measurement comes from the extended alignment, which saw more of both places
-            (rotation_offset, translation_offset) =
-                measured(&extended.rotation, &extended.translation);
-            score = extended.fitness;
+            if let Some(extended) = extended {
+                // the closure measurement comes from the extended alignment, which saw more of both places
+                (rotation_offset, translation_offset) =
+                    measured(&extended.rotation, &extended.translation);
+                score = extended.fitness;
+            }
         }
 
         diag.outcome = "accepted";
@@ -1790,5 +1828,35 @@ impl GscPgo {
                 score.max(1e-6),
             ));
         self.new_closure = true;
+    }
+}
+
+#[cfg(test)]
+mod disagreement_tests {
+    use super::*;
+
+    /// The dispute test is the innovation's chi-square against the graph's covariance plus the closure's own variance:
+    /// a 3 m offset the overtrusted graph claims to know within 0.1 m is disputed, the same offset against an honest
+    /// 3 m spread is not.
+    #[test]
+    fn a_closure_far_outside_the_graphs_spread_is_disputed() {
+        let cutoff = crate::loop_overlap::chi2_inverse_3dof(0.95);
+        let mut diag = ClosureCandidateDiag::new(10, 0.0, [0.0; 3]);
+        diag.innovation = [3.0, 0.0, 0.0];
+        diag.icp_fitness = 0.01;
+        diag.closure_noise_scale = 1.0;
+        let isotropic = |v: f64| -> Mat3 {
+            std::array::from_fn(|i| std::array::from_fn(|j| if i == j { v } else { 0.0 }))
+        };
+        diag.innovation_covariance = isotropic(0.01);
+        let overtrusted = crate::proportional_confidence::innovation_z2(&diag);
+        assert!((overtrusted - 9.0 / 0.02).abs() < 1e-9, "{overtrusted}");
+        assert!(overtrusted > cutoff);
+        diag.innovation_covariance = isotropic(9.0);
+        let honest = crate::proportional_confidence::innovation_z2(&diag);
+        assert!((honest - 9.0 / 9.01).abs() < 1e-9, "{honest}");
+        assert!(honest < cutoff);
+        diag.innovation_covariance = [[f64::NAN; 3]; 3];
+        assert!(crate::proportional_confidence::innovation_z2(&diag).is_nan());
     }
 }
