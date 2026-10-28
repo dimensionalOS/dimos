@@ -57,10 +57,11 @@ pub struct SolveConfig {
     /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
     /// cycles they close with the odometry is held in through GNC (`consistent_closures`); 0 odometry variance = off.
     pub pcm_odometry_translation_variance: f64,
-    /// When true, GNC uses the Geman-McClure surrogate instead of truncated least squares (Yang et al. 2020; Black &
-    /// Rangarajan 1996): it starts at least squares (every factor near weight 1) and tightens to GM, and a factor is
-    /// kept if its whitened residual at the GM solution is under the chi-square cutoff.
-    pub gnc_geman_mcclure: bool,
+    /// When true, GNC also runs with the Geman-McClure surrogate (Black & Rangarajan 1996; Yang et al. 2020), which
+    /// starts at least squares rather than at TLS's odometry-dominated mu near 0, keeping a factor whose whitened
+    /// residual at its solution is under the chi-square cutoff; its verdict replaces TLS's when the odometry residuals
+    /// of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`).
+    pub gnc_overtrust_check: bool,
 }
 
 pub struct Solution {
@@ -245,64 +246,21 @@ pub(crate) fn solve_core(
     let mut r2 = residual(&state);
     let mut u2 = unary_residuals(&state);
     let mut s2 = sighting_residuals(&state);
-    // TLS's convex start (mu near 0) weighs every closure at about cutoff x sqrt(mu) / residual against the always-in
-    // odometry, so how far the odometry is trusted, not what the closures say, decides the first steps: an overtrusted
-    // odometry takes the graph back before the closures are heard. GM's convex start is least squares itself
-    if config.gnc_geman_mcclure {
-        let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
-        // Remark 5: mu0 = 2 r_max^2 / cutoff, the residuals the least-squares solve leaves (the factors' conflict)
-        let mut mu = [
-            2.0 * max(&r2) / threshold,
-            2.0 * max(&u2) / unary_threshold,
-            2.0 * max(&s2),
-        ]
-        .into_iter()
-        .fold(1.0, f64::max);
-        let gm = |r: f64, threshold: f64, mu: f64| (mu * threshold / (r + mu * threshold)).powi(2);
-        loop {
-            for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
-                if !held {
-                    *w = gm(r, threshold, mu);
-                }
-            }
-            for (w, &r) in unary_weights.iter_mut().zip(&u2) {
-                *w = gm(r, unary_threshold, mu);
-            }
-            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-                *w = gm(r, 1.0, mu);
-            }
-            levenberg_marquardt(
-                &mut state,
-                &pattern,
-                odometry,
-                &scaled,
-                &weights,
-                unary,
-                &unary_weights,
-                sightings,
-                &sighting_weights,
-                1e-5,
-            );
-            r2 = residual(&state);
-            u2 = unary_residuals(&state);
-            s2 = sighting_residuals(&state);
-            if mu <= 1.0 {
-                break;
-            }
-            mu = (mu / 1.4).max(1.0);
-        }
-        // in or out by the chi-square test at the GM solution, as TLS's weights end
-        let classify = |r: f64, threshold: f64| if r < threshold { 1.0 } else { 0.0 };
-        for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
-            *w = if held { 1.0 } else { classify(r, threshold) };
-        }
-        for (w, &r) in unary_weights.iter_mut().zip(&u2) {
-            *w = classify(r, unary_threshold);
-        }
-        for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-            *w = classify(r, 1.0);
-        }
-    } else if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
+    // the least-squares solve with every factor in: where GNC-GM starts (`gnc_overtrust_check`)
+    let least_squares = config.gnc_overtrust_check.then(|| {
+        (
+            State {
+                rotation: state.rotation.clone(),
+                position: state.position.clone(),
+                landmark: state.landmark.clone(),
+                landmark_rotation: state.landmark_rotation.clone(),
+            },
+            r2.clone(),
+            u2.clone(),
+            s2.clone(),
+        )
+    });
+    if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
         // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
         let start = |worst: f64, threshold: f64| {
             (worst > threshold).then(|| threshold / (2.0 * worst - threshold))
@@ -377,6 +335,85 @@ pub(crate) fn solve_core(
             }
             previous_cost = weighted_cost;
             mu *= 1.4;
+        }
+    }
+    // TLS's convex start (mu near 0) weighs every closure at about cutoff x sqrt(mu) / residual against the always-in
+    // odometry, so how far the odometry is trusted decides its first steps: an overtrusted odometry takes the graph back
+    // before the closures are heard. GNC-GM starts at least squares instead (Black & Rangarajan 1996; Yang et al. 2020),
+    // and its verdict replaces TLS's only where the closures it keeps prove the odometry's noise understated
+    if let Some((mut gm_state, mut r2, mut u2, mut s2)) = least_squares {
+        let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
+        // Remark 5: mu0 = 2 r_max^2 / cutoff over the residuals the least-squares solve leaves
+        let mut mu = [
+            2.0 * max(&r2) / threshold,
+            2.0 * max(&u2) / unary_threshold,
+            2.0 * max(&s2),
+        ]
+        .into_iter()
+        .fold(1.0, f64::max);
+        let gm = |r: f64, threshold: f64, mu: f64| (mu * threshold / (r + mu * threshold)).powi(2);
+        let (mut gm_weights, mut gm_unary, mut gm_sightings) = (
+            vec![1.0; closures.len()],
+            vec![1.0; unary.len()],
+            vec![1.0; sightings.len()],
+        );
+        loop {
+            for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
+                if !held {
+                    *w = gm(r, threshold, mu);
+                }
+            }
+            for (w, &r) in gm_unary.iter_mut().zip(&u2) {
+                *w = gm(r, unary_threshold, mu);
+            }
+            for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
+                *w = gm(r, 1.0, mu);
+            }
+            levenberg_marquardt(
+                &mut gm_state,
+                &pattern,
+                odometry,
+                &scaled,
+                &gm_weights,
+                unary,
+                &gm_unary,
+                sightings,
+                &gm_sightings,
+                1e-5,
+            );
+            r2 = residual(&gm_state);
+            u2 = unary_residuals(&gm_state);
+            s2 = sighting_residuals(&gm_state);
+            if mu <= 1.0 {
+                break;
+            }
+            mu = (mu / 1.4).max(1.0);
+        }
+        // in or out by the chi-square test at the GM solution, as TLS's weights end
+        let classify = |r: f64, threshold: f64| if r < threshold { 1.0 } else { 0.0 };
+        for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
+            *w = if held { 1.0 } else { classify(r, threshold) };
+        }
+        for (w, &r) in gm_unary.iter_mut().zip(&u2) {
+            *w = classify(r, unary_threshold);
+        }
+        for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
+            *w = classify(r, 1.0);
+        }
+        if odometry_overtrusted(
+            &mut gm_state,
+            &pattern,
+            odometry,
+            closures,
+            &gm_weights,
+            unary,
+            &gm_unary,
+            sightings,
+            &gm_sightings,
+            config.gnc_inlier_probability,
+        ) {
+            (state, weights, unary_weights, sighting_weights) =
+                (gm_state, gm_weights, gm_unary, gm_sightings);
         }
     }
     let kept: Vec<f64> = weights
@@ -638,6 +675,59 @@ fn odometry_noise_evidence(
         }
     }
     Some(evidence)
+}
+
+/// Whether the odometry is overtrusted at `state` with these factors in: after a least-squares solve with them at their
+/// own variances, the odometry's whitened residuals squared over its redundancy (`odometry_noise_evidence`, its four
+/// noise sources pooled) exceed what its stated noise allows at `probability`, a chi-square with that many degrees of
+/// freedom (Wilson-Hilferty's cube-root normal approximation, as the redundancy is not a whole number).
+#[allow(clippy::too_many_arguments)]
+fn odometry_overtrusted(
+    state: &mut State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+    probability: f64,
+) -> bool {
+    levenberg_marquardt(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+        1e-5,
+    );
+    let Some(evidence) = odometry_noise_evidence(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    ) else {
+        return false;
+    };
+    let (sum, redundancy) = evidence[..4]
+        .iter()
+        .fold((0.0, 0.0), |(s, r), &(sc, rc)| (s + sc, r + rc));
+    if !(redundancy > 0.0 && sum.is_finite()) {
+        return false;
+    }
+    let z = landmarks::chi2_inverse(2.0 * probability - 1.0, 1).sqrt();
+    let spread = 2.0 / (9.0 * redundancy);
+    sum > redundancy * (1.0 - spread + z * spread.sqrt()).powi(3)
 }
 
 /// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
@@ -1577,7 +1667,7 @@ impl GscPgo {
             } else {
                 0.0
             },
-            gnc_geman_mcclure: config.closure_gnc_geman_mcclure,
+            gnc_overtrust_check: config.closure_gnc_overtrust_check,
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()

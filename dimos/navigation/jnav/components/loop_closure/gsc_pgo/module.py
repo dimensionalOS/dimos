@@ -105,8 +105,8 @@ class PGOConfig(NativeModuleConfig):
     closure_pcm: bool = False
     # True: a candidate the graph disputes (innovation beyond the graph's and ICP's combined spread) is never uninformative and gets every extended-ICP round
     closure_disagreement_pressure: bool = False
-    # True: GNC uses the Geman-McClure surrogate (convex start = least squares, so overtrusted odometry cannot vote out agreeing closures), kept by the chi-square cutoff
-    closure_gnc_geman_mcclure: bool = False
+    # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
+    closure_gnc_overtrust_check: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

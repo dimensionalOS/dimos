@@ -16,7 +16,7 @@
 //! (`a.json`) through `big_picture_fit::solve` at a chosen odometry noise, with or without PCM, so a solve-side change
 //! can be judged in seconds instead of a replay. Writes the solved positions (f64 x y z per keyframe) and prints the kept count.
 //! usage: resolve <run dir> <out.bin> [odometry noise factor, 1] [pcm 0|1, 0] [config overlay json, e.g.
-//! '{"closure_gnc_geman_mcclure":true}']
+//! '{"closure_gnc_overtrust_check":true}']
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3};
@@ -101,7 +101,7 @@ fn main() {
         } else {
             0.0
         },
-        gnc_geman_mcclure: config.closure_gnc_geman_mcclure,
+        gnc_overtrust_check: config.closure_gnc_overtrust_check,
     };
     let rotations: Vec<Mat3> = poses.iter().map(|p| p.0).collect();
     let positions: Vec<[f64; 3]> = poses.iter().map(|p| p.1).collect();

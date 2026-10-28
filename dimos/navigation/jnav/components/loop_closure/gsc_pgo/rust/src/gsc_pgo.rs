@@ -467,9 +467,11 @@ pub struct Config {
     /// odometry is overtrusted or the match is wrong) is never called uninformative, and is measured on all the data:
     /// every extended-ICP round up to `closure_extended_icp_max_keyframes`, the last that still clears the bar kept.
     pub closure_disagreement_pressure: bool,
-    /// When true, GNC's surrogate is Geman-McClure instead of truncated least squares (`SolveConfig::gnc_geman_mcclure`):
-    /// its convex start is least squares, so an overtrusted odometry cannot vote out closures that agree once heard.
-    pub closure_gnc_geman_mcclure: bool,
+    /// When true, each solve also runs GNC with the Geman-McClure surrogate, which starts at least squares rather than
+    /// at TLS's odometry-dominated start, and takes its verdict when the odometry residuals of its solution reject the
+    /// odometry's stated noise as too small (`SolveConfig::gnc_overtrust_check`): an overtrusted odometry cannot vote out
+    /// closures that agree once heard, and an honest or undertrusted one keeps TLS's verdict.
+    pub closure_gnc_overtrust_check: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -569,7 +571,7 @@ impl Default for Config {
             closure_skip_known: false,
             closure_pcm: false,
             closure_disagreement_pressure: false,
-            closure_gnc_geman_mcclure: false,
+            closure_gnc_overtrust_check: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,

@@ -125,7 +125,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
         pcm_odometry_translation_variance: 0.0,
-        gnc_geman_mcclure: false,
+        gnc_overtrust_check: false,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -230,7 +230,7 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
         pcm_odometry_translation_variance: 0.0,
-        gnc_geman_mcclure: false,
+        gnc_overtrust_check: false,
     };
     let solution = solve_with_priors(
         &rotations,
