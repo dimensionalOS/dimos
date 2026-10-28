@@ -38,10 +38,8 @@ STALE_RUN_CHECK_S = 5.0
 # watchers: file changes are grouped into one batch for at most this long (awatch's default)
 FILE_EVENT_DEBOUNCE_MS = 1_600
 
-# launches: a relaunch waits this long for a killed, still-starting launch to exit before starting its replacement
+# launches: a stop waits at most this long for a killed launch to be reaped (only one stuck in the kernel takes longer)
 KILLED_LAUNCH_EXIT_WAIT_S = 5.0
-# launches: how often that wait checks whether the killed launch is gone
-KILLED_LAUNCH_POLL_S = 0.05
 # launches: the last ~200 KB of a launch's output, enough for its startup error without reading a huge log
 LAUNCH_OUTPUT_TAIL_BYTES = 200_000
 
