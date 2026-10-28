@@ -328,7 +328,10 @@ jobs:
       - name: Run pre-commit
         env:
           # fmt is checked in the rust job, lint in cachix-build
-          SKIP: cargo-fmt,native-module-lint
+          # Fork PRs are exempt from the branch naming convention.
+          SKIP: >-
+            cargo-fmt,native-module-lint${{ github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name != github.repository && ',branch-name' || '' }}
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files --verbose
