@@ -124,6 +124,10 @@ class DimosAgentAdapter(PiAdapter):
             raise ValueError(
                 f"{name} does not support excluded_keywords: it has no live tool guard"
             )
+        if "max_tool_seconds" in self.config.model_fields_set:
+            raise ValueError(
+                f"{name} does not support max_tool_seconds: its bash has no per-call time limit"
+            )
 
     def preflight(self, environment: Environment) -> None:
         super().preflight(environment)

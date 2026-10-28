@@ -357,8 +357,9 @@ serves. A `models.json` in its config sends every model request through
 the trace proxy, so `raw/` holds each request and response, and it carries
 `max_output_tokens` as the model's output cap. The agent keeps its own system prompt,
 tools and skills, and the case guidance travels in the user message. It rejects
-`allowed_tools`, `no_dimos`, `skills` and `excluded_keywords`. The case's cleanup stops the
-gateway and its commands.
+`allowed_tools`, `no_dimos`, `skills` and `excluded_keywords`, and a `max_tool_seconds` you
+set, since its `bash` has no per-call time limit. The case's cleanup stops the gateway and its
+commands.
 
 ## Scoring
 
