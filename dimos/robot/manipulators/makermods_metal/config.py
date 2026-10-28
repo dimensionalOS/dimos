@@ -43,17 +43,15 @@ def metal_hardware(
     *,
     can_port: str | None = None,
     gripper_opening_direction: Literal["increasing_position", "decreasing_position"] | None = None,
-    gripper_current: float | None = None,
+    gripper_current: float = 0.1,
 ) -> HardwareComponent:
     """Require explicit CAN and gripper settings before selecting physical hardware."""
     adapter_kwargs: dict[str, object] = {}
     if can_port is not None:
         if not can_port.strip():
             raise ValueError("Metal CAN selector must not be empty")
-        if gripper_opening_direction is None or gripper_current is None:
-            raise ValueError(
-                "physical Metal requires gripper opening direction and per-unit current"
-            )
+        if gripper_opening_direction is None:
+            raise ValueError("physical Metal requires gripper opening direction")
         if not 0.0 < gripper_current <= 1.0:
             raise ValueError("Metal gripper current must be in (0, 1] per-unit")
         adapter_kwargs = {

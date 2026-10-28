@@ -76,9 +76,9 @@ def test_physical_component_uses_common_runtime_config() -> None:
     component = metal_hardware(
         can_port="test-can",
         gripper_opening_direction="increasing_position",
-        gripper_current=0.1,
     )
     assert component.adapter_type == "makermods_metal"
+    assert component.adapter_kwargs["gripper_current"] == 0.1
     assert component.address is None
     assert component.joints == list(METAL_JOINTS)
     runtime = component.adapter_kwargs["runtime_config"]
@@ -113,12 +113,10 @@ def test_cli_exposes_common_can_and_explicit_gripper_settings() -> None:
             "test-can",
             "--gripper-opening-direction",
             "increasing_position",
-            "--gripper-current",
-            "0.1",
         ],
         environ={},
     )
     config = parsed.module_kwargs("ControlCoordinator")
     assert config["can_port"] == "test-can"
     assert config["gripper_opening_direction"] == "increasing_position"
-    assert config["gripper_current"] == 0.1
+    assert "gripper_current" not in config

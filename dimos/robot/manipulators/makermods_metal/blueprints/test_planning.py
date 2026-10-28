@@ -61,14 +61,12 @@ def test_planner_preserves_physical_can_configuration() -> None:
             "serial123",
             "--gripper-opening-direction",
             "increasing_position",
-            "--gripper-current",
-            "0.1",
         ],
         environ={},
     )
     config = MetalCoordinatorConfig.model_validate(parsed.module_kwargs("ControlCoordinator"))
     assert config.can_port == "serial123"
-    assert config.gripper_current == 0.1
+    assert "gripper_current" not in MetalCoordinatorConfig.model_fields
     assert config.gripper_opening_direction == "increasing_position"
 
 
