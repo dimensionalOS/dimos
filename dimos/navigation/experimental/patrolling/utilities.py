@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 
 
 def point_to_pose_stamped(point: tuple[float, float]) -> PoseStamped:
-    pose = PoseStamped()
-    pose.position.x = point[0]
-    pose.position.y = point[1]
+    pose = PoseStamped(
+        header=message_time.header_now(),
+        pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+    pose.pose.position.x = point[0]
+    pose.pose.position.y = point[1]
     return pose
 
 
 def pose_stamped_to_point(pose: PoseStamped) -> tuple[float, float]:
-    return (pose.position.x, pose.position.y)
+    return (pose.pose.position.x, pose.pose.position.y)

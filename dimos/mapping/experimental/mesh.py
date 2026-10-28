@@ -28,9 +28,15 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
-from dimos.visualization.rerun.bridge import RerunEntry
+from dimos.message_utils import (
+    mesh as mesh_utils,
+    pointcloud,
+    time as message_time,
+)
+from dimos.messages.dimos_msgs.msg import PointCloudRegion, TriangleMesh
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.visualization.rerun.mesh import MESH_ENTITY as MESH_ENTITY, MeshColours as MeshColours
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -225,8 +231,18 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
         if self._mesher is None:
             self._mesher = OccupancyMesher(self.voxel_size, self.iso, self.device, self.simplify)
         for obs in upstream:
-            for key, v, n, f in self._mesher.mesh(obs.data.points_f32()):
-                yield obs.derive(data=TriangleMesh(v, f, n, key, obs.ts))
+            for key, v, n, f in self._mesher.mesh(pointcloud.xyz(obs.data).astype(np.float32)):
+                yield obs.derive(
+                    data=mesh_utils.from_arrays(
+                        v,
+                        f,
+                        n,
+                        key=key,
+                        header=message_time.header_now()
+                        if obs.ts is None
+                        else Header(message_time.time_from_seconds(obs.ts), ""),
+                    )
+                )
 
 
 class MeshModuleConfig(ModuleConfig):
@@ -311,7 +327,7 @@ class MeshModule(Module):
 
     config: MeshModuleConfig
 
-    map_regions: In[PointCloud2]
+    map_regions: In[PointCloudRegion]
     mesh: Out[TriangleMesh]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -342,9 +358,11 @@ class MeshModule(Module):
             self._worker.join(timeout=5.0)
         super().stop()
 
-    def _on_region(self, msg: PointCloud2) -> None:
+    def _on_region(self, msg: PointCloudRegion) -> None:
         with self._lock:
-            if self._queue.update(msg.seq, msg.points_f32(), time.time()):
+            if self._queue.update(
+                msg.region_id, pointcloud.xyz(msg.cloud).astype(np.float32), time.time()
+            ):
                 self._dirty.set()
 
     def _run(self) -> None:
@@ -368,66 +386,8 @@ class MeshModule(Module):
             for key, v, n, f in self._mesher.mesh_chunks(points, np.array(chunks, np.int64)):
                 if self._stopping:
                     return
-                self.mesh.publish(TriangleMesh(v, f, n, key, ts))
-
-
-MESH_ENTITY = "world/mesh"
-
-
-class MeshColours:
-    """Rerun entries for each mesh chunk, turbo by height over the mesh's own range.
-
-    Once the range moves ``recolour_m``, every chunk is recoloured (colours only).
-    ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
-    """
-
-    keyed_by_seq = True
-
-    def __init__(
-        self,
-        alpha: float = 0.4,
-        z_range: tuple[float, float] | None = None,
-        recolour_m: float = 0.5,
-        static: bool = True,
-    ) -> None:
-        self.alpha = alpha
-        self.z_range = z_range
-        self.recolour_m = recolour_m
-        self.static = static
-        self._heights: dict[Key, np.ndarray] = {}
-        self._range: tuple[float, float] | None = None
-
-    def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
-        out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]
-        if len(msg.faces) == 0:
-            self._heights.pop(msg.key, None)
-            return out
-        self._heights[msg.key] = msg.vertices[:, 2].copy()
-        lo, hi = self.z_range or np.percentile(
-            np.concatenate(list(self._heights.values())), [2, 98]
-        )
-        keys = [msg.key]
-        if (
-            self._range is None
-            or max(abs(lo - self._range[0]), abs(hi - self._range[1])) > self.recolour_m
-        ):
-            self._range = (float(lo), float(hi))
-            keys = list(self._heights)
-        return out + [
-            RerunEntry(_chunk_path(k), self._colours(self._heights[k]), self.static) for k in keys
-        ]
-
-    def _colours(self, z: np.ndarray) -> Any:
-        import matplotlib
-        import rerun as rr
-
-        assert self._range is not None
-        lo, hi = self._range
-        t = np.clip((z - lo) / max(hi - lo, 1e-6), 0, 1)
-        colors = (matplotlib.colormaps["turbo"](t)[:, :3] * 255).astype(np.uint8)
-        alpha = int(self.alpha * 255)
-        return rr.Mesh3D.from_fields(vertex_colors=colors, albedo_factor=[255, 255, 255, alpha])
-
-
-def _chunk_path(key: Key) -> str:
-    return f"{MESH_ENTITY}/{key[0]}_{key[1]}_{key[2]}"
+                self.mesh.publish(
+                    mesh_utils.from_arrays(
+                        v, f, n, key=key, header=Header(message_time.time_from_seconds(ts), "")
+                    )
+                )

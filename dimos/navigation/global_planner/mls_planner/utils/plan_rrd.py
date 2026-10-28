@@ -42,9 +42,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.message_utils import pointcloud
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
 from dimos.navigation.global_planner.viz import (
@@ -61,6 +62,7 @@ from dimos.robot.unitree.go2.constants import (
     ROBOT_WIDTH,
 )
 from dimos.utils.data import resolve_named_path
+from dimos.visualization.rerun.frames import TfFrameTree
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
@@ -167,8 +169,7 @@ class _TfSync:
 
         while self._next is not None and self._next.ts <= ts:
             rr.set_time(TIMELINE, timestamp=self._next.ts)
-            for path, archetype in self._next.data.to_rerun(self._tree):
-                rr.log(path, archetype)
+            self._tree.update(self._next.data.transforms)
             self._next = next(self._pending, None)
 
 
@@ -176,7 +177,7 @@ def _log_odometry(
     pose: tuple[float, ...],
     ts: float,
     trail: list[tuple[float, float, float]],
-    base: Transform | None,
+    base: TransformStamped | None,
 ) -> None:
     """Trace the sensor moving throughout the scene."""
     import rerun as rr
@@ -193,9 +194,18 @@ def _log_odometry(
     rr.log(
         "world/robot_body",
         rr.Transform3D(
-            translation=[base.translation.x, base.translation.y, base.translation.z],
+            translation=[
+                base.transform.translation.x,
+                base.transform.translation.y,
+                base.transform.translation.z,
+            ],
             quaternion=rr.Quaternion(
-                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+                xyzw=[
+                    base.transform.rotation.x,
+                    base.transform.rotation.y,
+                    base.transform.rotation.z,
+                    base.transform.rotation.w,
+                ]
             ),
         ),
     )
@@ -314,7 +324,6 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
     else:
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
-    register_colormap_annotation("turbo")
     for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
         for _key, suffix, name, color in series:
             rr.log(
@@ -441,7 +450,7 @@ def _process_frame(
 
     bounds = ray_obs.tags["region_bounds"]
     ox, oy, radius, z_min, z_max = bounds
-    pts = ray_obs.data.points_f32()
+    pts = pointcloud.xyz(ray_obs.data).astype(np.float32)
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
 
     ref_timing: dict[str, float] = {}
@@ -701,11 +710,11 @@ def main(
                 if base is None:
                     continue
                 start = (
-                    float(base.translation.x),
-                    float(base.translation.y),
-                    float(base.translation.z) - start_z_offset,
+                    float(base.transform.translation.x),
+                    float(base.transform.translation.y),
+                    float(base.transform.translation.z) - start_z_offset,
                 )
-                sensor_z = float(base.translation.z)
+                sensor_z = float(base.transform.translation.z)
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,

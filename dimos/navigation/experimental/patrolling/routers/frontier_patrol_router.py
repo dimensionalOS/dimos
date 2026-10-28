@@ -18,8 +18,9 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion, label
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils import occupancy as occupancy_utils
+from dimos.messages.geometry_msgs.msg import Point, PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.navigation.experimental.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
 
@@ -49,7 +50,7 @@ class FrontierPatrolRouter(BasePatrolRouter):
                 return
 
             clearance_cells = self._visitation.clearance_radius_cells
-            free_mask = msg.grid == 0
+            free_mask = occupancy_utils.view(msg) == 0
             structure = np.ones((2 * clearance_cells + 1, 2 * clearance_cells + 1), dtype=bool)
             self._safe_mask = binary_erosion(free_mask, structure=structure).astype(bool)
 
@@ -66,8 +67,10 @@ class FrontierPatrolRouter(BasePatrolRouter):
             return None
 
         # Robot position in grid coordinates.
-        grid_pos = occupancy_grid.world_to_grid((pose.position.x, pose.position.y))
-        robot_col, robot_row = grid_pos.x, grid_pos.y
+        grid_pos = occupancy_utils.world_to_grid(
+            occupancy_grid, Point(pose.pose.position.x, pose.pose.position.y, 0.0)
+        )
+        robot_col, robot_row = grid_pos[0], grid_pos[1]
 
         # Unvisited safe cells.
         unvisited_safe = safe_mask & ~visited
@@ -121,5 +124,5 @@ class FrontierPatrolRouter(BasePatrolRouter):
         dists_sq = cluster_dr * cluster_dr + cluster_dc * cluster_dc
         goal_row, goal_col = cluster_indices[np.argmax(dists_sq)]
 
-        world = occupancy_grid.grid_to_world((int(goal_col), int(goal_row), 0))
+        world = occupancy_utils.grid_to_world(occupancy_grid, (int(goal_col), int(goal_row)))
         return point_to_pose_stamped((world.x, world.y))

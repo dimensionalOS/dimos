@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import itertools
 
+import numpy as np
 import typer
 
 from dimos.mapping.experimental.mesh import Mesh, MeshColours
@@ -29,9 +30,10 @@ from dimos.memory.tf import StreamTF
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.utils.progress import progress
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.utils.data import get_data
+from dimos.visualization.rerun.cdr import image_archetype
 
 
 def main(
@@ -90,7 +92,9 @@ def main(
             )
             rr.log(
                 "world/lidar/scan",
-                rr.Points3D(obs.data.points_f32(), radii=0.01, colors=[255, 255, 255]),
+                rr.Points3D(
+                    pointcloud.xyz(obs.data).astype(np.float32), radii=0.01, colors=[255, 255, 255]
+                ),
             )
 
     db = dataset if dataset.endswith(".db") else str(get_data(f"{dataset}.db"))
@@ -133,11 +137,15 @@ def main(
                     pending[:] = [img]
                     return
                 rr.set_time("time", timestamp=img.ts)
-                rr.log("camera/image", img.data.to_rerun())
+                rr.log("camera/image", image_archetype(img.data))
             pending.clear()
 
         global_map: FnTransformer[PointCloud2, PointCloud2] = FnTransformer(
-            lambda o: o.derive(data=PointCloud2.from_numpy(ray.mapper.global_map()))
+            lambda o: o.derive(
+                data=pointcloud.from_xyz(
+                    ray.mapper.global_map(), header=message_time.header_now("world")
+                )
+            )
         )
         with progress(lidar.count(), "meshing") as bar:
             meshes = (

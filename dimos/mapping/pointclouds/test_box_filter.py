@@ -23,11 +23,17 @@ import numpy as np
 import pytest
 
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.tf.tf import MultiTBuffer
 
 
@@ -49,8 +55,9 @@ def sent(module: PointCloudBoxFilter) -> list[PointCloud2]:
 
 
 def _cloud(points: list[list[float]]) -> PointCloud2:
-    return PointCloud2.from_numpy(
-        np.asarray(points, dtype=np.float32), frame_id="world", timestamp=1.0
+    return pointcloud.from_xyz(
+        np.asarray(points, dtype=np.float32),
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
     )
 
 
@@ -60,12 +67,12 @@ def _feed(module: PointCloudBoxFilter, cloud: PointCloud2) -> None:
 
 def _place_tool(module: PointCloudBoxFilter, at: Vector3, yaw: float, ts: float) -> None:
     module.tfbuffer.receive_transform(
-        Transform(
-            translation=at,
-            rotation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
-            frame_id="world",
+        TransformStamped(
+            header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
             child_frame_id="tool",
-            ts=ts,
+            transform=Transform(
+                translation=at, rotation=geometry.quaternion_from_euler(0.0, 0.0, yaw)
+            ),
         )
     )
 
@@ -73,11 +80,15 @@ def _place_tool(module: PointCloudBoxFilter, at: Vector3, yaw: float, ts: float)
 def test_a_fixed_box_drops_the_points_inside(
     module: PointCloudBoxFilter, sent: list[PointCloud2]
 ) -> None:
-    module.set_box("target", Pose(position=Vector3(1.0, 0.0, 0.0)), Vector3(0.2, 0.2, 0.2))
+    module.set_box(
+        "target",
+        Pose(position=Point(1.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        Vector3(0.2, 0.2, 0.2),
+    )
 
     _feed(module, _cloud([[1.0, 0.0, 0.0], [1.05, -0.05, 0.05], [2.0, 0.0, 0.0]]))
 
-    np.testing.assert_allclose(sent[-1].points_f32(), [[2.0, 0.0, 0.0]])
+    np.testing.assert_allclose(pointcloud.xyz(sent[-1]).astype(np.float32), [[2.0, 0.0, 0.0]])
 
 
 def test_a_box_on_a_moving_frame_follows_it(
@@ -85,13 +96,22 @@ def test_a_box_on_a_moving_frame_follows_it(
 ) -> None:
     # 20 cm along the tool's x axis; the tool is turned 90 degrees, so in the
     # world the box sits 20 cm along y from the tool.
-    module.set_box("held", Pose(position=Vector3(0.2, 0.0, 0.0)), Vector3(0.1, 0.1, 0.1), "tool")
+    module.set_box(
+        "held",
+        Pose(position=Point(0.2, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        Vector3(0.1, 0.1, 0.1),
+        "tool",
+    )
     cloud = _cloud([[1.0, 0.2, 0.0], [1.2, 0.0, 0.0], [2.0, 0.2, 0.0]])
 
     _place_tool(module, Vector3(1.0, 0.0, 0.0), math.pi / 2, ts=1.0)
     _feed(module, cloud)
-    np.testing.assert_allclose(sent[-1].points_f32(), [[1.2, 0.0, 0.0], [2.0, 0.2, 0.0]])
+    np.testing.assert_allclose(
+        pointcloud.xyz(sent[-1]).astype(np.float32), [[1.2, 0.0, 0.0], [2.0, 0.2, 0.0]]
+    )
 
     _place_tool(module, Vector3(2.0, 0.0, 0.0), math.pi / 2, ts=2.0)
     _feed(module, cloud)
-    np.testing.assert_allclose(sent[-1].points_f32(), [[1.0, 0.2, 0.0], [1.2, 0.0, 0.0]])
+    np.testing.assert_allclose(
+        pointcloud.xyz(sent[-1]).astype(np.float32), [[1.0, 0.2, 0.0], [1.2, 0.0, 0.0]]
+    )

@@ -24,8 +24,14 @@ from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import (
+    occupancy as occupancy_utils,
+    pointcloud,
+    time as message_time,
+)
+from dimos.messages.geometry_msgs.msg import Point
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
@@ -35,7 +41,10 @@ from dimos.utils.data import get_data
 @pytest.fixture
 def big_office() -> OccupancyGrid:
     data = read_pointcloud(get_data("big_office.ply"))
-    cloud = PointCloud2.from_numpy(np.asarray(data.points), frame_id="")
+    cloud = pointcloud.from_xyz(
+        np.asarray(data.points),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+    )
     return height_cost_occupancy(cloud)
 
 
@@ -82,7 +91,9 @@ def _save_coverage_image(router_name, router, all_poses, big_office, big_office_
     stamp = np.zeros((h, w), dtype=np.uint8)
 
     for pose in all_poses:
-        grid = big_office.world_to_grid((pose.position.x, pose.position.y))
+        grid = occupancy_utils.world_to_grid(
+            big_office, Point(pose.position.x, pose.position.y, 0.0)
+        )
         gx, gy = int(grid.x), int(grid.y)
         if 0 <= gy < h and 0 <= gx < w:
             stamp[:] = 0

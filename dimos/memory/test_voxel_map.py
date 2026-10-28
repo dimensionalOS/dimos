@@ -18,11 +18,14 @@ import numpy as np
 
 from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory.type.observation import Observation
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 
 def _make_obs(obs_id: int, points: np.ndarray, ts: float = 0.0) -> Observation[PointCloud2]:
-    return Observation(id=obs_id, ts=ts, _data=PointCloud2.from_numpy(points))
+    return Observation(
+        id=obs_id, ts=ts, _data=pointcloud.from_xyz(points, header=message_time.header_now("world"))
+    )
 
 
 def _unit_cube_points(n: int = 100) -> np.ndarray:
@@ -43,7 +46,10 @@ def test_accumulate_two_frames() -> None:
     global_map = results[-1].data  # last result has the full accumulated map
 
     single_results = list(VoxelMapTransformer(voxel_size=0.5)(iter([obs1])))
-    assert len(global_map) > len(single_results[0].data)
+    assert (
+        global_map.width * global_map.height
+        > single_results[0].data.width * single_results[0].data.height
+    )
 
 
 def test_empty_stream() -> None:

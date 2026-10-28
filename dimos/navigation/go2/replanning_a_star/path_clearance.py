@@ -17,9 +17,11 @@ from threading import RLock
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.mapping.occupancy.operations import _grid_values
 from dimos.mapping.occupancy.path_mask import make_path_mask
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils import geometry
+from dimos.message_utils.occupancy import CostValues
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 
 
 class PathClearance:
@@ -60,7 +62,7 @@ class PathClearance:
         if (
             self._last_mask is not None
             and self._last_used_pose is not None
-            and costmap.grid.shape == self._last_used_shape
+            and _grid_values(costmap).shape == self._last_used_shape
             and self._pose_distance(self._last_used_pose, pose_index) < self._max_distance_cache
         ):
             return self._last_mask
@@ -73,7 +75,7 @@ class PathClearance:
             max_length=self._path_lookup_distance,
         )
 
-        self._last_used_shape = costmap.grid.shape
+        self._last_used_shape = _grid_values(costmap).shape
         self._last_used_pose = pose_index
 
         return self._last_mask
@@ -85,9 +87,9 @@ class PathClearance:
         if costmap is None:
             return True
 
-        return bool(np.any(costmap.grid[self.mask] == CostValues.OCCUPIED))
+        return bool(np.any(_grid_values(costmap)[self.mask] == CostValues.OCCUPIED))
 
     def _pose_distance(self, index1: int, index2: int) -> float:
-        p1 = self._path.poses[index1].position
-        p2 = self._path.poses[index2].position
-        return p1.distance(p2)
+        return geometry.point_distance(
+            self._path.poses[index1].pose.position, self._path.poses[index2].pose.position
+        )

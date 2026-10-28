@@ -13,7 +13,7 @@ This guide takes four steps:
 3. Test relocalization in replay, no robot needed
 4. Deploy on the live Go2
 
-Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and dimOS appends `.pc2.lcm` automatically.
+Throughout this guide, `{DB_NAME}` is the stem of your recording, for example `recording_go2` for `recording_go2.db`. For `map_file`, pass the same stem and dimOS appends `.pc2.cdr` automatically.
 
 ## 1. Record a run
 
@@ -44,7 +44,7 @@ dimos map replay recording_go2 --duration 60
 
 ## 2. Build the premap
 
-Export a loop-closed global map as `.pc2.lcm`:
+Export a loop-closed global map as `.pc2.cdr`:
 
 ```bash
 dimos map global recording_go2 --export
@@ -52,7 +52,7 @@ dimos map global recording_go2 --export
 
 | Flag | Effect |
 |------|--------|
-| `--export` | Run PGO and write `./{DB_NAME}.pc2.lcm` to the current working directory (implies `--pgo`) |
+| `--export` | Run PGO and write `./{DB_NAME}.pc2.cdr` to the current working directory (implies `--pgo`) |
 | `--no-gui` | Skip launching Rerun for headless servers or CI |
 | `--pgo-tol 0.3` | Spatial dedup tolerance for keyframes in meters. Use `0` to keep all posed frames |
 | `--voxel 0.05` | Voxel size in meters (default matches live mapper) |
@@ -76,8 +76,8 @@ Sample log:
 ```
 running PGO twopass map...
   Pass 1: 908 frames, 1 keyframes
-exporting PGO twopass map to .../recording_go2.pc2.lcm...
-wrote .../recording_go2.pc2.lcm
+exporting PGO twopass map to .../recording_go2.pc2.cdr...
+wrote .../recording_go2.pc2.cdr
 ```
 
 Open the companion `{DB_NAME}.rrd` in Rerun to verify loop closure before deploying to hardware.
@@ -91,7 +91,7 @@ dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
   --map-file=recording_go2
 ```
 
-`map_file` resolves `{DB_NAME}.pc2.lcm` with the same search order as above (cwd, then project root, then `data/`).
+`map_file` resolves `{DB_NAME}.pc2.cdr` with the same search order as above (cwd, then project root, then `data/`).
 
 ### Reading the logs
 
@@ -161,7 +161,7 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 | File | Format | Produced by | Consumed by |
 |------|--------|-------------|-------------|
 | `{name}.db` | memory SQLite (`lidar`, `odom`, `color_image`, …) | `unitree-go2-memory` | `dimos map *`, `--replay-db` |
-| `{name}.pc2.lcm` | LCM-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
+| `{name}.pc2.cdr` | CDR-encoded `PointCloud2` premap | `dimos map global --export` | `RelocalizationModule` (`map_file`) |
 | `{name}.rrd` | Rerun recording (visual QA) | `dimos map global` | Rerun viewer |
 
 ## Configuration reference
@@ -172,7 +172,7 @@ for example `--relocalizationmodule.map-file=…`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `map_file` | `None` (module disabled) | Premap stem or path. dimOS appends `.pc2.lcm` automatically |
+| `map_file` | `None` (module disabled) | Premap stem or path. dimOS appends `.pc2.cdr` automatically |
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
 | `tf_interval` | `10.0` | Seconds between tf republishes of the accepted fix (published immediately on every fix) |
 | `republish_loaded_map` | `0.0` | Seconds between `loaded_map` republishes once placed; `0` publishes once per fix |
@@ -199,7 +199,7 @@ dimos run unitree-go2-relocalization \
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `Relocalization module disabled (no map_file configured)` | Missing `--map-file=…` | Set `map_file` to your premap stem |
-| File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
+| File not found for `.pc2.cdr` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
 | Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
 | Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |
 | Nav works but map looks misaligned | Low fitness accepted in debug mode | Raise `fitness_threshold` back to default `0.45` |

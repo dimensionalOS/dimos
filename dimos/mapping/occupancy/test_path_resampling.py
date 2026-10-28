@@ -12,30 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import cv2
 import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
 from dimos.mapping.occupancy.visualize_path import visualize_path
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import (
+    image,
+    image as image_utils,
+    occupancy as occupancy_utils,
+    time as message_time,
+)
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 
 @pytest.fixture
 def costmap() -> OccupancyGrid:
-    return gradient(OccupancyGrid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
+    return gradient(
+        occupancy_utils.from_array(
+            np.asarray(np.load(get_data("occupancy_simple.npy")), dtype=np.int8),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            resolution=0.05,
+            origin=None,
+        ),
+        max_distance=1.5,
+    )
 
 
 @pytest.mark.parametrize("method", ["simple", "smooth"])
 def test_resample_path(costmap, method) -> None:
     start = Vector3(4.0, 2.0, 0)
-    goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
-    expected = Image.from_file(get_data(f"resample_path_{method}.png"))
+    goal_pose = Pose(position=Point(6.15, 10.0, 0), orientation=Quaternion(0, 0, 0, 1))
+    expected = image.from_array(
+        cv2.imread(str(get_data(f"resample_path_{method}.png"))),
+        encoding="bgr8",
+        header=message_time.header_now(),
+    )
     path = min_cost_astar(costmap, goal_pose.position, start, use_cpp=False)
 
     match method:
@@ -47,4 +66,4 @@ def test_resample_path(costmap, method) -> None:
             raise ValueError(f"Unknown resampling method: {method}")
 
     actual = visualize_path(costmap, resampled, 0.2, 0.4)
-    np.testing.assert_array_equal(actual.data, expected.data)
+    np.testing.assert_array_equal(image_utils.view(actual), image_utils.view(expected))

@@ -12,44 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// LCM messages in and out of the dim_slam library's plain types.
+// CDR messages in and out of the dim_slam library's plain types.
 
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
 use dim_slam::{CameraModel, ImageFrame, ImuSample, OdometryEstimate, PointCloud, Twist};
-use dimos_module::{Tf, Transform};
-use lcm_msgs::geometry_msgs;
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use dimos_generated_messages::{
+    builtin_interfaces::msg::time::Time,
+    geometry_msgs::msg::{
+        point::Point, pose::Pose, pose_with_covariance::PoseWithCovariance,
+        quaternion::Quaternion as WireQuaternion, transform::Transform as WireTransform,
+        twist::Twist as WireTwist, twist_with_covariance::TwistWithCovariance,
+        vector3::Vector3 as WireVector3,
+    },
+    nav_msgs::msg::odometry::Odometry,
+    sensor_msgs::msg::{
+        camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
+        point_field::PointField,
+    },
+    std_msgs::msg::header::Header,
+};
+use dimos_module::{Tf, TransformStamped};
 
 const NS_PER_SEC: i64 = 1_000_000_000;
-const BYTES_PER_POINT: i32 = 12;
+const BYTES_PER_POINT: u32 = 12;
 
 fn stamp_to_ns(header: &Header) -> i64 {
-    header.stamp.sec as i64 * NS_PER_SEC + header.stamp.nsec as i64
+    header.stamp.sec as i64 * NS_PER_SEC + header.stamp.nanosec as i64
 }
 
 fn to_stamp(timestamp_ns: i64) -> Time {
     Time {
-        sec: (timestamp_ns / NS_PER_SEC) as i32,
-        nsec: (timestamp_ns % NS_PER_SEC) as i32,
+        sec: timestamp_ns.div_euclid(NS_PER_SEC) as i32,
+        nanosec: timestamp_ns.rem_euclid(NS_PER_SEC) as u32,
     }
 }
 
 fn to_header(timestamp_ns: i64, frame_id: &str) -> Header {
     Header {
-        seq: 0,
         stamp: to_stamp(timestamp_ns),
         frame_id: frame_id.to_string(),
     }
 }
 
-fn to_vector3(vector: &geometry_msgs::Vector3) -> Vector3<f64> {
+fn to_vector3(vector: &WireVector3) -> Vector3<f64> {
     Vector3::new(vector.x, vector.y, vector.z)
 }
 
-fn to_vector3_msg(vector: &Vector3<f64>) -> geometry_msgs::Vector3 {
-    geometry_msgs::Vector3 {
+fn to_vector3_msg(vector: &Vector3<f64>) -> WireVector3 {
+    WireVector3 {
         x: vector.x,
         y: vector.y,
         z: vector.z,
@@ -65,10 +75,12 @@ fn row_major(matrix: &Matrix6<f64>) -> [f64; 36] {
 
 pub fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
     move |parent: &str, child: &str| {
-        tf.get_latest(parent, child).map(|transform| {
+        tf.get_latest(parent, child).map(|edge| {
+            let p = edge.transform.translation;
+            let q = edge.transform.rotation;
             Isometry3::from_parts(
-                Translation3::from(transform.translation()),
-                transform.rotation(),
+                Translation3::new(p.x, p.y, p.z),
+                UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.x, q.y, q.z)),
             )
         })
     }
@@ -78,10 +90,10 @@ pub fn to_image_frame(img: Image) -> ImageFrame {
     ImageFrame {
         timestamp_ns: stamp_to_ns(&img.header),
         frame_id: img.header.frame_id,
-        width: img.width,
-        height: img.height,
+        width: img.width as i32,
+        height: img.height as i32,
         encoding: img.encoding,
-        step: img.step,
+        step: img.step as i32,
         data: img.data,
     }
 }
@@ -90,10 +102,10 @@ pub fn to_camera_model(info: CameraInfo) -> CameraModel {
     CameraModel {
         timestamp_ns: stamp_to_ns(&info.header),
         frame_id: info.header.frame_id,
-        width: info.width,
-        height: info.height,
-        distortion: info.D,
-        intrinsics: info.K,
+        width: info.width as i32,
+        height: info.height as i32,
+        distortion: info.d,
+        intrinsics: info.k,
     }
 }
 
@@ -137,14 +149,14 @@ pub fn to_odometry_msg(estimate: &OdometryEstimate) -> Odometry {
     Odometry {
         header: to_header(estimate.timestamp_ns, &estimate.frame_id),
         child_frame_id: estimate.child_frame_id.clone(),
-        pose: geometry_msgs::PoseWithCovariance {
-            pose: geometry_msgs::Pose {
-                position: geometry_msgs::Point {
+        pose: PoseWithCovariance {
+            pose: Pose {
+                position: Point {
                     x: translation.x,
                     y: translation.y,
                     z: translation.z,
                 },
-                orientation: geometry_msgs::Quaternion {
+                orientation: WireQuaternion {
                     x: rotation.i,
                     y: rotation.j,
                     z: rotation.k,
@@ -153,8 +165,8 @@ pub fn to_odometry_msg(estimate: &OdometryEstimate) -> Odometry {
             },
             covariance: row_major(&estimate.pose_covariance),
         },
-        twist: geometry_msgs::TwistWithCovariance {
-            twist: geometry_msgs::Twist {
+        twist: TwistWithCovariance {
+            twist: WireTwist {
                 linear: to_vector3_msg(&estimate.twist.linear),
                 angular: to_vector3_msg(&estimate.twist.angular),
             },
@@ -163,26 +175,33 @@ pub fn to_odometry_msg(estimate: &OdometryEstimate) -> Odometry {
     }
 }
 
-pub fn to_transform(estimate: &OdometryEstimate) -> Transform {
-    Transform::new(
-        estimate.frame_id.clone(),
-        estimate.child_frame_id.clone(),
-        estimate.timestamp_ns as f64 / NS_PER_SEC as f64,
-        estimate.pose,
-    )
+pub fn to_transform(estimate: &OdometryEstimate) -> TransformStamped {
+    let odometry = to_odometry_msg(estimate);
+    TransformStamped {
+        header: odometry.header,
+        child_frame_id: odometry.child_frame_id,
+        transform: WireTransform {
+            translation: WireVector3 {
+                x: odometry.pose.pose.position.x,
+                y: odometry.pose.pose.position.y,
+                z: odometry.pose.pose.position.z,
+            },
+            rotation: odometry.pose.pose.orientation,
+        },
+    }
 }
 
-fn xyz_field(name: &str, offset: i32) -> PointField {
+fn xyz_field(name: &str, offset: u32) -> PointField {
     PointField {
         name: name.to_string(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     }
 }
 
 pub fn to_point_cloud2(cloud: &PointCloud) -> PointCloud2 {
-    let width = cloud.points.len() as i32;
+    let width = cloud.points.len() as u32;
     let mut data = Vec::with_capacity(cloud.points.len() * BYTES_PER_POINT as usize);
     for point in &cloud.points {
         for coordinate in point {
@@ -210,14 +229,14 @@ mod tests {
     fn stamp_round_trips_through_ns() {
         let header = Header {
             stamp: to_stamp(1_234_567_890_123_456_789),
-            ..Default::default()
+            frame_id: String::new(),
         };
         assert_eq!(stamp_to_ns(&header), 1_234_567_890_123_456_789);
     }
 
     #[test]
     fn odometry_round_trips_through_the_estimate() {
-        let mut msg = Odometry::default();
+        let mut msg = to_odometry_msg(&OdometryEstimate::default());
         msg.header.stamp = to_stamp(42 * NS_PER_SEC);
         msg.header.frame_id = "odom".to_string();
         msg.child_frame_id = "base_link".to_string();
@@ -233,6 +252,66 @@ mod tests {
 
         let back = to_odometry_msg(&to_estimate(&msg));
         assert_eq!(back, msg);
+    }
+
+    #[test]
+    fn generated_messages_cross_cdr_boundary_with_exact_stamps_and_calibration() {
+        use dimos_module::cdr;
+        let image = Image {
+            header: to_header(12_000_000_001, "left"),
+            width: 2,
+            height: 1,
+            step: 6,
+            encoding: "rgb8".into(),
+            data: vec![1, 2, 3, 4, 5, 6],
+            is_bigendian: 0,
+        };
+        let info = CameraInfo {
+            header: image.header.clone(),
+            width: 2,
+            height: 1,
+            d: vec![0.1, 0.2],
+            k: [2., 0., 1., 0., 3., 0.5, 0., 0., 1.],
+            distortion_model: "plumb_bob".into(),
+            r: [0.; 9],
+            p: [0.; 12],
+            binning_x: 0,
+            binning_y: 0,
+            roi: dimos_generated_messages::sensor_msgs::msg::region_of_interest::RegionOfInterest {
+                x_offset: 0,
+                y_offset: 0,
+                height: 0,
+                width: 0,
+                do_rectify: false,
+            },
+        };
+        for little_endian in [true, false] {
+            let frame = to_image_frame(
+                cdr::decode(&cdr::encode_endian(&image, little_endian).unwrap()).unwrap(),
+            );
+            assert_eq!(frame.timestamp_ns, 12_000_000_001);
+            assert_eq!((frame.width, frame.height, frame.step), (2, 1, 6));
+            assert_eq!(frame.data, vec![1, 2, 3, 4, 5, 6]);
+            let calibration = to_camera_model(
+                cdr::decode(&cdr::encode_endian(&info, little_endian).unwrap()).unwrap(),
+            );
+            assert_eq!(calibration.distortion, vec![0.1, 0.2]);
+            assert_eq!(
+                calibration.intrinsics,
+                [2., 0., 1., 0., 3., 0.5, 0., 0., 1.]
+            );
+            let estimate = OdometryEstimate {
+                timestamp_ns: 12_000_000_001,
+                frame_id: "odom".into(),
+                child_frame_id: "base".into(),
+                ..Default::default()
+            };
+            let output = to_odometry_msg(&estimate);
+            let restored: Odometry =
+                cdr::decode(&cdr::encode_endian(&output, little_endian).unwrap()).unwrap();
+            assert_eq!(to_estimate(&restored).timestamp_ns, 12_000_000_001);
+            assert_eq!(to_transform(&estimate).header, restored.header);
+        }
     }
 
     #[test]

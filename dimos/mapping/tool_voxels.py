@@ -20,7 +20,8 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
@@ -87,8 +88,8 @@ def test_carving(grid: VoxelGrid, moment1: Go2MapperMoment, moment2: Go2MapperMo
     count_carving = grid.size()
 
     voxel_size = grid._voxel_size
-    pts1 = np.asarray(lidar_frame1.pointcloud.points)
-    pts2 = np.asarray(lidar_frame2.pointcloud.points)
+    pts1 = pointcloud.xyz(lidar_frame1)
+    pts2 = pointcloud.xyz(lidar_frame2)
     combined_vox = np.floor(np.vstack([pts1, pts2]) / voxel_size).astype(np.int64)
     count_additive = np.unique(combined_vox, axis=0).shape[0]
 

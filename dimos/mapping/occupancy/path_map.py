@@ -16,7 +16,7 @@ from dimos.mapping.occupancy.gradient import GradientStrategy, gradient, voronoi
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.mapping.occupancy.types import NavigationStrategy
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
 def make_navigation_map(

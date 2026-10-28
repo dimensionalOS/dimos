@@ -28,12 +28,11 @@ from numpy.typing import NDArray
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, pointcloud
+from dimos.messages.geometry_msgs.msg import Pose, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 logger = setup_logger()
 
@@ -110,7 +109,9 @@ class PointCloudBoxFilter(Module):
         """
         if not name:
             raise ValueError("Box name must not be empty")
-        if any(edge <= 0.0 or not math.isfinite(edge) for edge in size.to_tuple()):
+        if any(
+            edge <= 0.0 or not math.isfinite(edge) for edge in tuple(geometry.vector_array(size))
+        ):
             raise ValueError("Box size must have three positive, finite edges")
         with self._lock:
             self._boxes[name] = Box(pose, size, frame_id)
@@ -136,29 +137,26 @@ class PointCloudBoxFilter(Module):
             self.filtered_cloud.publish(self._filtered(self._last_cloud))
 
     def _filtered(self, cloud: PointCloud2) -> PointCloud2:
-        points = cloud.points_f32()
+        points = pointcloud.xyz(cloud).astype(np.float32)
         boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, cloud))]
         if not boxes or not len(points):
             return cloud
         keep = ~inside_boxes(points, boxes)
-        filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
-        for name, values in cloud.pointcloud_tensor.point.items():
-            filtered.pointcloud_tensor.point[name] = values[keep]
-        return filtered
+        return pointcloud.select(cloud, keep)
 
     def _placed(
         self, box: Box, cloud: PointCloud2
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """The box's pose in the cloud's frame and its edge lengths; None while its frame is unknown."""
-        pose = pose_to_matrix(box.pose)
-        if box.frame_id is not None and box.frame_id != cloud.frame_id:
-            transform = self.tfbuffer.get(cloud.frame_id, box.frame_id, warn=False)
+        pose = geometry.pose_matrix(box.pose)
+        if box.frame_id is not None and box.frame_id != cloud.header.frame_id:
+            transform = self.tfbuffer.get(cloud.header.frame_id, box.frame_id, warn=False)
             if transform is None:
                 logger.warning(
                     "No transform from %s to %s yet; box points stay in the cloud",
-                    cloud.frame_id,
+                    cloud.header.frame_id,
                     box.frame_id,
                 )
                 return None
-            pose = transform.to_matrix() @ pose
-        return pose, np.asarray(box.size.to_tuple(), dtype=np.float64)
+            pose = geometry.transform_matrix(transform.transform) @ pose
+        return pose, np.asarray(tuple(geometry.vector_array(box.size)), dtype=np.float64)

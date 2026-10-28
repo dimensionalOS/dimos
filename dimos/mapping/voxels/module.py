@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
@@ -23,7 +26,8 @@ from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -53,8 +57,11 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
         self, grid: VoxelGrid, last_obs: Observation[PointCloud2], count: int
     ) -> Observation[PointCloud2]:
         # pose=None: the global map is in world frame, per-observation pose is meaningless
+        header = deepcopy(last_obs.data.header)
+        header.frame_id = self._grid_kwargs.get("frame_id", "world")
+        points = grid.get_global_pointcloud().point["positions"].numpy()
         return last_obs.derive(
-            data=grid.get_global_pointcloud2(),
+            data=pointcloud.from_xyz(points, header=header),
             pose=None,
             tags={**last_obs.tags, "frame_count": count},
         )
@@ -68,7 +75,9 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
             count = 0
 
             for obs in upstream:
-                grid.add_frame(obs.data)
+                coordinates = pointcloud.xyz(obs.data)
+                points = coordinates[np.isfinite(coordinates).all(axis=1)].astype(np.float32)
+                grid.add_points(points, timestamp=message_time.to_seconds(obs.data.header.stamp))
                 last_obs = obs
                 count += 1
 

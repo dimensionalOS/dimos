@@ -73,37 +73,6 @@
         "type": "github"
       }
     },
-    "dimos-local-planner": {
-      "inputs": {
-        "crate2nix": [
-          "crate2nix"
-        ],
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nix-filter": [
-          "nix-filter"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "dir": "dimos/navigation/local_planner/rust",
-        "lastModified": 1793139699,
-        "narHash": "sha256-vkAlzYwMbzXaG1knf0F1zRpKz/pScA7CcvQ7OTRSs9k=",
-        "owner": "dimensionalOS",
-        "repo": "dimos",
-        "rev": "7baa1f5f4934bca9bde63aff49487ad9b8b45227",
-        "type": "github"
-      },
-      "original": {
-        "dir": "dimos/navigation/local_planner/rust",
-        "owner": "dimensionalOS",
-        "repo": "dimos",
-        "type": "github"
-      }
-    },
     "flake-compat": {
       "locked": {
         "lastModified": 1733328505,
@@ -322,7 +291,6 @@
     "root": {
       "inputs": {
         "crate2nix": "crate2nix",
-        "dimos-local-planner": "dimos-local-planner",
         "flake-utils": "flake-utils",
         "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs_2"

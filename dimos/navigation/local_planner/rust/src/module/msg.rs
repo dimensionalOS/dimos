@@ -17,11 +17,17 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::geometry_msgs::msg::{
+    point::Point, pose::Pose, pose_stamped::PoseStamped, quaternion::Quaternion, twist::Twist,
+    vector3::Vector3,
+};
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::{error_throttled, Output};
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion, Vector3};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 
 /// A plan waypoint as the laws and the planner see it: `(x, y, yaw)`.
 pub type State = [f64; 3];
@@ -46,19 +52,25 @@ pub fn quat_of_yaw(yaw: f64) -> Quaternion {
 
 /// Seconds since the unix epoch as one float, the python `PoseStamped.ts`.
 pub fn secs_of(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    t.sec as f64 + t.nanosec as f64 * 1e-9
 }
 
-/// A float second count as a `Time`, matching `Header.__init__`'s truncation
-/// (`sec = int(ts)`, `nsec = int((ts - sec) * 1e9)`).
+pub fn nanoseconds(time: &Time) -> i64 {
+    time.sec as i64 * 1_000_000_000 + time.nanosec as i64
+}
+
+/// Normalize a floating second count into the canonical ROS Time fields.
 pub fn time_of_secs(ts: f64) -> Time {
     if !ts.is_finite() {
-        return Time { sec: 0, nsec: 0 };
+        return Time { sec: 0, nanosec: 0 };
     }
-    let sec = ts.trunc();
+    let ns = (ts * 1_000_000_000.).round() as i64;
+    let sec = ns
+        .div_euclid(1_000_000_000)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
     Time {
-        sec: sec.clamp(i32::MIN as f64, i32::MAX as f64) as i32,
-        nsec: ((ts - sec) * 1e9) as i32,
+        sec,
+        nanosec: ns.rem_euclid(1_000_000_000) as u32,
     }
 }
 
@@ -72,7 +84,6 @@ pub fn now_secs() -> f64 {
 
 pub fn header(frame_id: &str, ts: f64) -> Header {
     Header {
-        seq: 0,
         stamp: time_of_secs(ts),
         frame_id: frame_id.into(),
     }
@@ -122,20 +133,20 @@ pub fn build_cloud(points: &[[f32; 3]], frame_id: &str, ts: f64) -> PointCloud2 
             data.extend_from_slice(&v.to_le_bytes());
         }
     }
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.into(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
         header: header(frame_id, ts),
         height: 1,
-        width: points.len() as i32,
+        width: points.len() as u32,
         fields: vec![field("x", 0), field("y", 4), field("z", 8)],
         is_bigendian: false,
         point_step: 12,
-        row_step: 12 * points.len() as i32,
+        row_step: 12 * points.len() as u32,
         data,
         is_dense: true,
     }
@@ -164,8 +175,8 @@ pub fn path_stamps(path: &Path) -> Vec<f64> {
 }
 
 /// A body-frame twist, the only shape either module publishes.
-pub fn twist(vx: f64, vy: f64, wz: f64) -> lcm_msgs::geometry_msgs::Twist {
-    lcm_msgs::geometry_msgs::Twist {
+pub fn twist(vx: f64, vy: f64, wz: f64) -> Twist {
+    Twist {
         linear: Vector3 {
             x: vx,
             y: vy,
@@ -192,11 +203,34 @@ pub async fn publish<T>(out: &Output<T>, msg: &T) {
 }
 
 // Reading a cloud off the wire is dimos-module's; the path stays `msg::extract_xyz`.
-pub use dimos_module::pointcloud::{extract_xyz, ExtractError};
+pub use dimos_module::pointcloud::ExtractError;
+
+pub fn extract_xyz(
+    cloud: &dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2,
+) -> Result<Vec<[f32; 3]>, ExtractError> {
+    use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+    let offset = |name: &str| {
+        cloud
+            .fields
+            .iter()
+            .find(|f| f.name == name && f.datatype == PointField::FLOAT32 && f.count == 1)
+            .map(|f| f.offset as usize)
+            .ok_or(ExtractError("missing scalar float32 xyz field"))
+    };
+    dimos_module::pointcloud::extract_xyz_rows(
+        &cloud.data,
+        [cloud.width as usize, cloud.height as usize],
+        [cloud.point_step as usize, cloud.row_step as usize],
+        [offset("x")?, offset("y")?, offset("z")?],
+        cloud.is_bigendian,
+    )
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use dimos_module::cdr;
     use std::f64::consts::PI;
 
     #[test]
@@ -219,8 +253,8 @@ mod tests {
     #[test]
     fn a_non_finite_stamp_does_not_wrap_around() {
         // a saturating `as i32` would give i32::MAX seconds; zero is the honest "no time"
-        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nsec: 0 });
-        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nsec: 0 });
+        assert_eq!(time_of_secs(f64::NAN), Time { sec: 0, nanosec: 0 });
+        assert_eq!(time_of_secs(f64::INFINITY), Time { sec: 0, nanosec: 0 });
     }
 
     #[test]
@@ -244,5 +278,87 @@ mod tests {
         let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let path = build_path(&states, &[], 5.0, "odom", 0.0);
         assert_eq!(path_stamps(&path), vec![5.0, 5.0]);
+    }
+
+    #[test]
+    fn generated_path_codec_keeps_nanoseconds_with_existing_float_profile() {
+        let mut path = build_path(
+            &[[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]],
+            &[],
+            0.,
+            "map",
+            0.,
+        );
+        let base = 1_700_000_000_123_456_789i64;
+        for (pose, delta) in path.poses.iter_mut().zip([0, 1, 3]) {
+            let ns = base + delta;
+            pose.header.stamp = Time {
+                sec: ns.div_euclid(1_000_000_000) as i32,
+                nanosec: ns.rem_euclid(1_000_000_000) as u32,
+            };
+        }
+        for little in [false, true] {
+            let payload = cdr::encode_endian(&path, little).unwrap();
+            let decoded: Path = cdr::decode(&payload).unwrap();
+            assert_eq!(decoded, path);
+            assert!(path_stamps(&decoded)
+                .windows(2)
+                .all(|pair| pair[0] == pair[1]));
+            assert_eq!(decoded.header.frame_id, "map");
+        }
+        assert_eq!(
+            time_of_secs(-0.25),
+            Time {
+                sec: -1,
+                nanosec: 750_000_000
+            }
+        );
+    }
+
+    #[test]
+    fn generated_cloud_layout_handles_padding_endian_and_cdr() {
+        use dimos_generated_messages::sensor_msgs::msg::{
+            point_cloud2::PointCloud2, point_field::PointField,
+        };
+        let values = [[1f32, 2., 3.], [4., 5., 6.], [7., 8., 9.], [10., 11., 12.]];
+        for big in [false, true] {
+            let mut data = vec![0u8; 80];
+            for (index, point) in values.iter().enumerate() {
+                for (axis, value) in point.iter().enumerate() {
+                    let offset = (index / 2) * 40 + (index % 2) * 16 + axis * 4;
+                    let bytes = if big {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    };
+                    data[offset..offset + 4].copy_from_slice(&bytes);
+                }
+            }
+            let fields = ["x", "y", "z"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| PointField {
+                    name: (*name).into(),
+                    offset: (i * 4) as u32,
+                    datatype: PointField::FLOAT32,
+                    count: 1,
+                })
+                .collect();
+            let cloud = PointCloud2 {
+                header: header("map", 0.),
+                height: 2,
+                width: 2,
+                fields,
+                is_bigendian: big,
+                point_step: 16,
+                row_step: 40,
+                data,
+                is_dense: true,
+            };
+            let mut decoded: PointCloud2 = cdr::decode(&cdr::encode(&cloud).unwrap()).unwrap();
+            assert_eq!(extract_xyz(&decoded).unwrap(), values);
+            decoded.row_step = 7;
+            assert!(extract_xyz(&decoded).is_err());
+        }
     }
 }

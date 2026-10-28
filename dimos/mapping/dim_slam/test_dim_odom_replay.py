@@ -23,6 +23,8 @@ import math
 
 import pytest
 
+from dimos.message_utils import geometry, time as message_time
+
 # The recording is a Git LFS fixture, which the regular CI job caps at 1 MiB, and the
 # linux dim_odom wheel is CUDA-only, so this needs the GPU runner rather than the
 # containerized one.
@@ -76,7 +78,7 @@ def _tf_lookup(store):
         transform = tf.get(parent, child, warn=False)
         if transform is None:
             return None
-        translation, rotation = transform.translation, transform.rotation
+        translation, rotation = transform.transform.translation, transform.transform.rotation
         return (
             (translation.x, translation.y, translation.z),
             (rotation.x, rotation.y, rotation.z, rotation.w),
@@ -87,8 +89,8 @@ def _tf_lookup(store):
 
 def _image_frame(image):
     return dim_odom.ImageFrame(
-        timestamp_ns=round(image.ts * 1e9),
-        frame_id=image.frame_id,
+        timestamp_ns=message_time.to_nanoseconds(image.header.stamp),
+        frame_id=image.header.frame_id,
         width=image.width,
         height=image.height,
         encoding="mono8",
@@ -113,12 +115,12 @@ def _replay_trajectory(db_path):
             info = store.stream(f"{stream}_camera_info").first().data
             tracker.handle_camera_info(
                 dim_odom.CameraModel(
-                    timestamp_ns=round(info.ts * 1e9),
-                    frame_id=info.frame_id,
+                    timestamp_ns=message_time.to_nanoseconds(info.header.stamp),
+                    frame_id=info.header.frame_id,
                     width=info.width,
                     height=info.height,
-                    distortion=list(info.D),
-                    intrinsics=list(info.K),
+                    distortion=list(info.d),
+                    intrinsics=list(info.k),
                 )
             )
 
@@ -159,9 +161,11 @@ def _replay_fusion(db_path):
                 fusion.handle_imu(
                     dim_odom.ImuSample(
                         timestamp_ns=round(ts * 1e9),
-                        frame_id=message.frame_id,
-                        angular_velocity=tuple(message.angular_velocity),
-                        linear_acceleration=tuple(message.linear_acceleration),
+                        frame_id=message.header.frame_id,
+                        angular_velocity=tuple(geometry.vector_array(message.angular_velocity)),
+                        linear_acceleration=tuple(
+                            geometry.vector_array(message.linear_acceleration)
+                        ),
                     ),
                     base_from_imu,
                 )
@@ -169,17 +173,17 @@ def _replay_fusion(db_path):
                 fusion.handle_source(
                     dim_odom.OdometryEstimate(
                         timestamp_ns=round(ts * 1e9),
-                        frame_id=message.frame_id,
+                        frame_id=message.header.frame_id,
                         child_frame_id=message.child_frame_id,
-                        translation=tuple(message.position),
+                        translation=tuple(geometry.vector_array(message.pose.pose.position)),
                         rotation_xyzw=(
-                            message.orientation.x,
-                            message.orientation.y,
-                            message.orientation.z,
-                            message.orientation.w,
+                            message.pose.pose.orientation.x,
+                            message.pose.pose.orientation.y,
+                            message.pose.pose.orientation.z,
+                            message.pose.pose.orientation.w,
                         ),
-                        twist_linear=(message.vx, message.vy, message.vz),
-                        twist_angular=(message.wx, message.wy, message.wz),
+                        twist_linear=tuple(geometry.vector_array(message.twist.twist.linear)),
+                        twist_angular=tuple(geometry.vector_array(message.twist.twist.angular)),
                     )
                 )
             estimate = fusion.maybe_publish()

@@ -16,7 +16,7 @@ from threading import RLock
 
 from dimos.mapping.occupancy.gradient import GradientStrategy
 from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
 class NavigationMap:

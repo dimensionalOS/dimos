@@ -37,11 +37,13 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo import PGO
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.calibration import front_camera_calibration
 from dimos.utils.data import get_data
 
 DEFAULT_DATASETS = [f"hk_village{i}" for i in range(1, 7)]
@@ -68,7 +70,7 @@ def _eval_recording(
 ) -> tuple[float, float]:
     """Returns (pgo_time_s, spread_m) for one recording."""
     db_path = get_data(f"{name}.db")
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -106,15 +108,13 @@ def _eval_recording(
         # PGO-correct each track's pose; group by marker_id.
         by_marker: dict[int, list[tuple[float, float, float]]] = {}
         for d in tracks:
-            raw_tf = Transform(
-                translation=d.data.center,
-                rotation=d.data.orientation,
-                frame_id="world",
+            raw_tf = TransformStamped(
+                header=Header(message_time.time_from_seconds(d.ts), "world"),
                 child_frame_id=f"marker_{d.data.marker_id}",
-                ts=d.ts,
+                transform=Transform(translation=d.data.center, rotation=d.data.orientation),
             )
             corrected = graph.correct(raw_tf)
-            t = corrected.translation
+            t = corrected.transform.translation
             by_marker.setdefault(d.data.marker_id, []).append((t.x, t.y, t.z))
 
         spread = sum(_pairwise_sum(v) for v in by_marker.values())
