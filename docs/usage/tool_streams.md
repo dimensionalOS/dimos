@@ -93,8 +93,9 @@ Constructing a tool stream from a detached thread raises `RuntimeError` with a
 message that names the invariant.
 
 - **`start_tool("x")` while another `"x"` is already open on the same module
-raises.** Two concurrent streams for the same logical tool is almost always a
-bug. If you really need to restart, call `stop_tool("x")` first.
+re-stamps that stream with the new call's capability hold** and opens no second
+one. Its eventual stop frame then releases the newer hold. That is what lets a
+background skill call `start_tool` before its "already running" return.
 
 - **`tool_update` and `stop_tool` are thread-safe.** Background workers can fire
 updates from any thread once `start_tool` has registered the channel.
