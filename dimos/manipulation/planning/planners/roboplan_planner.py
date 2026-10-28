@@ -606,11 +606,19 @@ class RoboPlanPlanner:
                 )
                 result = self._shortcut_native_path(group, result)
             path = self._path_from_native(group, result, output_names=output_names)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
+            # the native RRT raises for a start or goal in collision: a failed plan, not a crash that leaves the
+            # module stuck PLANNING
+            message = str(exc)
+            status = (
+                PlanningStatus.COLLISION_AT_GOAL
+                if "Goal configuration is in collision" in message
+                else PlanningStatus.NO_SOLUTION
+            )
             return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
+                status=status,
                 planning_time=time.time() - started,
-                message=f"RoboPlan-native planning failed: {exc}",
+                message=f"RoboPlan-native planning failed: {message}",
             )
         if not path:
             return PlanningResult(

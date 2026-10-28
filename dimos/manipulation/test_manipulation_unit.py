@@ -327,6 +327,7 @@ class TestObstacleUpdates:
         detected = MagicMock()
         pose = PoseStamped(position=Vector3(0.4, 0.1, 0.2))
         obstacle = Obstacle(name="object-1", pose=pose, obstacle_type=ObstacleType.BOX)
+        module._world_monitor.is_finalized = True
         module._world_monitor.refresh_obstacles.return_value = [{"object_id": "object-1"}]
         module._world_monitor.world.get_obstacles.return_value = [obstacle]
 
@@ -337,6 +338,16 @@ class TestObstacleUpdates:
         module._world_monitor.on_objects.assert_called_once_with([detected])
         assert count == 1
         assert obstacles == {"object-1": pose}
+
+    def test_get_obstacles_returns_empty_before_world_finalizes(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.is_finalized = False
+
+        obstacles = module.get_obstacles()
+
+        assert obstacles == {}
+        module._world_monitor.world.get_obstacles.assert_not_called()
 
     def test_complete_update_forwards_new_obstacle_value(self, module_factory) -> None:
         module = module_factory()
@@ -596,6 +607,15 @@ class TestPlanningInitialization:
 
             initialize_execution.assert_called_once_with()
             initialize_planning.assert_called_once_with()
+        finally:
+            module.stop()
+
+    def test_state_is_readable_before_start(self, robot_config) -> None:
+        module = ManipulationModule(model=robot_config)
+        try:
+            snapshot = module.get_state()
+
+            assert snapshot.execution_status is ExecutionStatus.IDLE
         finally:
             module.stop()
 

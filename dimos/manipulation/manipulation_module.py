@@ -160,6 +160,8 @@ class ManipulationModuleConfig(ModuleConfig):
     # publisher for the whole chain: a second module publishing the mount at its
     # own rate leaves the two edges of one chain stamped up to a period apart.
     static_transforms: list[Transform] = Field(default_factory=list)
+    # Off when another module (e.g. UrdfManager) already publishes these links, so tf keeps one parent per frame.
+    publish_tf: bool = True
     # Frame the voxel_map port's clouds must already be expressed in.
     world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
@@ -330,7 +332,7 @@ class ManipulationModule(Module):
 
         # Publish every pose-group tip plus any explicitly requested extra links.
         has_pose_group = any(group.has_pose_target for group in self.config.model.planning_groups)
-        if has_pose_group or self.config.model.tf_extra_links:
+        if self.config.publish_tf and (has_pose_group or self.config.model.tf_extra_links):
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
@@ -449,11 +451,7 @@ class ManipulationModule(Module):
             operation_status = OperationStatus[self._state.name]
             error = self._error_message or None
             has_pending_plan = self._last_plan is not None
-        execution_status = (
-            self._execution_manager.status
-            if hasattr(self, "_execution_manager")
-            else ExecutionStatus.IDLE
-        )
+        execution_status = self._execution_status()
         return ManipulationSnapshot(
             timestamp=time.time(),
             operation_status=operation_status,
@@ -469,9 +467,16 @@ class ManipulationModule(Module):
         with self._lock:
             return OperationStatus[self._state.name]
 
+    def _execution_status(self) -> ExecutionStatus:
+        """Return execution status even before execution is initialized."""
+        execution_manager = getattr(self, "_execution_manager", None)
+        if execution_manager is None:
+            return ExecutionStatus.IDLE
+        return execution_manager.status
+
     def _refresh_execution_status(self) -> None:
         """Poll active nonblocking execution once, without waiting for motion."""
-        if self._execution_manager.status in {
+        if self._execution_status() in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.EXECUTING,
         }:
@@ -1210,7 +1215,7 @@ class ManipulationModule(Module):
     @rpc
     def get_obstacles(self) -> dict[str, PoseStamped]:
         """Return planning-world obstacle poses keyed by obstacle name."""
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
             return {}
         return {
             obstacle.name: obstacle.pose for obstacle in self._world_monitor.world.get_obstacles()

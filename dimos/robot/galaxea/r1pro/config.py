@@ -99,6 +99,12 @@ R1PRO_MODEL = (
     )
     .with_default_joint_acceleration_limit(2.0)
     .with_fixed_joints(*PASSIVE_JOINTS)
+    # Match the installed Galaxea r1pro_urdf/r1pro_2026.urdf upper bounds.
+    # The pinned description is 1 degree tighter and rejects the measured start
+    # posture. These bounds retain 1 degree below mobiman's controller limits;
+    # lower bounds, all other joints, and collision checking stay unchanged.
+    .with_joint_position_limits("left_arm_joint3", lower=-2.3212894150, upper=2.3387427075)
+    .with_joint_position_limits("left_arm_joint4", lower=-2.0594934150, upper=0.3316467075)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
@@ -131,6 +137,8 @@ _R1PRO_UPPER_BODY_PLANNING_GROUPS = (
         name="torso",
         joint_names=tuple(coordinator_name(joint) for joint in TORSO_JOINTS),
         base_link="base_link",
+        # The Controller's torso gizmo targets the top of this joint chain.
+        tip_link="torso_link4",
     ),
 )
 
