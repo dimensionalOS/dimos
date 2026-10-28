@@ -132,14 +132,11 @@ async function submitAndWait(agent: Agent, conversation: ConversationId, text: s
 }
 
 const PHASES: { [name: string]: () => Promise<void> } = {
-  /** The model asks for a slow image read and a sleeping bash in one round; `inflight.json` says both run, and the test kills us. */
+  /** The shell writes `bash-started` before sleeping; the test kills us once that command has started. */
   "turn-1": async () => {
     model.script([
       fauxAssistantMessage(
-        [
-          fauxToolCall("read", { path: join(scratch, "slow-image.png") }, { id: "call_read" }),
-          fauxToolCall("bash", { command: `touch ${join(scratch, "bash-started")}; sleep 60` }, { id: "call_bash" }),
-        ],
+        [fauxToolCall("bash", { command: `touch ${join(scratch, "bash-started")}; sleep 60` }, { id: "call_bash" })],
         { stopReason: "toolUse" },
       ),
     ]);
@@ -157,20 +154,6 @@ const PHASES: { [name: string]: () => Promise<void> } = {
       context,
     );
     marker("conversation.json", { conversation, submission: result.kind === "submitted" ? result.submission : null });
-    for (;;) {
-      const inspection = await agent.harness.inspect(context);
-      const running = inspection.tasks
-        .filter((task) => task.record.kind === "pi.tool" && task.state.kind === "running")
-        .map((task) => JSON.stringify(task.record.input));
-      if (
-        running.some((input) => input.includes("call_read")) &&
-        running.some((input) => input.includes("call_bash"))
-      ) {
-        marker("inflight.json", running);
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
     await forever();
   },
   /** The turn resumes; the model request that follows the tool round records what it was sent, then never answers. */

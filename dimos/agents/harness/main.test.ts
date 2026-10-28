@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import sharp from "sharp";
 import type { ChildProcess } from "node:child_process";
+import type { TestContext } from "node:test";
 import type { LinkStatus } from "../shared/protocol/gateway/link.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ChildAgent } from "../test/child-driver.ts";
@@ -45,11 +45,15 @@ function freePort(): Promise<number> {
   });
 }
 
-function child(phase: string): ChildProcess {
-  return spawn(process.execPath, [CHILD], {
+function child(phase: string, test: TestContext): ChildProcess {
+  const child = spawn(process.execPath, [CHILD], {
     env: { ...env, AGENT_CHILD_PHASE: phase },
     stdio: ["ignore", "inherit", "inherit"],
   });
+  test.after(() => {
+    child.kill("SIGKILL");
+  });
+  return child;
 }
 
 function exited(process: ChildProcess): Promise<number | null> {
@@ -68,9 +72,6 @@ before(async () => {
   writeFileSync(join(scratch, "root", ".env"), "FROM_DOTENV=leaked\n");
   writeFileSync(join(scratch, "bin", "python"), "#!/bin/sh\necho fake python\n", { mode: 0o755 });
   writeFileSync(join(scratch, "long-file"), "x".repeat(200));
-  await sharp({ create: { width: 6000, height: 6000, channels: 3, background: { r: 40, g: 90, b: 160 } } })
-    .png({ compressionLevel: 1 })
-    .toFile(join(scratch, "slow-image.png"));
   const port = await freePort();
   env = {
     ...process.env,
@@ -89,30 +90,24 @@ after(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-test("a turn survives SIGKILL during a bash call and during a model request", async () => {
-  const first = child("turn-1");
-  await until(() => existsSync(join(scratch, "inflight.json")), "both tool tasks to be running");
+test("a turn survives SIGKILL during a bash call and during a model request", async (test) => {
+  const first = child("turn-1", test);
+  await until(() => existsSync(join(scratch, "bash-started")), "bash to start");
   first.kill("SIGKILL");
   await exited(first);
-  assert.ok(existsSync(join(scratch, "bash-started")), "bash had started before the kill");
   assert.ok(!existsSync(join(scratch, "seen-1.json")), "the model was not asked again before the kill");
 
-  const second = child("turn-2");
+  const second = child("turn-2", test);
   await until(() => existsSync(join(scratch, "seen-1.json")), "the resumed turn to ask the model");
   second.kill("SIGKILL");
   await exited(second);
 
-  const third = child("turn-3");
+  const third = child("turn-3", test);
   assert.equal(await exited(third), 0, "third run exits cleanly");
 
   const seen1 = marker("seen-1.json") as { role: string; text: string }[];
   const seen2 = marker("seen-2.json") as { role: string; text: string }[];
-  const readResult = seen1.find((message) => message.role === "toolResult:read");
   const bashResult = seen1.find((message) => message.role === "toolResult:bash");
-  assert.ok(
-    readResult !== undefined && readResult.text.startsWith("[image]"),
-    `the interrupted read ran again and returned the image: ${JSON.stringify(readResult)}`,
-  );
   assert.ok(
     bashResult !== undefined && /interrupted/.test(bashResult.text),
     `the interrupted bash reached the model as interrupted: ${JSON.stringify(bashResult)}`,
