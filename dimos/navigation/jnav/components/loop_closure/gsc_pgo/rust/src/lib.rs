@@ -35,6 +35,7 @@ pub mod odometry_noise;
 #[cfg(test)]
 mod odometry_noise_overtrust;
 pub mod pointcloud;
+pub mod pose_graph_solving;
 pub mod proportional_confidence;
 #[cfg(feature = "native")]
 pub mod records;

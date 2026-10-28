@@ -19,10 +19,11 @@
 
 use std::sync::Arc;
 
-use crate::big_picture_fit::{closure_edges, Edge, Solving};
+use crate::big_picture_fit::{closure_edges, Edge};
 use crate::connection_fit::{self, dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pose_graph_solving::Solving;
 use crate::similarity_discovery;
 use crate::uniqueness;
 
@@ -1953,7 +1954,7 @@ impl GscPgo {
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.
-    pub(crate) fn commit_closure(
+    pub fn commit_closure(
         &mut self,
         source_id: usize,
         target_id: usize,
