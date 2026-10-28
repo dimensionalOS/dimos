@@ -89,7 +89,8 @@ still restores the terminal.
 The input slot holds one component at a time, and an `InputMode` picks it. The `PromptEditor` takes `chat` and `edit`.
 The `LoginPanel` takes `login` while this terminal's login flow runs. A `MessageSelection` takes `select` after Esc on
 an empty editor. Typed text goes to `send` as a steer while a run goes and as a follow-up otherwise. A line that starts
-with `/` runs the slash command of that name.
+with `/` runs the slash command of that name. Each conversation keeps its own unsent text. `switchTo` takes the
+editor's text with the conversation it leaves and puts back the text kept for the one it shows.
 
 The terminal holds a reference only while its view shows. `LifecycleContract` and `GatewayContract` live for the whole
 run. One `ConversationContract` lives while its conversation shows, and `switchTo` releases it before it gets the next

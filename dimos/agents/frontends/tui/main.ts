@@ -423,14 +423,15 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui.requestRender();
   };
 
-  const withdrawnUntilShown = new Map<ConversationId, string>();
+  /** The unsent text of each conversation that is not shown; it returns to the editor when its conversation shows. */
+  const drafts = new Map<ConversationId, string>();
   const restore = (from: ConversationId, text: string) => {
     if (showing?.id === from) {
       const typed = editor.getValue();
       editor.setValue(typed.trim() === "" ? text : `${typed}\n\n${text}`);
     } else {
-      const before = withdrawnUntilShown.get(from);
-      withdrawnUntilShown.set(from, before === undefined ? text : `${before}\n\n${text}`);
+      const before = drafts.get(from);
+      drafts.set(from, before === undefined ? text : `${before}\n\n${text}`);
       transcript.note(
         muted(`Queued messages of #${from} came back; they return to the editor when #${from} shows:\n${clean(text)}`),
       );
@@ -462,6 +463,9 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     const previous = showing;
     showing = null;
     if (previous !== null) {
+      const typed = editor.getValue();
+      if (typed.trim() !== "") drafts.set(previous.id, typed);
+      editor.setValue("");
       previous.stop();
       await previous.conversation.release();
     }
@@ -519,8 +523,8 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     const refusal = attachRefusal(id, role, shown.variant);
     if (refusal !== null) ui.actions.refuse(`attach #${id}`, refusal);
     editor.setWorkspace(cwd());
-    const back = withdrawnUntilShown.get(id);
-    withdrawnUntilShown.delete(id);
+    const back = drafts.get(id);
+    drafts.delete(id);
     if (back !== undefined) restore(id, back);
     requestRender();
   };
