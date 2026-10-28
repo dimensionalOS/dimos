@@ -154,6 +154,8 @@ class PGOConfig(NativeModuleConfig):
     closure_informative_by_graph_covariance: bool = False
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
+    # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
+    closure_uninformative_noise_upper_bound: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5

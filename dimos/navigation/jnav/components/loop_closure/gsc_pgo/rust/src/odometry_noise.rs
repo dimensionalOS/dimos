@@ -237,6 +237,18 @@ pub fn residual_ln_ratio(
     }
 }
 
+/// The posterior standard deviation of `residual_ln_ratio`'s result `u` (from the curvature of the same function).
+pub fn residual_ln_ratio_sd(
+    sum: f64,
+    dispatched: f64,
+    u: f64,
+    component: usize,
+    prior_sd: f64,
+) -> f64 {
+    let curvature = sum * (dispatched - u).exp() + 2.0 * prior_weight(component, prior_sd);
+    (2.0 / curvature).sqrt()
+}
+
 /// A component's prior weight on its ln ratio squared, in -2 ln units: 1 / sd^2 for a measured spread across
 /// recordings, else one innovation's information (axes / 2, a unit-information prior).
 fn prior_weight(component: usize, sd: f64) -> f64 {

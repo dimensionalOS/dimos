@@ -118,6 +118,8 @@ pub struct ClosureCandidateDiag {
     /// The odometry noise when the search started, as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `GscPgo::odometry_noise`).
     pub odometry_noise: [f64; 4],
+    /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_noise_for_gate`).
+    pub odometry_noise_gate: [f64; 4],
     /// The closure noise scale when the search started (`GscPgo::closure_noise_scale`).
     pub closure_noise_scale: f64,
     /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
@@ -208,6 +210,7 @@ impl ClosureCandidateDiag {
             lowe_ratio: f32::NAN,
             pressure: 0.0,
             odometry_noise: [1.0; 4],
+            odometry_noise_gate: [1.0; 4],
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
@@ -381,6 +384,11 @@ pub struct Config {
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
     pub closure_uninformative_gate: bool,
+    /// When true, the uninformative gate measures the graph with the learned odometry noise's upper bound (at
+    /// `closure_gnc_inlier_probability`, from the learner's posterior spread; the prior's while evidence is thin) instead of
+    /// its estimate: a closure is only called uninformative when the graph is surely surer than ICP, so a few tight
+    /// early loops that shrink the estimate cannot shut the gate on the loops that would correct it.
+    pub closure_uninformative_noise_upper_bound: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -509,6 +517,7 @@ impl Default for Config {
             odom_noise_per_motion: false,
             closure_informative_by_graph_covariance: false,
             closure_uninformative_gate: true,
+            closure_uninformative_noise_upper_bound: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -570,6 +579,8 @@ pub struct GscPgo {
     /// ln of each odometry variance's ratio to the reported one (0: the reported noise), set from the kept closures
     /// after each solve.
     pub(crate) odometry_noise_ln: [f64; 4],
+    /// Each `odometry_noise_ln`'s posterior standard deviation once the residuals have measured it (the prior's before).
+    pub(crate) odometry_noise_ln_sd: [Option<f64>; 4],
     /// ln of the closure noise scale (0: a closure's variance is its ICP fitness).
     pub(crate) closure_noise_ln_scale: f64,
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
@@ -801,7 +812,8 @@ impl ClosureSearch {
         // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
         // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
         // kept would count the same evidence twice
-        let odometry_step = self.mean_step_xy_variance * diag.odometry_noise[0];
+        let gate_noise = diag.odometry_noise_gate;
+        let odometry_step = self.mean_step_xy_variance * gate_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
         let known = if (self.config.odom_noise_per_motion
             || self.config.closure_informative_by_graph_covariance)
@@ -814,10 +826,15 @@ impl ClosureSearch {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            mat3::jacobi_eigen(diag.innovation_covariance)
-                .0
-                .into_iter()
-                .fold(0.0, f64::max)
+            // (at the upper bound: scaled by the most any component's bound exceeds its estimate)
+            let widen = (0..4)
+                .map(|c| gate_noise[c] / diag.odometry_noise[c])
+                .fold(1.0, f64::max);
+            widen
+                * mat3::jacobi_eigen(diag.innovation_covariance)
+                    .0
+                    .into_iter()
+                    .fold(0.0, f64::max)
         } else {
             self.kept_closures
                 .iter()
@@ -1013,6 +1030,28 @@ impl GscPgo {
     }
 
     /// The prior spread of each noise source's ln (`odom_noise_prior_ln_sd_*`).
+    /// The factor on each odometry variance the uninformative gate uses: the estimate, or with
+    /// `closure_uninformative_noise_upper_bound` its upper bound at `closure_gnc_inlier_probability`.
+    pub(crate) fn odometry_noise_for_gate(&self) -> [f64; 4] {
+        if !self.config.closure_uninformative_noise_upper_bound {
+            return self.odometry_noise();
+        }
+        // one-sided normal quantile z: P(|Z| < z) = 2p - 1
+        let p = self.config.closure_gnc_inlier_probability;
+        let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
+        let prior = self.odometry_noise_prior();
+        std::array::from_fn(|c| {
+            let sd = self.odometry_noise_ln_sd[c].unwrap_or_else(|| {
+                if prior[c] > 0.0 {
+                    prior[c]
+                } else {
+                    crate::odometry_noise::standard_error(c, 0)
+                }
+            });
+            (self.odometry_noise_ln[c] + z * sd).exp()
+        })
+    }
+
     pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
         let c = &self.config;
         [
@@ -1093,13 +1132,21 @@ impl GscPgo {
                     let (sum, r) = evidence[c];
                     redundancy[c] = r;
                     if r > 0.5 && sum.is_finite() {
-                        ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
-                            sum,
-                            r,
+                        let (dispatched, prior_sd) = (
                             self.odometry_noise_ln_dispatched[c],
-                            c,
                             self.odometry_noise_prior()[c],
                         );
+                        ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
+                            sum, r, dispatched, c, prior_sd,
+                        );
+                        self.odometry_noise_ln_sd[c] =
+                            Some(crate::odometry_noise::residual_ln_ratio_sd(
+                                sum,
+                                dispatched,
+                                ln_odometry[c],
+                                c,
+                                prior_sd,
+                            ));
                     }
                 }
             }
@@ -1161,6 +1208,7 @@ impl GscPgo {
         // a search that ended before its proposal was built never saw the noise scales
         if diag.target_id < 0 {
             diag.odometry_noise = self.odometry_noise();
+            diag.odometry_noise_gate = self.odometry_noise_for_gate();
             diag.closure_noise_scale = self.closure_noise_scale();
         }
         if diag.target_id >= 0 {
@@ -1423,6 +1471,7 @@ impl GscPgo {
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
         diag.odometry_noise = self.odometry_noise();
+        diag.odometry_noise_gate = self.odometry_noise_for_gate();
         diag.closure_noise_scale = self.closure_noise_scale();
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
         // the doubling step that covers max keyframes x that chance
