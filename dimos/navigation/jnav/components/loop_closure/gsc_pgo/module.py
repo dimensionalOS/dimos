@@ -185,7 +185,7 @@ class GscPGO(NativeModule):
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
-    # a landmark seen by a sensor: header.frame_id = sensor, child_frame_id = landmark name, position/covariance in the sensor frame
+    # a landmark seen by a sensor: header.frame_id = sensor, child_frame_id = landmark name, pose + 6x6 covariance in the sensor frame (unknown dims: -1)
     landmark_factor: In[Odometry]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one

@@ -28,6 +28,7 @@
 pub mod big_picture_fit;
 pub mod connection_fit;
 pub mod gsc_pgo;
+pub mod landmarks;
 pub mod loop_overlap;
 pub mod mat3;
 pub mod odometry_noise;

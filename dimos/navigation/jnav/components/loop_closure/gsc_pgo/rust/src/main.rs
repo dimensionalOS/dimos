@@ -153,8 +153,9 @@ struct OdomSample {
 struct LandmarkFix {
     ts: f64,
     landmark: u64,
+    rotation: Mat3,
     position: Vec3,
-    covariance: Mat3,
+    information: [[f64; 6]; 6],
 }
 
 /// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_coordinate_factor`).
@@ -205,8 +206,10 @@ struct GscPgoModule {
 
     // A landmark seen by a sensor (a camera's bearing with a rough range, a reflector, another robot's landmark):
     // header.frame_id is the sensor (placed on the body through tf), child_frame_id names the landmark (every sighting
-    // with that name is of the same fixed point), pose.position is where it was in the sensor's frame and
-    // pose.covariance's xyz block its uncertainty there (m²). Orientation and twist are ignored.
+    // with that name is of the same fixed pose), pose.pose is its pose in the sensor's frame and pose.covariance that
+    // pose's uncertainty there; a dimension whose variance is not a positive finite number (ROS's -1, a huge value works
+    // too) is unknown, so a reflector or a ranged bearing is a sighting whose rotation is unknown, and a zero
+    // quaternion leaves the rotation unknown too. Twist is ignored.
     #[input(decode = Odometry::decode, handler = on_landmark_factor)]
     landmark_factor: Input<Odometry>,
 
@@ -358,32 +361,61 @@ impl GscPgoModule {
         let sensor = &msg.header.frame_id;
         let body = &self.config.body_frame;
         let p = &msg.pose.pose.position;
+        let q = &msg.pose.pose.orientation;
         let c = &msg.pose.covariance;
-        let (mut position, mut covariance) = (
-            [p.x, p.y, p.z],
-            [
-                [c[0], c[1], c[2]],
-                [c[6], c[7], c[8]],
-                [c[12], c[13], c[14]],
-            ],
-        );
+        // ROS orders the covariance (x, y, z, rotation about x, y, z) with rotations about the sensor's axes; the pose
+        // graph orders it (rotation about the landmark's own axes, position) and takes information, zero where unknown
+        let ros = [3, 4, 5, 0, 1, 2];
+        let mut information: [[f64; 6]; 6] =
+            dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
+                std::array::from_fn(|j| c[6 * ros[i] + ros[j]])
+            }));
+        let norm = (q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
+        let seen: Mat3 = if norm > 0.0 {
+            mat3::mat_from_quat(&[q.w / norm, q.x / norm, q.y / norm, q.z / norm])
+        } else {
+            // no orientation: the rotation is unknown
+            for (i, row) in information.iter_mut().enumerate() {
+                for (j, v) in row.iter_mut().enumerate() {
+                    if i < 3 || j < 3 {
+                        *v = 0.0;
+                    }
+                }
+            }
+            mat3::identity()
+        };
+        let mut mount = mat3::identity();
+        let (mut rotation, mut position) = (seen, [p.x, p.y, p.z]);
         if !sensor.is_empty() && sensor != body {
             // a sighting placed through a guessed mount would bias the map, so one without its mount is dropped
             let Some(t) = self.tf.lookup(body, sensor).at(ts).get() else {
                 return;
             };
             let r = t.rotation().to_rotation_matrix();
-            let rotation: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)]));
+            mount = std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)]));
             let v = t.translation();
-            position = mat3::add(&mat3::mat_vec(&rotation, &position), &[v.x, v.y, v.z]);
-            covariance = mat3::mat_mul(
-                &rotation,
-                &mat3::mat_mul(&covariance, &mat3::transpose(&rotation)),
-            );
+            rotation = mat3::mat_mul(&mount, &seen);
+            position = mat3::add(&mat3::mat_vec(&mount, &position), &[v.x, v.y, v.z]);
         }
+        // the residual in the pose graph's terms is A times the message's, A = diag(seen^T, mount), so I <- A I A^T
+        let seen_t = mat3::transpose(&seen);
+        let a = |i: usize, k: usize| match (i < 3, k < 3) {
+            (true, true) => seen_t[i][k],
+            (false, false) => mount[i - 3][k - 3],
+            _ => 0.0,
+        };
+        let information: [[f64; 6]; 6] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                (0..6)
+                    .flat_map(|k| (0..6).map(move |l| (k, l)))
+                    .map(|(k, l)| a(i, k) * information[k][l] * a(j, l))
+                    .sum()
+            })
+        });
         if !position
             .iter()
-            .chain(covariance.iter().flatten())
+            .chain(rotation.iter().flatten())
+            .chain(information.iter().flatten())
             .all(|v| v.is_finite())
         {
             warn!(landmark = %msg.child_frame_id, "landmark sighting not finite; dropped");
@@ -404,8 +436,9 @@ impl GscPgoModule {
         state.landmark_factors.push(LandmarkFix {
             ts,
             landmark,
+            rotation,
             position,
-            covariance,
+            information,
         });
         drop(state);
         self.wake.notify_one();
@@ -539,7 +572,13 @@ impl Worker {
                     pgo.add_coordinate_factor(f.ts, f.frame, f.lever, f.position, f.covariance);
                 }
                 for s in sightings {
-                    pgo.add_landmark_factor(s.ts, s.landmark, s.position, s.covariance);
+                    pgo.add_landmark_factor(
+                        s.ts,
+                        s.landmark,
+                        s.rotation,
+                        s.position,
+                        s.information,
+                    );
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);

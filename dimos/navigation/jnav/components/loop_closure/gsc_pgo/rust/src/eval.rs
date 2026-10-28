@@ -167,14 +167,17 @@ struct Args {
     /// (x, y, z). Lockstep replay only.
     world_positions: Option<PathBuf>,
     /// Landmark sightings to feed the same way (`GscPgo::add_landmark_factor`), a CSV with one per line: time,
-    /// landmark id, x, y, z in the body frame, the 3x3 covariance row-major (m²). Lockstep replay only.
+    /// landmark id, x, y, z in the body frame, then either the 3x3 position covariance row-major (m², a point) or a
+    /// rotation vector (rad) and the 6x6 covariance row-major in `LandmarkSighting`'s order (a pose; a variance that is
+    /// not a positive finite number is unknown). Lockstep replay only.
     landmark_sightings: Option<PathBuf>,
 }
 
 /// The sightings of a `--landmark-sightings` file, in time order.
+#[allow(clippy::type_complexity)]
 fn read_landmark_sightings(
     path: &PathBuf,
-) -> Result<Vec<(f64, u64, [f64; 3], [[f64; 3]; 3])>, String> {
+) -> Result<Vec<(f64, u64, [[f64; 3]; 3], [f64; 3], [[f64; 6]; 6])>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut sightings = Vec::new();
     for line in text
@@ -185,24 +188,50 @@ fn read_landmark_sightings(
             .split(',')
             .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
             .collect::<Result<_, _>>()?;
-        if v.len() != 14 {
-            return Err(format!(
-                "{line}: needs 14 values (time, landmark id, xyz, 3x3 covariance)"
-            ));
-        }
-        sightings.push((
-            v[0],
-            v[1] as u64,
-            [v[2], v[3], v[4]],
-            [
-                [v[5], v[6], v[7]],
-                [v[8], v[9], v[10]],
-                [v[11], v[12], v[13]],
-            ],
-        ));
+        let position = [v[2], v[3], v[4]];
+        let (rotation, information) = match v.len() {
+            14 => {
+                let point = dimos_gsc_pgo::landmarks::LandmarkSighting::point(
+                    0,
+                    0,
+                    position,
+                    std::array::from_fn(|i| std::array::from_fn(|j| v[5 + 3 * i + j])),
+                );
+                (point.rotation, point.information)
+            }
+            44 => (
+                rotation_vector([v[5], v[6], v[7]]),
+                dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
+                    std::array::from_fn(|j| v[8 + 6 * i + j])
+                })),
+            ),
+            _ => {
+                return Err(format!(
+                    "{line}: needs 14 values (time, landmark id, xyz, 3x3 covariance) or 44 (time, landmark id, xyz, \
+                     rotation vector, 6x6 covariance)"
+                ))
+            }
+        };
+        sightings.push((v[0], v[1] as u64, rotation, position, information));
     }
     sightings.sort_by(|a, b| a.0.total_cmp(&b.0));
     Ok(sightings)
+}
+
+/// Rotation by axis-angle `w` (Rodrigues).
+fn rotation_vector(w: [f64; 3]) -> [[f64; 3]; 3] {
+    let angle = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+    if angle < 1e-12 {
+        return dimos_gsc_pgo::mat3::identity();
+    }
+    let axis = [w[0] / angle, w[1] / angle, w[2] / angle];
+    let half = angle / 2.0;
+    dimos_gsc_pgo::mat3::mat_from_quat(&[
+        half.cos(),
+        axis[0] * half.sin(),
+        axis[1] * half.sin(),
+        axis[2] * half.sin(),
+    ])
 }
 
 /// The fixes of a `--world-positions` file, in time order.
@@ -589,8 +618,8 @@ fn run() -> Result<(), String> {
                 next_fix += 1;
             }
             while next_sighting < sightings.len() && sightings[next_sighting].0 <= ts {
-                let (time, landmark, position, covariance) = sightings[next_sighting];
-                pgo.add_landmark_factor(time, landmark, position, covariance);
+                let (time, landmark, rotation, position, information) = sightings[next_sighting];
+                pgo.add_landmark_factor(time, landmark, rotation, position, information);
                 next_sighting += 1;
             }
             let step_started = Instant::now();
