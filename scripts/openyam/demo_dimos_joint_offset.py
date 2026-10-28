@@ -40,7 +40,6 @@ KD = np.array([5.0, 5.0, 5.0, 1.5, 1.5, 1.5] * 2)
 SIDES = ("left", "right")
 MAX_DELTA_DEG = 5.0
 MAX_TRACKING_ERROR_RAD = 0.15
-MAX_INITIAL_RAD = 0.15
 TEMPERATURE_MARGIN_C = 53
 TEMPERATURE_HARD_C = 60
 PERIOD_S = 0.01
@@ -267,8 +266,6 @@ class Runner:
             probe.disconnect()
         if temperature >= TEMPERATURE_MARGIN_C:
             raise RuntimeError(f"Motor is too warm to start ({temperature} C)")
-        if np.max(np.abs(raw_q)) > MAX_INITIAL_RAD:
-            raise RuntimeError("Arm is outside the supported near-zero starting pose")
         check_path(self.checker, raw_q, raw_q)
         for side, port in (("left", self.args.left_can), ("right", self.args.right_can)):
             for joint in range(1, 7):
@@ -331,8 +328,6 @@ class Runner:
             raise RuntimeError(f"Motor cooling margin reached: {temp} C")
         if np.max(np.abs(raw_q - target)) > MAX_TRACKING_ERROR_RAD:
             raise RuntimeError("Position tracking error exceeded 0.15 rad")
-        if not self.recovering and np.max(np.abs(raw_q - self.reference)) > MAX_INITIAL_RAD:
-            raise RuntimeError("Arm departed supported near-zero test envelope")
         if not self.recovering and stop_requested:
             raise InterruptedError("Stop requested")
         if self.last_command is not None and np.max(np.abs(target - self.last_command)) > 0.01:
