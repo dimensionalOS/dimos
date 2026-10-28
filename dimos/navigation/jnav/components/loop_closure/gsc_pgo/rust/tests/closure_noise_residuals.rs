@@ -121,6 +121,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
         huber_k: 0.0,
         pcm_odometry_translation_variance: 0.0,
         gnc_overtrust_check: false,
+        overtrust_noise_headroom: [1.0; 4],
     };
     let mut scale = [1.0_f64; 4];
     for iteration in 0..15 {

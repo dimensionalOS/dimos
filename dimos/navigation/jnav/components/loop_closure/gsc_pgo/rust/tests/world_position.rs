@@ -118,6 +118,7 @@ fn config() -> SolveConfig {
         huber_k: 0.0,
         pcm_odometry_translation_variance: 0.0,
         gnc_overtrust_check: false,
+        overtrust_noise_headroom: [1.0; 4],
     }
 }
 

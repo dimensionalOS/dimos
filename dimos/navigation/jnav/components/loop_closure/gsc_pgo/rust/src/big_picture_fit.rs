@@ -62,6 +62,10 @@ pub struct SolveConfig {
     /// residuals of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`: the model, not
     /// the path, is wrong, and the kept closures' residuals then teach the noise learner the larger noise).
     pub gnc_overtrust_check: bool,
+    /// Per odometry noise source (xy, z, yaw, roll/pitch): how many times larger the most noise the evidence still allows
+    /// is than the noise the odometry edges carry (1 when the solve uses the stated noise). The overtrust test asks
+    /// whether the residuals reject even that, since a learner's solve noise (its lower bound) is low by design.
+    pub overtrust_noise_headroom: [f64; 4],
 }
 
 pub struct Solution {
@@ -429,19 +433,35 @@ pub(crate) fn solve_core(
                     .sum::<f64>()
         };
         let lower = truncated_cost(&gm_state) < truncated_cost(&state);
+        // GM's verdict is new evidence that the odometry is overtrusted only where TLS's own verdict shows none: where
+        // TLS already keeps closures that bend the odometry past its noise (right or look-alike), the noise learner
+        // reads that from TLS's residuals, and swapping in GM's larger set would only add closures the evidence did
+        // not need (look-alike floors that agree with each other)
+        let overtrusted =
+            |state: &mut State, weights: &[f64], unary_w: &[f64], sighting_w: &[f64]| {
+                odometry_overtrusted(
+                    state,
+                    &pattern,
+                    odometry,
+                    closures,
+                    weights,
+                    unary,
+                    unary_w,
+                    sightings,
+                    sighting_w,
+                    config.gnc_inlier_probability,
+                    config.overtrust_noise_headroom,
+                )
+            };
+        let mut tls_state = State {
+            rotation: state.rotation.clone(),
+            position: state.position.clone(),
+            landmark: state.landmark.clone(),
+            landmark_rotation: state.landmark_rotation.clone(),
+        };
         if lower
-            || odometry_overtrusted(
-                &mut gm_state,
-                &pattern,
-                odometry,
-                closures,
-                &gm_weights,
-                unary,
-                &gm_unary,
-                sightings,
-                &gm_sightings,
-                config.gnc_inlier_probability,
-            )
+            || (overtrusted(&mut gm_state, &gm_weights, &gm_unary, &gm_sightings)
+                && !overtrusted(&mut tls_state, &weights, &unary_weights, &sighting_weights))
         {
             (state, weights, unary_weights, sighting_weights) =
                 (gm_state, gm_weights, gm_unary, gm_sightings);
@@ -710,7 +730,7 @@ fn odometry_noise_evidence(
 
 /// Whether the odometry is overtrusted at `state` with these factors in: after a least-squares solve with them at their
 /// own variances, the odometry's whitened residuals squared over its redundancy (`odometry_noise_evidence`, its four
-/// noise sources pooled) exceed what its stated noise allows at `probability`, a chi-square with that many degrees of
+/// noise sources pooled, each at its `headroom` x the edges' noise) exceed what that noise allows at `probability`, a chi-square with that many degrees of
 /// freedom (Wilson-Hilferty's cube-root normal approximation, as the redundancy is not a whole number).
 #[allow(clippy::too_many_arguments)]
 fn odometry_overtrusted(
@@ -724,6 +744,7 @@ fn odometry_overtrusted(
     sightings: &[Sighting],
     sighting_weights: &[f64],
     probability: f64,
+    headroom: [f64; 4],
 ) -> bool {
     levenberg_marquardt(
         state,
@@ -750,9 +771,13 @@ fn odometry_overtrusted(
     ) else {
         return false;
     };
+    // whitened at the largest noise still allowed, each source's sum shrinks by its headroom
     let (sum, redundancy) = evidence[..4]
         .iter()
-        .fold((0.0, 0.0), |(s, r), &(sc, rc)| (s + sc, r + rc));
+        .zip(headroom)
+        .fold((0.0, 0.0), |(s, r), (&(sc, rc), h)| {
+            (s + sc / h.max(1.0), r + rc)
+        });
     if !(redundancy > 0.0 && sum.is_finite()) {
         return false;
     }

@@ -268,6 +268,13 @@ impl GscPgo {
                 0.0
             },
             gnc_overtrust_check: config.closure_gnc_overtrust_check,
+            // overtrusted only beyond the learner's upper bound: its solve noise is the lower bound, low on purpose
+            overtrust_noise_headroom: if config.odometry_noise_from_closures {
+                let (upper, used) = (self.odometry_noise_bound(1.0), solve_noise);
+                std::array::from_fn(|c| upper[c] / used[c])
+            } else {
+                [1.0; 4]
+            },
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()

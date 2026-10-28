@@ -1073,7 +1073,7 @@ impl GscPgo {
 
     /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below
     /// (-1) the estimate, from its posterior spread (the prior's before the residuals have measured it).
-    fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
+    pub(crate) fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
         // one-sided normal quantile z: P(|Z| < z) = 2p - 1
         let p = self.config.closure_gnc_inlier_probability;
         let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
