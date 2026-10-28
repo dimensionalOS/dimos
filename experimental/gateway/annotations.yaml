@@ -216,6 +216,10 @@ robots:
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        go2-sim-nav-episode:
+          title: 'Go2 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
+          hidden: true
         go2-localize:
           title: 'Go2 with object localization'
           description: 'The Go2 plus perception that places what its camera detects in 3D, using the lidar.'
