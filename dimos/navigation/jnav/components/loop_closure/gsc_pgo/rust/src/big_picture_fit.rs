@@ -341,6 +341,13 @@ pub(crate) fn solve_core(
     // odometry, so how far the odometry is trusted decides its first steps: an overtrusted odometry takes the graph back
     // before the closures are heard. GNC-GM starts at least squares instead (Black & Rangarajan 1996; Yang et al. 2020),
     // and its verdict replaces TLS's only where the closures it keeps prove the odometry's noise understated
+    // only when TLS voted out a closure the least-squares solve found consistent (under the cutoff): the symptom of
+    // the odometry winning TLS's start; otherwise GM could keep nothing TLS lost
+    let least_squares = least_squares.filter(|(_, r2, _, _)| {
+        r2.iter()
+            .zip(&weights)
+            .any(|(&r, &w)| r < threshold && w < 0.5)
+    });
     if let Some((mut gm_state, mut r2, mut u2, mut s2)) = least_squares {
         let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
         // Remark 5: mu0 = 2 r_max^2 / cutoff over the residuals the least-squares solve leaves
