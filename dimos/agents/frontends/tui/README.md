@@ -410,8 +410,8 @@ one that returns the screen's rows, so the gutter reaches the bottom of the scre
 conversation's agent modules with their streams, its jobs with their next due time and last three runs, and its
 admitted notices in the input queue. Below them it lists the system's picture streams the conversation does
 not show. `sidebarGroups` and `systemGroups` from shared/view-models/streams/ build the groups. Each render collects the
-channels whose picture is unfolded and passes that set to the `FrameSource` with `want`, and a closed or hidden sidebar
-wants nothing. Each SDK rate sample replaces the displayed `RateTable` through `ratesOf`. A picture frame goes to the painter one at a time per channel,
+channels of unfolded cards and passes that set to the `FrameSource` with `want`, and a closed or hidden sidebar wants
+nothing. Each SDK rate sample replaces the displayed `RateTable` through `ratesOf`. A picture frame goes to the painter one at a time per channel,
 and a frame that arrives while one paints is dropped. `StreamCardView` in [card.ts](sidebar/card.ts) is one stream's
 title row with its rate, then a picture slot or the newest value. Each card keeps one kitty image id, so a new frame
 replaces the picture in place. `FramePainter` in [painter.ts](sidebar/painter.ts) turns an image, cloud or grid record

@@ -291,7 +291,7 @@ export class Sidebar implements Component {
         const expanded = !this.collapsed.has(key);
         content.push(...view.render(width, this.focused && this.selected === key, expanded));
         rows.push({ key, top, bottom: content.length });
-        if (expanded && card.picture !== null) wanted.add(card.channel);
+        if (expanded) wanted.add(card.channel);
       }
     }
   }

@@ -8,7 +8,7 @@ import type { Rate, RateTable } from "./rates.ts";
 import { pictureOf } from "./kind.ts";
 import { rateLevel } from "./rates.ts";
 
-/** One stream card: its picture kind decides whether the client subscribes to its frames or only counts it. */
+/** One stream card: its picture kind decides whether the client paints its frames or shows its newest value. */
 export type StreamCard = {
   readonly channel: Channel;
   readonly title: string;
