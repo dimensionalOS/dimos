@@ -88,9 +88,9 @@ def test_physical_component_uses_common_runtime_config() -> None:
     assert METAL_SOURCE.ref == "bccf3c82a21453a7b1784a94966456e16ff0f008"
 
 
-def test_physical_requires_explicit_gripper_settings() -> None:
-    with pytest.raises(ValueError, match="requires gripper"):
-        metal_hardware(can_port="test-can")
+def test_physical_defaults_gripper_direction() -> None:
+    component = metal_hardware(can_port="test-can")
+    assert component.adapter_kwargs["gripper_opening_direction"] == "increasing_position"
     with pytest.raises(ValueError, match="must not be empty"):
         metal_hardware(can_port="")
 
@@ -106,17 +106,15 @@ def test_coordinator_uses_mock_and_registers_both_tasks() -> None:
         coordinator.stop()
 
 
-def test_cli_exposes_common_can_and_explicit_gripper_settings() -> None:
+def test_cli_only_requires_can_selector() -> None:
     parsed = BlueprintConfigParser(coordinator_makermods_metal).parse(
         [
             "--can-port",
             "test-can",
-            "--gripper-opening-direction",
-            "increasing_position",
         ],
         environ={},
     )
     config = parsed.module_kwargs("ControlCoordinator")
     assert config["can_port"] == "test-can"
-    assert config["gripper_opening_direction"] == "increasing_position"
+    assert "gripper_opening_direction" not in config
     assert "gripper_current" not in config

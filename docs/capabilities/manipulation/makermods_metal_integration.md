@@ -36,8 +36,10 @@ to in-memory hardware. The `joint_trajectory` task controls `joint1` through
 For physical hardware, finish the vendor's motor ID and zero-pose procedure,
 then use `dimos hardware can list` to obtain the device selector. Pass
 `--can-port` after the blueprint name: a configured SocketCAN interface on Linux
-or the exact USB serial on macOS. Also pass `--gripper-opening-direction`
-(`increasing_position` or `decreasing_position`). Gripper current defaults to
+or the exact USB serial on macOS. Gripper opening direction defaults to `increasing_position`; there is no
+gripper-direction CLI flag. Python integrations may override the direction
+with `metal_hardware(gripper_opening_direction="decreasing_position")`.
+Gripper current defaults to
 `0.1` per-unit; there is no gripper-current CLI flag. Python callers may override
 `metal_hardware(gripper_current=...)` with a value in `(0, 1]`. This ratio is not
 amperes and is not MakerMods Lab's 0.5 A default.
@@ -126,6 +128,6 @@ opening. A renamed fixed mount joint avoids a joint/link frame-name collision
 in the official URDF. Model checkout and mesh loading occur at startup.
 
 For commissioned physical Metal hardware, the same blueprint accepts
-`--can-port` and `--gripper-opening-direction` as described above. The gripper
+`--can-port` as described above. The gripper
 uses the default current ratio of 0.1. Selecting it activates motors and moves the gripper for calibration;
 first verify the model, firmware profile, motor zero pose, and gripper settings.

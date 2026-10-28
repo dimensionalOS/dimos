@@ -16,19 +16,16 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.robot.manipulators.makermods_metal.config import metal_hardware
 
 
 class MetalCoordinatorConfig(ControlCoordinatorConfig):
     can_port: str | None = None
-    gripper_opening_direction: Literal["increasing_position", "decreasing_position"] | None = None
 
 
 class MetalCoordinator(ControlCoordinator):
-    """Use in-memory hardware unless explicit CAN and gripper direction are supplied."""
+    """Use in-memory hardware unless a CAN selector is supplied."""
 
     config: MetalCoordinatorConfig
 
@@ -36,7 +33,6 @@ class MetalCoordinator(ControlCoordinator):
         self.config.hardware = [
             metal_hardware(
                 can_port=self.config.can_port,
-                gripper_opening_direction=self.config.gripper_opening_direction,
             )
         ]
         super()._setup_from_config()

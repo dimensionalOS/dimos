@@ -49,7 +49,9 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
         self,
         address: str | Path | None = None,
         *,
-        gripper_opening_direction: Literal["increasing_position", "decreasing_position"],
+        gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
+            "increasing_position"
+        ),
         gripper_current: float = 0.1,
         runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
         dof: int | None = None,
