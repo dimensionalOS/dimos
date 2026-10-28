@@ -42,15 +42,15 @@ from dimos.teleop.webxr.blueprints import (
 )
 
 
-class CollectionRealSenseConfig(RealSenseCameraConfig):
+class _CollectionRealSenseConfig(RealSenseCameraConfig):
     """Capture dimensions must match the shipped collection profile."""
 
     width: Literal[848] = 848
     height: Literal[480] = 480
 
 
-class CollectionRealSenseCamera(RealSenseCamera):
-    config: CollectionRealSenseConfig
+class _CollectionRealSenseCamera(RealSenseCamera):
+    config: _CollectionRealSenseConfig
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
@@ -60,7 +60,7 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     if global_config.simulation:
         return ()
     return (
-        CollectionRealSenseCamera.blueprint(
+        _CollectionRealSenseCamera.blueprint(
             instance_name="RealSenseCamera", enable_pointcloud=False
         ),
     )
