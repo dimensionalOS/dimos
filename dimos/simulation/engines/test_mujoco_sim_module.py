@@ -25,7 +25,11 @@ import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    MujocoSimulation,
+)
 
 
 class _FakeData:
@@ -353,7 +357,13 @@ class _FakeCameraEngine:
 
 def _run_publish_loop(module: MujocoSimModule, timestamps: list[float]) -> None:
     module._engine = _FakeCameraEngine(timestamps, module._stop_event)
-    module._publish_loop()
+    MujocoSimulation.poll_camera(
+        module._engine,
+        module.config.camera_name,
+        module.config.fps,
+        module._stop_event,
+        module._publish_frame,
+    )
 
 
 def test_publish_loop_stamps_messages_with_frame_timestamp() -> None:
@@ -416,3 +426,18 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         assert elapsed >= (len(frame_ts) - 1) / fps
     finally:
         module.stop()
+
+
+def test_camera_tf_requires_relative_calibration_for_trusted_publishers():
+    frame = CameraFrame(
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.float32),
+        cam_pos=np.zeros(3),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=1.0,
+    )
+    with pytest.raises(RuntimeError, match="robot-relative"):
+        MujocoSimulation.camera_transforms(
+            frame, "wrist_camera", "link7", 1.0, require_relative=True
+        )
