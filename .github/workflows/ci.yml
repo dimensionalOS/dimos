@@ -630,8 +630,14 @@ jobs:
           cache: npm
           cache-dependency-path: dimos/agents/package-lock.json
 
+      - name: Check dependency release ages
+        run: node check-dependency-age.mjs
+
       - name: Install
         run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Typecheck
         run: npm run typecheck
