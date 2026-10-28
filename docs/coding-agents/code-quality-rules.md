@@ -34,7 +34,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 ## Configuration
 
 * Don't use environment variables for what the config/CLI system already handles. Config values override from the CLI (`--module.param-name=value`).
-* Don't bake personal/hardware config into source or blueprints: IPs (`192.168.x.x`), interface names (`enp86s0`), default IPs in constructors. Use a `GlobalConfig` field with a sensible default (often `None`) and set it via `.env` or CLI.
+* Don't bake personal/hardware config into source or blueprints: IPs (`192.168.x.x`), interface names (`enp86s0`), default IPs in constructors. Use the owning module config with a sensible default (often `None`) and set it via scoped `.env` or CLI options. Coordinator device addresses belong in its `hardware` list. Keep only shared runtime/composition settings in `GlobalConfig`.
 * Type required fields as required, not `... | None = None`. Then you drop the runtime None-check and the `or default` / `or ""` / `or "can0"` patterns.
 * Listen on `global_config.listen_host` by default, not `0.0.0.0`.
 

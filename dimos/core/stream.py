@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
+from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.resource import Resource
 from dimos.utils import colors
@@ -54,12 +55,13 @@ class ObservableMixin(Generic[T]):
     # subscribes and returns the first value it receives
     # might be nicer to write without rxpy but had this snippet ready
     def get_next(self, timeout: float = 10.0) -> T:
+        source = self.observable().pipe(ops.first())
+        if timeout is not None:
+            # An explicit scheduler: the default one keeps its cancelled timer thread
+            # sleeping for the whole timeout after the value has arrived.
+            source = source.pipe(ops.timeout(timeout, scheduler=TimeoutScheduler.singleton()))
         try:
-            return (  # type: ignore[no-any-return]
-                self.observable()
-                .pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else []))
-                .run()
-            )
+            return source.run()  # type: ignore[no-any-return]
         except Exception as e:
             raise Exception(f"No value received after {timeout} seconds") from e
 
@@ -189,7 +191,9 @@ class Out(Stream[T], ObservableMixin[T]):
     def publish(self, msg: T) -> None:
         if hasattr(self, "_transport") and self._transport is not None:
             self._transport.broadcast(self, msg)
-        for cb in self._subscribers:
+        # Snapshot: a callback may unsubscribe during delivery (a peek completes on
+        # its first value), and removing from the live list would skip the next one.
+        for cb in list(self._subscribers):
             cb(msg)
 
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:

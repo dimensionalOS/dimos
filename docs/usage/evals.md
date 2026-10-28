@@ -380,7 +380,7 @@ an **error**, not a score; the run continues.
 `Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
 for DimSim, `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
 
-`DimSimEnvironment` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
+`DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
@@ -486,9 +486,7 @@ waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
 `tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
-values, so a case can retune a module without a new blueprint. `scene` passes
-`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
-instead of its default `scene.xml`. `base_height` sets the planning model's
+values, so a case can retune a module without a new blueprint. `scene` selects a full MJCF, robot included, for `xarm-perception-sim`: it sets `mujocosimmodule.address`, and the coordinator's simulated arm attaches to that scene. `base_height` sets the planning model's
 existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
@@ -504,11 +502,15 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 
-- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`.
+  The exit status is 1 when a case errored or no case matched the selection.
+  A case that scored below its threshold is a measurement, not an error, and
+  leaves the status at 0.
 - **Docker**: add `--docker` to run that eval in a fresh, detached container
   from the eval image, one per invocation, any number side by side on one
-  host; setup, GPU rendering and an EC2 runbook are in
-  [`evals-docker.md`](/docs/usage/evals-docker.md).
+  host. The command returns once the container has started, so its exit
+  status says nothing about the eval. Setup, GPU rendering and an EC2 runbook
+  are in [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`

@@ -409,6 +409,11 @@ class MujocoSimModule(
         return 1.0
 
     @rpc
+    def scene_path(self) -> str:
+        """The MJCF the simulated manipulator adapters attach to (their SHM key)."""
+        return str(self.config.robot_mjcf or self.config.address)
+
+    @rpc
     def start(self) -> None:
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(

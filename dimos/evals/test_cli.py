@@ -25,12 +25,13 @@ from typer.testing import CliRunner
 from dimos.cli.dimos import main as app
 from dimos.evals import cli, runner as runner_module, suites
 from dimos.evals.agents.base import Agent
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.cli import run_provenance
 from dimos.evals.environments.base import Environment
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites import examples
-from dimos.evals.types import EvalCase, RunningEnvironment
+from dimos.evals.types import EvalCase, RunningEnvironment, Trajectory
 
 SUITE_MODULE = "dimos.evals.suites.examples"
 AGENT_MODULE = "dimos.evals.agents.question_answer"
@@ -44,13 +45,39 @@ class FailingEnvironment(Environment):
         raise AssertionError("invalid test setup: execution reached")
 
 
+class StaticEnvironment(Environment):
+    """Starts nothing and produces no artifacts."""
+
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+        return RunningEnvironment(mcp_url="", streams=(), artifacts={})
+
+
+class StaticAgent(Agent):
+    """Replies with one canned answer."""
+
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
+        trajectory = TrajectoryBuilder(inputs, name="static", model="static")
+        trajectory.step(message="42", request=run_dir / "r", response=run_dir / "s")
+        return trajectory.build("answer")
+
+
 def _case(case_id: str, tag: str = "image") -> EvalCase:
+    """A case that errors in preflight and never runs."""
     return EvalCase(
         id=case_id,
         inputs="?",
         environment=FailingEnvironment(),
         grade=lambda outcome: 1.0,
         tags=frozenset({tag}),
+    )
+
+
+def _scored(case_id: str, score: float) -> EvalCase:
+    """A case the static agent completes, graded with a fixed score."""
+    return EvalCase(
+        id=case_id, inputs="?", environment=StaticEnvironment(), grade=lambda outcome: score
     )
 
 
@@ -130,7 +157,7 @@ def test_run_cli_records_exact_selection_and_agent_inputs(
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1, result.output  # every selected case errors in preflight
     run_dir = next(cli_out_dir.glob("run-*"))
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["source"] == {"kind": "suite_module", "value": SUITE_MODULE}
@@ -187,7 +214,7 @@ def test_allow_cli_reaches_agent_and_manifest(
             allowed,
         ],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output  # the case errors in preflight
     assert seen[0].config.allowed_tools == tuple(expected)
     manifest = json.loads(next(cli_out_dir.glob("run-*/manifest.json")).read_text())
     assert manifest["agent"]["kwargs"]["allowed_tools"] == expected
@@ -241,7 +268,7 @@ def test_exclude_cli_reaches_agent_lowercased(
             "DimOS, dimensionalOS",
         ],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output  # the case errors in preflight
     assert seen[0].config.excluded_keywords == ("dimos", "dimensionalos")
     manifest = json.loads(next(cli_out_dir.glob("run-*/manifest.json")).read_text())
     assert manifest["agent"]["kwargs"]["excluded_keywords"] == ["DimOS", "dimensionalOS"]
@@ -256,3 +283,34 @@ def test_exclude_cli_rejects_bad_input(args: list[str], cli_out_dir: Path) -> No
         app, ["evals", "run", SUITE_MODULE, "--agent", "dimos.evals.agents.pi", *args]
     )
     assert result.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "cases,args,statuses,exit_code",
+    [
+        ([_scored("pass", 1.0)], [], ["PASS"], 0),
+        ([_scored("pass", 1.0), _scored("fail", 0.0)], [], ["PASS", "fail"], 0),
+        ([_scored("pass", 1.0), _case("error")], [], ["PASS", "ERROR"], 1),
+        ([_scored("pass", 1.0)], ["--tags", "nav"], [], 1),
+    ],
+    ids=["all-pass", "failed-case-is-a-measurement", "errored-case", "nothing-selected"],
+)
+def test_run_cli_exit_status(
+    cases: list[EvalCase],
+    args: list[str],
+    statuses: list[str],
+    exit_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    cli_out_dir: Path,
+) -> None:
+    monkeypatch.setattr(cli, "agent_class", lambda _: StaticAgent)
+    monkeypatch.setattr(examples, "SUITE", cases)
+
+    result = CliRunner().invoke(app, ["evals", "run", SUITE_MODULE, "--agent", AGENT_MODULE, *args])
+
+    assert result.exit_code == exit_code, result.output
+    run_dir = next(cli_out_dir.glob("run-*"))
+    lines = result.output.splitlines()
+    assert [line.split()[0] for line in lines[: len(statuses)]] == statuses
+    assert lines[-1].endswith(str(run_dir)), "the summary is printed before the exit status"
+    assert json.loads((run_dir / "summary.json").read_text())["n"] == len(statuses)

@@ -79,7 +79,7 @@ unitree_go2_holonomic_controller = (
         # calibration artifact was characterized against the velocity API, so
         # under the default the commanded and achieved speeds disagree — the
         # robot runs hot and glides past the goal.
-        GO2Connection.blueprint(velocity_api=True),
+        GO2Connection.blueprint(obstacle_avoidance=False, velocity_api=True),
         _Go2HolonomicCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
@@ -148,5 +148,4 @@ unitree_go2_holonomic_controller = (
             ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(obstacle_avoidance=False)
 )

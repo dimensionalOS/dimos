@@ -160,12 +160,12 @@ def test_global_config() -> None:
 
 
 def test_hosted_marks_a_composed_fragment_without_forwarding_module_kwargs() -> None:
-    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).hosted(tags={"gpu"})
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).hosted(tags={"gpu": True})
 
     assert blueprint.hosted_placements == (
         HostedPlacement(
             module_names=("modulea", "moduleb"),
-            tags=frozenset({"gpu"}),
+            tags={"gpu": True},
         ),
     )
     assert all("hosted" not in atom.kwargs for atom in blueprint.blueprints)
@@ -183,17 +183,39 @@ def test_autoconnect_preserves_independent_hosted_units() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "minimum", ({"gpu_mem_gb": "11"}, {"gpu_mem_gb": True}, {"": 1}, [("a", 1)])
+)
+def test_hosted_rejects_a_minimum_that_is_not_numbers(minimum: Any) -> None:
+    with pytest.raises(TypeError, match="minimum maps numeric tag names"):
+        ModuleA.blueprint().hosted(minimum=minimum)
+
+
+def test_hosted_keeps_a_minimum_and_refuses_it_with_local() -> None:
+    placement = ModuleA.blueprint().hosted(minimum={"bla": 22}).hosted_placements[0]
+    assert placement.minimum == {"bla": 22}
+    with pytest.raises(ValueError):
+        ModuleA.blueprint().hosted(local=True, minimum={"bla": 22})
+
+
+def test_hosted_tags_are_kept_as_given() -> None:
+    placement = (
+        ModuleA.blueprint().hosted(tags={"gpu": True, "site": "athens"}).hosted_placements[0]
+    )
+    assert placement.tags == {"gpu": True, "site": "athens"}
+
+
 def test_namespace_updates_hosted_placement_names() -> None:
-    blueprint = ModuleA.blueprint().hosted(tags={"gpu"}).namespace("robot0")
+    blueprint = ModuleA.blueprint().hosted(tags={"gpu": True}).namespace("robot0")
 
     assert blueprint.hosted_placements == (
-        HostedPlacement(module_names=("robot0/modulea",), tags=frozenset({"gpu"})),
+        HostedPlacement(module_names=("robot0/modulea",), tags={"gpu": True}),
     )
 
 
 def test_autoconnect_drops_hosted_metadata_from_overridden_module() -> None:
     blueprint = autoconnect(
-        ModuleA.blueprint().hosted(tags={"old"}),
+        ModuleA.blueprint().hosted(tags={"old": True}),
         ModuleA.blueprint(key1="new"),
     )
 
@@ -229,14 +251,19 @@ def test_blueprint_rejects_hosted_placement_for_unknown_module() -> None:
     "kwargs",
     (
         {"host": ""},
-        {"tags": "gpu"},
-        {"tags": {""}},
-        {"host": None, "tags": {"gpu"}},
+        {"local": True, "tags": {"gpu": True}},
+        {"local": True, "host": "robot"},
     ),
 )
 def test_hosted_rejects_invalid_constraints(kwargs: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         ModuleA.blueprint().hosted(**kwargs)
+
+
+@pytest.mark.parametrize("tags", ("gpu", {"gpu"}, {"": True}, {"gpu": False}, {"gpu": 1}))
+def test_hosted_rejects_tags_that_are_not_true_or_a_value(tags: Any) -> None:
+    with pytest.raises(TypeError, match="tags maps tag names"):
+        ModuleA.blueprint().hosted(tags=tags)
 
 
 def test_future_annotations_support() -> None:

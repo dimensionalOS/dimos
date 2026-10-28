@@ -25,7 +25,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.embodiment.go2 import GO2
 
 
 class LocalPlannerNativeConfig(NativeModuleConfig):
@@ -37,11 +36,15 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
 
     # Every field crosses to rust verbatim and rust has no defaults, so a field missing
     # here fails startup.
-    embodiment: Embodiment = GO2
+    embodiment: Embodiment
     # Grows (negative: shrinks) every planning box per side; the hard margin stays the embodiment's precision floor.
     body_dilate_m: float = 0.0
     # Price multiplier per meter over lattice cells the cloud saw no floor under; <= 1 turns it off.
     unseen_cost: float = 5.0
+    # Extra price per meter where the body steps on a low object, at steppable height. Scales with height.
+    step_cost: float = 5.0
+    # Speed ceiling (m/s) over waypoints that step on a low object.
+    step_speed: float = 0.5
     # Waypoint spacing of the published route (m).
     resolution: float = 0.1
     replan_hz: float = 5.0
@@ -71,6 +74,8 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     tf: IO[TFMessage]
 
     path: Out[Path]
+    # The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
+    ground_support: Out[PointCloud2]
 
 
 if TYPE_CHECKING:

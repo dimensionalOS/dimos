@@ -19,14 +19,17 @@ import sys
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
+import dimos.cli.commands.info as info
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
+import dimos.core.daemon as core_daemon
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
@@ -96,18 +99,67 @@ def test_global_config_flag_applies_before_subcommand():
         global_config.update(transport=original)
 
 
-def test_show_config_masks_secrets():
-    # A config dump gets pasted into chats and bug reports: keys print as ***.
-    original = global_config.relay_key
-    try:
-        result = CliRunner().invoke(
-            main, ["--relay-key", "robot-key-0123456789abcdef", "show-config"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "relay_key: ***" in result.output
-        assert "robot-key-0123456789abcdef" not in result.output
-    finally:
-        global_config.update(relay_key=original)
+def test_show_config_contains_only_global_settings():
+    result = CliRunner().invoke(main, ["show-config"])
+    assert result.exit_code == 0, result.output
+    assert "transport:" in result.output
+    assert "relay_key:" not in result.output
+    assert "mcp_port:" not in result.output
+
+
+def test_show_config_redacts_secrets_including_nested_settings(mocker: MockerFixture) -> None:
+    config = mocker.patch.object(info, "global_config")
+    config.model_dump.return_value = {
+        "transport": "zenoh",
+        "api_key": "private-api-key",
+        "connection": {"aes_128_key": "private-aes-key", "host": "localhost"},
+    }
+
+    result = CliRunner().invoke(main, ["show-config"])
+
+    assert result.exit_code == 0, result.output
+    assert "transport: zenoh" in result.output
+    assert "connection: {'host': 'localhost'}" in result.output
+    assert "private-" not in result.output
+
+
+def test_rerun_bridge_resolves_its_settings_like_a_blueprint_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dimos.visualization.rerun.bridge as bridge
+
+    recorded: dict[str, Any] = {}
+    monkeypatch.setattr(bridge, "run_bridge", lambda **config: recorded.update(config))
+    monkeypatch.setenv("RERUNBRIDGEMODULE__HOST", "0.0.0.0")
+
+    result = CliRunner().invoke(
+        main,
+        ["rerun-bridge", "--rerun-open", "none", "--rerunbridgemodule.memory-limit", "4GB"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert recorded == {
+        "host": "0.0.0.0",
+        "rerun_open": "none",
+        "memory_limit": "4GB",
+        "rerun_web": True,
+    }
+    help_output = CliRunner().invoke(main, ["rerun-bridge", "--help"]).output
+    assert "--rerunbridgemodule.host" in help_output
+
+
+def test_rerun_bridge_applies_global_options_given_after_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dimos.visualization.rerun.bridge as bridge
+
+    seen: list[str] = []
+    monkeypatch.setattr(bridge, "run_bridge", lambda **config: seen.append(global_config.transport))
+
+    result = CliRunner().invoke(main, ["rerun-bridge", "--transport", "lcm"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["lcm"]
 
 
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
@@ -193,13 +245,18 @@ def stubbed_run(
         transports: dict[tuple[str, type], Any] = {}
 
         @classmethod
-        def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":
+        def build(
+            cls, blueprint: Any, parsed_config: Any = None, *, remote_module_refs: Any = None
+        ) -> "FakeCoordinator":
             recorded["blueprint"] = blueprint
             recorded["parsed_config"] = parsed_config
             return cls()
 
         def health_check(self) -> bool:
             return True
+
+        def start_rpc_service(self, *, name: str | None = None) -> None:
+            return None
 
         def stop(self) -> None:
             return None
@@ -213,6 +270,8 @@ def stubbed_run(
     class FakeEntry:
         def __init__(self, **fields: Any) -> None:
             recorded["entry"] = fields
+            self.run_id = fields["run_id"]
+            self.log_dir = fields["log_dir"]
 
         def save(self) -> None:
             return None
@@ -235,7 +294,7 @@ def stubbed_run(
     monkeypatch.setattr(run_registry, "cleanup_stale", lambda: 0)
     monkeypatch.setattr(run_registry, "generate_run_id", lambda name: f"test-{name}")
     monkeypatch.setattr(process_lifecycle, "spawn_watchdog", lambda *args, **kwargs: None)
-    monkeypatch.setattr(lifecycle, "install_signal_handlers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(core_daemon, "install_signal_handlers", lambda *args, **kwargs: None)
     monkeypatch.setattr(lifecycle, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(logging_config, "set_run_log_dir", lambda path: None)
     monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", blueprints.__getitem__)
@@ -250,6 +309,30 @@ def stubbed_run(
         yield recorded
     finally:
         global_config.update(**original_global_config)
+
+
+@pytest.mark.parametrize(
+    ("exec_handoff", "expected_run_id"),
+    [(True, "launcher-run"), (False, "test-alpha")],
+)
+def test_daemon_reuses_identity_only_for_exec_handoff(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    exec_handoff: bool,
+    expected_run_id: str,
+) -> None:
+    monkeypatch.setenv("DIMOS_RUN_ID", "launcher-run")
+    if exec_handoff:
+        monkeypatch.setenv("_DIMOS_DAEMON_STATUS_FD", "7")
+    else:
+        monkeypatch.delenv("_DIMOS_DAEMON_STATUS_FD", raising=False)
+    monkeypatch.setattr(lifecycle, "fork_daemon", lambda path: (123, 7))
+    monkeypatch.setattr(lifecycle, "read_daemon_status", lambda fd: {"ok": True, "n_modules": 1})
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--daemon"])
+
+    assert result.exit_code == 0, result.output
+    assert f"Run ID:    {expected_run_id}" in result.output
 
 
 def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
@@ -378,22 +461,16 @@ def test_qualified_global_relay_flag_is_applied_before_composition(
     assert stubbed_run["parsed_config"].global_config["local_relay"] is True
 
 
-def test_run_relay_ca_flag_is_applied_before_composition(
+def test_run_relay_ca_flag_configures_composed_module(
     stubbed_run: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observed: list[str | None] = []
-
-    def compose(blueprint: Any) -> Any:
-        observed.append(global_config.relay_ca)
-        return blueprint
-
-    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
-
-    result = CliRunner().invoke(main, ["run", "alpha", "--relay-ca", "/ca.pem"])
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", "--local-relay", "--relaybridgemodule.relay-ca", "/ca.pem"],
+    )
 
     assert result.exit_code == 0, result.output
-    assert observed == ["/ca.pem"]
+    assert stubbed_run["parsed_config"].module_kwargs("relaybridgemodule")["relay_ca"] == "/ca.pem"
 
 
 def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:
@@ -540,3 +617,26 @@ def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
     assert result.exit_code == 2
     assert "dimos spy --transport" in result.output
     assert spy_main_argv == []  # never reaches the spy
+
+
+def test_run_registered_keeps_the_entry_from_readiness_until_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    entry = run_registry.RunEntry("run-1", 1, "bp", "now", str(tmp_path))
+    seen: list[bool] = []
+
+    def fake_run(blueprint: Any, config: Any, *, on_ready: Any, **_: Any) -> None:
+        seen.append(entry.registry_path.exists())
+        on_ready(None)
+        seen.append(entry.registry_path.exists())
+        raise SystemExit(0)
+
+    monkeypatch.setattr(lifecycle, "run_coordinator", fake_run)
+    monkeypatch.setattr(lifecycle, "_mcp_url", lambda *_: "http://127.0.0.1:9990/mcp")
+    with pytest.raises(SystemExit):
+        lifecycle._run_registered("bp", "cfg", entry)  # type: ignore[arg-type]
+
+    assert seen == [False, True]
+    assert entry.mcp_url == "http://127.0.0.1:9990/mcp"
+    assert not entry.registry_path.exists()

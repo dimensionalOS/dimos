@@ -26,11 +26,14 @@ Features:
 """
 
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import functools
 import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+
+from reactivex.disposable import Disposable
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -41,6 +44,7 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -69,10 +73,14 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
+from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+
+    from dimos.core.stream import Stream
 
 logger = setup_logger()
 
@@ -102,7 +110,18 @@ class ControlCoordinatorConfig(ModuleConfig):
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
+    # Device addresses by hardware id (an IP, a CAN interface, a serial port),
+    # applied when the stack runs on hardware. In simulation the blueprint's
+    # simulated adapters stay, so one saved robot configuration serves both.
+    addresses: dict[str, str] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    # The model the robots driven through connection modules get their joints
+    # and position limits from; its joints are named "<robot>/<joint>". See
+    # ControlCoordinator for how those robots are named.
+    model: RobotModel | None = None
+    # How old a robot's newest reading may be, in seconds, before it is no
+    # longer commanded.
+    reading_timeout_s: float = 0.2
 
 
 class ControlCoordinator(Module):
@@ -118,6 +137,28 @@ class ControlCoordinator(Module):
     3. Arbitrates conflicting commands per joint (highest priority wins)
     4. Routes commands to the owning hardware adapter
     5. Publishes the aggregated canonical joint state
+
+    A robot behind a ``ConnectionModule`` is driven through ports on a
+    coordinator subclass named ``<robot>_<kind>``, which the blueprint remaps
+    onto the connection module's ports::
+
+        class Go2Coordinator(ControlCoordinator):
+            go2_cmd_vel: Out[Twist]
+            go2_odom: In[PoseStamped]
+
+        autoconnect(Go2Coordinator.blueprint(), Go2Connection.blueprint()).remappings([
+            (Go2Connection, "cmd_vel", "go2_cmd_vel"),
+            (Go2Coordinator, "go2_odom", "odom"),
+        ])
+
+    The kinds are listed in ``connection_source.COMMAND_PORTS`` and
+    ``READING_PORTS``. Joints and their limits come from ``config.model``,
+    named ``<robot>/<joint>``; a base alone needs no model. A robot is
+    commanded every tick once it has reported, and not while its newest
+    reading is older than ``config.reading_timeout_s``. In a fleet, each
+    connection module sets ``frame_id_prefix`` to its robot's name so
+    readings are told apart. A coordinator drives adapters or connection
+    modules, never both.
 
     Key design decisions:
     - Joint-centric commands (not hardware-centric)
@@ -151,8 +192,14 @@ class ControlCoordinator(Module):
 
     config: ControlCoordinatorConfig
 
+    # Injected when the blueprint has a MujocoSimModule: the scene that
+    # simulated manipulator adapters without one of their own attach to.
+    _mujoco_sim: MujocoSimSpec | None = None
+
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
+    # Intended position-command updates for recording.
+    coordinator_joint_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -189,6 +236,18 @@ class ControlCoordinator(Module):
         # Guarded by _task_lock; added/pruned with their task.
         self._task_commands: dict[TaskName, frozenset[str]] = {}
 
+        # Robots driven through connection modules, by name, and each one's
+        # command ports by kind. Filled on start; guarded by _hardware_lock.
+        self._connections: dict[str, ConnectionSource] = {}
+        self._command_ports: dict[str, dict[str, Out[Any]]] = {}
+        # While set, robots behind connection modules are sent nothing.
+        # Guarded by _hardware_lock.
+        self._estopped = False
+        # While set, a task added is emergency-stopped too. Guarded by _task_lock.
+        self._tasks_estopped = False
+        # Held through each set_estop, so a stop and a clear never overlap.
+        self._estop_lock = threading.Lock()
+
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
 
@@ -212,6 +271,7 @@ class ControlCoordinator(Module):
 
         try:
             for component in self.config.hardware:
+                component = self._resolve_component(component)
                 self._setup_hardware(component)
                 hardware_added.append(component.hardware_id)
 
@@ -232,6 +292,28 @@ class ControlCoordinator(Module):
                 with suppress(Exception):
                     self.remove_hardware(hw_id)
             raise
+
+    def _resolve_component(self, component: HardwareComponent) -> HardwareComponent:
+        """Settle the adapter and address a component runs with.
+
+        A device address configured by hardware id applies on hardware, not in
+        simulation. A component still without an address runs its mock
+        stand-in when it has one. A simulated manipulator without a scene
+        attaches to the blueprint's MujocoSimModule.
+        """
+        address = component.address
+        if not self.config.g.simulation:
+            address = self.config.addresses.get(component.hardware_id, address)
+        if address is None and component.mock_limits is not None:
+            return replace(component, adapter_type="mock", limits=component.mock_limits)
+        if address is None and component.adapter_type == "sim_mujoco":
+            if self._mujoco_sim is None:
+                raise RuntimeError(
+                    f"Hardware {component.hardware_id!r} simulates an arm but the blueprint "
+                    "has no MujocoSimModule to attach to; add one or set the scene as its address"
+                )
+            address = str(self._mujoco_sim.scene_path())
+        return replace(component, address=address)
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
@@ -330,6 +412,55 @@ class ControlCoordinator(Module):
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
         self._robot_joint_port(hardware_id).publish(msg)
 
+    def _connect_robots(self) -> None:
+        """Set up each robot this coordinator's ports name, and listen on its reading ports.
+
+        Raises:
+            ValueError: If a port named ``<robot>_<kind>`` carries the wrong
+                message, a robot cannot be driven (see ``ConnectionSource``),
+                or this coordinator also has hardware adapters.
+        """
+        commands = _robot_ports(self.outputs, COMMAND_PORTS)
+        readings = _robot_ports(self.inputs, READING_PORTS)
+        robots = list(dict.fromkeys((*commands, *readings)))
+        if not robots:
+            return
+        if self.config.hardware:
+            raise ValueError(
+                f"{type(self).__name__} has hardware adapters and ports for robots {robots}; "
+                "a coordinator drives one or the other, not both"
+            )
+        with self._hardware_lock:
+            for robot in robots:
+                source = ConnectionSource(
+                    robot,
+                    commands.get(robot, []),
+                    readings.get(robot, []),
+                    self.config.model,
+                    self.config.reading_timeout_s,
+                )
+                self._connections[robot] = source
+                self._command_ports[robot] = {
+                    kind: self.outputs[f"{robot}_{kind}"] for kind in source.command_ports
+                }
+                for joint in source.joint_names:
+                    self._joint_to_hardware[joint] = robot
+        for robot, source in self._connections.items():
+            for kind in source.reading_ports:
+                handler = functools.partial(source.on_message, kind)
+                port = self.inputs[f"{robot}_{kind}"]
+                self.register_disposable(Disposable(port.subscribe(handler)))
+        logger.info(f"Driving robots through connection modules: {robots}")
+
+    def _publish_command(self, robot: str, values: dict[str, float]) -> None:
+        """Send one robot its command for this tick. Called by the tick loop,
+        which holds ``_hardware_lock``."""
+        if self._estopped:
+            return
+        ports = self._command_ports[robot]
+        for out in self._connections[robot].command_messages(values, time.time()):
+            ports[out.port].publish(out.message)
+
     @rpc
     def add_hardware(
         self,
@@ -352,6 +483,12 @@ class ControlCoordinator(Module):
                 f"Hardware type / adapter mismatch for '{component.hardware_id}': "
                 f"hardware_type={component.hardware_type.value} but got "
                 f"{type(adapter).__name__}"
+            )
+
+        if self._connections:
+            raise ValueError(
+                f"cannot add hardware {component.hardware_id!r}: this coordinator drives "
+                "connection modules, and a coordinator drives one or the other, not both"
             )
 
         if self.config.publish_robot_joint_states:
@@ -426,9 +563,9 @@ class ControlCoordinator(Module):
 
     @rpc
     def list_hardware(self) -> list[str]:
-        """List registered hardware IDs."""
+        """List registered hardware IDs, then robots driven through connection modules."""
         with self._hardware_lock:
-            return list(self._hardware.keys())
+            return [*self._hardware, *self._connections]
 
     @rpc
     def list_joints(self) -> list[str]:
@@ -445,6 +582,8 @@ class ControlCoordinator(Module):
                 state = hw.read_state()  # {joint_name: JointState}
                 for joint_name, joint_state in state.items():
                     positions[joint_name] = joint_state.position
+            for connection in self._connections.values():
+                positions.update(connection.read_joints().joint_positions)
             return positions
 
     @rpc
@@ -493,6 +632,8 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if self._tasks_estopped:
+                task.set_estop(True)
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
@@ -714,17 +855,40 @@ class ControlCoordinator(Module):
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
-        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
-        inert so the tick loop stops commanding the hardware within one tick.
-        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
-        if estopped:
-            logger.warning("E-STOP latched at coordinator")
-        with self._task_lock:
-            for task in self._tasks.values():
-                handler = getattr(task, "set_estop", None)
-                if callable(handler):
-                    handler(estopped)
+        """Emergency-stop every task and robot this coordinator drives, or clear the stop.
+
+        Stopping makes tasks inert and sends nothing more to robots behind
+        connection modules; those robots are halted by their own deadman within
+        its timeout once commands stop. Hardware adapters keep the last value
+        they were given. Clearing makes tasks live and commands each robot once
+        it reports again, held where that reading has it. Calls run one at a time.
+
+        Args:
+            estopped: True to stop, False to clear.
+        """
+        with self._estop_lock:
+            if estopped:
+                logger.warning("E-STOP latched at coordinator")
+                # The tick loop sends while holding this lock, so a tick
+                # already sending finishes first, and none sends after.
+                with self._hardware_lock:
+                    self._estopped = True
+                self._set_tasks_estop(True)
+            else:
+                self._set_tasks_estop(False)
+                with self._hardware_lock:
+                    for connection in self._connections.values():
+                        connection.drop_holds()
+                    self._estopped = False
+                logger.warning("E-STOP cleared at coordinator")
         return True
+
+    def _set_tasks_estop(self, estopped: bool) -> None:
+        """Call ``set_estop(estopped)`` on every task, and on tasks added later."""
+        with self._task_lock:
+            self._tasks_estopped = estopped
+            for task in self._tasks.values():
+                task.set_estop(estopped)
 
     @rpc
     def set_activated(self, engaged: bool) -> None:
@@ -896,6 +1060,8 @@ class ControlCoordinator(Module):
 
         super().start()
 
+        self._connect_robots()
+
         # Setup hardware and tasks from config (if any)
         if self.config.hardware or self.config.tasks:
             self._setup_from_config()
@@ -915,6 +1081,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_command_callback=self.coordinator_joint_command.publish,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses
@@ -922,6 +1089,8 @@ class ControlCoordinator(Module):
             frame_pose_hz=self.config.frame_pose_hz,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
+            connections=self._connections,
+            connection_command_callback=self._publish_command,
         )
         self._tick_loop.start()
 
@@ -975,3 +1144,31 @@ class ControlCoordinator(Module):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
+
+
+def _robot_ports(
+    ports: "Mapping[str, Stream[Any]]", kinds: "Mapping[str, type]"
+) -> dict[str, list[str]]:
+    """The kinds of port in ``ports`` named ``<robot>_<kind>``, by robot.
+
+    Args:
+        ports: A module's input or output ports, by name.
+        kinds: The kinds to look for, each with the message its port must carry.
+
+    Raises:
+        ValueError: If a port named for a kind carries another message.
+    """
+    found: dict[str, list[str]] = {}
+    for name, port in ports.items():
+        for kind, message in kinds.items():
+            robot = name.removesuffix(f"_{kind}")
+            if robot == name or not robot:
+                continue
+            if port.type is not message:
+                raise ValueError(
+                    f"port {name!r} is robot {robot!r}'s {kind}, so it must carry "
+                    f"{message.__name__}, not {port.type_name}"
+                )
+            found.setdefault(robot, []).append(kind)
+            break
+    return found

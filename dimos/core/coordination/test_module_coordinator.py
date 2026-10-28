@@ -38,13 +38,14 @@ from dimos.core.coordination.module_coordinator import (
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
-    _verify_no_name_conflicts,
     stream_name_types,
+    verify_no_name_conflicts,
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
@@ -368,7 +369,7 @@ def test_name_conflicts_are_reported() -> None:
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
@@ -390,7 +391,7 @@ def test_multiple_name_conflicts_are_reported() -> None:
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
@@ -414,7 +415,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
 
     try:
-        _verify_no_name_conflicts(blueprint_set)
+        verify_no_name_conflicts(blueprint_set)
         pytest.fail("Expected ValueError due to conflict")
     except ValueError as e:
         assert "'data' has conflicting types" in str(e)
@@ -430,7 +431,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     )
 
     # Should not raise any exception after remapping
-    _verify_no_name_conflicts(blueprint_set_remapped)
+    verify_no_name_conflicts(blueprint_set_remapped)
 
 
 def test_remapping() -> None:
@@ -660,6 +661,20 @@ def test_load_blueprint_twice(dynamic_coordinator) -> None:
     assert a.data1.transport.topic == b.data1.transport.topic
     assert a.data2.transport.topic == b.data2.transport.topic
     assert b.data3.transport.topic == c.data3.transport.topic
+
+
+def test_transport_observer_visits_existing_and_new_streams_once(dynamic_coordinator) -> None:
+    dynamic_coordinator.load_module(ModuleA)
+    seen: list[str] = []
+    with pytest.raises(RuntimeError, match="leave recording"):
+        with dynamic_coordinator.observe_transports(
+            lambda name, stream_type, transport: seen.append(name)
+        ):
+            dynamic_coordinator.load_module(ModuleB)
+            raise RuntimeError("leave recording")
+
+    dynamic_coordinator.load_module(SourceModule)
+    assert sorted(seen) == ["data1", "data2", "data3"]
 
 
 def test_load_module_convenience(dynamic_coordinator) -> None:
@@ -981,6 +996,45 @@ def test_unload_after_reload_restart(dynamic_coordinator, mocker) -> None:
 
     dynamic_coordinator.unload_module(ModuleA)
     assert dynamic_coordinator.get_instance(ModuleA) is None
+
+
+class SystemModulesRecorder(Module):
+    """Records each module list that the coordinator sends to `on_system_modules`."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._lists: list[list[str]] = []
+
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        self._lists.append(sorted(module.remote_name for module in modules))
+
+    @rpc
+    def module_lists(self) -> list[list[str]]:
+        return self._lists
+
+
+def test_unload_module_sends_the_remaining_modules(dynamic_coordinator) -> None:
+    """Modules that track the system, such as McpServer, stop seeing an unloaded module."""
+    dynamic_coordinator.load_module(SystemModulesRecorder)
+    dynamic_coordinator.load_module(ModuleA)
+    recorder = dynamic_coordinator.get_instance(SystemModulesRecorder)
+    assert recorder.module_lists()[-1] == ["ModuleA", "SystemModulesRecorder"]
+
+    dynamic_coordinator.unload_module(ModuleA)
+
+    assert recorder.module_lists()[-1] == ["SystemModulesRecorder"]
+
+
+def test_restart_sends_the_module_list_once_the_module_is_back(dynamic_coordinator) -> None:
+    dynamic_coordinator.load_module(SystemModulesRecorder)
+    dynamic_coordinator.load_module(ModuleA)
+    recorder = dynamic_coordinator.get_instance(SystemModulesRecorder)
+    sent = len(recorder.module_lists())
+
+    dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+
+    assert recorder.module_lists()[sent:] == [["ModuleA", "SystemModulesRecorder"]]
 
 
 def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:

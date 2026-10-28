@@ -32,7 +32,7 @@ dimos run teleop-webxr-openarm # OpenArm, bimanual IK + planner/Viser + mock har
 Select a CAN interface explicitly to control real A1Z hardware:
 
 ```bash
-dimos --can-port a1zcan run teleop-webxr-a1z
+dimos run teleop-webxr-a1z --controlcoordinator.addresses '{"arm": "a1zcan"}'
 ```
 
 Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
@@ -145,3 +145,5 @@ webxr/
 ├── blueprints.py
 └── web/static/index.html # WebXR client
 ```
+
+Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

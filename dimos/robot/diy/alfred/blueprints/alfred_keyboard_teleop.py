@@ -27,11 +27,11 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
-from dimos.robot.diy.alfred.config import ALFRED
+from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 
 alfred_keyboard_teleop = autoconnect(
     _alfred_hardware,
-    mid360_for_pointlio(lidar_ip=ALFRED.mid360_ip),
+    mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
     PointLio.blueprint().remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),

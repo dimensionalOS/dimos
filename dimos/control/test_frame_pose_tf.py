@@ -20,6 +20,7 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator
@@ -56,7 +57,9 @@ class _PoseTask(BaseControlTask):
         return {"link_tcp": PoseStamped(frame_id="link_base", position=(x, 0.0, 0.5))}
 
 
-def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> None:
+def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate(
+    mocker: MockerFixture,
+) -> None:
     adapter = MagicMock(spec=ManipulatorAdapter)
     adapter.read_joint_positions.return_value = [0.25, 0.5]
     adapter.read_joint_velocities.return_value = [0.0, 0.0]
@@ -76,7 +79,9 @@ def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> N
         publish_callback=joint_states,
         publish_tf_callback=published.append,
     )
-    for _ in range(5):
+    clock = mocker.patch("dimos.control.tick_loop.time.perf_counter")
+    for now in (0.0, 0.005, 0.01, 0.02, 0.03):
+        clock.return_value = now
         loop._tick()  # all within one 30 Hz period
 
     (message,) = published
@@ -84,6 +89,14 @@ def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> N
     assert (transform.frame_id, transform.child_frame_id) == ("world", "link_tcp")
     assert transform.translation.to_numpy().tolist() == [0.25, 0.0, 0.5]
     assert transform.ts == joint_states.call_args_list[0].args[0].ts
+
+    clock.return_value = 1.0 / 30.0
+    loop._tick()
+    assert len(published) == 2
+
+    clock.return_value = 0.04
+    loop._tick()
+    assert len(published) == 2
 
 
 def test_only_coordinators_declaring_tf_can_publish_frame_poses() -> None:

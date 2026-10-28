@@ -41,7 +41,7 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 **McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
-- `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
+- `agent: Out[BaseMessage]`: publishes the transcript: human input, agent responses (text, tool calls), tool results, and the turns fed to the model on a tool's behalf (`[tool:<name>]` stream updates, image artefacts tagged with the tool name in `additional_kwargs`), which chat UIs render as tool output
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.

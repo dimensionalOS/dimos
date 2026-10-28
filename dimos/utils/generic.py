@@ -38,6 +38,13 @@ def get_local_ips() -> list[tuple[str, str]]:
     return results
 
 
+def connect_host(bind_host: str) -> str:
+    """The host a client on this machine dials to reach a server bound to ``bind_host``."""
+    if bind_host in ("0.0.0.0", "::"):
+        return "localhost"
+    return f"[{bind_host}]" if ":" in bind_host else bind_host
+
+
 _T = TypeVar("_T")
 
 

@@ -12,25 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PGO drift corrections as a memory Transformer.
+"""Pose graph optimization: lidar keyframes, ICP loop closures, gtsam ISAM2.
 
-A lidar/odom stream comes in with poses that drift over time — the robot's
-estimate of where it is in the world slowly diverges from ground truth as
-small per-frame errors accumulate. PGO ("pose graph optimization") detects
-revisited places via loop closure and pulls the trajectory back into
-self-consistency.
-
-Two public types:
-
-- ``PGO`` is ``Transformer[PointCloud2, PoseGraph]``. Apply it to a lidar
-  stream and it emits one cumulative ``PoseGraph`` snapshot per loop-closure
-  event (the only state changes that meaningfully restructure the optimized
-  poses), plus a final emit at end-of-stream so ``.last()`` always returns
-  something even on loop-less recordings.
-- ``PoseGraph`` is a frozen dataclass carrying ``keyframes`` (nodes) and
-  ``loops`` (edges), *and* is itself ``Transformer[Any, Any]``. Apply via
-  ``stream.transform(graph)`` to rewrite ``obs.pose`` from the raw to the
-  drift-corrected frame; or call ``graph.correct(pose)`` for a one-off.
+- ``PGO``: ``Transformer[PointCloud2, PoseGraph]``, a cumulative snapshot per
+  accepted loop plus one at end of stream.
+- ``PoseGraph``: frozen keyframes and loops; as a ``Transformer`` it rewrites
+  ``obs.pose`` from ``world_raw`` into ``world_corrected``.
+- ``PGOState``: the incremental solver ``PGOMap`` drives live, premap included.
 
 Typical usage::
 
@@ -38,8 +26,7 @@ Typical usage::
     corrected = some_stream.transform(graph)          # apply
     for snapshot in lidar.transform(PGO()): ...       # live viz
 
-``gtsam`` is imported lazily inside hot helpers so importing this module
-stays cheap and gtsam-free for consumers that only need ``PoseGraph``.
+``gtsam`` is imported lazily, so ``PoseGraph`` alone doesn't need it.
 """
 
 from __future__ import annotations
@@ -58,6 +45,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -65,11 +53,15 @@ if TYPE_CHECKING:
     import gtsam  # type: ignore[import-not-found,import-untyped]
     from typing_extensions import Unpack  # TODO(PY311): import from typing
 
+    from dimos.navigation.go2.loop_closure.premap import Premap
+
 T = TypeVar("T")
 
 FRAME_WORLD_CORRECTED = "world_corrected"
 FRAME_WORLD_RAW = "world_raw"
 FRAME_BODY = "body"
+FRAME_WORLD = "world"
+FRAME_MAP = "map"
 
 logger = setup_logger()
 
@@ -94,20 +86,29 @@ class PGOConfig(BaseConfig):
     max_icp_iterations: int = 50
     max_icp_correspondence_dist: float = 1.0
 
-    # Noise variances on the GTSAM between-factor (Pose3 is [rx, ry, rz, x, y, z]).
-    # Defaults are tuned for a Go2-class ground robot: tight z because the
-    # platform is planar; isotropic rotation. Loosen on aerial / 6-DoF arms.
+    # Odometry between-factor variances, gtsam order [rx, ry, rz, x, y, z]; tight z for a ground robot.
     odom_rot_var: float = 1e-6
     odom_trans_var_xy: float = 1e-4
     odom_trans_var_z: float = 1e-6
 
-    # Loop-closure rotation variance. Translation variance is supplied
-    # per-edge from ICP fitness, floored at 1e-4 (sigma_trans ~ 1 cm).
+    # Loop rotation variance; translation variance is the ICP fitness, floored at 1e-4.
     loop_rot_var: float = 0.05
+
+    # Premap attachment: this many agreeing fixes in a row settle it.
+    reloc_settle_after: int = 3
+    # A fix this close to the attachment agrees with it.
+    reloc_agree_m: float = 0.25
+    reloc_agree_deg: float = 2.0
+    reloc_trans_sigma: float = 0.2
+    reloc_rot_sigma_deg: float = 2.0
+    # A disagreeing fix must outscore the attachment on the same window by this much to move it.
+    reloc_move_margin: float = 0.05
+    # Premap loop closures ICP a keyframe against the premap cropped to this radius.
+    premap_crop_m: float = 15.0
 
 
 class PGOKwargs(TypedDict, total=False):
-    """Typed kwargs for `pgo_keyframes`; mirrors `PGOConfig` fields."""
+    """Typed kwargs for `PGO`; mirrors `PGOConfig` fields."""
 
     key_pose_delta_trans: float
     key_pose_delta_deg: float
@@ -126,14 +127,21 @@ class PGOKwargs(TypedDict, total=False):
     odom_trans_var_xy: float
     odom_trans_var_z: float
     loop_rot_var: float
+    reloc_settle_after: int
+    reloc_agree_m: float
+    reloc_agree_deg: float
+    reloc_trans_sigma: float
+    reloc_rot_sigma_deg: float
+    reloc_move_margin: float
+    premap_crop_m: float
 
 
 @dataclass(frozen=True)
 class Keyframe:
-    """Keyframe emitted by `pgo_keyframes`.
+    """A pose graph node.
 
     `local` is the body pose in the odom (`world_raw`) frame, `optimized` is
-    the body pose in the drift-corrected (`world_corrected`) frame.
+    the body pose in `world_corrected`.
     """
 
     ts: float
@@ -145,10 +153,9 @@ class Keyframe:
 class LoopClosure:
     """An accepted ICP loop-closure edge in the pose graph.
 
-    `source` and `target` are the final optimized body poses (in
-    `world_corrected`) of the two keyframes the loop connected. `score` is
-    the ICP fitness used as the loop's translation variance — lower is a
-    tighter match.
+    `source` and `target` are the two keyframes' optimized body poses in
+    `world_corrected`. `score` is the edge's translation variance (floored ICP
+    fitness, m^2); lower is tighter.
     """
 
     source: Transform
@@ -160,9 +167,8 @@ class LoopClosure:
 class PoseGraph(Transformer[Any, Any]):
     """Output of PGO: the keyframe nodes and loop edges of the optimized graph.
 
-    Apply via ``stream.transform(graph)`` to rewrite each obs's pose into
-    the drift-corrected frame; the data payload passes through untouched.
-    For one-off pose corrections call :meth:`correct` directly.
+    As a ``Transformer`` it rewrites each obs's pose into ``world_corrected``,
+    passing data through.
     """
 
     keyframes: tuple[Keyframe, ...] = ()
@@ -174,11 +180,7 @@ class PoseGraph(Transformer[Any, Any]):
         return self.correction_at(pose.ts) + pose
 
     def correction_at(self, ts: float) -> Transform:
-        """The raw ``world_corrected <- world_raw`` transform at ``ts``.
-
-        Useful when applying the correction to non-pose data (e.g. point
-        clouds): ``pointcloud.transform(graph.correction_at(obs.ts))``.
-        """
+        """The ``world_corrected <- world_raw`` transform at ``ts``."""
         R, t = self._corrections(np.array([ts]))
         return Transform(
             translation=Vector3(t[0]),
@@ -252,7 +254,7 @@ class PoseGraph(Transformer[Any, Any]):
 
         ts_arr = np.array(ts_list)
         table = (ts_arr, Slerp(ts_arr, Rotation.from_quat(np.stack(quat_list))), np.stack(t_list))
-        # frozen=True blocks plain attribute writes; use object.__setattr__.
+        # frozen dataclass
         object.__setattr__(self, "_drifts_cache", table)
         return table
 
@@ -260,11 +262,8 @@ class PoseGraph(Transformer[Any, Any]):
 class PGO(Transformer[PointCloud2, "PoseGraph"]):
     """Pose-graph optimization as a memory Transformer.
 
-    Emits one cumulative :class:`PoseGraph` snapshot per state change. By
-    default (``emit_on="loop"``) that's one emit per accepted loop closure
-    plus a final emit at end-of-stream so ``.last()`` always returns
-    something even on loop-less recordings. ``emit_on="keyframe"`` emits on
-    every new keyframe — noisier, useful for live progress viz.
+    Emits a cumulative :class:`PoseGraph` per accepted loop (``emit_on="loop"``)
+    or per keyframe (``"keyframe"``), and once more at end of stream.
     """
 
     def __init__(
@@ -279,7 +278,7 @@ class PGO(Transformer[PointCloud2, "PoseGraph"]):
     def __call__(
         self, upstream: Iterator[Observation[PointCloud2]]
     ) -> Iterator[Observation[PoseGraph]]:
-        pgo = _PGOState(self._cfg)
+        pgo = PGOState(self._cfg)
         last_kf_count = 0
         last_loop_count = 0
         last_kf_ts: float | None = None
@@ -288,14 +287,13 @@ class PGO(Transformer[PointCloud2, "PoseGraph"]):
             pose = obs.pose
             if pose is None:
                 continue
-            # Placeholder filter: zero translation OR uninitialized (all-zero)
-            # quaternion. Identity rotation (qw=1) is valid and stays.
+            # placeholder poses: zero translation or all-zero quaternion
             if pose.position.is_zero() or pose.orientation.is_zero():
                 continue
             pgo.process(_obs_to_pose3(obs), obs.ts, obs.data)
 
             n_kf = len(pgo._key_poses)
-            n_loops = len(pgo._accepted_loops)
+            n_loops = pgo.n_loops
             if n_kf == last_kf_count and n_loops == last_loop_count:
                 continue
             last_kf_ts = pgo._key_poses[-1].timestamp if pgo._key_poses else last_kf_ts
@@ -308,8 +306,7 @@ class PGO(Transformer[PointCloud2, "PoseGraph"]):
             if should_emit and last_kf_ts is not None:
                 yield Observation(ts=last_kf_ts, data_type=PoseGraph, _data=pgo.snapshot())
 
-        # Final emit: guarantees `.last()` returns something even on
-        # loop-less recordings (and catches any tail state since the last emit).
+        # so `.last()` has something on loop-less recordings
         if last_kf_ts is not None:
             yield Observation(ts=last_kf_ts, data_type=PoseGraph, _data=pgo.snapshot())
 
@@ -348,30 +345,252 @@ class _LoopPair:
     score: float
 
 
-class _PGOState:
+@dataclass
+class _Edge:
+    """One between edge: keyframe ``b`` measured in keyframe ``a``, in gtsam's covariance order."""
+
+    a: int
+    b: int
+    measured: np.ndarray  # 4x4
+    covariance: np.ndarray  # 6x6, [rx, ry, rz, x, y, z]
+    kind: Literal["premap", "live", "join"]
+    robust: bool = False
+
+
+class PGOState:
     """Incremental PGO: gtsam ISAM2 over keyframes with ICP loop closures.
 
     Call `process` per frame (odom pose + body-frame points). Call
     `finalize` once at the end for the sorted, deduped keyframe list.
+
+    With a premap, its keyframes and edges join the solver pinned at its first
+    keyframe; once attached, the solver's frame is ``map``. ``join`` edges
+    (`relocalize` fixes and live-to-premap loops) belong to the attachment:
+    moving it drops them and rebuilds the solver from each session's own edges.
+
+    The graph is `_edges`; gtsam factors are only ever made from it. Premap
+    keyframe ``j`` is key ``j`` and live keyframe ``i`` is key ``n_premap + i``.
     """
 
-    def __init__(self, config: PGOConfig) -> None:
+    def __init__(self, config: PGOConfig, premap: Premap | None = None) -> None:
         import gtsam  # type: ignore[import-not-found,import-untyped]
 
         self._gtsam = gtsam
         self._cfg = config
         self._key_poses: list[_KeyPose] = []
-        self._pending_loops: list[_LoopPair] = []
-        self._accepted_loops: list[_LoopPair] = []
         self._last_loop_ts: float | None = None
         self._world_correction: gtsam.Pose3 = gtsam.Pose3()  # identity
 
-        params = gtsam.ISAM2Params()
-        params.setRelinearizeThreshold(0.01)
-        params.relinearizeSkip = 1
-        self._isam2 = gtsam.ISAM2(params)
+        self._isam2 = self._new_isam2()
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
+        self._edges: list[_Edge] = []
+        self._n_loops = 0  # live loop edges, counted as they land
+
+        self._premap = premap
+        self._p = len(premap) if premap is not None else 0
+        self._attached = False
+        self._agreeing = 0
+        self._last_premap_loop_ts: float | None = None
+        self.n_attaches = 0
+        self.n_premap_loops = 0
+        # each keyframe's raw odom pose and estimate, refreshed in _flush
+        self._stamps = np.empty(0)
+        self._local = np.empty((0, 4, 4))
+        self._optimized = np.empty((0, 4, 4))
+        self._premap_poses = np.empty((0, 4, 4))
+        self._premap_coarse: tuple[np.ndarray, ...] = ()
+        self._premap_reach = np.empty(0)
+        if premap is not None:
+            self._premap_poses = premap.poses.copy()
+            self._premap_coarse = tuple(
+                PointCloud2.from_numpy(scan).voxel_downsample(config.submap_resolution).points_f32()
+                if len(scan)
+                else scan
+                for scan in premap.scans
+            )
+            # how far each premap keyframe's points reach from it
+            self._premap_reach = np.array(
+                [
+                    np.linalg.norm(c[:, :2], axis=1).max() if len(c) else 0.0
+                    for c in self._premap_coarse
+                ]
+            )
+            for (a, b), m, cov in zip(
+                premap.edges, premap.edge_poses, premap.edge_covariances, strict=True
+            ):
+                gtsam_cov = cov[ROS_GTSAM_SWAP][:, ROS_GTSAM_SWAP]
+                self._add_edge(_Edge(int(a), int(b), m, gtsam_cov, "premap"))
+            self._graph.add(self._premap_pin())
+            for j, m in enumerate(premap.poses):
+                self._values.insert(j, gtsam.Pose3(m))
+
+    def _new_isam2(self) -> Any:
+        params = self._gtsam.ISAM2Params()
+        params.setRelinearizeThreshold(0.01)
+        params.relinearizeSkip = 1
+        return self._gtsam.ISAM2(params)
+
+    def _premap_pin(self) -> Any:
+        assert self._premap is not None
+        pinned = self._gtsam.noiseModel.Diagonal.Variances(np.full(6, 1e-12))
+        return self._gtsam.PriorFactorPose3(0, self._gtsam.Pose3(self._premap.poses[0]), pinned)
+
+    def _factor(self, edge: _Edge) -> Any:
+        gtsam = self._gtsam
+        noise = gtsam.noiseModel.Gaussian.Covariance(edge.covariance)
+        if edge.robust:
+            noise = gtsam.noiseModel.Robust.Create(
+                gtsam.noiseModel.mEstimator.Cauchy.Create(1.0), noise
+            )
+        return gtsam.BetweenFactorPose3(edge.a, edge.b, gtsam.Pose3(edge.measured), noise)
+
+    def _add_edge(self, edge: _Edge) -> None:
+        self._edges.append(edge)
+        self._graph.add(self._factor(edge))
+        if edge.kind == "live" and edge.b != edge.a + 1:
+            self._n_loops += 1
+
+    def _reset(self, premap_poses: np.ndarray, live_poses: np.ndarray) -> None:
+        """A fresh solver over `_edges` from these poses."""
+        gtsam = self._gtsam
+        self._isam2 = self._new_isam2()
+        self._graph = gtsam.NonlinearFactorGraph()
+        self._values = gtsam.Values()
+        if self._premap is not None:
+            self._graph.add(self._premap_pin())
+        for edge in self._edges:
+            self._graph.add(self._factor(edge))
+        for j, m in enumerate(premap_poses):
+            self._values.insert(j, gtsam.Pose3(m))
+        for i, m in enumerate(live_poses):
+            self._values.insert(self._p + i, gtsam.Pose3(m))
+        self._flush(self._cfg.loop_closure_extra_iterations)
+
+    def _live_gauge(self, at: gtsam.Pose3) -> Any:
+        noise = self._gtsam.noiseModel.Diagonal.Variances(np.full(6, 1e-12))
+        return self._gtsam.PriorFactorPose3(self._p, at, noise)
+
+    @property
+    def attached(self) -> bool:
+        return self._attached
+
+    @property
+    def settled(self) -> bool:
+        return self._attached and self._agreeing >= self._cfg.reloc_settle_after
+
+    def keyframe_stamps(self) -> np.ndarray:
+        return self._stamps
+
+    def keyframe_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+        """Each keyframe's raw odom pose and its pose in the solver's frame: (K, 4, 4) each."""
+        return self._local, self._optimized
+
+    def graph_from_world(self) -> np.ndarray:
+        """The robot-anchored world frame into the solver's frame (``map`` once attached): 4x4."""
+        return np.asarray(self._world_correction.matrix())
+
+    def joint_graph(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Every keyframe and every edge, premap keyframes first, indexed like the keys.
+
+        Stamps (N,), poses in the solver's frame (N, 4, 4), edges (E, 2), each edge's
+        measurement (E, 4, 4) and covariance (E, 6, 6) in gtsam's [rx, ry, rz, x, y, z]
+        order: the factors themselves, so a saved map is the same graph, not its shape.
+        """
+        premap_stamps = self._premap.stamps if self._premap is not None else np.empty(0)
+        stamps = np.concatenate([premap_stamps, self.keyframe_stamps()])
+        poses = np.concatenate([self._premap_poses, self._optimized]).reshape(-1, 4, 4)
+        edges = np.array([(e.a, e.b) for e in self._edges], dtype=np.int64).reshape(-1, 2)
+        measured = np.array([e.measured for e in self._edges])
+        covariances = np.array([e.covariance for e in self._edges]).reshape(-1, 6, 6)
+        return stamps, poses, edges, measured.reshape(-1, 4, 4), covariances
+
+    def premap_poses(self) -> np.ndarray:
+        """The premap keyframes' current estimates in ``map``: (K, 4, 4)."""
+        return self._premap_poses
+
+    def world_to_map(self) -> Transform | None:
+        """Where ``map`` sits in the robot-anchored world frame, once attached."""
+        if not self._attached:
+            return None
+        # attached, the solver works in map, so the latest correction is map <- raw odom
+        return _pose3_to_transform(
+            self._world_correction.inverse(),
+            ts=self._key_poses[-1].timestamp,
+            frame_id=FRAME_WORLD,
+            child_frame_id=FRAME_MAP,
+        )
+
+    def relocalize(
+        self,
+        fix: Transform,
+        fitness: float = 1.0,
+        current_fitness: float | None = None,
+    ) -> None:
+        """A relocalizer's ``world -> map`` fix, measured in the raw odom frame at ``fix.ts``.
+
+        ``current_fitness`` scores the current attachment on the same window; a
+        disagreeing fix moves the attachment only when it scores higher.
+        """
+        if self._premap is None or not self._key_poses:
+            return
+        k = max(0, int(np.searchsorted(self._stamps, fix.ts, side="right")) - 1)
+        kp = self._key_poses[k]
+        # map as the solver's current frame sees it, if this fix is right
+        implied = kp.optimized.compose(kp.local.inverse()).compose(_transform_to_pose3(fix))
+        join = self._reloc_edge(k, implied)
+        # judged at keyframe k, from the same premap keyframe as the graph has it now
+        current = np.linalg.inv(self._premap_poses[join.a]) @ self._optimized[k]
+        if self._attached and self._agree(
+            self._gtsam.Pose3(join.measured), self._gtsam.Pose3(current)
+        ):
+            self._add_edge(join)
+            self._flush(self._cfg.loop_closure_extra_iterations)
+            self._agreeing += 1
+            if self._agreeing == self._cfg.reloc_settle_after:
+                logger.info("PGO premap: settled", agreeing_fixes=self._agreeing)
+            return
+        margin = self._cfg.reloc_move_margin
+        if self._attached and current_fitness is not None and fitness <= current_fitness + margin:
+            logger.info(
+                "PGO premap: kept the attachment over a disagreeing fix",
+                fitness=round(fitness, 3),
+                current_fitness=round(current_fitness, 3),
+            )
+            # settling takes agreeing fixes in a row; once settled, fixes from unmapped places can't undo it
+            if not self.settled:
+                self._agreeing = 0
+            return
+        if self._attached:
+            logger.info("PGO premap: relocalization changed its mind, moving the attachment")
+        self._edges = [e for e in self._edges if e.kind != "join"] + [join]
+        to_map = np.asarray(implied.inverse().matrix())
+        self._last_premap_loop_ts = None
+        self._attached = True
+        self._reset(self._premap.poses, to_map @ self._optimized)
+        self._agreeing = 1
+        self.n_attaches += 1
+        logger.info("PGO premap: attached", attaches=self.n_attaches)
+
+    def _agree(self, a: gtsam.Pose3, b: gtsam.Pose3) -> bool:
+        d = a.between(b)
+        dist_m = float(np.linalg.norm(np.asarray(d.translation())))
+        angle_deg = float(np.degrees(np.linalg.norm(self._gtsam.Rot3.Logmap(d.rotation()))))
+        return dist_m <= self._cfg.reloc_agree_m and angle_deg <= self._cfg.reloc_agree_deg
+
+    def _reloc_edge(self, k: int, implied: gtsam.Pose3) -> _Edge:
+        """Live keyframe ``k`` where the fix puts it, from the nearest premap keyframe as stored."""
+        assert self._premap is not None
+        stored = self._premap.poses
+        in_map = np.asarray(implied.inverse().matrix()) @ self._optimized[k]
+        j = int(np.argmin(np.linalg.norm(stored[:, :3, 3] - in_map[:3, 3], axis=1)))
+        rot = np.radians(self._cfg.reloc_rot_sigma_deg)
+        trans = self._cfg.reloc_trans_sigma
+        cov = np.diag(np.array([rot, rot, rot, trans, trans, trans]) ** 2)
+        measured = np.linalg.inv(stored[j]) @ in_map  # k in j, as the matcher saw it
+        return _Edge(j, self._p + k, measured, cov, "join", robust=True)
 
     @property
     def n_keyframes(self) -> int:
@@ -379,24 +598,40 @@ class _PGOState:
 
     @property
     def n_loops(self) -> int:
-        return len(self._accepted_loops)
+        return self._n_loops
+
+    def _live_loops(self) -> list[_Edge]:
+        return [e for e in self._edges if e.kind == "live" and e.b != e.a + 1]
 
     def keyframe_poses(self) -> tuple[np.ndarray, np.ndarray]:
-        """Optimized keyframe poses, anchored at the latest: positions (K, 3), xyzw quats (K, 4)."""
+        """Every keyframe in the graph, anchored at the latest: positions (K, 3), xyzw quats (K, 4).
+
+        Once attached that is the premap's keyframes too, first.
+        """
         if not self._key_poses:
             return np.empty((0, 3)), np.empty((0, 4))
-        anchor = self._world_correction.inverse()
-        poses = [anchor.compose(kp.optimized) for kp in self._key_poses]
-        positions = np.array([p.translation() for p in poses])
-        quats = Rotation.from_matrix(np.array([p.rotation().matrix() for p in poses])).as_quat()
-        return positions, quats
+        poses = self._anchored_poses()
+        return poses[:, :3, 3], Rotation.from_matrix(poses[:, :3, :3]).as_quat()
 
     def loop_segments(self) -> tuple[np.ndarray, np.ndarray]:
-        """Accepted loop edges in the same frame: endpoints (L, 2, 3) and ICP scores (L,)."""
-        positions, _ = self.keyframe_poses()
-        pairs = np.array([(lp.source, lp.target) for lp in self._accepted_loops], dtype=int)
-        scores = np.array([lp.score for lp in self._accepted_loops])
-        return positions[pairs.reshape(-1, 2)], scores
+        """Every edge but odometry, as endpoints (L, 2, 3), with its translation variance (L,)."""
+        if not self._key_poses:
+            return np.empty((0, 2, 3)), np.empty(0)
+        positions = self._anchored_poses()[:, :3, 3]
+        # the premap is in a frame of its own until attached, so only the live edges then
+        offset = 0 if self._attached else self._p
+        drawn = [e for e in self._edges if e.b != e.a + 1 and (self._attached or e.kind == "live")]
+        if not drawn:
+            return np.empty((0, 2, 3)), np.empty(0)
+        ends = np.array([(e.a - offset, e.b - offset) for e in drawn])
+        variance = np.array([np.diag(e.covariance)[3:].mean() for e in drawn])
+        return positions[ends], variance
+
+    def _anchored_poses(self) -> np.ndarray:
+        """The keyframes ``keyframe_poses`` draws, in the robot-anchored world frame: (K, 4, 4)."""
+        _, live = self.keyframe_matrices()
+        poses = np.concatenate([self._premap_poses, live]) if self._attached else live
+        return np.asarray(np.linalg.inv(self.graph_from_world()) @ poses)
 
     def process(
         self,
@@ -408,8 +643,7 @@ class _PGOState:
             return
         if not self._is_keyframe(local_pose):
             return
-        # Unregister: lift world-frame scan back into body frame using its
-        # odom pose, so PGO can re-project it via the optimized pose later.
+        # kept in body frame, placed by the optimized pose
         body_cloud = world_cloud.transform(
             _pose3_to_transform(
                 local_pose.inverse(),
@@ -419,8 +653,7 @@ class _PGOState:
             )
         ).voxel_downsample(self._cfg.submap_resolution)
         self._add_keyframe(local_pose, ts, body_cloud)
-        self._search_for_loops()
-        self._smooth_and_update()
+        self._smooth_and_update(self._search_for_loops())
 
     def finalize(self) -> list[Keyframe]:
         """Return keyframes sorted by ts, with duplicate-ts entries dropped."""
@@ -451,9 +684,9 @@ class _PGOState:
     def loop_closures(self) -> list[LoopClosure]:
         """Accepted loop edges, resolved to final optimized poses."""
         out: list[LoopClosure] = []
-        for pair in self._accepted_loops:
-            src = self._key_poses[pair.source]
-            tgt = self._key_poses[pair.target]
+        for edge in self._live_loops():
+            src = self._key_poses[edge.b - self._p]
+            tgt = self._key_poses[edge.a - self._p]
             out.append(
                 LoopClosure(
                     source=_pose3_to_transform(
@@ -468,7 +701,7 @@ class _PGOState:
                         frame_id=FRAME_WORLD_CORRECTED,
                         child_frame_id=FRAME_BODY,
                     ),
-                    score=pair.score,
+                    score=float(np.diag(edge.covariance)[3:].mean()),
                 )
             )
         return out
@@ -499,32 +732,31 @@ class _PGOState:
         ts: float,
         body_cloud: PointCloud2,
     ) -> None:
-        gtsam = self._gtsam
         idx = len(self._key_poses)
+        key = self._p + idx
         optimized = self._world_correction.compose(local_pose)
 
-        self._values.insert(idx, optimized)
+        self._values.insert(key, optimized)
 
         if idx == 0:
-            noise = gtsam.noiseModel.Diagonal.Variances(np.full(6, 1e-12))
-            self._graph.add(gtsam.PriorFactorPose3(idx, optimized, noise))
+            self._graph.add(self._live_gauge(optimized))
         else:
-            last_local = self._key_poses[-1].local
-            between = last_local.inverse().compose(local_pose)
+            between = self._key_poses[-1].local.inverse().compose(local_pose)
             cfg = self._cfg
-            noise = gtsam.noiseModel.Diagonal.Variances(
-                np.array(
-                    [
-                        cfg.odom_rot_var,
-                        cfg.odom_rot_var,
-                        cfg.odom_rot_var,
-                        cfg.odom_trans_var_xy,
-                        cfg.odom_trans_var_xy,
-                        cfg.odom_trans_var_z,
-                    ]
-                )
+            cov = np.diag(
+                [
+                    cfg.odom_rot_var,
+                    cfg.odom_rot_var,
+                    cfg.odom_rot_var,
+                    cfg.odom_trans_var_xy,
+                    cfg.odom_trans_var_xy,
+                    cfg.odom_trans_var_z,
+                ]
             )
-            self._graph.add(gtsam.BetweenFactorPose3(idx - 1, idx, between, noise))
+            self._add_edge(_Edge(key - 1, key, np.asarray(between.matrix()), cov, "live"))
+        self._stamps = np.append(self._stamps, ts)
+        self._local = np.concatenate([self._local, [np.asarray(local_pose.matrix())]])
+        self._optimized = np.concatenate([self._optimized, [np.asarray(optimized.matrix())]])
 
         self._key_poses.append(
             _KeyPose(
@@ -560,47 +792,26 @@ class _PGOState:
             )
         return cloud.voxel_downsample(self._cfg.submap_resolution)
 
-    def _search_for_loops(self) -> None:
+    def _search_for_loops(self) -> _LoopPair | None:
         if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
-            return
+            return None
 
         cur_ts = self._key_poses[-1].timestamp
         if (
             self._last_loop_ts is not None
             and cur_ts - self._last_loop_ts < self._cfg.min_loop_detect_duration
         ):
-            return
+            return None
 
         cur_idx = len(self._key_poses) - 1
         cur_kp = self._key_poses[-1]
-        cur_t = np.asarray(cur_kp.optimized.translation())
-
-        from scipy.spatial import KDTree
-
-        positions = np.array(
-            [np.asarray(kp.optimized.translation()) for kp in self._key_poses[:-1]]
-        )
-        tree = KDTree(positions)
-        idxs = tree.query_ball_point(cur_t, self._cfg.loop_search_radius)
-        if not idxs:
-            return
-
-        # query_ball_point doesn't sort by distance — do it ourselves and
-        # filter by min time gap to avoid closing loops to recent keyframes.
-        candidates = [
-            (
-                float(
-                    np.linalg.norm(np.asarray(self._key_poses[i].optimized.translation()) - cur_t)
-                ),
-                i,
-            )
-            for i in idxs
-            if abs(cur_ts - self._key_poses[i].timestamp) > self._cfg.loop_time_thresh
-        ]
-        if not candidates:
-            return
-        candidates.sort()
-        loop_idx = candidates[0][1]
+        # the nearest keyframe in reach, old enough not to be the recent trail
+        dist = np.linalg.norm(self._optimized[:-1, :3, 3] - self._optimized[-1, :3, 3], axis=1)
+        old = np.abs(cur_ts - self._stamps[:-1]) > self._cfg.loop_time_thresh
+        dist[~old | (dist > self._cfg.loop_search_radius)] = np.inf
+        if not np.isfinite(dist).any():
+            return None
+        loop_idx = int(np.argmin(dist))
 
         target = self._get_submap(loop_idx, self._cfg.loop_submap_half_range)
         source = self._get_submap(cur_idx, 0)
@@ -613,7 +824,7 @@ class _PGOState:
             min_inliers=self._cfg.min_icp_inliers,
         )
         if fitness > self._cfg.loop_score_thresh:
-            return
+            return None
 
         # icp_tf takes cur_kp.optimized -> refined pose (correcting the drift).
         # offset = loop_kp.optimized^-1 * refined = relative pose from loop to cur.
@@ -621,14 +832,6 @@ class _PGOState:
         refined = icp_pose.compose(cur_kp.optimized)
         offset = self._key_poses[loop_idx].optimized.between(refined)
 
-        self._pending_loops.append(
-            _LoopPair(
-                source=cur_idx,
-                target=loop_idx,
-                offset=offset,
-                score=fitness,
-            )
-        )
         self._last_loop_ts = cur_ts
         logger.info(
             "Loop closure detected",
@@ -636,44 +839,103 @@ class _PGOState:
             target=loop_idx,
             score=round(fitness, 4),
         )
+        return _LoopPair(source=cur_idx, target=loop_idx, offset=offset, score=fitness)
 
-    def _smooth_and_update(self) -> None:
-        gtsam = self._gtsam
-        has_loop = bool(self._pending_loops)
-
-        for pair in self._pending_loops:
-            # Pose3 noise is [rx, ry, rz, x, y, z]. The two halves have
-            # different units (rad² vs m²), so a uniform variance silently
-            # makes one half pathological. Use ICP fitness as the
-            # *translation* variance and a generous fixed rotation variance
-            # — loops shouldn't be trusted to fix rotation tightly without
-            # normals + p2plane.
-            # Floor at 1e-4 m² (sigma_trans ~ 1 cm) so a near-perfect ICP isn't
-            # forced to a slack 10 cm prior; a fitness score of 0.01 still wins.
-            trans_var = max(1e-4, float(pair.score))
+    def _smooth_and_update(self, loop: _LoopPair | None) -> None:
+        has_loop = loop is not None
+        if loop is not None:
+            # ICP fitness (m^2) as translation variance, a loose fixed rotation variance
+            trans_var = max(1e-4, float(loop.score))
             rot_var = self._cfg.loop_rot_var
-            noise = gtsam.noiseModel.Diagonal.Variances(
-                np.array([rot_var, rot_var, rot_var, trans_var, trans_var, trans_var])
-            )
-            self._graph.add(gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, noise))
-        self._accepted_loops.extend(self._pending_loops)
-        self._pending_loops.clear()
+            cov = np.diag([rot_var, rot_var, rot_var, trans_var, trans_var, trans_var])
+            a, b = self._p + loop.target, self._p + loop.source
+            self._add_edge(_Edge(a, b, np.asarray(loop.offset.matrix()), cov, "live"))
+        has_loop = self._search_premap() or has_loop
 
+        # extra relinearization only when a loop lands
+        self._flush(self._cfg.loop_closure_extra_iterations if has_loop else 0)
+
+    def _flush(self, extra_iterations: int) -> None:
+        """Hand the pending factors and values to ISAM2 and read the estimates back."""
+        gtsam = self._gtsam
         self._isam2.update(self._graph, self._values)
-        # Extra linearization iterations only when a loop edge lands; odom-only
-        # adds don't move the state much and a single update suffices.
-        if has_loop:
-            for _ in range(self._cfg.loop_closure_extra_iterations):
-                self._isam2.update()
+        for _ in range(extra_iterations):
+            self._isam2.update()
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
 
         estimates = self._isam2.calculateBestEstimate()
         for i in range(len(self._key_poses)):
-            self._key_poses[i].optimized = estimates.atPose3(i)
+            self._key_poses[i].optimized = estimates.atPose3(self._p + i)
+        self._optimized = np.array(
+            [np.asarray(kp.optimized.matrix()) for kp in self._key_poses]
+        ).reshape(-1, 4, 4)
+        if self._premap is not None:
+            self._premap_poses = np.array([estimates.atPose3(j).matrix() for j in range(self._p)])
 
         last = self._key_poses[-1]
         self._world_correction = last.optimized.compose(last.local.inverse())
+
+    def _search_premap(self) -> bool:
+        """Close a loop from the newest keyframe into the nearest premap keyframe. True if one landed."""
+        if not self._attached or self._premap is None:
+            return False
+        cur_ts = self._key_poses[-1].timestamp
+        if (
+            self._last_premap_loop_ts is not None
+            and cur_ts - self._last_premap_loop_ts < self._cfg.min_loop_detect_duration
+        ):
+            return False
+        cur_idx = len(self._key_poses) - 1
+        cur = self._key_poses[cur_idx].optimized
+        poses = self._premap_poses
+        at = np.asarray(cur.translation())
+        # the premap's points around here, from every keyframe whose points can reach the crop
+        reach = self._cfg.premap_crop_m + self._premap_reach
+        near = np.linalg.norm(poses[:, :2, 3] - at[:2], axis=1) <= reach
+        placed = [
+            scan @ poses[i, :3, :3].T + poses[i, :3, 3]
+            for i, scan in enumerate(self._premap_coarse)
+            if near[i] and len(scan)
+        ]
+        if not placed:
+            return False
+        pts = np.concatenate(placed)
+        pts = pts[np.linalg.norm(pts[:, :2] - at[:2], axis=1) <= self._cfg.premap_crop_m]
+        if len(pts) < self._cfg.min_icp_inliers:
+            return False
+        j = int(np.argmin(np.linalg.norm(poses[:, :3, 3] - at, axis=1)))
+        target = PointCloud2.from_numpy(pts.astype(np.float32)).voxel_downsample(
+            self._cfg.submap_resolution
+        )
+        source = self._get_submap(cur_idx, 0)
+        icp_tf, fitness = _icp(
+            source,
+            target,
+            max_iter=self._cfg.max_icp_iterations,
+            max_dist=self._cfg.max_icp_correspondence_dist,
+            min_inliers=self._cfg.min_icp_inliers,
+        )
+        if fitness > self._cfg.loop_score_thresh:
+            logger.info("PGO premap loop refused", keyframe=cur_idx, score=round(fitness, 4))
+            return False
+        refined = np.asarray(_transform_to_pose3(icp_tf).compose(cur).matrix())
+        rot_var = self._cfg.loop_rot_var
+        trans_var = max(1e-4, fitness)
+        # fitness-gated like a live loop, so no robust kernel to mute it
+        cov = np.diag([rot_var] * 3 + [trans_var] * 3)
+        offset = np.linalg.inv(poses[j]) @ refined
+        self._add_edge(_Edge(j, self._p + cur_idx, offset, cov, "join"))
+        self._last_premap_loop_ts = cur_ts
+        self.n_premap_loops += 1
+        logger.info(
+            "PGO premap loop closed",
+            keyframe=cur_idx,
+            premap_keyframe=j,
+            score=round(fitness, 4),
+            premap_loops=self.n_premap_loops,
+        )
+        return True
 
 
 def _pose3_to_transform(
@@ -712,10 +974,8 @@ def _icp(
 ) -> tuple[Transform, float]:
     """Point-to-plane ICP using Open3D's tensor pipeline.
 
-    Returns ``(tf, fitness)`` where ``fitness`` is mean squared inlier
-    distance (m^2) — the GTSAM noise model in `_smooth_and_update` uses
-    this directly as sigma_trans squared. On rejection (too few points or
-    zero correspondences) returns the identity transform and inf fitness.
+    Returns ``(tf, fitness)``, fitness being the mean squared inlier distance
+    (m^2); identity and inf when rejected.
     """
     import open3d as o3d  # type: ignore[import-untyped]
     import open3d.core as o3c  # type: ignore[import-untyped]
@@ -726,9 +986,6 @@ def _icp(
     src_pcd = source.pointcloud_tensor
     tgt_pcd = target.pointcloud_tensor
 
-    # Normals on the target enable point-to-plane ICP — converges tighter
-    # than point-to-point on indoor scenes (walls give unambiguous normals
-    # that resolve the slide-along-wall ambiguity).
     tgt_pcd.estimate_normals(max_nn=30, radius=0.3)
 
     device = src_pcd.device
@@ -738,8 +995,7 @@ def _icp(
         device=device,
     )
 
-    # Silence Open3D's "0 correspondence" warning — we deliberately use a
-    # tight max_correspondence_distance and reject loops with poor fitness.
+    # 0-correspondence warnings are expected with a tight max_dist
     with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Error):
         result = o3d.t.pipelines.registration.icp(
             source=src_pcd,
@@ -757,7 +1013,7 @@ def _icp(
     if float(result.fitness) == 0.0:
         return Transform.identity(), float("inf")
 
-    # Frames intentionally unlabeled: caller only reads .to_matrix().
+    # unlabeled: callers only read .to_matrix()
     tf = Transform.from_matrix(result.transformation.numpy(), ts=source.ts)
     rmse = float(result.inlier_rmse)
     return tf, rmse * rmse

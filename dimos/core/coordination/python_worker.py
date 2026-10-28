@@ -222,6 +222,7 @@ class PythonWorker:
             daemon=True,
         )
         self._process.start()
+        child_conn.close()
 
     def deploy_module(
         self,
@@ -310,7 +311,19 @@ class PythonWorker:
                 )
                 self._process.terminate()
                 self._process.join(timeout=1)
+                if self._process.is_alive():
+                    logger.warning(
+                        "Worker ignored termination, killing.",
+                        worker_id=self._worker_id,
+                    )
+                    self._process.kill()
+                    self._process.join(timeout=1)
+                    if self._process.is_alive():
+                        raise RuntimeError(f"Worker {self._worker_id} did not exit after SIGKILL")
+            self._process.close()
             self._process = None
+        self._modules.clear()
+        self._reserved = 0
 
 
 def _suppress_console_output() -> None:

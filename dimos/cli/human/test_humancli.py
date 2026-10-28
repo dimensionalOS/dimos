@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import pytest
 
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli.human import humancli
 from dimos.cli.human.humancli import HumanCLIApp
 
@@ -66,6 +67,14 @@ async def test_block_content_messages_render(monkeypatch: pytest.MonkeyPatch) ->
             ),
             ToolMessage(content=[{"type": "text", "text": "arrived"}], tool_call_id="c1"),
             AIMessage(content=[{"type": "text", "text": "Done."}]),
+            # A tool's image artefact: a user turn for the model, a tool line here.
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": "This is the artefact for the 'observe' tool."},
+                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+                ],
+                additional_kwargs={TOOL_ORIGIN_KEY: "observe"},
+            ),
         ]
         for msg in messages:
             # The real callback runs on the transport thread, never the app's.
@@ -79,4 +88,6 @@ async def test_block_content_messages_render(monkeypatch: pytest.MonkeyPatch) ->
         assert "▶ move_to({})" in text
         assert "↳ arrived" in text
         assert "Done." in text
+        assert "tool │ ↳ This is the artefact for the 'observe' tool." in text
+        assert "human │ This is the artefact" not in text
         assert "could not render" not in text

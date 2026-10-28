@@ -515,9 +515,9 @@ def test_every_module_flake_builds_against_one(input_name: str) -> None:
     devcontainer, and bumping it is an everyone-lives-here change.
     """
     by_rev: dict[str, list[str]] = {}
-    for lock in sorted(DIMOS_PROJECT_ROOT.rglob("flake.lock")):
-        if ".git" in lock.parts or lock.parent == DIMOS_PROJECT_ROOT:
-            continue
+    # Generated build directories can contain dependency checkouts with their own
+    # locks. Only compare the module flakes tracked by this repository.
+    for lock in sorted(_RELOCK.flake_locks()):
         rev = _root_input(lock, input_name)
         if rev:
             by_rev.setdefault(rev, []).append(
