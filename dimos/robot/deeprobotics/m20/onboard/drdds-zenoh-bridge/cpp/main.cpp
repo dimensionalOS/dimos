@@ -8,7 +8,7 @@
 // to the robot's onboard Fast-DDS fork ("drdds").
 //
 // It also receives the small DimOS command streams over Zenoh and publishes the
-// vendor DrDDS command topics. Dense clouds never cross an LCM boundary.
+// vendor DrDDS command topics. Zenoh carries generated CDR payloads.
 //
 // This executable is deliberately fixed to the M20 deployment. Run it as root
 // for access to the robot's root-owned Fast-DDS SHM writers.
@@ -27,17 +27,7 @@
 #include "dridl/dr_msgs/msg/StdMsgInt32PubSubTypes.h"
 
 #include <zenoh.h>
-
-#include "geometry_msgs/Quaternion.hpp"
-#include "geometry_msgs/Twist.hpp"
-#include "geometry_msgs/Vector3.hpp"
-#include "nav_msgs/Odometry.hpp"
-#include "sensor_msgs/PointCloud2.hpp"
-#include "sensor_msgs/PointField.hpp"
-#include "std_msgs/Bool.hpp"
-#include "std_msgs/Int32.hpp"
-#include "std_msgs/UInt32.hpp"
-#include "tf2_msgs/TFMessage.hpp"
+#include "cdr_wire.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -48,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <map>
@@ -73,15 +64,15 @@ constexpr char kMotionInfoTopic[] = "/MOTION_INFO";
 constexpr char kGaitTopic[] = "/GAIT";
 constexpr char kHesStatusTopic[] = "/HES_STATUS";
 
-constexpr char kBodyKey[] = "dimos/slam_body_points/sensor_msgs.PointCloud2";
-constexpr char kOdometryKey[] = "dimos/slam_odom/nav_msgs.Odometry";
-constexpr char kTfKey[] = "dimos/tf/tf2_msgs.TFMessage";
-constexpr char kCmdVelKey[] = "dimos/cmd_vel/geometry_msgs.Twist";
-constexpr char kMotionStateCmdKey[] = "dimos/motion_state_cmd/std_msgs.Int32";
-constexpr char kGaitCmdKey[] = "dimos/gait_cmd/std_msgs.UInt32";
-constexpr char kCommandReadyKey[] = "dimos/command_ready/std_msgs.Bool";
-constexpr char kMotionStateKey[] = "dimos/motion_state/std_msgs.Int32";
-constexpr char kGaitStateKey[] = "dimos/gait_state/std_msgs.UInt32";
+constexpr char kBodyKey[] = "dimos/slam_body_points";
+constexpr char kOdometryKey[] = "dimos/slam_odom";
+constexpr char kTfKey[] = "dimos/tf";
+constexpr char kCmdVelKey[] = "dimos/cmd_vel";
+constexpr char kMotionStateCmdKey[] = "dimos/motion_state_cmd";
+constexpr char kGaitCmdKey[] = "dimos/gait_cmd";
+constexpr char kCommandReadyKey[] = "dimos/command_ready";
+constexpr char kMotionStateKey[] = "dimos/motion_state";
+constexpr char kGaitStateKey[] = "dimos/gait_state";
 
 constexpr double kCommandRateHz = 10.0;
 constexpr double kCommandTimeoutS = 0.4;
@@ -95,7 +86,7 @@ struct Port {
     Port(std::string key_value, std::string label_value)
         : key(std::move(key_value)), label(std::move(label_value)) {}
 
-    std::string key;    // zenoh key expr, e.g. "dimos/aligned_points/sensor_msgs.PointCloud2"
+    std::string key;    // zenoh key expr, e.g. "dimos/aligned_points"
     std::string label;  // short name for logs
     std::atomic<long> n{0};
     std::atomic<long> bytes{0};
@@ -146,8 +137,7 @@ static const z_loaned_publisher_t* get_pub(const std::string& key) {
             fprintf(stderr, "[bridge] bad key expr '%s'\n", key.c_str());
             return nullptr;
         }
-        const bool is_stream = key.find("sensor_msgs.PointCloud2") != std::string::npos ||
-                               key.find("sensor_msgs.Image") != std::string::npos;
+        const bool is_stream = key == kBodyKey;
         z_publisher_options_t opts;
         z_publisher_options_default(&opts);
         if (is_stream) {
@@ -167,31 +157,23 @@ static const z_loaned_publisher_t* get_pub(const std::string& key) {
     return z_loan(it->second);
 }
 
-// LCM-encode a dimos_lcm message and publish the raw bytes on the port's key.
 template <class T>
 static void publish_zenoh(Port* p, const T& msg) {
     const z_loaned_publisher_t* pub = get_pub(p->key);
     if (pub == nullptr) { return; }
-    const int len = msg.getEncodedSize();
-    if (len < 0) { return; }
-    std::vector<uint8_t> buf(static_cast<size_t>(len));
-    if (msg.encode(buf.data(), 0, len) != len) {
-        fprintf(stderr, "[bridge] encode failed for '%s'\n", p->key.c_str());
+    std::vector<uint8_t> buf;
+    try { buf = bridge_wire::encode(msg); }
+    catch (const std::exception& error) {
+        fprintf(stderr, "[bridge] CDR encode failed for '%s': %s\n", p->key.c_str(), error.what());
         return;
     }
     z_owned_bytes_t payload;
-    z_bytes_copy_from_buf(&payload, buf.data(), static_cast<size_t>(len));
+    z_bytes_copy_from_buf(&payload, buf.data(), buf.size());
     z_publisher_put_options_t po;
     z_publisher_put_options_default(&po);
     z_publisher_put(pub, z_move(payload), &po);
     p->n.fetch_add(1, std::memory_order_relaxed);
-    p->bytes.fetch_add(len, std::memory_order_relaxed);
-}
-
-template <class T>
-static bool decode_lcm(const uint8_t* data, size_t len, T* out) {
-    if (len > static_cast<size_t>(std::numeric_limits<int>::max())) { return false; }
-    return out->decode(data, 0, static_cast<int>(len)) >= 0;
+    p->bytes.fetch_add(buf.size(), std::memory_order_relaxed);
 }
 
 static void on_zenoh_sample(z_loaned_sample_t* sample, void* context) {
@@ -237,16 +219,11 @@ static bool declare_zenoh_subscriber(InputPort* port) {
     return true;
 }
 
-// ----------------------------------------------------- drdds -> dimos_lcm conv --
-// (identical field-for-field copies to ../../dds/cpp/main.cpp; the drdds and
-// dimos_lcm ROS-message layouts match, so these are straight member copies.)
-
-static std_msgs::Header to_lcm_header(const std_msgs::msg::Header& h) {
-    static std::atomic<int32_t> seq{0};
-    std_msgs::Header out;
-    out.seq = seq.fetch_add(1, std::memory_order_relaxed);
+// Vendor DDS layouts remain confined to this translation unit.
+static bridge_wire::Header to_wire_header(const std_msgs::msg::Header& h) {
+    bridge_wire::Header out;
     out.stamp.sec = h.stamp().sec();
-    out.stamp.nsec = static_cast<int32_t>(h.stamp().nanosec());
+    out.stamp.nanosec = h.stamp().nanosec();
     out.frame_id = h.frame_id();
     return out;
 }
@@ -272,8 +249,8 @@ static void on_pointcloud(const sensor_msgs::msg::PointCloud2* m, Port* p,
         fprintf(stderr, "[bridge] first body cloud: frame=%s points=%ux%u step=%u\n",
                 m->header().frame_id().c_str(), m->width(), m->height(), m->point_step());
     }
-    sensor_msgs::PointCloud2 pc;
-    pc.header = to_lcm_header(m->header());
+    bridge_wire::PointCloud2 pc;
+    pc.header = to_wire_header(m->header());
     pc.height = m->height();
     pc.width = m->width();
     pc.is_bigendian = m->is_bigendian();
@@ -282,12 +259,12 @@ static void on_pointcloud(const sensor_msgs::msg::PointCloud2* m, Port* p,
     pc.is_dense = m->is_dense();
 
     const auto& fields = m->fields();
-    pc.fields_length = static_cast<int32_t>(fields.size());
+
     pc.fields.resize(fields.size());
     for (size_t i = 0; i < fields.size(); ++i) {
         pc.fields[i].name = fields[i].name();
         pc.fields[i].offset = fields[i].offset();
-        pc.fields[i].datatype = static_cast<int8_t>(fields[i].datatype());
+        pc.fields[i].datatype = fields[i].datatype();
         pc.fields[i].count = fields[i].count();
     }
 
@@ -296,7 +273,7 @@ static void on_pointcloud(const sensor_msgs::msg::PointCloud2* m, Port* p,
     if (!data.empty()) {
         std::memcpy(pc.data.data(), data.data(), data.size());
     }
-    pc.data_length = static_cast<int32_t>(pc.data.size());
+
     publish_zenoh(p, pc);
 }
 
@@ -307,8 +284,8 @@ static void on_odometry(const nav_msgs::msg::Odometry* m, Port* odometry_port,
         fprintf(stderr, "[bridge] first odometry: frame=%s child=%s\n",
                 m->header().frame_id().c_str(), m->child_frame_id().c_str());
     }
-    nav_msgs::Odometry out;
-    out.header = to_lcm_header(m->header());
+    bridge_wire::Odometry out;
+    out.header = to_wire_header(m->header());
     out.child_frame_id = m->child_frame_id();
 
     const auto& pose = m->pose().pose();
@@ -338,8 +315,8 @@ static void on_odometry(const nav_msgs::msg::Odometry* m, Port* odometry_port,
     // body cloud can reach the mapper. Generating it one process later from
     // `slam_odom` lets the cloud handler block the mapper's dispatch loop while
     // the required TF is already queued behind it.
-    tf2_msgs::TFMessage tf;
-    tf.transforms_length = 1;
+    bridge_wire::TFMessage tf;
+
     tf.transforms.resize(1);
     auto& transform = tf.transforms[0];
     transform.header = out.header;
@@ -369,8 +346,8 @@ double clamp(double value, double limit) {
     return std::max(-limit, std::min(limit, value));
 }
 
-geometry_msgs::Twist zero_twist() {
-    geometry_msgs::Twist result;
+bridge_wire::Twist zero_twist() {
+    bridge_wire::Twist result;
     result.linear.x = 0.0;
     result.linear.y = 0.0;
     result.linear.z = 0.0;
@@ -439,9 +416,9 @@ public:
     }
 
     bool on_command(const uint8_t* data, size_t len) {
-        geometry_msgs::Twist source;
-        if (!decode_lcm(data, len, &source)) { return false; }
-        geometry_msgs::Twist bounded = zero_twist();
+        bridge_wire::Twist source;
+        if (!bridge_wire::decode(data, len, &source)) { return false; }
+        bridge_wire::Twist bounded = zero_twist();
         if (std::isfinite(source.linear.x) && std::isfinite(source.linear.y) &&
             std::isfinite(source.angular.z)) {
             bounded.linear.x = clamp(source.linear.x, kMaxLinearX);
@@ -456,8 +433,8 @@ public:
     }
 
     bool on_motion_state_command(const uint8_t* data, size_t len) {
-        std_msgs::Int32 source;
-        if (!decode_lcm(data, len, &source)) { return false; }
+        bridge_wire::Int32 source;
+        if (!bridge_wire::decode(data, len, &source)) { return false; }
         if (motion_state_publisher_ == nullptr) { return true; }
         drdds::msg::MotionState output;
         set_vendor_header(output.header(), command_sequence_.fetch_add(1));
@@ -468,8 +445,8 @@ public:
     }
 
     bool on_gait_command(const uint8_t* data, size_t len) {
-        std_msgs::UInt32 source;
-        if (!decode_lcm(data, len, &source)) { return false; }
+        bridge_wire::UInt32 source;
+        if (!bridge_wire::decode(data, len, &source)) { return false; }
         if (gait_publisher_ == nullptr) { return true; }
         drdds::msg::Gait output;
         set_vendor_header(output.header(), command_sequence_.fetch_add(1));
@@ -496,10 +473,10 @@ private:
             motion_info_received_at_ = Clock::now();
             have_motion_info_ = true;
         }
-        std_msgs::Int32 motion;
+        bridge_wire::Int32 motion;
         motion.data = motion_state;
         publish_zenoh(motion_state_, motion);
-        std_msgs::UInt32 gait;
+        bridge_wire::UInt32 gait;
         gait.data = source->data().gait_state().gait();
         publish_zenoh(gait_state_, gait);
     }
@@ -511,7 +488,7 @@ private:
                motion_state_value_ == kMotionRlControl && (!have_hes_ || hes_status_ == 0);
     }
 
-    void publish_nav(const geometry_msgs::Twist& command) {
+    void publish_nav(const bridge_wire::Twist& command) {
         if (nav_cmd_publisher_ == nullptr) { return; }
         drdds::msg::NavCmd output;
         set_vendor_header(output.header(), command_sequence_.fetch_add(1));
@@ -522,7 +499,7 @@ private:
     }
 
     void publish_final_zero() {
-        const geometry_msgs::Twist zero = zero_twist();
+        const bridge_wire::Twist zero = zero_twist();
         publish_nav(zero);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         publish_nav(zero);
@@ -542,11 +519,11 @@ private:
         const bool ready = !stopping && nav_cmd_publisher_ != nullptr &&
                            nav_cmd_publisher_->GetMatchedCount() > 0 &&
                            robot_ready(now);
-        std_msgs::Bool ready_message;
-        ready_message.data = static_cast<int8_t>(ready);
+        bridge_wire::Bool ready_message;
+        ready_message.data = ready;
         publish_zenoh(command_ready_, ready_message);
 
-        geometry_msgs::Twist command = zero_twist();
+        bridge_wire::Twist command = zero_twist();
         bool publish = false;
         bool release = false;
         {
@@ -581,7 +558,7 @@ private:
     std::unique_ptr<DrDDSChannel<drdds::msg::GaitPubSubType>> gait_publisher_;
     std::thread command_thread_;
     mutable std::mutex state_mutex_;
-    geometry_msgs::Twist latest_command_ = zero_twist();
+    bridge_wire::Twist latest_command_ = zero_twist();
     Clock::time_point command_received_at_{};
     Clock::time_point motion_info_received_at_{};
     bool command_path_active_ = false;

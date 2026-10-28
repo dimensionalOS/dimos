@@ -23,10 +23,9 @@ from typing import Any
 from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -167,7 +166,7 @@ class MavlinkConnection:
         # MAVLink --> ROS conversion
         # MAVLink: positive pitch = nose up, positive yaw = clockwise
         # ROS: positive pitch = nose down, positive yaw = counter-clockwise
-        quaternion = Quaternion.from_euler(Vector3(roll, -pitch, -yaw))
+        quaternion = geometry.quaternion_from_euler(roll, -pitch, -yaw)
 
         if not hasattr(self, "_position"):
             self._position = {"x": 0.0, "y": 0.0, "z": 0.0}
@@ -229,10 +228,10 @@ class MavlinkConnection:
         )
 
         pose = PoseStamped(
-            position=Vector3(self._position["x"], self._position["y"], self._position["z"]),
-            orientation=quaternion,
-            frame_id="world",
-            ts=current_time,
+            header=Header(message_time.time_from_seconds(current_time), "world"),
+            pose=Pose(
+                Point(self._position["x"], self._position["y"], self._position["z"]), quaternion
+            ),
         )
 
         self._odom_subject.on_next(pose)

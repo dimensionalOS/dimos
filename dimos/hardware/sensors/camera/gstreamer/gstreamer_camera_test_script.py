@@ -21,7 +21,7 @@ import time
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
 

@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
+from dimos.message_utils import image as image_utils
+from dimos.message_utils.time import header_now, to_seconds
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
@@ -51,13 +53,13 @@ class ImageFile(Environment):
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
-        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos.messages.sensor_msgs.msg import Image
 
-        image = Image.from_file(self.config.path)
+        image = image_utils.from_file(self.config.path, header=header_now())
         recording = MemoryStore()
         self._resources.callback(recording.stop)
         stream = recording.stream("image", Image)
-        stream.append(image, ts=image.ts)
+        stream.append(image, ts=to_seconds(image.header.stamp))
         return RunningEnvironment(
             mcp_url="", streams=(stream,), artifacts={"image": self.config.path}
         )

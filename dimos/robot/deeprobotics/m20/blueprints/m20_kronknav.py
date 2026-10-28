@@ -20,8 +20,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.messages.foxglove_msgs.msg import CompressedVideo
+from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
@@ -38,6 +38,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     PLANNING_HEIGHT_M,
     ROTATION_DIAMETER_M,
 )
+from dimos.visualization.rerun.cdr import camera_pinhole
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.1
@@ -52,17 +53,11 @@ def _render_h265(msg: CompressedVideo) -> Any:
 
 
 def _render_front_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/front_camera",
-        optical_frame="front_camera_optical",
-    )
+    return [("world/front_camera", camera_pinhole(msg, "front_camera_optical"))]
 
 
 def _render_rear_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/rear_camera",
-        optical_frame="rear_camera_optical",
-    )
+    return [("world/rear_camera", camera_pinhole(msg, "rear_camera_optical"))]
 
 
 def _static_robot_body(rr: Any) -> list[Any]:

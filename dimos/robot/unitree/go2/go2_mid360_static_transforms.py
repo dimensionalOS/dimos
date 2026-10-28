@@ -33,7 +33,8 @@ from __future__ import annotations
 
 import math
 
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.protocol.tf.static_tf_publisher import (
     FrameSpec,
     StaticTfPublisher,
@@ -69,14 +70,18 @@ FRAMES: list[FrameSpec] = [
 ]
 
 
-def mount_transforms() -> list[Transform]:
+def mount_transforms() -> list[TransformStamped]:
     """The mount tree as published: rooted at mid360_link."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
+    return [
+        geometry.inverse_transform(edges["mid360_link"]),
+        geometry.inverse_transform(edges["front_camera"]),
+        edges["camera_optical"],
+    ]
 
 
 class Go2Mid360StaticTf(StaticTfPublisher):
     """Publishes the Go2/Mid-360 mount tree onto tf on a fixed interval."""
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return mount_transforms()

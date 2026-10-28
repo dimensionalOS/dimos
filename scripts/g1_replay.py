@@ -27,9 +27,12 @@ from pathlib import Path
 import threading
 import time
 
+import numpy as np
+
 from dimos.control.components import make_humanoid_joints
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
@@ -64,10 +67,11 @@ def load_trajectory(path: Path) -> tuple[list[float], list[list[float]]]:
 
 def make_joint_state(positions: list[float]) -> JointState:
     return JointState(
+        header=message_time.header_now(),
         name=list(CANONICAL_JOINTS),
-        position=list(positions),
-        velocity=[0.0] * NUM_DOF,
-        effort=[0.0] * NUM_DOF,
+        position=np.asarray(positions, dtype=np.float64),
+        velocity=np.zeros(NUM_DOF, dtype=np.float64),
+        effort=np.zeros(NUM_DOF, dtype=np.float64),
     )
 
 

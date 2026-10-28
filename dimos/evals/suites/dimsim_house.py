@@ -28,12 +28,13 @@ navigate it. Run it under the shipped agent::
 from __future__ import annotations
 
 from collections.abc import Callable
+import math
 from typing import TYPE_CHECKING
 
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
@@ -70,7 +71,7 @@ def _explore_house(sim: DimSimClient) -> None:
     import time
 
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
     from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
     # dimsim spawns the robot well after MCP is up — wait for odom before driving
@@ -98,10 +99,10 @@ def _ended_near(target: Vector3) -> Callable[[Outcome], float]:
     def grade(o: Outcome) -> float:
         store = recording(o)
         try:
-            p = store.streams.odom.last().data.position
+            p = store.streams.odom.last().data.pose.position
         finally:
             store.stop()
-        d = Vector3(p.x - target.x, p.y - target.y, 0.0).length()
+        d = math.hypot(p.x - target.x, p.y - target.y)
         return ramp(max(0.0, d - 2.0), band=2.0)  # full credit inside the e2e 2m threshold
 
     return grade

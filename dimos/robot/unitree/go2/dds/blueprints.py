@@ -38,6 +38,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS, GO2L1Lidar
 from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
+from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, image_archetype
 from dimos.visualization.vis_module import vis_module
 
 # GO2DDS doubles as a zenoh router
@@ -103,12 +104,12 @@ def _camera_info_to_pinhole(camera_info: Any) -> Any:
     No ``optical_frame``: the video's frame_id already anchors it, a second parent is
     rejected.
     """
-    return camera_info.to_rerun(image_topic=CAMERA_ENTITY)
+    return [(CAMERA_ENTITY, camera_pinhole(camera_info))]
 
 
 def _image_to_camera(image: Any) -> Any:
     """GO2DDS's jpeg `image` onto the h264 `video` entity, so the pane is encoder-blind."""
-    return [(CAMERA_ENTITY, image.to_rerun())]
+    return [(CAMERA_ENTITY, image_archetype(image))]
 
 
 def _rerun_blueprint(hidden: tuple[str, ...] = ()) -> Any:
@@ -142,7 +143,7 @@ def _rerun_blueprint(hidden: tuple[str, ...] = ()) -> Any:
 
 
 def _render_map(msg: Any) -> Any:
-    return msg.to_rerun(voxel_size=0.01)
+    return cloud_archetype(msg, voxel_size=0.01)
 
 
 def _rerun_config(

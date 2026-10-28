@@ -29,6 +29,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import cv2
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import numpy as np
@@ -41,7 +42,7 @@ from dimos.evals.agents.base import Agent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
-from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.agents.question_answer import QuestionAnswer, _observation_blocks
 from dimos.evals.cli import load_agent
 from dimos.evals.constants import RAW_README
 from dimos.evals.environments.base import Environment
@@ -77,17 +78,16 @@ from dimos.evals.types import (
 )
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 
 def _pose(x: float, y: float) -> PoseStamped:
     return PoseStamped(
-        position=make_vector3(x, y, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="world",
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
 
 
@@ -198,7 +198,7 @@ def test_dataset_start_hands_out_the_selection(dataset: str) -> None:
         assert odom.name == "odom"
         observations = list(odom)
         assert [o.ts for o in observations] == [1000.0, 1001.0]
-        assert observations[0].data.position.x == 0.0
+        assert observations[0].data.pose.position.x == 0.0
         assert running.mcp_url == "" and not env.has_robot
         assert running.artifacts["recording"] == Path(dataset)
     finally:
@@ -327,14 +327,23 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
 
 def test_image_file_environment(tmp_path: Path) -> None:
     path = tmp_path / "frame.png"
-    Image.from_numpy(np.full((8, 8, 3), 200, dtype=np.uint8)).save(str(path))
+    cv2.imwrite(
+        str(path),
+        image_utils.to_bgr(
+            image_utils.from_array(
+                np.full((8, 8, 3), 200, dtype=np.uint8),
+                encoding="rgb8",
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+            )
+        ),
+    )
     env = ImageFile(path)
     env.preflight(QuestionAnswer())
     running = env.start(())
     try:
         (image_stream,) = running.streams
         (obs,) = list(image_stream)
-        assert obs.data.agent_encode()[0]["type"] == "image_url"
+        assert _observation_blocks(obs, "frame")[1]["type"] == "image_url"
         assert running.artifacts == {"image": path}
     finally:
         env.stop()
@@ -714,9 +723,14 @@ def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
 
 def test_recording_helper_opens_the_artifact(dataset: str) -> None:
     with recording(
-        Outcome(trajectory=_trajectory("", Path()), artifacts={"recording": Path(dataset)})
+        Outcome(
+            trajectory=_trajectory(
+                "", Path(header=Header(stamp=time_from_seconds(0.0), frame_id=""), poses=[])
+            ),
+            artifacts={"recording": Path(dataset)},
+        )
     ) as store:
-        assert store.streams.odom.last().data.position.x == 4.0
+        assert store.streams.odom.last().data.pose.position.x == 4.0
 
 
 def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:

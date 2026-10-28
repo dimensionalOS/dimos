@@ -26,14 +26,25 @@ import pytest
 from scipy.spatial import cKDTree
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.go2.base import Go2BaseConfig
 from dimos.robot.unitree.go2.dds.module import GO2L1LidarConfig, L1Deskew
+from dimos.robot.unitree.go2.dds.pointcloud import sensor_cloud
 from dimos.utils.data import get_data
 
 # The first L1 cloud of across_the_box; the clip starts 3.5 s after it.
@@ -84,15 +95,31 @@ def _replay(**mount):
 
 
 def _odom(ts, x):
-    return Odometry(ts=ts, frame_id="odom", child_frame_id="mid360_link", pose=Pose(x, 0.0, 0.0))
+    return Odometry(
+        Header(message_time.time_from_seconds(ts), "odom"),
+        "mid360_link",
+        PoseWithCovariance(Pose(Point(x, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)), np.zeros(36)),
+        TwistWithCovariance(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)), np.zeros(36)),
+    )
 
 
 def test_a_scan_waits_for_odometry_and_deskews_per_point():
-    core = L1Deskew(GO2L1LidarConfig(), Transform(), Transform())
-    cloud = PointCloud2.from_numpy(
+    core = L1Deskew(
+        GO2L1LidarConfig(),
+        TransformStamped(
+            message_time.header_now("mid360_link"),
+            "utlidar_lidar",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        TransformStamped(
+            message_time.header_now("base_link"),
+            "utlidar_lidar",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+    )
+    cloud = sensor_cloud(
         np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 0.0, 0.0], [3.0, 0.0, 0.0]]),
-        frame_id="utlidar_lidar",
-        timestamp=10.0,
+        header=Header(message_time.time_from_seconds(10.0), "utlidar_lidar"),
         offset_times=np.array([0, 50_000_000, 0, 0]),
     )
     core.on_odometry(_odom(9.9, 0.0))
@@ -101,13 +128,27 @@ def test_a_scan_waits_for_odometry_and_deskews_per_point():
     (out,) = core.on_odometry(_odom(10.1, 1.0))
     # Odometry moves 5 m/s: each point lands by the pose at its own time; the body
     # (0.5 m) and out-of-range (3 m) returns are gone.
-    np.testing.assert_allclose(out.points_f32()[:, 0], [1.5, 1.75], atol=1e-5)
-    assert (out.frame_id, out.ts) == ("odom", 10.0)
+    np.testing.assert_allclose(pointcloud.xyz(out)[:, 0], [1.5, 1.75], atol=1e-5)
+    assert (out.header.frame_id, message_time.to_seconds(out.header.stamp)) == ("odom", 10.0)
 
 
 def test_a_late_scan_is_dropped():
-    core = L1Deskew(GO2L1LidarConfig(), Transform(), Transform())
-    cloud = PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]]), timestamp=10.0)
+    core = L1Deskew(
+        GO2L1LidarConfig(),
+        TransformStamped(
+            message_time.header_now("mid360_link"),
+            "utlidar_lidar",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        TransformStamped(
+            message_time.header_now("base_link"),
+            "utlidar_lidar",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+    )
+    cloud = sensor_cloud(
+        np.array([[1.0, 0.0, 0.0]]), header=Header(message_time.time_from_seconds(10.0), "world")
+    )
     core.on_odometry(_odom(9.9, 0.0))
     assert core.on_cloud(cloud, arrival=11.5) == []
     assert core.on_odometry(_odom(10.1, 1.0)) == []
@@ -121,11 +162,11 @@ def replay():
 
 def _consistency(clouds):
     """Fraction of each clean scan's points within 5 cm of the scans before it."""
-    clean = [c for c in clouds if c.ts < T0 + 5.4]
-    seen = clean[0].points_f32()
+    clean = [c for c in clouds if message_time.to_seconds(c.header.stamp) < T0 + 5.4]
+    seen = pointcloud.xyz(clean[0])
     hits = []
     for cloud in clean[1:]:
-        pts = cloud.points_f32()
+        pts = pointcloud.xyz(cloud)
         dist, _ = cKDTree(seen).query(pts)
         hits.append(np.mean(dist < 0.05))
         seen = np.vstack([seen, pts])
@@ -141,7 +182,9 @@ def test_knock_holds_off_the_bad_stretch(replay):
     assert T0 + 5.5 < start < T0 + 6.0
     assert end > T0 + 9.1
     assert core.dropped_knock > 20
-    assert not any(a <= c.ts < b for c in out for a, b in core.knocks)
+    assert not any(
+        a <= message_time.to_seconds(c.header.stamp) < b for c in out for a, b in core.knocks
+    )
 
 
 @pytest.mark.self_hosted
@@ -149,15 +192,19 @@ def test_the_stalled_cloud_is_dropped(replay):
     core, out = replay
     # Stamped 10.05 s in, delivered 6 s later; placed by its stamp it would smear the map.
     assert core.dropped_late >= 1
-    assert all(c.ts < T0 + 10.1 or c.ts > T0 + 15.0 for c in out)
+    assert all(
+        message_time.to_seconds(c.header.stamp) < T0 + 10.1
+        or message_time.to_seconds(c.header.stamp) > T0 + 15.0
+        for c in out
+    )
 
 
 @pytest.mark.self_hosted
 def test_scans_land_in_odom_filtered(replay):
     _, out = replay
     assert len(out) > 20
-    assert {c.frame_id for c in out} == {"odom"}
-    assert all(len(c.points_f32()) > 100 for c in out)
+    assert {c.header.frame_id for c in out} == {"odom"}
+    assert all(len(pointcloud.xyz(c)) > 100 for c in out)
 
 
 @pytest.mark.self_hosted

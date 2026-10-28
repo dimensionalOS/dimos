@@ -32,10 +32,10 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_TELEOP_MODEL,
     _G1GrootCoordinator,
@@ -160,7 +160,20 @@ async def test_g1_collection_accepts_blueprint_config_and_records_without_world_
         }
         assert recorder.config.record_tf is False
         for name in ports:
-            assert await recorder._resolve_pose(name, JointState(ts=1.0), 1.0) is None
+            assert (
+                await recorder._resolve_pose(
+                    name,
+                    JointState(
+                        header=message_time.header_now(),
+                        name=[],
+                        position=np.asarray([], dtype=np.float64),
+                        velocity=np.empty(0, dtype=np.float64),
+                        effort=np.empty(0, dtype=np.float64),
+                    ),
+                    1.0,
+                )
+                is None
+            )
     finally:
         recorder.stop()
 

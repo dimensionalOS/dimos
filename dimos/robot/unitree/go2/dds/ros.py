@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Decode the standard-ROS DDS channels into ``dimos.msgs`` types.
+"""Decode the standard-ROS DDS channels into generated messages.
 
 The wire layouts are declared as ``__cdr_fields__`` specs and walked by the
 generic :mod:`cdr` decoder (no hand-rolled byte cursors). A thin per-type
@@ -21,31 +21,30 @@ that genuinely differ from a field copy (point-buffer reinterpretation, jpeg
 decode, pose nesting) live there.
 """
 
-# TODO this file needs to go away, dimos/msgs are structurally the same as
-# these messages here so we will write an automatic translator, temporary so
-# we can iterate on go2 dds research, see if it's viable at all
-#
-# TODO pointcloud has timestamps and intensities, we drop those on LCM round trip
-# and our pointcloud2 message doesn't support arbitrary fields per point, we need
-# to implement those
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import image
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import Image, Imu, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds import cdr
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
+from dimos.robot.unitree.go2.dds.pointcloud import sensor_cloud
 
 
 # Shared wire specs (Header/Time) reused by the per-message layouts below.
@@ -98,13 +97,12 @@ def decode_imu(buf: bytes) -> Imu:
     qw, qx, qy, qz = (float(v) for v in w.orientation)
     return Imu(
         orientation=Quaternion(qx, qy, qz, qw),
-        angular_velocity=Vector3(w.angular_velocity.tolist()),
-        linear_acceleration=Vector3(w.linear_acceleration.tolist()),
-        orientation_covariance=w.orientation_covariance.tolist(),
-        angular_velocity_covariance=w.angular_velocity_covariance.tolist(),
-        linear_acceleration_covariance=w.linear_acceleration_covariance.tolist(),
-        frame_id=w.header.frame_id,
-        ts=_ts(w.header),
+        angular_velocity=Vector3(*w.angular_velocity.tolist()),
+        linear_acceleration=Vector3(*w.linear_acceleration.tolist()),
+        orientation_covariance=w.orientation_covariance.copy(),
+        angular_velocity_covariance=w.angular_velocity_covariance.copy(),
+        linear_acceleration_covariance=w.linear_acceleration_covariance.copy(),
+        header=Header(Time(w.header.stamp.sec, w.header.stamp.nanosec), w.header.frame_id),
     )
 
 
@@ -158,18 +156,21 @@ class _OdomWire:
 
 def decode_odometry(buf: bytes) -> Odometry:
     w: _OdomWire = cdr.decode(buf, _OdomWire)[0]
-    pose = Pose()
-    pose.position = Vector3(w.pose.pose.position.tolist())
-    pose.orientation = Quaternion(*w.pose.pose.orientation.tolist())
-    twist = Twist()
-    twist.linear = Vector3(w.twist.twist.linear.tolist())
-    twist.angular = Vector3(w.twist.twist.angular.tolist())
     return Odometry(
-        ts=_ts(w.header),
-        frame_id=w.header.frame_id,
-        child_frame_id=w.child_frame_id,
-        pose=pose,
-        twist=twist,
+        Header(Time(w.header.stamp.sec, w.header.stamp.nanosec), w.header.frame_id),
+        w.child_frame_id,
+        PoseWithCovariance(
+            Pose(
+                Point(*w.pose.pose.position.tolist()), Quaternion(*w.pose.pose.orientation.tolist())
+            ),
+            np.zeros(36, dtype=np.float64),
+        ),
+        TwistWithCovariance(
+            Twist(
+                Vector3(*w.twist.twist.linear.tolist()), Vector3(*w.twist.twist.angular.tolist())
+            ),
+            np.zeros(36, dtype=np.float64),
+        ),
     )
 
 
@@ -220,9 +221,9 @@ _PF_DT = {1: "<i1", 2: "<u1", 3: "<i2", 4: "<u2", 5: "<i4", 6: "<u4", 7: "<f4", 
 
 def decode_pointcloud2(buf: bytes) -> PointCloud2:
     w: _Pc2Wire = cdr.decode(buf, _Pc2Wire)[0]
-    ts, frame = _ts(w.header), w.header.frame_id
+    header = Header(Time(w.header.stamp.sec, w.header.stamp.nanosec), w.header.frame_id)
     if w.point_step == 0 or w.data.size < w.point_step:
-        return PointCloud2.from_numpy(np.empty((0, 3), np.float32), frame, ts)
+        return sensor_cloud(np.empty((0, 3), np.float32), header=header)
     dt = np.dtype(
         {
             "names": [f.name for f in w.fields],
@@ -244,10 +245,9 @@ def decode_pointcloud2(buf: bytes) -> PointCloud2:
         field("ring", "line"),
         field("tag"),
     )
-    return PointCloud2.from_numpy(
+    return sensor_cloud(
         xyz,
-        frame,
-        ts,
+        header=header,
         intensities=None if inten is None else inten.astype(np.float32),
         # per-point `time` is seconds after the header stamp; dimos carries it as u32 ns,
         # which holds 4.29 s (a scan the L1 stalled through spans longer)
@@ -280,7 +280,11 @@ def decode_compressed_image(buf: bytes) -> Image | None:
     bgr = cv2.imdecode(w.data, cv2.IMREAD_COLOR)
     if bgr is None:
         return None
-    return Image.from_numpy(bgr, ImageFormat.BGR, w.header.frame_id, _ts(w.header))
+    return image.from_array(
+        bgr,
+        encoding="bgr8",
+        header=Header(Time(w.header.stamp.sec, w.header.stamp.nanosec), w.header.frame_id),
+    )
 
 
 # foxglove_msgs/CompressedVideo (field order differs from CompressedImage:

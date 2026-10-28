@@ -25,18 +25,17 @@ from __future__ import annotations
 
 from xml.etree import ElementTree
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 
 CAMERA_LINKS = frozenset({"camera_front_link", "camera_back_link"})
 
 
-def _fixed_edges() -> dict[str, list[Transform]]:
+def _fixed_edges() -> dict[str, list[TransformStamped]]:
     """Every fixed joint of the urdf as a transform, grouped by parent link."""
-    edges: dict[str, list[Transform]] = {}
+    edges: dict[str, list[TransformStamped]] = {}
     for joint in ElementTree.parse(ALFRED_URDF).getroot().findall("joint"):
         parent, child, origin = joint.find("parent"), joint.find("child"), joint.find("origin")
         if joint.attrib["type"] != "fixed" or parent is None or child is None or origin is None:
@@ -44,17 +43,16 @@ def _fixed_edges() -> dict[str, list[Transform]]:
         translation = [float(value) for value in origin.attrib["xyz"].split()]
         rpy = [float(value) for value in origin.attrib["rpy"].split()]
         edges.setdefault(parent.attrib["link"], []).append(
-            Transform(
-                translation=Vector3(*translation),
-                rotation=Quaternion.from_euler(Vector3(*rpy)),
-                frame_id=parent.attrib["link"],
-                child_frame_id=child.attrib["link"],
+            TransformStamped(
+                message_time.header_now(parent.attrib["link"]),
+                child.attrib["link"],
+                Transform(Vector3(*translation), geometry.quaternion_from_euler(*rpy)),
             )
         )
     return edges
 
 
-def mount_transforms(root_frame: str) -> list[Transform]:
+def mount_transforms(root_frame: str) -> list[TransformStamped]:
     """Every link rigidly fixed to base_link, minus the camera imager frames, rooted at root_frame.
 
     The camera drivers publish their own imager offsets from factory extrinsics.
@@ -69,7 +67,7 @@ def mount_transforms(root_frame: str) -> list[Transform]:
         for edge in edges.get(link, []):
             transforms.append(edge)
             reached.append(edge.child_frame_id)
-    parent_of = {transform.child_frame_id: transform.frame_id for transform in transforms}
+    parent_of = {transform.child_frame_id: transform.header.frame_id for transform in transforms}
     if root_frame not in parent_of and root_frame not in parent_of.values():
         raise ValueError(f"{root_frame} is not a frame of the published mount tree")
     inverted = set()
@@ -78,7 +76,7 @@ def mount_transforms(root_frame: str) -> list[Transform]:
         inverted.add(frame)
         frame = parent_of[frame]
     return [
-        -transform if transform.child_frame_id in inverted else transform
+        geometry.inverse_transform(transform) if transform.child_frame_id in inverted else transform
         for transform in transforms
     ]
 
@@ -92,5 +90,5 @@ class AlfredMountTf(StaticTfPublisher):
 
     config: AlfredMountTfConfig
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return mount_transforms(self.config.root_frame)

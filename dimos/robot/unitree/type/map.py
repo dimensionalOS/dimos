@@ -18,6 +18,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from reactivex import interval
 from reactivex.disposable import Disposable
 
@@ -27,8 +28,10 @@ from dimos.core.stream import In, Out
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import occupancy, pointcloud, time as message_time
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
@@ -82,15 +85,18 @@ class Map(Module):
         super().stop()
 
     def to_PointCloud2(self) -> PointCloud2:
-        return PointCloud2(
-            pointcloud=self._point_cloud_accumulator.get_point_cloud(),
-            ts=time.time(),
-        )
+        cloud = self._point_cloud_accumulator.get_point_cloud()
+        header = Header(stamp=message_time.time_from_seconds(time.time()), frame_id="")
+        points = np.asarray(cloud.points)
+        if cloud.has_colors():
+            colors = np.rint(np.asarray(cloud.colors) * 255).astype(np.uint8)
+            return pointcloud.from_xyz_rgb(points, colors, header=header)
+        return pointcloud.from_xyz(points, header=header)
 
     # TODO: Why is this RPC?
     @rpc
     def add_frame(self, frame: PointCloud2) -> None:
-        self._point_cloud_accumulator.add(frame.pointcloud)
+        self._point_cloud_accumulator.add(pointcloud.to_open3d(frame))
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
@@ -110,7 +116,10 @@ class Map(Module):
         if self.config.global_costmap_from_occupancy:
             if self._preloaded_occupancy is None:
                 path = Path(self.config.global_costmap_from_occupancy)
-                self._preloaded_occupancy = OccupancyGrid.from_path(path)
+                self._preloaded_occupancy = occupancy.from_file(
+                    path,
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                )
             occupancygrid = self._preloaded_occupancy
 
         self.global_costmap.publish(occupancygrid)

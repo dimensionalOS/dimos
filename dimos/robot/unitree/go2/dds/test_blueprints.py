@@ -16,10 +16,11 @@
 
 from typing import Any
 
+import numpy as np
 import rerun as rr
 
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.message_utils import camera_info, time as message_time
+from dimos.messages.sensor_msgs.msg import CompressedImage
 from dimos.robot.unitree.go2.dds.blueprints import CAMERA_ENTITY, go2_nav_viewer
 
 
@@ -32,9 +33,21 @@ def test_both_encodings_land_on_the_pane() -> None:
     kwargs = _rerun_kwargs(go2_nav_viewer)
     overrides = kwargs["visual_override"]
     assert kwargs["blueprint"]().root_container is not None
-    info = CameraInfo(width=640, height=480, frame_id="camera_optical")
+    info = camera_info.from_intrinsics(
+        width=640,
+        height=480,
+        fx=1.0,
+        fy=1.0,
+        cx=0.0,
+        cy=0.0,
+        header=message_time.header_now("camera_optical"),
+    )
     [(pinhole_path, _)] = overrides["world/camera_info"](info)
-    jpeg = CompressedImage(data=b"\xff\xd8", format="jpeg", frame_id="camera_optical")
+    jpeg = CompressedImage(
+        header=message_time.header_now("camera_optical"),
+        data=np.frombuffer(b"\xff\xd8", dtype=np.uint8).copy(),
+        format="jpeg",
+    )
     [(image_path, archetype)] = overrides["world/image"](jpeg)
     assert pinhole_path == image_path == CAMERA_ENTITY
     assert isinstance(archetype, rr.EncodedImage)

@@ -29,12 +29,10 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.std_msgs.msg import Bool, Int32, UInt32
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -139,7 +137,7 @@ class M20Connection(Module):
     @rpc
     def stop_movement(self) -> None:
         """Publish an immediate zero velocity without disabling future commands."""
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
 
     @rpc
     def standup(self) -> bool:
@@ -221,7 +219,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_odometry(self, odometry: Odometry) -> None:
-        self.odom.publish(odometry.to_pose_stamped())
+        self.odom.publish(geometry.pose_from_transform(geometry.transform_from_odometry(odometry)))
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:

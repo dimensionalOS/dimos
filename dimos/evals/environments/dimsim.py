@@ -26,7 +26,7 @@ from dimos.simulation.dimsim.config import DIMSIM_PORT
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
 
 class DimSimEnvironmentConfig(SimConfig):

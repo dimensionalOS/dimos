@@ -26,6 +26,7 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from pathlib import Path
 import threading
@@ -43,16 +44,31 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import (
+    camera_info as calibration,
+    geometry,
+    image as image_utils,
+    pointcloud,
+    time as message_time,
+)
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import (
+    CameraInfo,
+    Image,
+    Imu,
+    JointState,
+    PointCloud2,
+)
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -96,17 +112,11 @@ def _pose_matrix(
 
 def _transform_from_matrix(
     matrix: NDArray[np.float64], *, frame_id: str, child_frame_id: str, ts: float
-) -> Transform:
-    return Transform(
-        translation=Vector3(
-            float(matrix[0, 3]),
-            float(matrix[1, 3]),
-            float(matrix[2, 3]),
-        ),
-        rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
-        frame_id=frame_id,
-        child_frame_id=child_frame_id,
-        ts=ts,
+) -> TransformStamped:
+    return TransformStamped(
+        Header(message_time.time_from_seconds(ts), frame_id),
+        child_frame_id,
+        geometry.transform_from_matrix(matrix),
     )
 
 
@@ -127,11 +137,13 @@ def _imu_from_mujoco_wxyz(
 ) -> Imu:
     w, x, y, z = quaternion
     return Imu(
+        header=Header(message_time.time_from_seconds(ts), frame_id),
         orientation=Quaternion(x, y, z, w),
         angular_velocity=Vector3(*gyroscope),
         linear_acceleration=Vector3(*accelerometer),
-        frame_id=frame_id,
-        ts=ts,
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 
@@ -166,11 +178,27 @@ class _WholeBodySimHooks:
             if shm.read_command_mode() == CMD_MODE_PD_TAU:
                 self._latest_pd_pos_target = pos_cmd
             else:
-                engine.write_joint_command(JointState(position=pos_cmd.tolist()))
+                engine.write_joint_command(
+                    JointState(
+                        header=message_time.header_now(),
+                        name=[],
+                        position=np.asarray(pos_cmd, dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    )
+                )
 
         vel_cmd = shm.read_velocity_command(dof)
         if vel_cmd is not None:
-            engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    header=message_time.header_now(),
+                    name=[],
+                    position=np.asarray([], dtype=np.float64),
+                    velocity=np.asarray(vel_cmd, dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            )
 
         kp_cmd = shm.read_kp_command(dof)
         if kp_cmd is not None:
@@ -195,7 +223,15 @@ class _WholeBodySimHooks:
                 + self._latest_pd_kd * (-dq)
                 + tau_ff
             )
-            engine.write_joint_command(JointState(effort=tau.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    header=message_time.header_now(),
+                    name=[],
+                    position=np.asarray([], dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray(tau, dtype=np.float64),
+                )
+            )
 
         if self._gripper_idx is not None:
             gripper_cmd = shm.read_gripper_command()
@@ -394,7 +430,7 @@ class MujocoSimModule(
             base = self._camera_info_base
         if base is None:
             return None
-        return base.with_ts(self._camera_info_ts())
+        return calibration.with_stamp(base, message_time.time_from_seconds(self._camera_info_ts()))
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
@@ -402,7 +438,7 @@ class MujocoSimModule(
             base = self._camera_info_base
         if base is None:
             return None
-        return base.with_ts(self._camera_info_ts())
+        return calibration.with_stamp(base, message_time.time_from_seconds(self._camera_info_ts()))
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -494,13 +530,13 @@ class MujocoSimModule(
 
         # Hooks are installed via set_step_hooks() after gripper detection
         # below, since they depend on the resolved gripper index.
-        engine_kwargs: dict[str, Any] = dict(
-            headless=self.config.headless,
-            cameras=cameras,
-            raycast_lidars=raycast_lidars,
-            robot_sim_spec=self.config.robot_sim_spec,
-            reset_joint_positions=self.config.reset_joint_positions,
-        )
+        engine_kwargs: dict[str, Any] = {
+            "headless": self.config.headless,
+            "cameras": cameras,
+            "raycast_lidars": raycast_lidars,
+            "robot_sim_spec": self.config.robot_sim_spec,
+            "reset_joint_positions": self.config.reset_joint_positions,
+        }
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
             engine_kwargs["model"] = self._compose_model()
@@ -687,7 +723,7 @@ class MujocoSimModule(
                 self._engine.disconnect()
                 self._engine = None
             except Exception as exc:
-                logger.error("engine.disconnect() failed", error=str(exc))
+                logger.exception("engine.disconnect() failed", error=str(exc))
                 errors.append(("engine.disconnect", exc))
         if self._shm is not None:
             try:
@@ -695,7 +731,7 @@ class MujocoSimModule(
                 self._shm.cleanup()
                 self._shm = None
             except Exception as exc:
-                logger.error("SHM cleanup failed", error=str(exc))
+                logger.exception("SHM cleanup failed", error=str(exc))
                 errors.append(("shm.cleanup", exc))
 
         self._sim_hooks = None
@@ -789,6 +825,7 @@ class MujocoSimModule(
         if shm is None:
             return
 
+        stamp = message_time.time_from_nanoseconds(time.time_ns())
         # Odom - when the MJCF has a free-joint root, publish base pose
         # every step.  Without this, downstream consumers (viser viewer,
         # nav stack) only see joint articulation, not base translation
@@ -801,15 +838,16 @@ class MujocoSimModule(
             ]  # (w, x, y, z) per MuJoCo convention
             self.odom.publish(
                 PoseStamped(
-                    ts=time.time(),
-                    frame_id="world",
-                    position=Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
-                    orientation=Quaternion(
-                        float(base_quat[1]),
-                        float(base_quat[2]),
-                        float(base_quat[3]),
-                        float(base_quat[0]),
-                    ),  # PoseStamped uses x,y,z,w
+                    Header(deepcopy(stamp), "world"),
+                    Pose(
+                        Point(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
+                        Quaternion(
+                            float(base_quat[1]),
+                            float(base_quat[2]),
+                            float(base_quat[3]),
+                            float(base_quat[0]),
+                        ),
+                    ),
                 )
             )
 
@@ -846,9 +884,9 @@ class MujocoSimModule(
         shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
         # Also publish on the stream port for downstream consumers.
         # MuJoCo reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
-        self.imu.publish(
-            _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
-        )
+        imu = _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
+        imu.header.stamp = deepcopy(stamp)
+        self.imu.publish(imu)
 
         if not self._shm_ready_signaled:
             shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
@@ -866,14 +904,14 @@ class MujocoSimModule(
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        camera_info = CameraInfo.from_intrinsics(
+        camera_info = calibration.from_intrinsics(
             fx=fx,
             fy=fy,
             cx=w / 2.0,
             cy=h / 2.0,
             width=w,
             height=h,
-            frame_id=self._color_optical_frame,
+            header=message_time.header_now(self._color_optical_frame),
         )
         with self._state_lock:
             self._camera_info_base = camera_info
@@ -904,11 +942,10 @@ class MujocoSimModule(
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
-                logger.error(
+                logger.exception(
                     "MuJoCo render failed; stopping publish loop",
                     camera_name=self.config.camera_name,
                     error=str(exc),
-                    exc_info=True,
                 )
                 return
 
@@ -921,20 +958,18 @@ class MujocoSimModule(
                 self._latest_frame_ts = ts
 
             if self.config.enable_color:
-                color_img = Image(
-                    data=frame.rgb,
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                color_img = image_utils.from_array(
+                    frame.rgb,
+                    encoding="rgb8",
+                    header=Header(message_time.time_from_seconds(ts), self._color_optical_frame),
                 )
                 self.color_image.publish(color_img)
 
             if self.config.enable_depth:
-                depth_img = Image(
-                    data=frame.depth,
-                    format=ImageFormat.DEPTH,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                depth_img = image_utils.from_array(
+                    frame.depth,
+                    encoding="32FC1",
+                    header=Header(message_time.time_from_seconds(ts), self._color_optical_frame),
                 )
                 self.depth_image.publish(depth_img)
 
@@ -959,18 +994,10 @@ class MujocoSimModule(
         if base is None:
             return
         ts = self._camera_info_ts()
-        info = CameraInfo(
-            height=base.height,
-            width=base.width,
-            distortion_model=base.distortion_model,
-            D=base.D,
-            K=base.K,
-            P=base.P,
-            frame_id=base.frame_id,
-            ts=ts,
-        )
+        info = calibration.with_stamp(base, message_time.time_from_seconds(ts))
+        depth_info = deepcopy(info)
         self.camera_info.publish(info)
-        self.depth_camera_info.publish(info)
+        self.depth_camera_info.publish(depth_info)
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None) -> None:
         if frame is None:
@@ -989,35 +1016,40 @@ class MujocoSimModule(
 
         self.tf.publish(
             TFMessage(
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._color_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._depth_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    camera_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._camera_link,
-                    ts=ts,
-                ),
-                *self._body_transforms(),
+                [
+                    value
+                    for value in (
+                        _transform_from_matrix(
+                            optical_transform,
+                            frame_id=parent_frame,
+                            child_frame_id=self._color_optical_frame,
+                            ts=ts,
+                        ),
+                        _transform_from_matrix(
+                            optical_transform,
+                            frame_id=parent_frame,
+                            child_frame_id=self._depth_optical_frame,
+                            ts=ts,
+                        ),
+                        _transform_from_matrix(
+                            camera_transform,
+                            frame_id=parent_frame,
+                            child_frame_id=self._camera_link,
+                            ts=ts,
+                        ),
+                        *self._body_transforms(),
+                    )
+                ]
             )
         )
 
-    def _body_transforms(self) -> list[Transform]:
+    def _body_transforms(self) -> list[TransformStamped]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
         engine = self._engine
         if engine is None or not self.config.tracked_bodies:
             return []
         ts = time.time()
-        transforms: list[Transform] = []
+        transforms: list[TransformStamped] = []
         for name in self.config.tracked_bodies:
             pose = engine.get_body_pose(name)
             if pose is None:
@@ -1027,12 +1059,13 @@ class MujocoSimModule(
                 continue
             position, (qx, qy, qz, qw) = pose
             transforms.append(
-                Transform(
-                    translation=Vector3(float(position[0]), float(position[1]), float(position[2])),
-                    rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
-                    frame_id="world",
-                    child_frame_id=name,
-                    ts=ts,
+                TransformStamped(
+                    Header(message_time.time_from_seconds(ts), "world"),
+                    name,
+                    Transform(
+                        Vector3(float(position[0]), float(position[1]), float(position[2])),
+                        Quaternion(float(qx), float(qy), float(qz), float(qw)),
+                    ),
                 )
             )
         return transforms
@@ -1052,28 +1085,30 @@ class MujocoSimModule(
         if frame is None:
             return
         try:
-            color_img = Image(
-                data=frame.rgb,
-                format=ImageFormat.RGB,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            color_img = image_utils.from_array(
+                frame.rgb,
+                encoding="rgb8",
+                header=Header(
+                    message_time.time_from_seconds(frame.timestamp), self._color_optical_frame
+                ),
             )
-            depth_img = Image(
-                data=frame.depth,
-                format=ImageFormat.DEPTH,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            depth_img = image_utils.from_array(
+                frame.depth,
+                encoding="32FC1",
+                header=Header(
+                    message_time.time_from_seconds(frame.timestamp), self._color_optical_frame
+                ),
             )
-            pcd = PointCloud2.from_rgbd(
-                color_image=color_img,
-                depth_image=depth_img,
-                camera_info=camera_info,
+            pcd = pointcloud.from_rgbd(
+                color=color_img,
+                depth=depth_img,
+                calibration=camera_info,
                 depth_scale=1.0,
             )
-            pcd = pcd.voxel_downsample(0.005)
+            pcd = pointcloud.voxel_downsample(pcd, 0.005)
             self.pointcloud.publish(pcd)
         except Exception as exc:
-            logger.error("Pointcloud generation error", error=str(exc))
+            logger.exception("Pointcloud generation error", error=str(exc))
 
     def _mujoco_lidar_camera_names(self) -> list[str]:
         names = self.config.mujoco_lidar_camera_names
@@ -1098,12 +1133,11 @@ class MujocoSimModule(
             return
 
         try:
-            pcd = PointCloud2.from_numpy(
+            pcd = pointcloud.from_xyz(
                 np.vstack(all_points),
-                frame_id="world",
-                timestamp=latest_ts or time.time(),
+                header=Header(message_time.time_from_seconds(latest_ts or time.time()), "world"),
             )
-            pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
+            pcd = pointcloud.voxel_downsample(pcd, self.config.mujoco_lidar_voxel_size)
             self.pointcloud.publish(pcd)
         except Exception as exc:
-            logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))
+            logger.exception("MuJoCo lidar pointcloud generation error", error=str(exc))

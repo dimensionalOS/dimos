@@ -26,17 +26,18 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.simulation.go2_sim.world import SimGo2World
+from dimos.visualization.rerun.cdr import lines_archetype
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+    from dimos.messages.dimos_msgs.msg import LineSegments3D
 
 
 def _scene_lines(scene: LineSegments3D) -> Archetype:
-    return scene.to_rerun(radii=0.01)
+    return lines_archetype(scene, radii=0.01)
 
 
 def rerun_blueprint(hidden: tuple[str, ...] = ()) -> Blueprint:

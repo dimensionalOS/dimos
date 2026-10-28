@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.messages.nav_msgs.msg import Path as NavPath
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
@@ -31,6 +31,7 @@ from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.diy.alfred.config import alfred_model
+from dimos.visualization.rerun.cdr import path_archetype
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ PLANNER_VIZ_HZ = 2.0
 
 
 def _path_colored(msg: NavPath, color: tuple[int, int, int]) -> Archetype:
-    return msg.to_rerun(color=color)
+    return path_archetype(msg, color=color)
 
 
 def _resolved_urdf() -> Path:

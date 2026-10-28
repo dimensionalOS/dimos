@@ -38,22 +38,30 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.dimos_msgs.msg import Contact, Contacts, LineSegment3D, LineSegments3D
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
+from dimos.simulation.scenes.contact_types import Part
 from dimos.simulation.scenes.procedural import Family, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
@@ -108,7 +116,9 @@ BOX_EDGES = np.array(
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """base_link -> mid360_link as a translation and rotation matrix, from the rig's frame tree."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    matrix = edges["front_camera"].to_matrix() @ edges["mid360_link"].to_matrix()
+    matrix = geometry.transform_matrix(edges["front_camera"].transform) @ geometry.transform_matrix(
+        edges["mid360_link"].transform
+    )
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
@@ -255,14 +265,14 @@ class Go2Sim:
     def contacts(self) -> list[Contact]:
         """Every (robot part, scene kind) pair in contact right now, sorted."""
         m, d = self.model, self.data
-        found: set[Contact] = set()
+        found: set[tuple[Part, str]] = set()
         for i in range(d.ncon):
             c = d.contact[i]
             for scene_geom, robot_geom in ((c.geom1, c.geom2), (c.geom2, c.geom1)):
                 kind = self._kind.get(scene_geom)
                 if kind is not None and m.geom_bodyid[robot_geom] != 0:
-                    found.add(Contact(self._part(robot_geom), kind))
-        return sorted(found)
+                    found.add((self._part(robot_geom), kind))
+        return [Contact(part, kind) for part, kind in sorted(found)]
 
     def _part(self, geom: int) -> Part:
         if geom == self._lidar_geom:
@@ -383,8 +393,6 @@ class SimGo2World(Module):
         return viewer
 
     def _run(self) -> None:
-        # open3d loads on the first cloud, about a second
-        PointCloud2.from_numpy(np.zeros((0, 3), np.float32), frame_id=SENSOR_FRAME_ID)
         viewer = self._open_viewer(self._sim)
         try:
             self._simulate(self._sim, viewer)
@@ -406,16 +414,25 @@ class SimGo2World(Module):
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
             if contacts != last_contacts:
-                self.contacts.publish(Contacts(contacts, ts=stamp))
+                self.contacts.publish(
+                    Contacts(Header(message_time.time_from_seconds(stamp), ""), contacts)
+                )
                 last_contacts = contacts
             if frame is not None:
                 self.lidar.publish(
-                    PointCloud2.from_numpy(frame.points, frame_id=SENSOR_FRAME_ID, timestamp=stamp)
+                    pointcloud.from_xyz(
+                        frame.points,
+                        header=Header(message_time.time_from_seconds(stamp), SENSOR_FRAME_ID),
+                    )
                 )
             if sim.t >= next_scene_publish:
                 self.scene.publish(
                     LineSegments3D(
-                        ts=stamp, frame_id=ODOM_FRAME_ID, segments=scene_edges(sim.scene)
+                        header=Header(message_time.time_from_seconds(stamp), ODOM_FRAME_ID),
+                        segments=[
+                            LineSegment3D(Point(*start), Point(*end), 1.0)
+                            for start, end in scene_edges(sim.scene)
+                        ],
                     )
                 )
                 next_scene_publish = sim.t + SCENE_PUBLISH_DT
@@ -430,34 +447,36 @@ class SimGo2World(Module):
         position, rotation = sim.sensor_pose()
         linear, angular = sim.sensor_velocity()
         q = Rotation.from_matrix(rotation).as_quat()
-        sensor = Pose(*map(float, position), *map(float, q))
+        sensor = Pose(Point(*map(float, position)), Quaternion(*map(float, q)))
+        header = Header(message_time.time_from_seconds(stamp), ODOM_FRAME_ID)
         self.odometry.publish(
             Odometry(
-                ts=stamp,
-                frame_id=ODOM_FRAME_ID,
+                header=header,
                 child_frame_id=SENSOR_FRAME_ID,
-                pose=sensor,
-                twist=Twist(Vector3(linear.tolist()), Vector3(angular.tolist())),
+                pose=PoseWithCovariance(sensor, np.zeros(36, dtype=np.float64)),
+                twist=TwistWithCovariance(
+                    Twist(Vector3(*linear), Vector3(*angular)), np.zeros(36, dtype=np.float64)
+                ),
             )
         )
         self.tf.publish(
             TFMessage(
-                Transform(
-                    translation=Vector3(sensor.position),
-                    rotation=Quaternion(sensor.orientation),
-                    frame_id=ODOM_FRAME_ID,
-                    child_frame_id=SENSOR_FRAME_ID,
-                    ts=stamp,
-                )
+                [
+                    TransformStamped(
+                        header,
+                        SENSOR_FRAME_ID,
+                        Transform(
+                            Vector3(sensor.position.x, sensor.position.y, sensor.position.z),
+                            sensor.orientation,
+                        ),
+                    )
+                ]
             )
         )
         base_position, base_rotation = sim.base_pose()
         base_q = Rotation.from_matrix(base_rotation).as_quat()
         self.ground_truth.publish(
             PoseStamped(
-                *map(float, base_position),
-                *map(float, base_q),
-                ts=stamp,
-                frame_id=ODOM_FRAME_ID,
+                header, Pose(Point(*map(float, base_position)), Quaternion(*map(float, base_q)))
             )
         )

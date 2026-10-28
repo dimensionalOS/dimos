@@ -29,6 +29,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
@@ -37,6 +38,7 @@ from dimos.navigation.global_planner.mls_planner.viz import planner_visual_overr
 from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.simulation.habitat.connection import HabitatConnection
+from dimos.visualization.rerun.cdr import cloud_archetype
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
@@ -65,9 +67,9 @@ ROBOT_HEIGHT = 0.5
 HIDDEN = ("world/nodes", "world/depth_image")
 
 
-def _small_points(cloud: Any) -> Any:
-    """Flat dots; mode is explicit so this does not track to_rerun's default."""
-    return cloud.to_rerun(mode="points", ui_radius=1.0)
+def _small_points(cloud: PointCloud2) -> Any:
+    """Flat dots; mode is explicit so their screen-space size stays fixed."""
+    return cloud_archetype(cloud, mode="points", ui_radius=1.0, height_colors=True)
 
 
 def _view() -> Any:

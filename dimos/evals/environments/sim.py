@@ -40,7 +40,7 @@ from dimos.evals.types import RunningEnvironment
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
 
 class SimConfig(EnvironmentConfig):
@@ -197,7 +197,7 @@ class Sim(Environment):
                 pose = self.latest_pose(self._recording)
             except LookupError:
                 return
-            position = pose.position
+            position = pose.pose.position
             if (
                 anchor is None
                 or math.hypot(position.x - anchor.x, position.y - anchor.y) > self.config.at_rest_m

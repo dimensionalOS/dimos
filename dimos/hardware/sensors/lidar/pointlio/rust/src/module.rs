@@ -15,15 +15,21 @@
 //! Point-LIO native module: PointCloud2 + Imu in, odometry + body cloud + tf out.
 
 use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
-use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
+use dimos_module::{native_config, Input, Module, Output, Tf};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance};
-use lcm_msgs::geometry_msgs::{Quaternion as QuatMsg, Vector3};
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::geometry_msgs::msg::{
+    point::Point, pose::Pose, pose_with_covariance::PoseWithCovariance,
+    quaternion::Quaternion as QuatMsg, twist::Twist, twist_with_covariance::TwistWithCovariance,
+    vector3::Vector3,
+};
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{
+    imu::Imu, point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -117,16 +123,16 @@ fn core_config_parses(cfg: &Config) -> Result<(), ValidationError> {
 #[derive(Module)]
 #[module(name = "pointlio", setup = start)]
 pub struct PointLioModule {
-    #[input(decode = PointCloud2::decode)]
+    #[input(decode = dimos_module::cdr::decode)]
     lidar_raw: Input<PointCloud2>,
 
-    #[input(decode = Imu::decode)]
+    #[input(decode = dimos_module::cdr::decode)]
     imu_raw: Input<Imu>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = Odometry::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     odometry: Output<Odometry>,
 
     #[tf]
@@ -211,10 +217,10 @@ impl PointLioModule {
                     o.quat[3], o.quat[0], o.quat[1], o.quat[2],
                 )),
             );
-            let t = Transform::new(
+            let t = dimos_module::tf::from_isometry(
                 self.config.world_frame(),
                 self.config.sensor_frame(),
-                o.ts,
+                header("", o.ts).stamp,
                 iso,
             );
             let _ = self.tf.publish(&[t]).await;
@@ -239,20 +245,19 @@ fn due(last: &mut Option<f64>, ts: f64, hz: f64) -> bool {
 }
 
 fn stamp_secs(t: &Time) -> f64 {
-    f64::from(t.sec) + f64::from(t.nsec) * 1e-9
+    f64::from(t.sec) + f64::from(t.nanosec) * 1e-9
 }
 
 fn stamp_ns(t: &Time) -> u64 {
-    t.sec as u64 * 1_000_000_000 + t.nsec as u64
+    t.sec as u64 * 1_000_000_000 + t.nanosec as u64
 }
 
 fn header(frame_id: &str, ts: f64) -> Header {
     let sec = ts.floor();
     Header {
-        seq: 0,
         stamp: Time {
             sec: sec as i32,
-            nsec: (((ts - sec) * 1e9).round() as i32).min(999_999_999),
+            nanosec: (((ts - sec) * 1e9).round() as u32).min(999_999_999),
         },
         frame_id: frame_id.to_string(),
     }
@@ -270,7 +275,7 @@ struct Layout {
 
 fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
     let step = cloud.point_step as usize;
-    let find = |name: &str, datatype: i8| -> Result<Option<usize>, String> {
+    let find = |name: &str, datatype: u8| -> Result<Option<usize>, String> {
         let Some(f) = cloud.fields.iter().find(|f| f.name == name) else {
             return Ok(None);
         };
@@ -291,7 +296,7 @@ fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
         }
         Ok(Some(offset))
     };
-    let need = |name: &str, datatype: i8| {
+    let need = |name: &str, datatype: u8| {
         find(name, datatype)?.ok_or_else(|| format!("cloud has no {name} field"))
     };
     if cloud.is_bigendian {
@@ -403,20 +408,20 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
         .enumerate()
         .map(|(i, name)| PointField {
             name: (*name).into(),
-            offset: (i * 4) as i32,
+            offset: (i * 4) as u32,
             datatype: PointField::FLOAT32 as u8,
             count: 1,
         })
         .collect();
-    let n = cloud.len() as i32;
+    let n = cloud.len() as u32;
     PointCloud2 {
         header: header(frame_id, ts),
         height: 1,
         width: n,
         fields,
         is_bigendian: false,
-        point_step: STEP as i32,
-        row_step: STEP as i32 * n,
+        point_step: STEP as u32,
+        row_step: STEP as u32 * n,
         data,
         is_dense: true,
     }
@@ -426,10 +431,10 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
 mod tests {
     use super::*;
 
-    fn field(name: &str, offset: usize, datatype: i8) -> PointField {
+    fn field(name: &str, offset: usize, datatype: u8) -> PointField {
         PointField {
             name: name.into(),
-            offset: offset as i32,
+            offset: offset as u32,
             datatype: datatype as u8,
             count: 1,
         }
@@ -439,14 +444,44 @@ mod tests {
         PointCloud2 {
             header: header("lidar_link", 1.5),
             height: 1,
-            width: (data.len() / step) as i32,
+            width: (data.len() / step) as u32,
             fields,
             is_bigendian: false,
-            point_step: step as i32,
-            row_step: data.len() as i32,
+            point_step: step as u32,
+            row_step: data.len() as u32,
             data,
             is_dense: true,
         }
+    }
+
+    #[test]
+    fn output_cloud_preserves_coordinates_and_stamp() {
+        let output = cloud_message(
+            "body",
+            -0.25,
+            &[PointXYZI {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                intensity: 4.0,
+                curvature: 0.0,
+            }],
+        );
+        assert_eq!(
+            (output.header.stamp.sec, output.header.stamp.nanosec),
+            (-1, 750_000_000)
+        );
+        assert_eq!(
+            (output.width, output.point_step, output.row_step),
+            (1, 16, 16)
+        );
+        assert_eq!(output.header.frame_id, "body");
+        let coordinates: Vec<f32> = output
+            .data
+            .chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+            .collect();
+        assert_eq!(coordinates, [1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]

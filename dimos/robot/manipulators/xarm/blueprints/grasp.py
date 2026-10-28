@@ -36,10 +36,16 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
@@ -106,11 +112,13 @@ XARM_GRASP_FRAME_TO_TCP = (
 # resolves into world, and every cloud the camera produces is silently unusable.
 # link7 is a frame the model already publishes, so ManipulationModule emits the
 # whole chain from one loop at one rate.
-XARM_WRIST_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
-    frame_id="link7",
+XARM_WRIST_CAMERA_TRANSFORM = TransformStamped(
+    header=message_time.header_now("link7"),
     child_frame_id="camera_link",
+    transform=Transform(
+        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+        rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    ),
 )
 
 
@@ -119,7 +127,10 @@ if SIMULATED:
     # of the 12 cm pedestal data/xarm7 uses. Inheriting that offset would put the
     # planning model 12 cm above the arm MuJoCo simulates.
     _model = make_xarm7_sim_robot_config(
-        base_pose=PoseStamped(frame_id="world"),
+        base_pose=PoseStamped(
+            message_time.header_now("world"),
+            Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         tf_extra_links=[],
     )
     _hardware = make_xarm7_sim_hardware(home_joints=XARM_GRASP_SCAN_JOINTS)
@@ -127,7 +138,10 @@ else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=PoseStamped(frame_id="world"),
+        base_pose=PoseStamped(
+            message_time.header_now("world"),
+            Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         tf_extra_links=["link7"],
     )
     _hardware = xarm7_hardware("arm", gripper=True)

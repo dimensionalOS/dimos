@@ -25,19 +25,18 @@ from __future__ import annotations
 import threading
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, InstanceOf, field_serializer, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.foxglove_msgs.msg import CompressedVideo
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
+from dimos.messages.std_msgs.msg import String
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
@@ -60,11 +59,26 @@ class Go2BaseConfig(StaticTfPublisherConfig):
     l1_xyz: tuple[float, float, float] = L1_XYZ
     l1_mount: tuple[float, float, float] = L1_MOUNT
     # The front camera's calibration, published at camera_info_hz.
-    camera_info: CameraInfo = Field(default_factory=_camera_info_static)
+    camera_info: InstanceOf[CameraInfo] = Field(default_factory=_camera_info_static)
     camera_info_hz: float = Field(default=1.0, gt=0.0)
     # The frame the live odometry moves; the mount edges above it are inverted so it
     # never gets two parents. GO2DDS publishes its own odom edge only for base_link.
     tf_root: Literal["base_link", "mid360_link"] = "base_link"
+
+    @field_serializer("camera_info")
+    def _camera_info_dict(self, value: CameraInfo) -> dict[str, Any]:
+        return {
+            "frame_id": value.header.frame_id,
+            "height": value.height,
+            "width": value.width,
+            "distortion_model": value.distortion_model,
+            "D": value.d.tolist(),
+            "K": value.k.tolist(),
+            "R": value.r.tolist(),
+            "P": value.p.tolist(),
+            "binning_x": value.binning_x,
+            "binning_y": value.binning_y,
+        }
 
     @field_validator("mid360_mount", mode="before")
     @classmethod

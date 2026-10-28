@@ -1240,10 +1240,13 @@ jobs:
           uv run python -c "
           import numpy as np
           from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
-          from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+          from dimos.message_utils import pointcloud
+          from dimos.messages.builtin_interfaces.msg import Time
+          from dimos.messages.std_msgs.msg import Header
 
           points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
-          height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
+          cloud = pointcloud.from_xyz(points, header=Header(stamp=Time(sec=1, nanosec=0), frame_id=''))
+          height_cost_occupancy(cloud)
           "
       - name: Run the replay under cgroup accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py

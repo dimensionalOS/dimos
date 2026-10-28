@@ -17,6 +17,7 @@
 import os
 import platform
 
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
@@ -25,9 +26,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview import (
     r1pro_planar_preview,
@@ -47,12 +48,17 @@ def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
 def _forward(distance: float, duration: float) -> JointTrajectory:
     velocity = [distance / duration, 0.0, 0.0]
     return JointTrajectory(
-        joint_names=["x", "y", "yaw"],
-        points=[
-            TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0, 0.0], velocities=velocity),
-            TrajectoryPoint(
-                time_from_start=duration, positions=[distance, 0.0, 0.0], velocities=velocity
-            ),
+        message_time.header_now(),
+        ["x", "y", "yaw"],
+        [
+            JointTrajectoryPoint(
+                np.asarray(positions, dtype=np.float64),
+                np.asarray(velocity, dtype=np.float64),
+                np.empty(0, dtype=np.float64),
+                np.empty(0, dtype=np.float64),
+                message_time.duration_from_seconds(t),
+            )
+            for t, positions in [(0.0, [0.0, 0.0, 0.0]), (duration, [distance, 0.0, 0.0])]
         ],
     )
 
@@ -94,7 +100,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
+            == TrajectoryState.COMPLETED,
             timeout=5.0,
             message="the base trajectory never completed",
         )

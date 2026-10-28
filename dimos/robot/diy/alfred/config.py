@@ -18,9 +18,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openarm.config import OPENARM_DESCRIPTION_ROOT
 from dimos.utils.data import LfsPath
@@ -69,6 +67,6 @@ ALFRED_HARDWARE = AlfredConfig(
     d455_serial="260922302422",
     internal_odom_offsets={
         # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
-        "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
+        "mid360_link": Pose(Point(0.2, -0.2, 0.3), Quaternion(0.0, 0.0, 0.0, 1.0)),
     },
 )

@@ -28,8 +28,8 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import joint_names
@@ -66,7 +66,9 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
 # below the arm it is driving and every grasp closes on air.
-XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+XARM7_SIM_BASE_POSE = PoseStamped(
+    message_time.header_now("world"), Pose(Point(0.0, 0.0, 0.12), Quaternion(0.0, 0.0, 0.0, 1.0))
+)
 
 
 def make_xarm7_sim_robot_config(
@@ -307,7 +309,12 @@ def make_xarm_model_config(
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
         ).with_default_joint_acceleration_limit(2.0),
-        base_pose=base_pose if base_pose is not None else PoseStamped(),
+        base_pose=base_pose
+        if base_pose is not None
+        else PoseStamped(
+            message_time.header_now("world"),
+            Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
         planning_groups=[

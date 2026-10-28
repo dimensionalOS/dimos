@@ -14,9 +14,8 @@
 
 """FlowBase platform constants."""
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 
-# Mid-360 mount pose on the FlowBase (position + orientation) in the base frame.
-FLOWBASE_MID360_MOUNT = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
+FLOWBASE_MID360_MOUNT = Pose(
+    position=Point(0.20, -0.20, 0.10), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+)

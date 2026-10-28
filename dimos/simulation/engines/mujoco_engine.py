@@ -40,7 +40,7 @@ from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.messages.sensor_msgs.msg import JointState
 
 logger = setup_logger()
 
@@ -723,17 +723,17 @@ class MujocoEngine(SimulationEngine):
         return self.joint_efforts
 
     def write_joint_command(self, command: JointState) -> None:
-        if command.position:
+        if len(command.position) > 0:
             self._command_mode = "position"
-            self._set_position_targets(command.position)
+            self._set_position_targets(command.position.tolist())
             return
-        if command.velocity:
+        if len(command.velocity) > 0:
             self._command_mode = "velocity"
-            self._set_velocity_targets(command.velocity)
+            self._set_velocity_targets(command.velocity.tolist())
             return
-        if command.effort:
+        if len(command.effort) > 0:
             self._command_mode = "effort"
-            self._set_effort_targets(command.effort)
+            self._set_effort_targets(command.effort.tolist())
             return
 
     def _set_position_targets(self, positions: list[float]) -> None:

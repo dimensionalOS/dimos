@@ -17,7 +17,7 @@
 ``dimos run real-sense-camera-vis``
 
 The cloud comes from the camera's own ``enable_pointcloud`` path
-(:meth:`PointCloud2.from_rgbd`), so it lands in the color optical frame and rides
+(``dimos.message_utils.pointcloud.from_rgbd``), so it lands in the color optical frame and rides
 whatever tf tree the camera is mounted under.
 """
 
@@ -28,11 +28,11 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
+from dimos.visualization.rerun.cdr import cloud_archetype
 from dimos.visualization.vis_module import vis_module
 
 # Dot radius in screen-space UI points.
@@ -46,13 +46,12 @@ class RealSenseMountTf(StaticTfPublisher):
     path from world to it and draws nothing.
     """
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return [
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="camera_link",
+            TransformStamped(
+                message_time.header_now("world"),
+                "camera_link",
+                Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
             )
         ]
 
@@ -78,7 +77,7 @@ def _rerun_blueprint() -> Any:
 def _cloud(cloud: PointCloud2) -> Any:
     # The default "spheres" mode is sized for sparse lidar; a dense RGBD cloud
     # reads better as flat dots that keep their size as you zoom.
-    return cloud.to_rerun(mode="points", ui_radius=_CLOUD_RADIUS_UI)
+    return cloud_archetype(cloud, mode="points", ui_radius=_CLOUD_RADIUS_UI)
 
 
 _vis = vis_module(

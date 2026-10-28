@@ -19,10 +19,13 @@ from __future__ import annotations
 import time
 from typing import Any, NoReturn, Protocol, TypeGuard
 
+import numpy as np
 import typer
 
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
 from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE
@@ -163,7 +166,14 @@ def _execute_ready_pose(
     _require_armed_and_enabled(coordinator)
     _require_teleop_disengaged(coordinator)
     targets = {
-        group: JointState(position=list(positions)) for group, positions in G1_READY_JOINTS.items()
+        group: JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=[],
+            position=np.asarray(positions, dtype=np.float64),
+            velocity=np.empty(0, dtype=np.float64),
+            effort=np.empty(0, dtype=np.float64),
+        )
+        for group, positions in G1_READY_JOINTS.items()
     }
     planned = manipulation.plan_to_joints(targets, speed_scale=G1_READY_SPEED_SCALE)
     if not planned.succeeded:

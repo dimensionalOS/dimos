@@ -19,7 +19,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.messages.dimos_msgs.msg import Contact
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (

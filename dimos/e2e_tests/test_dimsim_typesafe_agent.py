@@ -26,8 +26,8 @@ import pytest
 
 from dimos.agents.typesafe.test_world_state import det3d
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.vision_msgs.msg import Detection3DArray
 
 CHAIR = (4.0, 2.0)
 

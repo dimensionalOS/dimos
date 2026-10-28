@@ -44,11 +44,17 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
@@ -206,7 +212,7 @@ class AlfredHighLevel(Module):
                 # Odometry comes back in the inverted-Y frame move() sends into.
                 y, yaw = -y, -yaw
                 # The controller reports no velocity, so difference consecutive poses.
-                twist = Twist()
+                twist = Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
                 if previous is not None:
                     last_ts, last_x, last_y, last_yaw = previous
                     dt = ts - last_ts
@@ -225,14 +231,15 @@ class AlfredHighLevel(Module):
 
                 self.wheel_odometry.publish(
                     Odometry(
-                        ts=ts,
-                        frame_id=self.config.wheel_odom_frame_id,
-                        child_frame_id=self.config.base_frame_id,
-                        pose=Pose(
-                            position=Vector3(x, y, 0.0),
-                            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                        header=Header(
+                            message_time.time_from_seconds(ts), self.config.wheel_odom_frame_id
                         ),
-                        twist=twist,
+                        child_frame_id=self.config.base_frame_id,
+                        pose=PoseWithCovariance(
+                            Pose(Point(x, y, 0.0), geometry.quaternion_from_euler(0.0, 0.0, yaw)),
+                            np.zeros(36, dtype=np.float64),
+                        ),
+                        twist=TwistWithCovariance(twist, np.zeros(36, dtype=np.float64)),
                     )
                 )
             except asyncio.CancelledError:

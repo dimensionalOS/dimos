@@ -14,6 +14,7 @@
 
 from typing import Any, cast
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -22,9 +23,10 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
@@ -72,14 +74,26 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
         DualOpenYamPinkPoseTargetSolver,
         "frame_poses",
         return_value={
-            "left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
-            "right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "left_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, 0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
+            "right_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, -0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         },
     )
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
         "step",
-        return_value=JointState(name=DUAL_OPENYAM_ARM_JOINTS, position=[0.01] * 12),
+        return_value=JointState(
+            header=message_time.header_now(),
+            name=DUAL_OPENYAM_ARM_JOINTS,
+            position=np.asarray([0.01] * 12, dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     mocker.patch.object(TickLoop, "start")
     coordinator = DualOpenYamCoordinator(publish_joint_state=False, **kwargs)
@@ -96,11 +110,17 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(DUAL_OPENYAM_WEBXR_TASK_NAME),
+                Pose(Point(*[1.0, 0.0, 0.0]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(DUAL_OPENYAM_WEBXR_TASK_NAME),
+                Pose(Point(*[-1.0, 0.0, 0.0]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
         assert coordinator._tick_loop is not None
         coordinator._tick_loop._tick()

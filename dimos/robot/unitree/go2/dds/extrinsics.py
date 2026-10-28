@@ -25,10 +25,10 @@ the trajectory. Validated against the official "default imu reading"
 """
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 
 # base_link <- lidar rotation (lidar points -> base frame: p_base = EXT_R @ p_lidar + EXT_T)
 EXT_R = np.array(
@@ -47,15 +47,13 @@ CAM_T = np.array([0.30, 0.0, 0.0], dtype=np.float64)
 CAM_Q = np.array([-0.5, 0.5, -0.5, 0.5], dtype=np.float64)  # xyzw
 
 # Same mounts as standard Transform msgs (typed; carry frame ids; have to_rerun).
-LIDAR_TO_BASE = Transform(
-    translation=Vector3(EXT_T),
-    rotation=Quaternion.from_rotation_matrix(EXT_R),
-    frame_id="base_link",
-    child_frame_id="lidar",
+LIDAR_TO_BASE = TransformStamped(
+    message_time.header_now("base_link"),
+    "lidar",
+    Transform(Vector3(*EXT_T), Quaternion(*Rotation.from_matrix(EXT_R).as_quat())),
 )
-BASE_TO_CAMERA = Transform(
-    translation=Vector3(CAM_T),
-    rotation=Quaternion(CAM_Q),
-    frame_id="base_link",
-    child_frame_id="camera_optical",
+BASE_TO_CAMERA = TransformStamped(
+    message_time.header_now("base_link"),
+    "camera_optical",
+    Transform(Vector3(*CAM_T), Quaternion(*CAM_Q)),
 )

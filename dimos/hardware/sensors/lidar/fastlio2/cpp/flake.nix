@@ -8,11 +8,7 @@
     zenoh.inputs.flake-utils.follows = "flake-utils";
     nixpkgs.follows = "dimos-native-cpp/nixpkgs";
     flake-utils.follows = "dimos-native-cpp/flake-utils";
-    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
+    dimos-native-cpp.url = "path:../../../../../../native/cpp";
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
@@ -31,7 +27,7 @@
     };
   };
 
-  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -97,7 +93,7 @@
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DCMAKE_TOOLCHAIN_FILE=${dimos-native-cpp.packages.${system}.messages}/toolchain.cmake"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
             "-DDIMOS_NATIVE_CPP_DIR=${dimos-native-cpp.packages.${system}.default}"

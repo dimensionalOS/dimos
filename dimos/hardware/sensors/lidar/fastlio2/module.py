@@ -46,12 +46,10 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
 
 
@@ -139,17 +137,12 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(
-            TFMessage(
-                Transform(
-                    frame_id=self.frame_id,
-                    child_frame_id=self.config.sensor_frame_id,
-                    translation=Vector3(msg.pose.position),
-                    rotation=Quaternion(msg.pose.orientation),
-                    ts=msg.ts or time.time(),
-                )
-            )
-        )
+        transform = geometry.transform_from_odometry(msg)
+        transform.header.frame_id = self.frame_id
+        transform.child_frame_id = self.config.sensor_frame_id
+        if message_time.to_nanoseconds(transform.header.stamp) == 0:
+            transform.header.stamp = message_time.time_from_seconds(time.time())
+        self.tf.publish(TFMessage([transform]))
 
     @rpc
     def stop(self) -> None:

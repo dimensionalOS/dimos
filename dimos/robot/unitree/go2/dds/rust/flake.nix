@@ -2,6 +2,7 @@
   description = "Go2 DDS native module for dimos";
 
   inputs = {
+    dimos-source = { url = "path:../../../../../.."; flake = false; };
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
@@ -9,13 +10,19 @@
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
+  outputs = { self, dimos-source, nix-filter, nixpkgs, flake-utils, crate2nix }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-go2-dds";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        modulePath = "dimos/robot/unitree/go2/dds/rust";
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        staged = import (dimos-source + "/native/rust/module-source.nix") {
+          inherit pkgs modulePath moduleSource;
+          projectRoot = dimos-source;
+        };
+        src = staged + "/${modulePath}";
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         # The vendored cyclonedds-sys binds nixpkgs' cyclonedds (bindgen) instead of cloning and building its own.
@@ -36,10 +43,6 @@
               defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
                 # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
                 stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; };
-                # Two lcm-msgs 0.1.0 ride along (dimos-module's rust-codegen pin and our v0.1.6 tag).
-                # buildRustCrate names and ids a crate by name and version alone, so the two would
-                # collide; the rev in the version tells them apart.
-                lcm-msgs = attrs: { version = "${attrs.version}+${builtins.substring 0 8 (attrs.src.rev or "")}"; };
                 cyclonedds-sys = cyclonedds;
                 ${name} = cyclonedds;
               };

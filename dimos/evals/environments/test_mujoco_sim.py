@@ -24,12 +24,20 @@ from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import image as image_utils
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 def environment(**kwargs):
@@ -38,7 +46,15 @@ def environment(**kwargs):
 
 def _tf(ts: float, child: str, z: float) -> TFMessage:
     return TFMessage(
-        Transform(translation=Vector3(0.4, 0.08, z), frame_id="world", child_frame_id=child, ts=ts)
+        transforms=[
+            TransformStamped(
+                header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                child_frame_id=child,
+                transform=Transform(
+                    translation=Vector3(0.4, 0.08, z), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        ]
     )
 
 
@@ -117,8 +133,15 @@ def test_latest_pose_needs_odom():
     with MemoryStore() as store:
         with pytest.raises(LookupError):
             env.latest_pose(store)
-        store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))
-        assert env.latest_pose(store).ts == 5
+        store.stream("odom", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(5), frame_id="world"),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        )
+        assert to_seconds(env.latest_pose(store).header.stamp) == 5
 
 
 def test_raw_arm_blueprint_configures_its_bridge():
@@ -181,10 +204,20 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
             env.wait_ready(store, deadline=time.monotonic() + 0.3)
         now = time.time()
         store.stream("color_image", Image).append(
-            Image(data=np.zeros((1, 1, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
+            image_utils.from_array(
+                np.zeros((1, 1, 3), dtype=np.uint8),
+                encoding="rgb8",
+                header=Header(stamp=time_from_seconds(now), frame_id=""),
+            )
         )
         store.stream("coordinator_joint_state", JointState).append(
-            JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
+            JointState(
+                name=["j1"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([0.0], dtype=np.float64),
+                header=Header(stamp=time_from_seconds(now), frame_id=""),
+                effort=np.asarray([], dtype=np.float64),
+            )
         )
         store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
         env.wait_ready(store, deadline=time.monotonic() + 2.0)
@@ -200,13 +233,29 @@ def test_settle_waits_for_joints_to_stop():
         joints = store.stream("coordinator_joint_state", JointState)
         env.settle(1.0)
         assert time.monotonic() - started < 0.5
-        joints.append(JointState(ts=1.0, name=["j1"], position=[0.0], velocity=[0.5]))
+        joints.append(
+            JointState(
+                name=["j1"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([0.5], dtype=np.float64),
+                header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
         env._recording = store
         started = time.monotonic()
         env.settle(0.2)
         assert time.monotonic() - started >= 0.2
 
-        joints.append(JointState(ts=2.0, name=["j1"], position=[0.0], velocity=[0.0]))
+        joints.append(
+            JointState(
+                name=["j1"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([0.0], dtype=np.float64),
+                header=Header(stamp=time_from_seconds(2.0), frame_id=""),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
         started = time.monotonic()
         env.settle(5.0)
         assert time.monotonic() - started < 1.0

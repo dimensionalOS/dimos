@@ -28,9 +28,10 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_WEBXR_TASK_NAME,
@@ -160,16 +161,25 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         OpenArmPinkPoseTargetSolver,
         "frame_poses",
         return_value={
-            "openarm_left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
-            "openarm_right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "openarm_left_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, 0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
+            "openarm_right_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, -0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         },
     )
     step = mocker.patch.object(
         OpenArmPinkPoseTargetSolver,
         "step",
         return_value=JointState(
+            header=message_time.header_now(),
             name=list(OPENARM_ARM_JOINTS),
-            position=[0.01] * len(OPENARM_ARM_JOINTS),
+            position=np.asarray([0.01] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
         ),
     )
     mocker.patch.object(TickLoop, "start")
@@ -199,11 +209,17 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(OPENARM_WEBXR_TASK_NAME),
+                Pose(Point(*[1.0, 0.0, 0.0]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(OPENARM_WEBXR_TASK_NAME),
+                Pose(Point(*[-1.0, 0.0, 0.0]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
 
         assert coordinator._tick_loop is not None
@@ -241,7 +257,13 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
         lm_damping=0.01,
         gain=0.25,
     )
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        header=message_time.header_now(),
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     solver = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
     targets = solver.frame_poses(seed, frames)
 
@@ -262,8 +284,13 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
     )
 
     moved_seed = JointState(
+        header=message_time.header_now(),
         name=OPENARM_ARM_JOINTS,
-        position=np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(),
+        position=np.asarray(
+            np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(), dtype=np.float64
+        ),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     solver.reset()
     solver.step(targets, moved_seed, 0.01)
@@ -287,13 +314,21 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
         gain=0.25,
     )
     ik = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        header=message_time.header_now(),
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     initial = ik.frame_poses(seed, frames)
     targets = {
         name: PoseStamped(
-            frame_id=pose.frame_id,
-            position=[pose.position.x, pose.position.y, pose.position.z + 0.01],
-            orientation=pose.orientation,
+            message_time.header_now(pose.header.frame_id),
+            Pose(
+                Point(*[pose.pose.position.x, pose.pose.position.y, pose.pose.position.z + 0.01]),
+                pose.pose.orientation,
+            ),
         )
         for name, pose in initial.items()
     }
@@ -311,12 +346,12 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
     final = ik.frame_poses(seed, frames)
     errors = [
         np.linalg.norm(
-            np.array([target.position.x, target.position.y, target.position.z])
+            np.array([target.pose.position.x, target.pose.position.y, target.pose.position.z])
             - np.array(
                 [
-                    final[name].position.x,
-                    final[name].position.y,
-                    final[name].position.z,
+                    final[name].pose.position.x,
+                    final[name].pose.position.y,
+                    final[name].pose.position.z,
                 ]
             )
         )

@@ -17,12 +17,10 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
 from dimos.utils.data import get_data
@@ -45,14 +43,14 @@ class Go2Moment(Moment):
         self.odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))
 
     @property
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         if self.odom.value is None:
             return []
 
         # we just make sure to change timestamps so that we can jump
         # back and forth through time and the viewer doesn't get confused
         odom = self.odom.value
-        odom.ts = time.time()
+        odom.header.stamp = message_time.time_from_seconds(time.time())
         return connection.GO2Connection._odom_to_tf(odom)
 
     def publish(self) -> None:
@@ -63,7 +61,7 @@ class Go2Moment(Moment):
         tf_transport.stop()
 
         camera_info = connection._camera_info_static()
-        camera_info.ts = time.time()
+        camera_info.header.stamp = message_time.time_from_seconds(time.time())
         camera_info_transport: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
         camera_info_transport.publish(camera_info)
         camera_info_transport.stop()

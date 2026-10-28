@@ -27,7 +27,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
-from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation, Slerp
@@ -36,17 +35,22 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.BatteryState import BatteryState
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.control_msgs.msg import DynamicJointState
+from dimos.messages.geometry_msgs.msg import TransformStamped, Vector3
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import (
+    BatteryState,
+    CompressedImage,
+    Imu,
+    JointState,
+    Joy,
+    PointCloud2,
+)
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
+from dimos.robot.unitree.go2.dds.pointcloud import sensor_cloud, sensor_field
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -132,12 +136,15 @@ class L1Deskew:
     """Causal L1 scan placement: hold each scan until odometry covers it, then deskew."""
 
     def __init__(
-        self, config: GO2L1LidarConfig, odom_from_l1: Transform, body_from_l1: Transform
+        self,
+        config: GO2L1LidarConfig,
+        odom_from_l1: TransformStamped,
+        body_from_l1: TransformStamped,
     ) -> None:
         """odom_from_l1 is the odometry child frame <- the L1, body_from_l1 base_link <- the L1."""
         self.config = config
-        self._mount = odom_from_l1.to_matrix()
-        self._body = body_from_l1.to_matrix()
+        self._mount = geometry.transform_matrix(odom_from_l1.transform)
+        self._body = geometry.transform_matrix(body_from_l1.transform)
         self._to_l1 = Rotation.from_euler("xyz", config.knock_imu_rpy, degrees=True)
         self._poses: deque[Odometry] = deque()
         self._pending: deque[tuple[PointCloud2, float]] = deque()
@@ -155,26 +162,33 @@ class L1Deskew:
         if self._body_gyro is None:
             return
         res2 = float(np.sum((_vec(imu.angular_velocity) - self._body_gyro) ** 2))
-        self._residual.append((imu.ts, res2))
-        while imu.ts - self._residual[0][0] > self.config.knock_window:
+        self._residual.append((message_time.to_seconds(imu.header.stamp), res2))
+        while (
+            message_time.to_seconds(imu.header.stamp) - self._residual[0][0]
+            > self.config.knock_window
+        ):
             self._residual.popleft()
         rms = np.sqrt(np.mean([r for _, r in self._residual]))
         knocked = bool(rms >= self.config.knock_rad_s)
         if knocked and not self._knocked:
-            end = imu.ts + self.config.knock_hold
-            if self.knocks and imu.ts < self.knocks[-1][1]:
+            end = message_time.to_seconds(imu.header.stamp) + self.config.knock_hold
+            if self.knocks and message_time.to_seconds(imu.header.stamp) < self.knocks[-1][1]:
                 self.knocks[-1] = (self.knocks[-1][0], end)
             else:
-                self.knocks.append((imu.ts, end))
-            logger.info(f"L1 knock at {imu.ts:.3f}, holding scans for {self.config.knock_hold} s")
+                self.knocks.append((message_time.to_seconds(imu.header.stamp), end))
+            logger.info(
+                f"L1 knock at {message_time.to_seconds(imu.header.stamp):.3f}, holding scans for {self.config.knock_hold} s"
+            )
         self._knocked = knocked
 
     def on_cloud(self, cloud: PointCloud2, arrival: float) -> list[PointCloud2]:
-        if arrival - cloud.ts > self.config.max_lag:
+        if arrival - message_time.to_seconds(cloud.header.stamp) > self.config.max_lag:
             self.dropped_late += 1
             return []
-        offsets = cloud.offset_times_u32()
-        end = cloud.ts + (0.0 if offsets is None or len(offsets) == 0 else offsets.max() * 1e-9)
+        offsets = sensor_field(cloud, "offset_time")
+        end = message_time.to_seconds(cloud.header.stamp) + (
+            0.0 if offsets is None or len(offsets) == 0 else offsets.max() * 1e-9
+        )
         self._pending.append((cloud, end))
         return self._release()
 
@@ -184,31 +198,38 @@ class L1Deskew:
 
     def _release(self) -> list[PointCloud2]:
         out: list[PointCloud2] = []
-        newest = self._poses[-1].ts if self._poses else -np.inf
+        newest = message_time.to_seconds(self._poses[-1].header.stamp) if self._poses else -np.inf
         while self._pending and (
             self._pending[0][1] <= newest
-            or self._pending[0][0].ts < self._pending[-1][0].ts - self.config.max_lag
+            or message_time.to_seconds(self._pending[0][0].header.stamp)
+            < message_time.to_seconds(self._pending[-1][0].header.stamp) - self.config.max_lag
         ):
             cloud, end = self._pending.popleft()
             if end > newest:
                 continue  # odometry never caught up
-            if any(a <= cloud.ts < b for a, b in self.knocks):
+            if any(a <= message_time.to_seconds(cloud.header.stamp) < b for a, b in self.knocks):
                 self.dropped_knock += 1
                 continue
             placed = self._place(cloud)
             if placed is not None:
                 out.append(placed)
         # A scan is stamped at most max_lag before it arrives, and odometry trails arrival.
-        while len(self._poses) > 2 and self._poses[1].ts < newest - 2 * self.config.max_lag:
+        while (
+            len(self._poses) > 2
+            and message_time.to_seconds(self._poses[1].header.stamp)
+            < newest - 2 * self.config.max_lag
+        ):
             self._poses.popleft()
         return out
 
     def _place(self, cloud: PointCloud2) -> PointCloud2 | None:
         poses = list(self._poses)
-        ts = np.array([p.ts for p in poses])
-        pts = cloud.points_f32().astype(np.float64)
-        offsets = cloud.offset_times_u32()
-        tp = cloud.ts + (np.zeros(len(pts)) if offsets is None else offsets * 1e-9)
+        ts = np.array([message_time.to_seconds(p.header.stamp) for p in poses])
+        pts = pointcloud.xyz(cloud).astype(np.float64)
+        offsets = sensor_field(cloud, "offset_time")
+        tp = message_time.to_seconds(cloud.header.stamp) + (
+            np.zeros(len(pts)) if offsets is None else offsets * 1e-9
+        )
         body = pts @ self._body[:3, :3].T + self._body[:3, 3]
         keep = (np.linalg.norm(pts, axis=1) < self.config.max_range) & (
             np.linalg.norm(body[:, :2], axis=1) > self.config.self_radius
@@ -218,17 +239,27 @@ class L1Deskew:
             return None
         pts, tp = pts[keep] @ self._mount[:3, :3].T + self._mount[:3, 3], tp[keep]
         quats = [
-            [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w] for p in poses
+            [
+                p.pose.pose.orientation.x,
+                p.pose.pose.orientation.y,
+                p.pose.pose.orientation.z,
+                p.pose.pose.orientation.w,
+            ]
+            for p in poses
         ]
-        pos = np.array([_vec(p.position) for p in poses])
+        pos = np.array(
+            [
+                np.array([p.pose.pose.position.x, p.pose.pose.position.y, p.pose.pose.position.z])
+                for p in poses
+            ]
+        )
         world = Slerp(ts, Rotation.from_quat(quats))(tp).apply(pts) + np.stack(
             [np.interp(tp, ts, pos[:, k]) for k in range(3)], axis=1
         )
-        inten = cloud.intensities_f32()
-        return PointCloud2.from_numpy(
+        inten = sensor_field(cloud, "intensity")
+        return sensor_cloud(
             world.astype(np.float32),
-            frame_id=poses[-1].frame_id,
-            timestamp=cloud.ts,
+            header=Header(cloud.header.stamp, poses[-1].header.frame_id),
             intensities=None if inten is None else inten[keep],
         )
 

@@ -37,7 +37,9 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 
 if TYPE_CHECKING:
@@ -75,4 +77,10 @@ class H264Decoder(Transformer[CompressedVideo, Image]):
     @staticmethod
     def _emit(frame: Any, obs: Observation[CompressedVideo]) -> Observation[Image]:
         bgr = frame.to_ndarray(format="bgr24")
-        return obs.derive(data=Image.from_numpy(bgr, ImageFormat.BGR, obs.data.frame_id, obs.ts))
+        return obs.derive(
+            data=image.from_array(
+                bgr,
+                encoding="bgr8",
+                header=Header(message_time.time_from_seconds(obs.ts), obs.data.frame_id),
+            )
+        )

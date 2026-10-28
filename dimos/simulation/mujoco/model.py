@@ -23,7 +23,7 @@ import mujoco
 import numpy as np
 
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils import occupancy, time as message_time
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.menagerie import menagerie_path
@@ -149,7 +149,7 @@ def _add_person_object(root: ET.Element) -> None:
 def load_scene_xml(config: MujocoConfig) -> str:
     if config.room_from_occupancy:
         path = Path(config.room_from_occupancy)
-        return generate_mujoco_scene(OccupancyGrid.from_path(path))
+        return generate_mujoco_scene(occupancy.from_file(path, header=message_time.header_now()))
 
     mujoco_room = config.room
     if mujoco_room == "office_555":
