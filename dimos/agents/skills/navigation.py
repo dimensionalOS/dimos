@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+import threading
 import time
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -43,6 +46,10 @@ class NavigationSkillContainer(Module):
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
+    # The navigate_with_text goal under way, as (query, goal), until the planner's
+    # goal_reached ends it or stop_navigation cancels it.
+    _active: tuple[str, PoseStamped] | None = None
+    _active_lock: threading.Lock
 
     _spatial_memory: SpatialMemorySpec
     _navigation: NavigationInterfaceSpec
@@ -50,10 +57,12 @@ class NavigationSkillContainer(Module):
 
     color_image: In[Image]
     odom: In[PoseStamped]
+    goal_reached: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._skill_started = False
+        self._active_lock = threading.Lock()
 
         # Here to prevent unwanted imports in the file.
         from dimos.models.vl.qwen import QwenVlModel
@@ -65,6 +74,9 @@ class NavigationSkillContainer(Module):
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        # Unconnected when the blueprint's planner publishes no goal_reached.
+        if self.goal_reached.transport is not None:
+            self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self._skill_started = True
 
     @rpc
@@ -111,19 +123,16 @@ class NavigationSkillContainer(Module):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    # TODO(capabilities): this skill is `instant`, so the `movement` hold is
-    # released the moment the call returns even though the tagged-location and
-    # semantic-map paths only fire set_goal() and keep navigating. Make it
-    # `background` and close the hold when the robot actually stops (the
-    # planner already emits a goal-reached signal, see PatrollingModule) so
-    # patrol/follow/explore can't start over an active navigation goal.
-    @skill(uses=[CAP_MOVEMENT])
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
 
         First attempts to locate an object in the robot's camera view using vision.
         If the object is found, navigates to it. If not, falls back to querying the
         semantic map for a location matching the description.
+        Returns as soon as the robot sets off. A tool update then reports when the robot
+        stops and how far from the target it is, which can be short of it. Calling this
+        skill again plans a fresh route from where the robot stands.
         CALL THIS SKILL FOR ONE SUBJECT AT A TIME. For example: "Go to the person wearing a blue shirt in the living room",
         you should call this skill twice, once for the person wearing a blue shirt and once for the living room.
         Args:
@@ -132,6 +141,18 @@ class NavigationSkillContainer(Module):
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
+
+        # Opened before any return so the movement hold always has a stream to release
+        # it. It stays open while a goal is under way and closes in _on_goal_reached.
+        self.start_tool("navigate_with_text")
+        message = self._navigate(query)
+        with self._active_lock:
+            navigating = self._active is not None
+        if not navigating:
+            self.stop_tool("navigate_with_text")
+        return message
+
+    def _navigate(self, query: str) -> str:
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
             return success_msg
@@ -163,18 +184,46 @@ class NavigationSkillContainer(Module):
             frame_id="map",
         )
 
-        return self._navigate_to(goal_pose, f"Found a tagged location called '{query}'.")
+        return self._navigate_to(query, goal_pose, f"Found a tagged location called '{query}'.")
 
-    def _navigate_to(self, pose: PoseStamped, message: str) -> str:
+    def _navigate_to(self, query: str, pose: PoseStamped, message: str) -> str:
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
+        # Recorded before set_goal: a planner that finds no path gives up inside the
+        # call, and its goal_reached frame must find this navigation active.
+        with self._active_lock:
+            self._active = (query, pose)
         self._navigation.set_goal(pose)
 
         return (
-            f"{message}. Started navigating to that position. "
-            f"To cancel movement call the 'stop_navigation' tool."
+            f"{message} Started navigating to that position. A tool update reports when "
+            f"the robot stops. To cancel movement call the 'stop_navigation' tool."
         )
+
+    def _on_goal_reached(self, msg: Bool) -> None:
+        with self._active_lock:
+            active, self._active = self._active, None
+        if active is None:
+            # A goal another module set, or one stop_navigation already ended.
+            return
+        query, goal = active
+        odom = self._latest_odom
+        if odom is None:
+            where = "robot position unknown"
+        else:
+            distance = math.dist(
+                (goal.position.x, goal.position.y), (odom.position.x, odom.position.y)
+            )
+            where = (
+                f"robot at ({odom.position.x:.2f}, {odom.position.y:.2f}), {distance:.2f} m from it"
+            )
+        if msg.data:
+            outcome = f"Arrived at '{query}'"
+        else:
+            outcome = f"Navigation to '{query}' stopped short of the target"
+        self.tool_update("navigate_with_text", f"{outcome}: {where}.")
+        self.stop_tool("navigate_with_text")
 
     def _navigate_to_object(self, query: str) -> str | None:
         if self._object_tracking is None:
@@ -248,16 +297,21 @@ class NavigationSkillContainer(Module):
             return f"Found a result for '{query}' but it didn't have a valid position."
 
         message = f"Found a location in the semantic map matching '{query}'."
-        return self._navigate_to(goal_pose, message)
+        return self._navigate_to(query, goal_pose, message)
 
     @skill
     def stop_navigation(self) -> str:
-        """Immediatly stop moving."""
+        """Immediately stop moving."""
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
 
+        # Cleared first so the cancel's goal_reached frame is not reported as a stop
+        # short of the target.
+        with self._active_lock:
+            self._active = None
         self._cancel_goal_and_stop()
+        self.stop_tool("navigate_with_text")
 
         return "Stopped"
 
