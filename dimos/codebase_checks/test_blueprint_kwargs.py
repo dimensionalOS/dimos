@@ -89,6 +89,6 @@ def test_blueprint_atom_kwargs_match_module_config(
         listing = "\n".join(f"  - {violation}" for violation in violations)
         raise AssertionError(
             f"Blueprint {blueprint_name!r} passes unknown module kwargs:\n{listing}\n\n"
-            "Blueprint kwargs are forwarded into the module constructor. For modules "
+            "Blueprint kwargs are forwarded into the module constructor. "
             "use fields from the config model or explicitly declared `__init__` keyword names."
         )
