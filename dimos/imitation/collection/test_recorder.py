@@ -294,7 +294,10 @@ def connected_recorder(tmp_path, mocker):
         atom = collect(
             profile=_profile(2), recording=tmp_path / "session", format=format
         ).active_blueprints[0]
-        instance = atom.module(**atom.kwargs, **kwargs)
+        instance = atom.module(
+            **atom.kwargs,
+            **{"source_dir": None, "build_command": None, "executable": sys.executable, **kwargs},
+        )
         for port, _ in instance.recording_inputs:
             getattr(instance, port).transport = mocker.MagicMock(channel=f"dimos/{port}")
         recorders.append(instance)
@@ -313,9 +316,9 @@ def test_build_saves_portable_schema_before_native_capture(
     connected_recorder, format, payload, mocker
 ):
     recorder = connected_recorder(
-        format, stream_remapping={"camera_0": "wrist", "status": "episodes"}
+        format,
+        stream_remapping={"camera_0": "wrist", "status": "episodes"},
     )
-    mocker.patch.object(NativeModule, "build")
     start = mocker.patch.object(NativeModule, "start")
     recorder.build()
     directory = recorder.config.recording
@@ -340,7 +343,6 @@ def test_existing_directory_is_never_overwritten(connected_recorder, mocker):
     recorder.config.recording.mkdir()
     marker = recorder.config.recording / "schema.json"
     marker.write_text("existing")
-    mocker.patch.object(NativeModule, "build")
     start = mocker.patch.object(NativeModule, "start")
     with pytest.raises(FileExistsError):
         recorder.build()
@@ -358,13 +360,12 @@ def test_missing_connections_fail_before_build_or_directory_creation(recorder, m
 
 def test_schema_write_failure_prevents_capture(connected_recorder, mocker):
     recorder = connected_recorder()
-    mocker.patch.object(NativeModule, "build")
     start = mocker.patch.object(NativeModule, "start")
     mocker.patch.object(Path, "open", side_effect=PermissionError("not writable"))
     with pytest.raises(PermissionError, match="not writable"):
         recorder.build()
     start.assert_not_called()
-    assert not recorder._prepared
+    assert not (recorder.config.recording / "schema.json").exists()
 
 
 def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypatch):
