@@ -48,6 +48,8 @@ def dual_openyam_hardware(
     *,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
+    tracking_comp: bool = False,
+    openyam_anvil_parity: bool = False,
 ) -> HardwareComponent:
     """Select mock hardware or an explicitly configured dual-CAN adapter."""
     if left_can_port is None and right_can_port is None:
@@ -62,6 +64,8 @@ def dual_openyam_hardware(
             "runtime_config": DamiaoRuntimeConfig(
                 bus_devices={"left": left_can_port, "right": right_can_port},
                 gravity_comp=True,
+                tracking_comp=tracking_comp,
+                openyam_anvil_parity=openyam_anvil_parity,
             )
         },
     )

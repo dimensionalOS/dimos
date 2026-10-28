@@ -31,4 +31,6 @@ class DamiaoRuntimeConfig:
 
     bus_devices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
     gravity_comp: bool = Field(default=True, strict=True)
+    openyam_anvil_parity: bool = Field(default=False, strict=True)
+    tracking_comp: bool = Field(default=False, strict=True)
     tick_deadline_us: int = Field(default=1_000, ge=1, strict=True)

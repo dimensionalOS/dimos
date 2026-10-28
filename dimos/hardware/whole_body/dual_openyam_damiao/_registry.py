@@ -16,4 +16,7 @@ ADAPTER_FACTORIES = {
     "dual_openyam_damiao": (
         "dimos.hardware.whole_body.dual_openyam_damiao.adapter:DualOpenYamDamiaoAdapter"
     ),
+    "dual_openyam_arms_only_damiao": (
+        "dimos.hardware.whole_body.dual_openyam_damiao.adapter:ArmOnlyDualOpenYamDamiaoAdapter"
+    ),
 }

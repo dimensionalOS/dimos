@@ -19,7 +19,7 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
-from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
+from dimos.hardware.whole_body.openyam_damiao.tracking_adapter import OpenYamTrackingMixin
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
@@ -44,7 +44,7 @@ def _gripper_motor(side: str) -> can_motor_control.MotorSpec:
     )
 
 
-class DualOpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
+class DualOpenYamDamiaoAdapter(OpenYamTrackingMixin):
     """Two standard YAM follower arms and linear grippers, one bus per side."""
 
     arm_joints = {
@@ -92,5 +92,21 @@ class DualOpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
                 opening_direction="decreasing_position",
                 default_current=0.15,
             )
+            .build()
+        )
+
+
+class ArmOnlyDualOpenYamDamiaoAdapter(DualOpenYamDamiaoAdapter):
+    """Dual OpenYAM transport for tested arm motion without gripper activation."""
+
+    gripper_joints: dict[str, str] = {}
+
+    def _build_robot(self) -> can_motor_control.Robot:
+        return (
+            can_motor_control.Robot.builder()
+            .add_bus("left", self._make_can_bus("left"), damiao.DamiaoCodec())
+            .add_bus("right", self._make_can_bus("right"), damiao.DamiaoCodec())
+            .add_arm("left_arm", bus="left", motors=_arm_motors("left"))
+            .add_arm("right_arm", bus="right", motors=_arm_motors("right"))
             .build()
         )

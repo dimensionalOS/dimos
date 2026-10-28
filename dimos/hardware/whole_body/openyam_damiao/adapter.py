@@ -20,12 +20,12 @@ import can_motor_control
 from can_motor_control import damiao
 
 from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
+from dimos.hardware.whole_body.openyam_damiao.tracking_adapter import OpenYamTrackingMixin
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
 
 
-class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
+class OpenYamDamiaoAdapter(OpenYamTrackingMixin):
     """One OpenYAM arm and calibrated gripper on a shared CAN bus."""
 
     bus_name = "openyam"

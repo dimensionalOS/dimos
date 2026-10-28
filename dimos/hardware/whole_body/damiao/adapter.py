@@ -30,7 +30,7 @@ import pinocchio
 
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
+from dimos.hardware.whole_body.spec import POS_STOP, IMUState, MotorCommand, MotorState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -106,6 +106,9 @@ class DamiaoWholeBodyAdapter(ABC):
         self._arm_position_limits: tuple[tuple[float, float], ...] = ()
         self._feedback_fault: str | None = None
         self._warned_feedback_clamps: set[tuple[str, str]] = set()
+        self._last_arm_states: list[MotorState] = []
+        self._last_arm_state_time: float | None = None
+        self._last_tracking_command_time: float | None = None
 
     @property
     def joint_names(self) -> tuple[str, ...]:
@@ -229,6 +232,7 @@ class DamiaoWholeBodyAdapter(ABC):
         self._connected = False
         self._active = False
         self._has_state = False
+        self._reset_tracking()
 
     def is_connected(self) -> bool:
         return self._connected and self._robot.is_connected()
@@ -278,6 +282,7 @@ class DamiaoWholeBodyAdapter(ABC):
             )
             return False
         self._active = False
+        self._reset_tracking()
         return True
 
     def has_motor_states(self) -> bool:
@@ -314,7 +319,12 @@ class DamiaoWholeBodyAdapter(ABC):
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
             states.append(MotorState(q=opening, dq=0.0, tau=0.0))
         self._validate_finite_states(states)
-        return self._normalize_arm_feedback(states)
+        normalized = self._normalize_arm_feedback(states)
+        self._last_arm_states = normalized[
+            : sum(len(joints) for joints in self.arm_joints.values())
+        ]
+        self._last_arm_state_time = time.monotonic()
+        return normalized
 
     def read_imu(self) -> IMUState:
         return IMUState()
@@ -342,10 +352,13 @@ class DamiaoWholeBodyAdapter(ABC):
                 commands[arm_count:],
                 strict=True,
             ):
-                if not np.isfinite(command.q) or not 0.0 <= command.q <= 1.0:
+                if not np.isfinite(command.q) or not (
+                    0.0 <= command.q <= 1.0 or command.q == POS_STOP
+                ):
                     raise ValueError(f"gripper {name!r} opening must be in [0, 1]")
 
             gravity = self._gravity_torques()
+            tracking = self._tracking_torques(commands[:arm_count], gravity)
             offset = 0
             gravity_offset = 0
             for name, joints in self.arm_joints.items():
@@ -357,8 +370,10 @@ class DamiaoWholeBodyAdapter(ABC):
                             command.kp,
                             command.kd,
                             command.q,
-                            command.dq,
-                            command.tau + gravity[gravity_offset + index],
+                            command.dq * self._command_velocity_scale(index),
+                            command.tau
+                            + gravity[gravity_offset + index]
+                            + tracking[gravity_offset + index],
                         ]
                         for index, command in enumerate(group_commands)
                     ],
@@ -370,17 +385,31 @@ class DamiaoWholeBodyAdapter(ABC):
 
             for name in self.gripper_joints:
                 opening = commands[offset].q
-                self._grippers[name].set_opening(opening)
+                if opening != POS_STOP:
+                    self._grippers[name].set_opening(opening)
                 offset += 1
 
             self._robot.tick(self._runtime_config.tick_deadline_us)
             return True
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Damiao whole-body adapter rejected motor command",
                 hardware_id=self._hardware_id,
+                error=repr(exc),
             )
             return False
+
+    def _command_velocity_scale(self, index: int) -> float:
+        return 1.0
+
+    def _tracking_torques(self, commands: list[MotorCommand], gravity: np.ndarray) -> np.ndarray:
+        """OpenYAM adapters may supply an opt-in, stateful torque correction."""
+        return np.zeros(len(commands), dtype=np.float64)
+
+    def _reset_tracking(self) -> None:
+        self._last_tracking_command_time = None
+        self._last_arm_state_time = None
+        self._last_arm_states = []
 
     def _refresh(self) -> None:
         self._send_with_backpressure_retry(self._robot.refresh)

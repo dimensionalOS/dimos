@@ -39,6 +39,7 @@ class MotorCommand:
     kp: float = 0.0  # position gain
     kd: float = 0.0  # velocity gain
     tau: float = 0.0  # feedforward torque (Nm)
+    ddq: float | None = None  # desired acceleration, rad/s² for angular joints
 
 
 @dataclass(frozen=True)

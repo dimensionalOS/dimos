@@ -756,6 +756,18 @@ def test_write_motor_commands_grippers_routes_normalized_openings(
     assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
 
 
+def test_write_motor_commands_can_leave_grippers_untouched(
+    active_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+) -> None:
+    commands = [MotorCommand(q=0.0)] * 4 + [MotorCommand(), MotorCommand()]
+
+    assert active_dual_adapter.write_motor_commands(commands)
+
+    assert cast("FakeGripper", dual_robot["left_gripper"]).commands == []
+    assert cast("FakeGripper", dual_robot["right_gripper"]).commands == []
+
+
 def test_socketcan_queue_full_is_retried_without_changing_command(
     active_dual_adapter: DualAdapter,
     dual_robot: FakeRobot,
