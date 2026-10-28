@@ -99,14 +99,8 @@ pub fn innovation(
 }
 
 /// The ln ratios to the reported values of the four odometry variances, the ln closure scale (each 0 unless fitted)
-/// and the share of the closures that are right, most probable given the innovations. A right closure's innovation is
-/// zero-mean Gaussian with covariance S = sum_c e^(r_c) pieces_c + e^(k) fitness I; a wrong one (a look-alike
-/// place) points anywhere a scan could have been matched to, uniform with density `outlier_density`. Every committed
-/// closure counts, weighed by that mixture rather than by the solve's verdict, which was itself reached with the noise
-/// being estimated (low noise rejects the right closures that would raise it). This minimizes
-/// -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c r_c^2 / sd_c^2 + 1.5 k^2 over the lns and the share w
-/// (uniform prior). One at a time: a grid (numerical range only) finds its basin and golden-section search refines it,
-/// alternated until they settle. None without an innovation.
+/// and the share of the closures that are right, most probable given the innovations (`fit_mixture` from the reported
+/// noise). None without an innovation.
 pub fn fit(
     innovations: &[Innovation],
     prior_sd: [f64; COMPONENTS],
@@ -114,18 +108,77 @@ pub fn fit(
     fit_closure: bool,
     outlier_density: f64,
 ) -> Option<([f64; COMPONENTS], f64, f64)> {
-    if innovations.is_empty() {
-        return None;
+    fit_mixture(
+        innovations,
+        prior_sd,
+        fit_odometry,
+        fit_closure,
+        outlier_density,
+        [0.0; COMPONENTS],
+        0.0,
+    )
+    .map(|m| (m.odometry, m.closure, m.share))
+}
+
+/// The right/wrong mixture over closure innovations at its most probable point (`fit_mixture`).
+#[derive(Clone, Debug)]
+pub struct Mixture {
+    /// The ln ratios of the four odometry variances to the reported ones, and the ln closure scale.
+    pub odometry: [f64; COMPONENTS],
+    pub closure: f64,
+    /// The share of the closures that are right.
+    pub share: f64,
+    /// Each odometry ln's posterior standard deviation (the inverse curvature of the cost with every other parameter
+    /// free; the prior's where the cost is flat).
+    pub odometry_sd: [f64; COMPONENTS],
+    /// The cost (-2 ln posterior) at that point.
+    pub cost: f64,
+    /// Per innovation (in order), its probability of being a right closure.
+    pub right: Vec<f64>,
+}
+
+/// The mixture's cost, -2 sum ln(w N(v; 0, S) + (1 - w) outlier_density) + sum_c r_c^2 / sd_c^2 + 1.5 k^2, at ln
+/// odometry ratios r, ln closure scale k and the right share w as a logit.
+struct MixtureCost<'a> {
+    innovations: &'a [Innovation],
+    prior_sd: [f64; COMPONENTS],
+    ln_outlier: f64,
+}
+
+impl MixtureCost<'_> {
+    /// Each innovation's probability of being a right closure at the given parameters.
+    fn right(&self, odometry: &[f64; COMPONENTS], closure: f64, logit: f64) -> Vec<f64> {
+        self.innovations
+            .iter()
+            .map(|n| {
+                let single = MixtureCost {
+                    innovations: std::slice::from_ref(n),
+                    prior_sd: self.prior_sd,
+                    ln_outlier: self.ln_outlier,
+                };
+                // -2 ln of the mixture density, and of its wrong part alone
+                let both = single.cost(odometry, closure, logit) - single.prior(odometry, closure);
+                let share = 1.0 / (1.0 + (-logit).exp());
+                let wrong = -2.0 * ((1.0 - share).ln() + self.ln_outlier);
+                (1.0 - (0.5 * (both - wrong)).exp()).clamp(0.0, 1.0)
+            })
+            .collect()
     }
-    let ln_outlier = outlier_density.ln();
-    let ln_two_pi = (2.0 * std::f64::consts::PI).ln();
-    // the share of right closures as a logit
-    let cost = |odometry: &[f64; COMPONENTS], closure: f64, logit: f64| -> f64 {
+
+    fn prior(&self, odometry: &[f64; COMPONENTS], closure: f64) -> f64 {
+        (0..COMPONENTS)
+            .map(|c| odometry[c] * odometry[c] * prior_weight(c, self.prior_sd[c]))
+            .sum::<f64>()
+            + 1.5 * closure * closure
+    }
+
+    fn cost(&self, odometry: &[f64; COMPONENTS], closure: f64, logit: f64) -> f64 {
+        let ln_two_pi = (2.0 * std::f64::consts::PI).ln();
         let variances: [f64; COMPONENTS] = std::array::from_fn(|c| odometry[c].exp());
         let k = closure.exp();
         let share = 1.0 / (1.0 + (-logit).exp());
         let (ln_right, ln_wrong) = (share.ln(), (1.0 - share).ln());
-        innovations
+        self.innovations
             .iter()
             .map(|n| {
                 let covariance: Mat3 = std::array::from_fn(|i| {
@@ -143,38 +196,77 @@ pub fn fit(
                 let quadratic = n.v[0] * iv[0] + n.v[1] * iv[1] + n.v[2] * iv[2];
                 let ln_gaussian =
                     -0.5 * (quadratic + mat3::det(&covariance).ln() + 3.0 * ln_two_pi);
-                let (a, b) = (ln_right + ln_gaussian, ln_wrong + ln_outlier);
+                let (a, b) = (ln_right + ln_gaussian, ln_wrong + self.ln_outlier);
                 let high = a.max(b);
                 -2.0 * (high + ((a - high).exp() + (b - high).exp()).ln())
             })
             .sum::<f64>()
             + (0..COMPONENTS)
-                .map(|c| odometry[c] * odometry[c] * prior_weight(c, prior_sd[c]))
+                .map(|c| odometry[c] * odometry[c] * prior_weight(c, self.prior_sd[c]))
                 .sum::<f64>()
             + 1.5 * closure * closure
-    };
-    let minimize = |f: &dyn Fn(f64) -> f64, start: f64| -> f64 {
-        let (mut best, mut best_cost) = (start, f(start));
-        for step in -60..=60 {
-            let t = step as f64 * 0.5;
-            let c = f(t);
-            if c < best_cost {
-                (best, best_cost) = (t, c);
-            }
+    }
+}
+
+/// One coordinate's minimum: a grid over the numerical range finds its basin, golden-section search refines it.
+fn minimize(f: &dyn Fn(f64) -> f64, start: f64) -> f64 {
+    let (mut best, mut best_cost) = (start, f(start));
+    for step in -60..=60 {
+        let t = step as f64 * 0.5;
+        let c = f(t);
+        if c < best_cost {
+            (best, best_cost) = (t, c);
         }
-        let (mut low, mut high) = (best - 0.5, best + 0.5);
-        let golden = (5f64.sqrt() - 1.0) / 2.0;
-        for _ in 0..60 {
-            let (a, b) = (high - golden * (high - low), low + golden * (high - low));
-            if f(a) < f(b) {
-                high = b;
-            } else {
-                low = a;
-            }
+    }
+    let (mut low, mut high) = (best - 0.5, best + 0.5);
+    let golden = (5f64.sqrt() - 1.0) / 2.0;
+    let (mut a, mut b) = (high - golden * (high - low), low + golden * (high - low));
+    let (mut fa, mut fb) = (f(a), f(b));
+    for _ in 0..60 {
+        if fa < fb {
+            (high, b, fb) = (b, a, fa);
+            a = high - golden * (high - low);
+            fa = f(a);
+        } else {
+            (low, a, fa) = (a, b, fb);
+            b = low + golden * (high - low);
+            fb = f(b);
         }
-        (low + high) / 2.0
+    }
+    (low + high) / 2.0
+}
+
+/// The mixture over every innovation given: a right closure's innovation is zero-mean Gaussian with covariance
+/// S = sum_c e^(r_c) pieces_c + e^(k) fitness I; a wrong one (a look-alike place) points anywhere a scan could have been
+/// matched to, uniform with density `outlier_density`. Every closure counts, weighed by that mixture rather than by the
+/// solve's verdict, which was itself reached with the noise being estimated (low noise rejects the right closures that
+/// would raise it). Minimizes `MixtureCost` over the lns and the share w (uniform prior), one at a time, from the odometry
+/// lns `start` and closure ln `closure_start` with the share at even odds (so a share that went to all-wrong under an
+/// earlier noise cannot hold the noise there), alternated until they settle. None without an innovation.
+pub fn fit_mixture(
+    innovations: &[Innovation],
+    prior_sd: [f64; COMPONENTS],
+    fit_odometry: bool,
+    fit_closure: bool,
+    outlier_density: f64,
+    start: [f64; COMPONENTS],
+    closure_start: f64,
+) -> Option<Mixture> {
+    if innovations.is_empty() {
+        return None;
+    }
+    let model = MixtureCost {
+        innovations,
+        prior_sd,
+        ln_outlier: outlier_density.ln(),
     };
-    let (mut odometry, mut closure, mut logit) = ([0.0; COMPONENTS], 0.0, 0.0);
+    let start = if fit_odometry {
+        start
+    } else {
+        [0.0; COMPONENTS]
+    };
+    let closure_start = if fit_closure { closure_start } else { 0.0 };
+    let (mut odometry, mut closure, mut logit) = (start, closure_start, 0.0);
     for _ in 0..30 {
         let previous = (odometry, closure, logit);
         if fit_odometry {
@@ -183,16 +275,16 @@ pub fn fit(
                     &|t| {
                         let mut trial = odometry;
                         trial[c] = t;
-                        cost(&trial, closure, logit)
+                        model.cost(&trial, closure, logit)
                     },
                     odometry[c],
                 );
             }
         }
         if fit_closure {
-            closure = minimize(&|t| cost(&odometry, t, logit), closure);
+            closure = minimize(&|t| model.cost(&odometry, t, logit), closure);
         }
-        logit = minimize(&|t| cost(&odometry, closure, t), logit);
+        logit = minimize(&|t| model.cost(&odometry, closure, t), logit);
         let moved = (0..COMPONENTS)
             .map(|c| (odometry[c] - previous.0[c]).abs())
             .fold(
@@ -203,7 +295,119 @@ pub fn fit(
             break;
         }
     }
-    Some((odometry, closure, 1.0 / (1.0 + (-logit).exp())))
+    // the posterior covariance of every fitted parameter is 2 H^-1 (H the cost's Hessian, by central differences)
+    let mut free: Vec<usize> = Vec::new();
+    if fit_odometry {
+        free.extend(0..COMPONENTS);
+    }
+    if fit_closure {
+        free.push(COMPONENTS);
+    }
+    free.push(COMPONENTS + 1);
+    let at = |shift: &[(usize, f64)]| {
+        let (mut o, mut k, mut l) = (odometry, closure, logit);
+        for &(index, d) in shift {
+            match index {
+                i if i < COMPONENTS => o[i] += d,
+                COMPONENTS => k += d,
+                _ => l += d,
+            }
+        }
+        model.cost(&o, k, l)
+    };
+    let h = 1e-3;
+    let size = free.len();
+    let mut hessian = vec![vec![0.0; size]; size];
+    for (a, &i) in free.iter().enumerate() {
+        for (b, &j) in free.iter().enumerate().skip(a) {
+            hessian[a][b] =
+                (at(&[(i, h), (j, h)]) - at(&[(i, h), (j, -h)]) - at(&[(i, -h), (j, h)])
+                    + at(&[(i, -h), (j, -h)]))
+                    / (4.0 * h * h);
+            hessian[b][a] = hessian[a][b];
+        }
+    }
+    let inverse = invert(hessian.clone());
+    let odometry_sd = std::array::from_fn(|c| {
+        let fallback = (1.0 / prior_weight(c, prior_sd[c])).sqrt();
+        if !fit_odometry {
+            return fallback;
+        }
+        match &inverse {
+            Some(inv) if inv[c][c] > 0.0 && inv[c][c].is_finite() => (2.0 * inv[c][c]).sqrt(),
+            _ if hessian[c][c] > 0.0 => (2.0 / hessian[c][c]).sqrt(),
+            _ => fallback,
+        }
+    });
+    Some(Mixture {
+        odometry,
+        closure,
+        share: 1.0 / (1.0 + (-logit).exp()),
+        odometry_sd,
+        cost: model.cost(&odometry, closure, logit),
+        right: model.right(&odometry, closure, logit),
+    })
+}
+
+/// How much more the mixture's cost is at odometry lns `odometry` than at its fit `fitted` (the closure scale, if
+/// fitted, and the share free): -2 ln of their posterior ratio, about chi-square with `COMPONENTS` degrees of freedom
+/// where `odometry` is the true noise.
+pub fn mixture_excess(
+    innovations: &[Innovation],
+    prior_sd: [f64; COMPONENTS],
+    fit_closure: bool,
+    outlier_density: f64,
+    odometry: [f64; COMPONENTS],
+    fitted: &Mixture,
+) -> f64 {
+    let model = MixtureCost {
+        innovations,
+        prior_sd,
+        ln_outlier: outlier_density.ln(),
+    };
+    let (mut closure, mut logit) = (fitted.closure, 0.0);
+    for _ in 0..30 {
+        let previous = (closure, logit);
+        if fit_closure {
+            closure = minimize(&|t| model.cost(&odometry, t, logit), closure);
+        }
+        logit = minimize(&|t| model.cost(&odometry, closure, t), logit);
+        if (closure - previous.0).abs().max((logit - previous.1).abs()) < 1e-6 {
+            break;
+        }
+    }
+    (model.cost(&odometry, closure, logit) - fitted.cost).max(0.0)
+}
+
+/// The inverse of a small symmetric matrix by Gauss-Jordan with partial pivoting; None if singular.
+fn invert(mut m: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let n = m.len();
+    let mut inv: Vec<Vec<f64>> = (0..n)
+        .map(|i| (0..n).map(|j| if i == j { 1.0 } else { 0.0 }).collect())
+        .collect();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&a, &b| m[a][col].abs().total_cmp(&m[b][col].abs()))?;
+        if m[pivot][col].abs() < 1e-300 || !m[pivot][col].is_finite() {
+            return None;
+        }
+        m.swap(col, pivot);
+        inv.swap(col, pivot);
+        let d = m[col][col];
+        for j in 0..n {
+            m[col][j] /= d;
+            inv[col][j] /= d;
+        }
+        for row in 0..n {
+            if row != col {
+                let f = m[row][col];
+                for j in 0..n {
+                    m[row][j] -= f * m[col][j];
+                    inv[row][j] -= f * inv[col][j];
+                }
+            }
+        }
+    }
+    Some(inv)
 }
 
 /// A noise source's ln ratio to its reported variance from the solved graph's residuals: they were whitened at

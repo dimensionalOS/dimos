@@ -97,6 +97,7 @@ config! {
     closure_uninformative_noise_upper_bound: bool,
     closure_noise_from_residuals: bool,
     odometry_noise_solve_lower_bound: bool,
+    odometry_noise_innovation_check: bool,
     odom_xy_var_per_m: f64,
     odom_xy_var_per_rad: f64,
     odom_z_var_per_m: f64,
