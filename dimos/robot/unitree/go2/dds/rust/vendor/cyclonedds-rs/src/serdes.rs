@@ -329,6 +329,11 @@ impl<'a, T: TopicType> SampleBuffer<T> {
         self.buffer.len()
     }
 
+    /// The writer's source timestamp of sample `index`: ns since the epoch, its clock.
+    pub fn source_timestamp(&self, index: usize) -> i64 {
+        self.sample_info[index].source_timestamp
+    }
+
     pub fn iter(&'a self) -> impl Iterator<Item = &T> {
         let p = self.buffer.iter().filter_map(|p| {
             let sample = unsafe { &*(*p) };

@@ -18,7 +18,7 @@ import sys
 
 import pytest
 
-from dimos.core.global_config import global_config
+from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 
 
@@ -28,7 +28,7 @@ def fake_dimsim() -> Iterator[Callable[[str], DimSimProcess]]:
     started: list[DimSimProcess] = []
 
     def make(script: str) -> DimSimProcess:
-        proc = DimSimProcess(global_config)
+        proc = DimSimProcess(DimSimConfig())
         proc.process = subprocess.Popen(
             [sys.executable, "-u", "-c", script],
             stdout=subprocess.PIPE,

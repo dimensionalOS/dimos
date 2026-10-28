@@ -21,6 +21,7 @@ with `.time_range(t0, t1)`). Keeps these fast and dependency-free.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -56,6 +57,7 @@ from dimos.imitation.dataprep.schema import (
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
+from dimos.robot.manipulators.xarm.config import xarm7_hardware
 
 
 @pytest.mark.parametrize(
@@ -122,6 +124,9 @@ class _FakeStore:
 
     def list_streams(self) -> list[str]:
         return list(self._streams)
+
+    def stop(self) -> None:
+        pass
 
 
 def _status(events: list[tuple[float, str, str | None]]) -> list[_Obs]:
@@ -1012,3 +1017,74 @@ print(json.dumps(inspect_recording(sys.argv[1])))
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1])["format"] == "recording"
+
+
+# -- example config -----------------------------------------------------------
+
+
+def _webxr_xarm7_recording(*, jitter_s: float) -> _FakeStore:
+    joints = xarm7_hardware("arm", gripper=True).joints
+    image = {"data": np.zeros((480, 640, 3), dtype=np.uint8)}
+    images = [_Obs(10.0 + k / 28.0, image) for k in range(57)]
+    images[2] = _Obs(images[2].ts + jitter_s, image)
+    states = [
+        _Obs(9.9 + k / 100.0, JointState(name=joints, position=[float(k)] * len(joints)))
+        for k in range(221)
+    ]
+    return _FakeStore(
+        {
+            "color_image": images,
+            "coordinator_joint_state": states,
+            "status": _status([(10.0, "start", "pick"), (12.0, "save", "pick")]),
+        }
+    )
+
+
+def _example_config(tmp_path: Path) -> DataPrepConfig:
+    path = Path(__file__).with_name("example_config.json")
+    config = DataPrepConfig.model_validate_json(path.read_text())
+    return config.model_copy(
+        update={
+            "source": "recording.db",
+            "output": OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
+        }
+    )
+
+
+def test_example_config_names_match_the_webxr_xarm7_recording(tmp_path: Path) -> None:
+    config = _example_config(tmp_path)
+    joints = xarm7_hardware("arm", gripper=True).joints
+
+    assert config.observation["joint_state"].names == joints
+    assert config.action["joint_target"].names == joints
+
+
+def test_example_config_builds_the_webxr_xarm7_recording(mocker, tmp_path: Path) -> None:
+    config = _example_config(tmp_path)
+    mocker.patch(
+        "dimos.imitation.dataprep.build._open_recording",
+        return_value=_webxr_xarm7_recording(jitter_s=0.025),
+    )
+    received: list[Sample] = []
+
+    def writer(samples: Iterator[Sample], _output: OutputConfig) -> Path:
+        received.extend(samples)
+        return tmp_path
+
+    run_dataprep(config, writer=writer)
+
+    assert config.quality.mode == "fill"
+    assert len(received) > 20
+    assert received[0].observation["joint_state"].shape == (8,)
+    assert any(bool(sample.complementary_info["is_filled"][0]) for sample in received)
+
+
+def test_example_config_in_strict_mode_rejects_one_late_image(mocker, tmp_path: Path) -> None:
+    config = _example_config(tmp_path).model_copy(update={"quality": QualityConfig(mode="strict")})
+    mocker.patch(
+        "dimos.imitation.dataprep.build._open_recording",
+        return_value=_webxr_xarm7_recording(jitter_s=0.025),
+    )
+
+    with pytest.raises(RuntimeError, match="failed dataset validation"):
+        run_dataprep(config, writer=mocker.Mock(return_value=tmp_path))

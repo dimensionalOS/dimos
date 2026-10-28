@@ -747,6 +747,8 @@ class ViserPanelGui:
         }
 
     def _preset_values_by_name(self, preset: str) -> dict[str, float]:
+        if preset == "Zero":
+            return dict.fromkeys(self.get_model_config().joint_names, 0.0)
         if preset == "Current":
             state = self.get_current_joint_state()
         elif preset == "Init":
@@ -776,6 +778,7 @@ class ViserPanelGui:
         options.append("Current")
         if self.get_model_config().home_joints is not None:
             options.append("Home")
+        options.append("Zero")
         for attr in ("options", "values"):
             if hasattr(handle, attr):
                 try:
@@ -786,7 +789,7 @@ class ViserPanelGui:
     def _apply_preset(self, preset: str) -> None:
         if self._closed:
             return
-        if preset not in {"Current", "Init", "Home"}:
+        if preset not in {"Current", "Init", "Home", "Zero"}:
             return
         targets: dict[PlanningGroupID, JointState] = {}
         slider_values: list[tuple[PlanningGroupID, tuple[str, ...], list[float]]] = []
@@ -806,6 +809,14 @@ class ViserPanelGui:
                 )
                 return
             positions = [float(values[str(name)]) for name in group.joint_names]
+            if preset == "Zero":
+                try:
+                    self.scene_info.model.joint_space.select(group.joint_names).normalize_positions(
+                        positions
+                    )
+                except ValueError as exc:
+                    self._set_recoverable_error(f"Cannot apply Zero preset: {exc}")
+                    return
             targets[group_id] = JointState({"name": list(group.joint_names), "position": positions})
             slider_values.append((group_id, group.joint_names, positions))
         self.state.group_joint_targets.update(targets)

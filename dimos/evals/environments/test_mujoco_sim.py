@@ -61,7 +61,8 @@ def test_launch_flags(monkeypatch):
 
     proc = DimosCliCall()
     environment(scene=Path("scenes/table.xml")).configure_launch(proc)
-    assert proc.global_args[-2:] == ["--mujoco-scene", str(Path("scenes/table.xml").resolve())]
+    assert proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] == str(Path("scenes/table.xml").resolve())
+    assert "CONTROLCOORDINATOR__HARDWARE" not in proc.extra_env
 
     proc = DimosCliCall()
     environment(base_height=0.912).configure_launch(proc)
@@ -214,6 +215,7 @@ def test_settle_waits_for_joints_to_stop():
 
 def test_launch_and_cleanup(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.sim.launched_mcp_url", return_value="http://x/mcp")
     proc.extra_env = {}
     proc.global_args = []
     mocker.patch(

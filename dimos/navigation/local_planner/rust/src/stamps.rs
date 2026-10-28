@@ -41,6 +41,13 @@ pub fn governor_speed(clearance: f64, gov: &Governor) -> f64 {
     gov.min_speed + (gov.max_speed - gov.min_speed) * frac.max(0.0).min(1.0)
 }
 
+/// Speed (m/s) -> the clearance the governor grants it at, the inverse of `governor_speed`.
+#[allow(clippy::manual_clamp)]
+pub fn governor_clearance(speed: f64, gov: &Governor) -> f64 {
+    let frac = (speed - gov.min_speed) / (gov.max_speed - gov.min_speed);
+    gov.floor + (gov.speed_clearance - gov.floor) * frac.max(0.0).min(1.0)
+}
+
 /// The path's timestamps carrying its precision profile, the inverse of `decode_ceilings`.
 /// `clearance` of the wrong length gives every segment cruise; fan segments are priced by yaw span.
 pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64, gov: &Governor) -> Vec<f64> {

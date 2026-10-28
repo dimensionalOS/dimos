@@ -104,6 +104,9 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ## Behavior
 
 - Off unless `--record`; never active under `--replay`.
+- The Python recorder automatically subscribes to new streams when modules are
+  added to a recording run through `Dimos.connect().run(...)`. The same topic
+  filters apply, and messages go into the run's existing `memory.db`.
 - The Python recorder uses one writer thread. Its queue holds 1000 messages, then
   drops and warns. The Rust recorder uses its existing native encoding pool and
   ordered writer pipeline.

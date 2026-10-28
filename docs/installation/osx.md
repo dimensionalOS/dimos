@@ -18,7 +18,7 @@ See [installer options](/docs/installation/index.md).
 
 LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** everywhere, so you never need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
-See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
+See the [Zenoh transport guide](/docs/usage/transports/index.md#zenoh) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
 
 ## Manual installation
 

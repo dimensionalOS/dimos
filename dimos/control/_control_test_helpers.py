@@ -17,20 +17,45 @@
 Not named ``test_*``/``*_test`` so pytest does not collect it; both
 ``test_control.py`` and ``test_coordinator_routing.py`` import ``RecordingTask``
 from here rather than reaching into each other's test modules.
+
+``FakeArm`` is a connection module with no hardware behind it, for tests of
+``ConnectionModule`` and of anything that talks to one.
 """
 
 from __future__ import annotations
 
+from collections import deque
+import functools
+from pathlib import Path
+import tempfile
+import threading
+import time
 from typing import Any
 
+from pydantic import Field
+from reactivex.disposable import Disposable
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
+from dimos.control.contract.convert import (
+    JOINT_STATE_FIELDS,
+    joint_state_from_values,
+    joint_state_to_values,
+    motor_joints,
+)
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.core.core import rpc
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 class RecordingTask(BaseControlTask):
@@ -90,3 +115,113 @@ class RecordingTask(BaseControlTask):
     def on_teleop_buttons(self, msg: Any, t_now: float) -> bool:
         # Mirrors TeleopIKTask: the uniform handler delegates to on_buttons.
         return self.on_buttons(msg)
+
+
+#: The fake arm's joints, in order.
+FAKE_ARM_JOINTS: tuple[str, ...] = tuple(f"joint{i}" for i in range(1, 8))
+
+
+@functools.cache
+def fake_arm_model(joints: tuple[str, ...] = FAKE_ARM_JOINTS) -> RobotModel:
+    """A model of turning joints one after another: joint1 to joint7 unless told otherwise.
+
+    Each may be told to go anywhere within one turn either side of 0 (radians),
+    at up to 2 rad/s and 50 Nm.
+
+    Args:
+        joints: The joint names, in order.
+    """
+    limit = 'lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"'
+    links = "".join(f'<link name="link{i}"/>' for i in range(len(joints) + 1))
+    chain = "".join(
+        f'<joint name="{joint}" type="revolute"><parent link="link{i}"/>'
+        f'<child link="link{i + 1}"/><limit {limit}/></joint>'
+        for i, joint in enumerate(joints)
+    )
+    path = Path(tempfile.mkdtemp(prefix="fake_arm_")) / "fake_arm.urdf"
+    path.write_text(f'<robot name="fake_arm">{links}{chain}</robot>')
+    return RobotModel.from_file(path)
+
+
+class FakeArmConfig(ConnectionConfig):
+    """Settings for ``FakeArm``: named "mock", told joint positions.
+
+    Attributes:
+        state_rate_hz: How many times a second it reports its joints.
+    """
+
+    source: str = "mock"
+    model: RobotModel | None = Field(default_factory=fake_arm_model)
+    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    state_rate_hz: float = 100.0
+
+
+class FakeArm(ConnectionModule):
+    """A pretend arm, told joint positions, with no hardware behind it.
+
+    Its joints are wherever they were last told to be, at once, and it
+    reports them ``state_rate_hz`` times a second from its own thread, with
+    zero speed and effort. ``writes`` keeps the latest commands passed to
+    ``write`` and ``halts`` counts calls to ``halt``, so a test can see what
+    reached the "hardware".
+    """
+
+    config: FakeArmConfig
+
+    position_command: In[JointState]
+    joint_state: Out[JointState]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        #: The last 1000 commands passed to ``write``, oldest first.
+        self.writes: deque[dict[str, float]] = deque(maxlen=1000)
+        #: How many times ``halt`` has been called.
+        self.halts = 0
+        self._joints: list[str] = []
+        self._readings: dict[str, float] = {}
+        self._stop_reading = threading.Event()
+        self._reader: threading.Thread | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(
+                self.position_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+                )
+            )
+        )
+        self._reader = threading.Thread(target=self._read_loop, daemon=True, name="FakeArm-read")
+        self._reader.start()
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_reading.set()
+        if self._reader is not None:
+            self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        super().stop()
+
+    def connect(self) -> None:
+        # The limits table was built first, so a config without a model never gets here.
+        assert self.config.model is not None
+        self._joints = motor_joints(self.config.model, self.config.source)
+        self._readings = {
+            f"{joint}/{field}": 0.0 for joint in self._joints for field in JOINT_STATE_FIELDS
+        }
+
+    def write(self, values: dict[str, float]) -> None:
+        self.writes.append(dict(values))
+        # Replaced whole, so the reading thread never sees it half-changed.
+        # Only keys it reports are kept, so its readings stay valid.
+        self._readings = {key: values.get(key, value) for key, value in self._readings.items()}
+
+    def halt(self) -> None:
+        self.halts += 1
+
+    def _read_loop(self) -> None:
+        period = 1.0 / self.config.state_rate_hz
+        while not self._stop_reading.wait(period):
+            self.joint_state.publish(
+                joint_state_from_values(self._readings, self._joints, ts=time.time())
+            )

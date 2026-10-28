@@ -67,6 +67,7 @@ unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
     GO2Connection.blueprint(
+        obstacle_avoidance=False,
         lidar=False,
         camera=False,
         motion_mode="mcf",
@@ -93,7 +94,7 @@ unitree_go2_nav_3d = autoconnect(
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(heading_gain=1.0, lookahead_time_s=2.5, min_lookahead_m=1.2),
     MovementManager.blueprint(),
-).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=11, robot_model="unitree_go2")
 
 # LCM can lose the one-shot loaded_map publish, so this stack republishes it.
 unitree_go2_nav_3d_relocalization = autoconnect(

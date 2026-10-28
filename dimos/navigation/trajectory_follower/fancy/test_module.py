@@ -21,6 +21,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.tf_pose import TfPose
 from dimos.navigation.trajectory_follower.fancy.laws import seed
 from dimos.navigation.trajectory_follower.fancy.module import (
@@ -62,7 +63,7 @@ def test_goal_latch_ignores_sub_tolerance_goal_moves():
 
 
 def _follower(**config):
-    follower = TrajectoryFollower(**config)
+    follower = TrajectoryFollower(**{"embodiment": GO2, **config})
     _BUILT.append(follower)
     return follower
 

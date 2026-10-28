@@ -26,8 +26,11 @@ import re
 from typing import Annotated
 import xml.etree.ElementTree as ET
 
+import numpy as np
+from numpy.typing import NDArray
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
 from dimos.robot.assets.xacro import expand_xacro
@@ -51,6 +54,31 @@ class JointDescription:
     velocity: float | None = None
     acceleration: float | None = None
     effort: float | None = None
+    # URDF's default axis is x.
+    axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    # (leader joint, multiplier, offset): this joint sits at multiplier * leader + offset.
+    mimic: tuple[str, float, float] | None = None
+
+    def origin(self) -> NDArray[np.float64]:
+        """The 4x4 parent -> child transform at the joint's zero (URDF rpy is extrinsic x, y, z)."""
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler("xyz", self.origin_rpy).as_matrix()
+        transform[:3, 3] = self.origin_xyz
+        return transform
+
+    def parent_from_child(self, position: float = 0.0) -> NDArray[np.float64]:
+        """The 4x4 parent -> child transform of a fixed or single-DOF joint at `position`."""
+        if self.type == "fixed":
+            return self.origin()
+        motion = np.eye(4)
+        axis = np.asarray(self.axis, dtype=np.float64) / np.linalg.norm(self.axis)
+        if self.type in ("revolute", "continuous"):
+            motion[:3, :3] = Rotation.from_rotvec(axis * position).as_matrix()
+        elif self.type == "prismatic":
+            motion[:3, 3] = axis * position
+        else:
+            raise ValueError(f"{self.type} joint {self.name} has no single position")
+        return self.origin() @ motion
 
 
 @dataclass(frozen=True)
@@ -576,6 +604,8 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
 
         origin = joint.find("origin")
         limit = joint.find("limit")
+        axis = joint.find("axis")
+        mimic = joint.find("mimic")
         joints.append(
             JointDescription(
                 name=joint.get("name", ""),
@@ -589,6 +619,16 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
                 velocity=_optional_float(limit, "velocity"),
                 acceleration=_optional_float(limit, "acceleration"),
                 effort=_optional_float(limit, "effort"),
+                axis=_triple(axis.get("xyz", "1 0 0")) if axis is not None else (1.0, 0.0, 0.0),
+                mimic=(
+                    (
+                        mimic.get("joint", ""),
+                        float(mimic.get("multiplier", "1")),
+                        float(mimic.get("offset", "0")),
+                    )
+                    if mimic is not None
+                    else None
+                ),
             )
         )
 

@@ -14,20 +14,19 @@
 
 from threading import RLock
 
-from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.gradient import GradientStrategy
 from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 
 class NavigationMap:
-    _global_config: GlobalConfig
+    _robot_width: float
     _gradient_strategy: GradientStrategy
     _binary: OccupancyGrid | None = None
     _lock: RLock
 
-    def __init__(self, global_config: GlobalConfig, gradient_strategy: GradientStrategy) -> None:
-        self._global_config = global_config
+    def __init__(self, robot_width: float, gradient_strategy: GradientStrategy) -> None:
+        self._robot_width = robot_width
         self._gradient_strategy = gradient_strategy
         self._lock = RLock()
 
@@ -64,7 +63,7 @@ class NavigationMap:
 
         return make_navigation_map(
             binary,
-            self._global_config.robot_width * robot_increase,
+            self._robot_width * robot_increase,
             strategy="simple",
             gradient_strategy=self._gradient_strategy,
         )

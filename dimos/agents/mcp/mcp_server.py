@@ -25,6 +25,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 import uvicorn
@@ -32,8 +33,9 @@ import uvicorn
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
@@ -352,7 +354,13 @@ async def mcp_sse_endpoint() -> StreamingResponse:
     )
 
 
+class McpServerConfig(ModuleConfig):
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    port: int = Field(default=DEFAULT_MCP_PORT, ge=1, le=65535)
+
+
 class McpServer(Module):
+    config: McpServerConfig
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
@@ -441,12 +449,15 @@ class McpServer(Module):
         finally:
             transport.stop()
 
-    def _start_server(self, port: int | None = None) -> None:
-        from dimos.core.global_config import global_config
+    @rpc
+    def mcp_url(self) -> str:
+        """The HTTP endpoint for clients on this host."""
+        return mcp_url(self.config.host, self.config.port)
 
-        _port = port if port is not None else global_config.mcp_port
-        _host = global_config.listen_host
-        config = uvicorn.Config(app, host=_host, port=_port, log_level="warning", access_log=False)
+    def _start_server(self) -> None:
+        config = uvicorn.Config(
+            app, host=self.config.host, port=self.config.port, log_level="warning", access_log=False
+        )
         server = uvicorn.Server(config)
         self._uvicorn_server = server
         loop = self._loop

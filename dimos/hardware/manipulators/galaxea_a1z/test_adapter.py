@@ -271,6 +271,15 @@ def test_connect_opens_bus_without_powering_motors(
     assert not adapter.read_enabled()
 
 
+def test_json_config_restores_nested_gripper_limits(a1z_adapter_module: ModuleType) -> None:
+    adapter = a1z_adapter_module.GalaxeaA1ZAdapter(
+        address="can0", config={"gripper": {"max_opening_m": 0.08}}, dof=7
+    )
+
+    assert adapter.get_limits().position_upper[-1] == pytest.approx(0.08)
+    assert adapter.get_dof() == 7
+
+
 def test_connect_forwards_configured_arm_gains_to_sdk(
     a1z_adapter_module: ModuleType,
 ) -> None:
@@ -621,7 +630,7 @@ def test_socketcan_connect_fails_closed_before_sdk_construction(
             "mttcan",
             "0x1\n",
             "SocketCAN interface 'can7' belongs to kernel driver 'mttcan', not the HHS "
-            "adapter driver 'gs_usb'. Pass the HHS SocketCAN interface with --can-port.",
+            "adapter driver 'gs_usb'. Pass the HHS SocketCAN interface in ControlCoordinator hardware.address.",
         ),
         (
             "gs_usb",

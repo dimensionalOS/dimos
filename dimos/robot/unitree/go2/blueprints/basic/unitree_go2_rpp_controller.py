@@ -76,7 +76,7 @@ class _Go2RppCoordinator(PathFollowingCoordinator):
 
 unitree_go2_rpp_controller = (
     autoconnect(
-        GO2Connection.blueprint(),
+        GO2Connection.blueprint(obstacle_avoidance=False),
         _Go2RppCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
@@ -149,5 +149,4 @@ unitree_go2_rpp_controller = (
             ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(obstacle_avoidance=False)
 )
