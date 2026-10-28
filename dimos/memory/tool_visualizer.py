@@ -16,18 +16,19 @@
 
 from __future__ import annotations
 
-import pickle
 from typing import TYPE_CHECKING
 
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import Batch, QualityWindow
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.vl.florence import Florence2Model
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.utils.data import get_data, get_data_dir
@@ -153,8 +154,11 @@ class TestVisualizer:
                 print(obs.ts, obs.data)
 
     def test_build_global_map(self, store: SqliteStore) -> None:
-        global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
-        print(f"Global map: {len(global_map)}")
+        from dimos.utils.testing.pickle_messages import load_message_pickle
+
+        with get_data("unitree_go2_bigoffice_map.pickle").open("rb") as source:
+            global_map = load_message_pickle(source)
+        print(f"Global map: {global_map.width * global_map.height}")
 
     # we semantically search, then detect with a detection model
     #
@@ -171,7 +175,7 @@ class TestVisualizer:
         for obs in (
             store.streams.color_image
             # find all frames within 60 seconds of the semantic hotspot
-            .at(bottle_pos.ts, tolerance=60.0)
+            .at(message_time.to_seconds(bottle_pos.header.stamp), tolerance=60.0)
             # filter the frames within 1m radius near the semantic hotspot
             .near(bottle_pos, radius=1.0)
             # select highest quality frames from these results (based on sharpness)
@@ -192,10 +196,19 @@ class TestVisualizer:
                     det,
                     lidar_frame,
                     camera_info=GO2Connection.camera_info_static,
-                    world_to_optical_transform=Transform(
-                        ts=obs.ts,
-                        translation=obs.pose_stamped.position,
-                        rotation=obs.pose_stamped.orientation,
-                    ).inverse(),
+                    world_to_optical_transform=geometry.inverse_transform(
+                        TransformStamped(
+                            header=Header(stamp=obs.pose_stamped.header.stamp, frame_id="world"),
+                            child_frame_id="camera_optical",
+                            transform=Transform(
+                                translation=Vector3(
+                                    obs.pose_stamped.pose.position.x,
+                                    obs.pose_stamped.pose.position.y,
+                                    obs.pose_stamped.pose.position.z,
+                                ),
+                                rotation=obs.pose_stamped.pose.orientation,
+                            ),
+                        )
+                    ),
                 )
                 print(det3d)

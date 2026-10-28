@@ -16,35 +16,44 @@
 
 import math
 
-from dimos_lcm.std_msgs import Bool
 import pytest
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Bool
+from dimos.web import _test_values as message_values
 from dimos.web.codecs import resolve_decoder, resolve_encoder
 from dimos.web.relay_bridge.builtin_codecs import decode_bool, decode_point, encode_path
 
 
 def _pose(x: float, y: float) -> PoseStamped:
-    return PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    return message_values.pose_stamped(
+        ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]
+    )
 
 
 def test_path_encodes_a_rounded_xy_polyline() -> None:
-    path = Path(ts=1.0, frame_id="world", poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)])
+    path = message_values.path(
+        ts=1.0, frame_id="world", poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)]
+    )
     assert encode_path(path) == b"[[1.235,-2.0],[0.0,3.5]]"
     assert resolve_encoder("path.json.v1", Path).encode is encode_path
 
 
 def test_empty_path_encodes_as_a_clear() -> None:
     # The planner publishes Path() on cancel and arrival: the overlay must go.
-    assert encode_path(Path()) == b"[]"
+    assert encode_path(message_values.path()) == b"[]"
 
 
 def test_point_decodes_a_click() -> None:
     point = decode_point({"x": 1.5, "y": -2})
     assert isinstance(point, PointStamped)
-    assert (point.x, point.y, point.z, point.frame_id) == (1.5, -2.0, 0.0, "world")
+    assert (point.point.x, point.point.y, point.point.z, point.header.frame_id) == (
+        1.5,
+        -2.0,
+        0.0,
+        "world",
+    )
     assert resolve_decoder("point.json.v1", PointStamped).decode is decode_point
 
 

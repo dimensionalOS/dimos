@@ -153,7 +153,7 @@ Which names a panel can use depends on the stream:
 A second camera, for example:
 
 ```python
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel, Row, Video, cockpit
 
 blueprint = cockpit(
@@ -217,7 +217,7 @@ The Go2 blueprints use `path="path"`, `click="clicked_point"` and `stop="stop_mo
 
 The world in 3D: a `PointCloud2` stream drawn as one point per voxel, coloured by height, with the robot's pose (`PoseStamped`) as a red cone. `pose=None` drops the cone and the follow toggle. Drag to orbit, wheel to zoom, right-drag to pan. The `follow` toggle keeps the camera a few metres behind and above the robot as it drives. Orbit, zoom and pan then hold relative to the robot.
 
-`cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
+`cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the payload contains voxel occupancy rather than every point field. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
 
 ### Teleop
 
@@ -286,7 +286,7 @@ The mechanism on the bridge side (generation numbers, clamps, why zeros are sent
 
 The page subscribes to every cheap channel as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. An expensive channel is subscribed only while a panel that binds it is on screen: in the grid, or as the open page tab. Switching to another page or to the channels tab releases it, and the channels tab lists it as `not subscribed (its panel is off screen)`. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels, and a video panel nobody is looking at costs nothing.
 
-Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Expensive means video frames, costmaps, voxel maps and LCM messages with variable-length arrays (point clouds, scans, paths). A [web SDK](/docs/web/web_sdk.md) page subscribes to whatever it asks for. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
+Cheap means channels with a JSON encoding, and schema-based messages without variable-length arrays. They are read for the channels tab whether or not a panel shows them. Expensive means video frames, costmaps, voxel maps and schema-based messages with variable-length arrays (point clouds, scans, paths). A [web SDK](/docs/web/web_sdk.md) page subscribes to whatever it asks for. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
 The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are expensive, so only those are excluded.
 

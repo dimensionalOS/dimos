@@ -25,10 +25,12 @@ import json
 from typing import Any
 import zlib
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.web import _test_values as message_values
 from dimos.web.codecs import resolve_encoder
 from dimos.web.relay_bridge import builtin_codecs
 from dimos.web.relay_bridge.builtin_codecs import _VOXEL_RECORD, _zlib_rle, encode_voxels
@@ -68,7 +70,7 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
 def test_encoder_handles_wire_decoded_cloud() -> None:
     """The bridge encodes clouds that arrived over LCM."""
     msg = cloud_msg([[0.025, 0.025, 0.025], [1.025, -0.475, 0.125]])
-    encoded = encode_voxels(PointCloud2.lcm_decode(msg.lcm_encode()), {"res": 0.05})
+    encoded = encode_voxels(decode(encode(msg), PointCloud2), {"res": 0.05})
     assert encoded.meta == {"res": 0.05, "n": 2, "chunks": 2}
     assert unpack(encoded.payload, encoded.meta) == [[0, 0, 0], [20, -10, 2]]
 
@@ -79,7 +81,7 @@ EMPTY_FRAME = (_zlib_rle(b""), {"res": 0.05, "n": 0, "chunks": 0})
 def test_empty_cloud_encodes_to_an_empty_frame() -> None:
     # An empty cloud is a frame, not a skip: a filtered cloud can empty out
     # and a producer can clear its map, and the panel must clear with it.
-    encoded = encode_voxels(PointCloud2(), {})
+    encoded = encode_voxels(message_values.cloud(), {})
     assert (encoded.payload, encoded.meta) == EMPTY_FRAME
     assert unpack(encoded.payload, encoded.meta) == []
     nan = float("nan")

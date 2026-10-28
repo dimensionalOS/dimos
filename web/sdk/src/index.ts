@@ -42,3 +42,5 @@ export type {
 } from "@dimos/shared";
 export { TRACK_ENCODING } from "@dimos/shared/manifest";
 export type { Manifest } from "@dimos/shared/manifest";
+
+export { cdrDecoder, cdrHasSequences, isCdrSchema } from "./decoders/cdr.ts";

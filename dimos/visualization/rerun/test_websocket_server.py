@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 import websockets.asyncio.client as ws_client
 
+from dimos.message_utils import time as message_time
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
@@ -131,11 +132,11 @@ def test_click_publishes_point_stamped(
 
     assert len(received) == 1
     point = received[0]
-    assert point.x == pytest.approx(1.5)
-    assert point.y == pytest.approx(2.5)
-    assert point.z == pytest.approx(0.0)
-    assert point.frame_id == "/robot/base"
-    assert point.ts == pytest.approx(5.0)
+    assert point.point.x == pytest.approx(1.5)
+    assert point.point.y == pytest.approx(2.5)
+    assert point.point.z == pytest.approx(0.0)
+    assert point.header.frame_id == "/robot/base"
+    assert message_time.to_seconds(point.header.stamp) == pytest.approx(5.0)
 
 
 def test_twist_publishes_on_tele_cmd_vel(
@@ -172,7 +173,14 @@ def test_stop_publishes_zero_twist(
     unsub()
 
     assert len(received) == 1
-    assert received[0].is_zero()
+    assert (
+        received[0].linear.x,
+        received[0].linear.y,
+        received[0].linear.z,
+        received[0].angular.x,
+        received[0].angular.y,
+        received[0].angular.z,
+    ) == (0.0,) * 6
 
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
@@ -239,6 +247,6 @@ def test_mixed_message_sequence(
     unsub()
 
     assert len(received) == 1
-    assert received[0].x == pytest.approx(7.0)
-    assert received[0].y == pytest.approx(8.0)
-    assert received[0].z == pytest.approx(9.0)
+    assert received[0].point.x == pytest.approx(7.0)
+    assert received[0].point.y == pytest.approx(8.0)
+    assert received[0].point.z == pytest.approx(9.0)

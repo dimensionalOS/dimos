@@ -33,11 +33,10 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, PeekNotFound
 from dimos.core.stream import In, Out, RemoteIn
 from dimos.core.transport import pLCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.web import _test_values as message_values
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.relay_bridge import dynamic
 from dimos.web.relay_bridge.config import RelayBridgeConfig
@@ -170,7 +169,7 @@ def test_digest_name_collision_with_different_specs_raises(monkeypatch):
 
 _RELOAD_SCRIPT = """
 import importlib, pickle, sys
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
 import dimos.web.relay_bridge.dynamic as dynamic
 
 C = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
@@ -339,10 +338,12 @@ def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     peeker = threading.Thread(target=peek)
     peeker.start()
     try:
-        retry_until(got, lambda: ping_transport.publish(Vector3(1.0, 2.0, 3.0)), timeout=10.0)
+        retry_until(
+            got, lambda: ping_transport.publish(message_values.vector(1.0, 2.0, 3.0)), timeout=10.0
+        )
     finally:
         peeker.join(timeout=20.0)
-    assert received == [Vector3(1.0, 2.0, 3.0)]
+    assert received == [message_values.vector(1.0, 2.0, 3.0)]
 
 
 def test_deploy_fresh_process_reconstructs_class(worker_manager, deployed_proxies):

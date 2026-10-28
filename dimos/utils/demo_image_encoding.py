@@ -15,11 +15,11 @@
 """
 # Usage
 
-Run it with uncompressed LCM:
+Run it with uncompressed CDR over LCM:
 
     python dimos/utils/demo_image_encoding.py
 
-Run it with JPEG LCM:
+Run it with JPEG-compressed CDR over LCM:
 
     python dimos/utils/demo_image_encoding.py --use-jpeg
 """
@@ -34,7 +34,9 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.fast_image_generator import random_image
 
 
@@ -64,7 +66,13 @@ class EmitterModule(Module):
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.image.publish(Image(data=data))
+            self.image.publish(
+                image.from_array(
+                    data,
+                    encoding="rgb8",
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                )
+            )
         open_file.close()
 
 
@@ -92,7 +100,7 @@ def main() -> None:
     parser.add_argument(
         "--use-jpeg",
         action="store_true",
-        help="Use JPEG LCM transport instead of regular LCM transport",
+        help="Use JPEG-compressed CDR over LCM transport instead of regular LCM transport",
     )
     args = parser.parse_args()
 

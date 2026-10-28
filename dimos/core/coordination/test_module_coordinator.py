@@ -49,9 +49,11 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -1217,7 +1219,20 @@ class IoTfPublisher(Module):
 
     @rpc
     def send(self, child: str) -> None:
-        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+        self.tf.publish(
+            TFMessage(
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id="world"),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(0.0, 0.0, 0.0),
+                            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                        ),
+                    )
+                ]
+            )
+        )
 
 
 class IoTfEcho(Module):
@@ -1235,7 +1250,20 @@ class IoTfEcho(Module):
 
     @rpc
     def send(self, child: str) -> None:
-        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+        self.tf.publish(
+            TFMessage(
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id="world"),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(0.0, 0.0, 0.0),
+                            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                        ),
+                    )
+                ]
+            )
+        )
 
     @rpc
     def seen(self) -> list[str]:

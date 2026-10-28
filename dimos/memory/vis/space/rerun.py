@@ -21,12 +21,28 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.color import Color
-from dimos.memory.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.memory.vis.space.elements import (
+    Arrow,
+    Box3D,
+    Camera,
+    Point,
+    Polyline,
+    Pose,
+    Text,
+    heading,
+    pose_value,
+    position,
+)
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.visualization.rerun.cdr import (
+    camera_pinhole,
+    cloud_archetype,
+    image_archetype,
+    occupancy_archetype,
+)
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space
@@ -41,16 +57,18 @@ def _rgba(el: Any) -> tuple[int, int, int, int]:
 
 # base_link → camera_optical extrinsics (applied at render time for image observations)
 _BASE_TO_OPTICAL = Transform(
-    translation=Vector3(0.3, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-) + Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-    frame_id="camera_link",
-    child_frame_id="camera_optical",
+    translation=Vector3(0.3, 0.0, 0.0), rotation=Quaternion(-0.5, 0.5, -0.5, 0.5)
 )
+
+
+def _pose_archetype(pose: Any) -> Any:
+    import rerun as rr
+
+    value = pose_value(pose)
+    return rr.Transform3D(
+        translation=geometry.vector_array(value.position),
+        quaternion=rr.Quaternion(xyzw=geometry.quaternion_array(value.orientation)),
+    )
 
 
 def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
@@ -127,17 +145,19 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
     # Log elements
     if grids:
         for i, el in enumerate(grids):
-            rr.log(f"scene/map/{i}", el.to_rerun(), static=True)
+            rr.log(f"scene/map/{i}", occupancy_archetype(el), static=True)
 
     if pointclouds:
         for i, el in enumerate(pointclouds):
-            rr.log(f"scene/pointcloud/{i}", el.to_rerun(), static=True)
+            rr.log(f"scene/pointcloud/{i}", cloud_archetype(el), static=True)
 
     if points:
         rr.log(
             "scene/points",
             rr.Points3D(
-                positions=[[p.msg.x, p.msg.y, p.msg.z] for p in points],
+                positions=[
+                    [position(p.msg).x, position(p.msg).y, position(p.msg).z] for p in points
+                ],
                 colors=[_rgba(p) for p in points],
                 radii=[max(p.radius, 0.05) for p in points],
                 labels=[p.label or "" for p in points] if any(p.label for p in points) else None,
@@ -149,7 +169,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             "scene/poses",
             rr.Points3D(
-                positions=[[p.msg.x, p.msg.y, 0] for p in poses],
+                positions=[[position(p.msg).x, position(p.msg).y, 0] for p in poses],
                 colors=[_rgba(p) for p in poses],
                 radii=[p.size * 0.3 for p in poses],
                 labels=[p.label or "" for p in poses] if any(p.label for p in poses) else None,
@@ -159,9 +179,10 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             "scene/poses/headings",
             rr.Arrows3D(
-                origins=[[p.msg.x, p.msg.y, 0] for p in poses],
+                origins=[[position(p.msg).x, position(p.msg).y, 0] for p in poses],
                 vectors=[
-                    [math.cos(p.msg.yaw) * p.size, math.sin(p.msg.yaw) * p.size, 0] for p in poses
+                    [math.cos(heading(p.msg)) * p.size, math.sin(heading(p.msg)) * p.size, 0]
+                    for p in poses
                 ],
                 colors=[_rgba(p) for p in poses],
             ),
@@ -172,9 +193,9 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             "scene/arrows",
             rr.Arrows3D(
-                origins=[[a.msg.x, a.msg.y, 0] for a in arrows],
+                origins=[[position(a.msg).x, position(a.msg).y, 0] for a in arrows],
                 vectors=[
-                    [math.cos(a.msg.yaw) * a.length, math.sin(a.msg.yaw) * a.length, 0]
+                    [math.cos(heading(a.msg)) * a.length, math.sin(heading(a.msg)) * a.length, 0]
                     for a in arrows
                 ],
                 colors=[_rgba(a) for a in arrows],
@@ -186,7 +207,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             "scene/boxes",
             rr.Boxes3D(
-                centers=[[b.center.x, b.center.y, 0] for b in boxes],
+                centers=[[b.center.position.x, b.center.position.y, 0] for b in boxes],
                 half_sizes=[[b.size.x / 2, b.size.y / 2, b.size.z / 2] for b in boxes],
                 colors=[_rgba(b) for b in boxes],
                 labels=[b.label or "" for b in boxes] if any(b.label for b in boxes) else None,
@@ -198,7 +219,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             f"scene/polylines/{i}",
             rr.LineStrips3D(
-                strips=[[[p.x, p.y, 0] for p in el.msg.poses]],
+                strips=[[[position(p).x, position(p).y, 0] for p in el.msg.poses]],
                 colors=[_rgba(el)],
                 radii=[el.width / 2],
             ),
@@ -219,13 +240,13 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
 
     for i, el in enumerate(cameras):
         path = f"scene/cameras/{i}"
-        rr.log(path, el.pose.to_rerun(), static=True)
+        rr.log(path, _pose_archetype(el.pose), static=True)
         if el.camera_info:
-            pinhole = el.camera_info.to_rerun()
+            pinhole = camera_pinhole(el.camera_info)
             assert not isinstance(pinhole, list)
             rr.log(path, pinhole, static=True)
         elif el.image:
-            h, w = el.image.shape[:2]
+            h, w = (el.image.height, el.image.width)
             focal = max(w, h)
             rr.log(
                 path,
@@ -233,7 +254,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
                 static=True,
             )
         if el.image:
-            rr.log(f"{path}/image", el.image.to_rerun(), static=True)
+            rr.log(f"{path}/image", image_archetype(el.image), static=True)
 
     for i, obs in enumerate(observations):
         path = f"scene/observations/{i}"
@@ -244,9 +265,9 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         img = _as_image(data)
         if img is not None:
             # Apply base→optical extrinsics for camera frustum rendering
-            world_T_optical = Transform.from_pose("world", ps) + _BASE_TO_OPTICAL
-            rr.log(path, world_T_optical.to_pose().to_rerun(), static=True)
-            h, w = img.shape[:2]
+            world_T_optical = geometry.transform_pose_local(ps.pose, _BASE_TO_OPTICAL)
+            rr.log(path, _pose_archetype(world_T_optical), static=True)
+            h, w = (img.height, img.width)
             focal = max(w, h)
             rr.log(
                 path,
@@ -258,15 +279,15 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
                 ),
                 static=True,
             )
-            rr.log(f"{path}/image", img.to_rerun(), static=True)
+            rr.log(f"{path}/image", image_archetype(img), static=True)
         elif isinstance(data, PointCloud2):
-            rr.log(path, ps.to_rerun(), static=True)
-            rr.log(f"{path}/pointcloud", data.to_rerun(), static=True)
+            rr.log(path, _pose_archetype(ps), static=True)
+            rr.log(f"{path}/pointcloud", cloud_archetype(data), static=True)
         elif isinstance(data, (int, float)):
             rr.log(
                 path,
                 rr.Points3D(
-                    positions=[[ps.x, ps.y, 0]],
+                    positions=[[ps.pose.position.x, ps.pose.position.y, 0]],
                     labels=[str(data)],
                     radii=[0.025],
                 ),
@@ -286,7 +307,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             if line:
                 lines.append(line)
             label = "\n".join(lines)
-            x, y = ps.x, ps.y
+            x, y = ps.pose.position.x, ps.pose.position.y
             # Pin: line from ground up, label at the tip
             rr.log(
                 f"{path}/pin",
@@ -309,19 +330,19 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         else:
             rr.log(
                 path,
-                rr.Points3D(positions=[[ps.x, ps.y, 0]], radii=[0.05]),
+                rr.Points3D(positions=[[ps.pose.position.x, ps.pose.position.y, 0]], radii=[0.05]),
                 static=True,
             )
 
     for i, obs in enumerate(panels):
         img = _as_image(obs.data)
         if img is not None:
-            rr.log(f"scene/panels/{i}", img.to_rerun(), static=True)
+            rr.log(f"scene/panels/{i}", image_archetype(img), static=True)
 
 
 def _as_image(data: Any) -> Any | None:
     """Return an Image if data is an Image or ImageDetections, else None."""
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.messages.sensor_msgs.msg import Image
     from dimos.perception.detection.type.imageDetections import ImageDetections
 
     if isinstance(data, Image):

@@ -35,10 +35,11 @@ dimos/web/relay_bridge/builtin_codecs.py.
 
 Encoders take the message (plus, optionally, the channel's params mapping) and
 return `bytes`, an `EncodedPayload` when the frame needs header meta, or None
-to skip the sample. Two codecs apply without registration: json.v1 for
+to skip the sample. Codecs apply without registration: json.v1 for
 JSON-shaped message types, and `<msg_name>.lcm.v1` (dimos/web/lcm_codec.py)
 for DimOS messages with a dimos_lcm schema (the frame is `msg.lcm_encode()`,
-the schema rides the channel's params["lcm"]). Anything else potentially
+the schema rides the channel's params["lcm"]), and explicit `<package>/msg/<Type>.cdr.v1`
+for installed generated CDR values with complete params["cdr"] schemas. Anything else potentially
 large (images, arrays, bytes) needs an explicit @web_encoder.
 """
 
@@ -52,6 +53,13 @@ import threading
 import types
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 
+from dimos.web.cdr_codec import (
+    CDR_V1_SUFFIX,
+    cdr_type_name,
+    check_cdr_params,
+    encode_cdr_v1,
+    export_schema as export_cdr_schema,
+)
 from dimos.web.lcm_codec import (
     LCM_V1_SUFFIX,
     check_lcm_params,
@@ -60,6 +68,13 @@ from dimos.web.lcm_codec import (
     schema_class_for,
 )
 from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN, RESERVED_CHANNEL_PREFIX
+
+
+def default_encoding(message_type: type[Any], dir: str) -> str:
+    """Use schema-backed CDR for generated messages and JSON for plain values."""
+    type_name = cdr_type_name(message_type)
+    return f"{type_name}{CDR_V1_SUFFIX}" if type_name is not None else "json.v1"
+
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -421,6 +436,11 @@ def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
     )
 
 
+def is_generic_cdr_encoding(encoding: str) -> bool:
+    """True for a generic CDR encoder unless a registered encoder owns the id."""
+    return encoding.endswith(CDR_V1_SUFFIX) and encoding not in _encoders
+
+
 def is_generic_lcm_encoding(encoding: str) -> bool:
     """True for a *.lcm.v1 id the generic LCM codec serves (a registered
     @web_encoder with that id keeps its own params and encoder)."""
@@ -446,6 +466,16 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
                 "and qualified name"
             )
         return definition
+    if encoding.endswith(CDR_V1_SUFFIX):
+        if encoding != f"{cdr_type_name(message_type)}{CDR_V1_SUFFIX}":
+            raise ValueError(
+                f"encoding {encoding!r} does not match the installed CDR type "
+                f"{message_type.__qualname__}"
+            )
+        export_cdr_schema(message_type)
+        return EncoderDef(
+            encoding, message_type, encode_cdr_v1, takes_params=True, check_params=check_cdr_params
+        )
     if encoding.endswith(LCM_V1_SUFFIX):
         if encoding != f"{lcm_type_name(message_type)}{LCM_V1_SUFFIX}":
             raise ValueError(
@@ -457,11 +487,7 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
             encoding, message_type, encode_lcm_v1, takes_params=True, check_params=check_lcm_params
         )
     if encoding == "json.v1":
-        # DimosMsg detection by attribute: the protocol has a data member, so
-        # issubclass() is unavailable, and importing dimos.msgs here would
-        # defeat this module's import-lightness. Some wire messages (Image)
-        # are dataclasses too - the marker must win.
-        is_dimos_msg = callable(getattr(message_type, "lcm_encode", None))
+        is_dimos_msg = isinstance(getattr(message_type, "__msgtype__", None), str)
         plain_dataclass = dataclasses.is_dataclass(message_type) and not is_dimos_msg
         if message_type not in _JSON_V1_TYPES and not plain_dataclass:
             raise ValueError(

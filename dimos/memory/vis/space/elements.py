@@ -14,12 +14,12 @@
 
 """Element types for the Space drawing language.
 
-Each element wraps one or more dimos.msgs with rendering intent + style.
+Each element wraps generated messages with rendering intent and style.
 For example, Pose(posestamped) says "render this PoseStamped as a circle +
 heading arrow", while Arrow(posestamped) says "render it as an arrow only."
 
 SVG renderer collapses to 2D (top-down XY projection, Z ignored).
-Rerun renderer can use the wrapped msgs' .to_rerun() methods directly.
+Rerun rendering uses explicit generated-message utilities.
 """
 
 from __future__ import annotations
@@ -28,20 +28,20 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Union
 
 from dimos.memory.vis.color import Color, DeferredColor
+from dimos.message_utils import geometry
 
 ColorLike = Union[str, Color, DeferredColor]
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-    from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-    from dimos.msgs.nav_msgs.Path import Path
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.geometry_msgs.msg import (
+        Point as GeoPoint,
+        Pose as GeoPose,
+        PoseStamped,
+        Vector3,
+    )
+    from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+    from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 
 
 @dataclass
@@ -163,3 +163,17 @@ SpaceElement = Union[
     "PointCloud2",  # pass-through, rerun renders full 3D, SVG collapses to occupancy grid
     "Observation[Any]",  # pass-through, renderer decides presentation (covers EmbeddedObservation)
 ]
+
+
+def pose_value(value: PoseStamped | GeoPose) -> GeoPose:
+    return value.pose if hasattr(value, "pose") else value
+
+
+def position(value: GeoPoint | PoseStamped | GeoPose) -> GeoPoint:
+    if hasattr(value, "pose"):
+        return value.pose.position
+    return value.position if hasattr(value, "position") else value
+
+
+def heading(value: PoseStamped | GeoPose) -> float:
+    return geometry.yaw(pose_value(value).orientation)

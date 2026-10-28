@@ -33,15 +33,18 @@ from typing import Any
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.web.relay_bridge.builtin_codecs import encode_voxels
 from dimos.web.relay_bridge.locate import find_web_dir
 
 
 def cloud_msg(points: list[list[float]]) -> PointCloud2:
     """Fixture-shaped PointCloud2; also used by test_voxel_encoding.py."""
-    return PointCloud2.from_numpy(
-        np.array(points, dtype=np.float32).reshape(-1, 3), frame_id="world", timestamp=1752576000.5
+    return pointcloud.from_xyz(
+        np.array(points, dtype=np.float32).reshape(-1, 3),
+        header=Header(stamp=time.time_from_seconds(1752576000.5), frame_id="world"),
     )
 
 

@@ -23,11 +23,12 @@ import json
 from typing import Any
 import zlib
 
+from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.web import _test_values as message_values
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -62,7 +63,7 @@ def test_encoder_handles_wire_decoded_grid() -> None:
     still expose .yaw (regression: the raw wire pose did not, and every
     global_costmap frame failed to encode)."""
     msg = grid_msg([[0, 100], [-1, 50]], 0.05, -1.25, 2.5, 0.5)
-    decoded = OccupancyGrid.lcm_decode(msg.lcm_encode())
+    decoded = decode(encode(msg), OccupancyGrid)
     encoded = encode_costmap(decoded)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -71,14 +72,16 @@ def test_encoder_handles_wire_decoded_grid() -> None:
 
 
 def test_empty_grid_encodes_to_none() -> None:
-    assert encode_costmap(OccupancyGrid()) is None
+    assert encode_costmap(message_values.grid()) is None
 
 
 def test_oversized_grid_is_downsampled_within_budget() -> None:
     rows = np.zeros((4096, 4096), dtype=np.int8)
     rows[0, 1] = 100  # lone obstacle: the block max must keep it
     rows[2:4, 2:4] = -1  # a fully unknown block stays unknown
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(1.0, 2.0, 0.0), ts=1.0)
+    msg = message_values.grid(
+        grid=rows, resolution=0.05, origin=message_values.pose(1.0, 2.0, 0.0), ts=1.0
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -93,7 +96,9 @@ def test_oversized_grid_is_downsampled_within_budget() -> None:
 
 def test_grid_at_exactly_max_side_is_not_downsampled() -> None:
     rows = np.full((4, 2048), 7, dtype=np.int8)
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(0.0, 0.0, 0.0), ts=1.0)
+    msg = message_values.grid(
+        grid=rows, resolution=0.05, origin=message_values.pose(0.0, 0.0, 0.0), ts=1.0
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -103,7 +108,9 @@ def test_grid_at_exactly_max_side_is_not_downsampled() -> None:
 
 def test_non_square_oversized_grid_uses_ceil_factor() -> None:
     rows = np.zeros((100, 4100), dtype=np.int8)
-    msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(0.0, 0.0, 0.0), ts=1.0)
+    msg = message_values.grid(
+        grid=rows, resolution=0.05, origin=message_values.pose(0.0, 0.0, 0.0), ts=1.0
+    )
     encoded = encode_costmap(msg)
     assert encoded is not None
     meta = encoded.meta

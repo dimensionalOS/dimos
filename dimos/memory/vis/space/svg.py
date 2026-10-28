@@ -43,9 +43,11 @@ from dimos.memory.vis.space.elements import (
     Pose,
     SpaceElement,
     Text,
+    heading,
+    position,
 )
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space
@@ -95,7 +97,7 @@ def _style(el: object) -> tuple[str, float]:
 
 
 def _render_point(el: Point, b: Bounds) -> str:
-    x, y = el.msg.x, _y(el.msg.y)
+    x, y = position(el.msg).x, _y(position(el.msg).y)
     r = el.radius
     b.include(x - r, y - r)
     b.include(x + r, y + r)
@@ -110,8 +112,8 @@ def _render_point(el: Point, b: Bounds) -> str:
 
 
 def _render_arrow(el: Arrow, b: Bounds) -> str:
-    x, y = el.msg.x, _y(el.msg.y)
-    yaw = el.msg.yaw
+    x, y = position(el.msg).x, _y(position(el.msg).y)
+    yaw = heading(el.msg)
     length = el.length
     half_base = length * 0.4
 
@@ -139,7 +141,7 @@ def _render_pose(el: Pose, b: Bounds) -> str:
     arrow = Arrow(msg=el.msg, length=el.size, color=el.color, opacity=el.opacity)
     parts = [_render_arrow(arrow, b)]
     if el.label:
-        x, y = el.msg.x, _y(el.msg.y)
+        x, y = position(el.msg).x, _y(position(el.msg).y)
         fill, alpha = _style(el)
         parts.append(
             f'<text x="{x + el.size * 0.5:.4f}" y="{y:.4f}" '
@@ -151,7 +153,7 @@ def _render_pose(el: Pose, b: Bounds) -> str:
 def _render_polyline(el: Polyline, b: Bounds) -> str:
     pts = []
     for p in el.msg.poses:
-        x, y = p.x, _y(p.y)
+        x, y = position(p).x, _y(position(p).y)
         b.include(x, y)
         pts.append(f"{x:.4f},{y:.4f}")
     stroke, alpha = _style(el)
@@ -163,7 +165,7 @@ def _render_polyline(el: Polyline, b: Bounds) -> str:
 
 
 def _render_box3d(el: Box3D, b: Bounds) -> str:
-    cx, cy = el.center.x, el.center.y
+    cx, cy = el.center.position.x, el.center.position.y
     hw, hh = el.size.x / 2, el.size.y / 2
     # Top-left in world → SVG
     x = cx - hw
@@ -188,12 +190,12 @@ def _render_box3d(el: Box3D, b: Bounds) -> str:
 
 
 def _render_camera(el: Camera, b: Bounds) -> str:
-    x, y = el.pose.x, _y(el.pose.y)
-    yaw = el.pose.yaw
+    x, y = position(el.pose).x, _y(position(el.pose).y)
+    yaw = heading(el.pose)
     stroke, alpha = _style(el)
 
-    if el.camera_info and el.camera_info.K[4] > 0:
-        fy = el.camera_info.K[4]
+    if el.camera_info and el.camera_info.k[4] > 0:
+        fy = el.camera_info.k[4]
         fov_y = 2 * math.atan(el.camera_info.height / (2 * fy))
         fov_half = fov_y / 2
         wedge_len = 0.8
@@ -239,7 +241,7 @@ def _render_text(el: Text, b: Bounds) -> str:
 
 
 def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
-    if el.grid.size == 0:
+    if el.data.size == 0:
         return ""
 
     rgba = np.flipud(generate_rgba_texture(el))
@@ -248,9 +250,9 @@ def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    ox, oy = el.origin.x, el.origin.y
-    world_w = el.width * el.resolution
-    world_h = el.height * el.resolution
+    ox, oy = el.info.origin.position.x, el.info.origin.position.y
+    world_w = el.info.width * el.info.resolution
+    world_h = el.info.height * el.info.resolution
 
     # SVG top-left: world top-left with Y-flip
     sx = ox

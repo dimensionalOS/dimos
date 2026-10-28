@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, cast
 
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
@@ -441,7 +441,7 @@ class ModuleCoordinator(Resource):
             remote_ref_proxies = coordinator._create_remote_module_ref_clients(
                 remote_module_refs or {}
             )
-            _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs, transports)
             t1 = time.perf_counter()
             coordinator._connect_streams(blueprint, transports)
             _connect_module_refs(
@@ -543,7 +543,14 @@ class ModuleCoordinator(Resource):
         )
         existing_classes = {self._instance_classes[name] for name in before}
 
-        _deploy_all_modules(blueprint, self, self._global_config, module_kwargs)
+        additions = _viewer_message_types(blueprint, transports, self._transport_registry)
+        for name in before:
+            if _is_viewer_module(self._instance_classes[name]):
+                cast("_ViewerSchemaProxy", self._deployed_modules[name]).update_message_types(
+                    additions
+                )
+
+        _deploy_all_modules(blueprint, self, self._global_config, module_kwargs, transports)
         self._connect_streams(blueprint, transports)
         _connect_module_refs(
             blueprint,
@@ -997,12 +1004,63 @@ def _check_requirements(blueprint: Blueprint) -> None:
         sys.exit(1)
 
 
+def _viewer_message_types(
+    blueprint: Blueprint,
+    transports: Mapping[tuple[str, type], Transport[Any]],
+    existing: Mapping[tuple[str, type], Transport[Any]],
+) -> dict[str, type]:
+    declared: dict[str, type] = {}
+    for atom in blueprint.active_blueprints:
+        for stream in atom.streams:
+            name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
+            if not isinstance(name, str) or not hasattr(stream.type, "__msgtype__"):
+                continue
+            key = (name, stream.type)
+            transport = (
+                existing.get(key)
+                or transports.get(key)
+                or _get_transport_for(blueprint, name, stream.type)
+            )
+            if not isinstance(transport, PubSubTransport):
+                continue
+            topic = getattr(transport, "topic", None)
+            channel = getattr(topic, "topic", None)
+            descriptor = getattr(topic, "message", None)
+            if not isinstance(channel, str) or descriptor is None:
+                continue
+            if channel in declared and declared[channel] is not stream.type:
+                raise TypeError(f"Viewer channel {channel!r} has conflicting message types")
+            declared[channel] = stream.type
+    return declared
+
+
+class _ViewerSchemaProxy(Protocol):
+    def update_message_types(self, additions: dict[str, type]) -> None: ...
+
+
+def _is_viewer_module(module: type) -> bool:
+    return any(
+        base.__module__ == "dimos.visualization.rerun.bridge"
+        and base.__name__ == "RerunBridgeModule"
+        for base in module.__mro__
+    )
+
+
 def _deploy_all_modules(
     blueprint: Blueprint,
     module_coordinator: ModuleCoordinator,
     gc: GlobalConfig,
     module_kwargs: Mapping[str, Mapping[str, Any]],
+    transports: Mapping[tuple[str, type], Transport[Any]] | None = None,
 ) -> None:
+    viewer_modules = {
+        atom.module for atom in blueprint.active_blueprints if _is_viewer_module(atom.module)
+    }
+    viewer_types = (
+        _viewer_message_types(blueprint, transports or {}, module_coordinator._transport_registry)
+        if viewer_modules
+        else {}
+    )
     module_specs: list[ModuleSpec] = []
     deployed_atoms: dict[str, BlueprintAtom] = {}
     for bp in blueprint.active_blueprints:
@@ -1010,6 +1068,14 @@ def _deploy_all_modules(
         # deep-copied, and parsed values are already independent snapshots.
         kwargs = dict(bp.kwargs)
         kwargs.update(module_kwargs.get(bp.name, {}))
+        if bp.module in viewer_modules:
+            configured = dict(kwargs.get("message_types", {}))
+            for channel, kind in configured.items():
+                if channel in viewer_types and viewer_types[channel] is not kind:
+                    raise TypeError(
+                        f"Configured viewer type conflicts with graph channel {channel!r}"
+                    )
+            kwargs["message_types"] = {**viewer_types, **configured}
         # Instance identity belongs to blueprint composition, not user config.
         kwargs.pop("instance_name", None)
         if bp.instance_name is not None:
