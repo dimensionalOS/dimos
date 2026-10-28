@@ -572,6 +572,9 @@ pub struct GscPgo {
     pub(crate) odometry_noise_ln_dispatched: [f64; 4],
     pub(crate) closure_noise_ln_scale_dispatched: f64,
     pub(crate) odometry_noise_rescale: bool,
+    /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
+    /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
+    pub(crate) odometry_noise_rescaled: bool,
     /// Per committed closure: its yank per sqrt keyframe gap (rotation deg, translation m), for `closure_yank_scale_from_kept`.
     pub(crate) closure_yanks: Vec<(f64, f64)>,
     pub(crate) closure_fit_confidence: Vec<f64>,
@@ -1102,7 +1105,7 @@ impl GscPgo {
                     > (2.0 / redundancy[c]).sqrt()
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
             > (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt();
-        if moved {
+        if moved && !self.odometry_noise_rescaled {
             self.odometry_noise_rescale = true;
         }
         (self.odometry_noise_ln, self.closure_noise_ln_scale) = (ln_odometry, ln_closure);

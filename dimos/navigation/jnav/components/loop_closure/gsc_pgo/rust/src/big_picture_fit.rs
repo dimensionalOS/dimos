@@ -1759,6 +1759,11 @@ impl GscPgo {
                 (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
+        // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
+        self.odometry_noise_rescaled = self.odometry_noise_rescale
+            && self.committed_closures.len() == self.closures_dispatched
+            && self.world_positions.len() == self.world_positions_dispatched
+            && self.landmark_sightings.len() == self.landmark_sightings_dispatched;
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
