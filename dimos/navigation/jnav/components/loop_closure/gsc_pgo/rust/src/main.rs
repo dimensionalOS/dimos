@@ -583,6 +583,7 @@ impl Worker {
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                     self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
+                    self.log_solve(&pgo, last_time);
                 }
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
@@ -728,6 +729,9 @@ impl Worker {
                 "kept": kept,
                 "graph_error": pgo.graph_error(),
                 "keyframes": pgo.key_poses().len(),
+                // each landmark (its index among `landmark_factor`'s names) and each world frame, where the solve put it
+                "landmarks": pgo.landmarks().iter().map(|(id, _, p)| serde_json::json!([id, p])).collect::<Vec<_>>(),
+                "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
     }

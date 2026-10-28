@@ -288,3 +288,24 @@ fn unknown_dimensions_carry_no_information() {
     assert!((information[3][3] - 0.25 / det).abs() < 1e-9);
     assert!((information[3][4] + 0.1 / det).abs() < 1e-9);
 }
+
+#[test]
+fn factors_before_the_first_keyframe_wait_for_it() {
+    // a fix or sighting can reach the module before its first scan; there is nothing to solve yet
+    let mut pgo = dimos_gsc_pgo::gsc_pgo::GscPgo::new(dimos_gsc_pgo::gsc_pgo::Config::default());
+    pgo.add_landmark_point(
+        0.0,
+        7,
+        [1.0, 0.0, 0.0],
+        [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
+    );
+    pgo.add_coordinate_factor(
+        0.0,
+        0,
+        [0.0; 3],
+        [0.0; 3],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    );
+    assert!(!pgo.update());
+    assert!(!pgo.finish());
+}

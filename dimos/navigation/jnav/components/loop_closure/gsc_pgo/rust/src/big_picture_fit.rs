@@ -1261,10 +1261,12 @@ impl GscPgo {
     }
     /// Whether a closure or a world position arrived after the newest solve started.
     fn unsolved(&self) -> bool {
-        self.committed_closures.len() > self.closures_dispatched
-            || self.world_positions.len() > self.world_positions_dispatched
-            || self.landmark_sightings.len() > self.landmark_sightings_dispatched
-            || self.odometry_noise_rescale
+        // nothing to solve before the first keyframe (a fix or sighting can arrive before it)
+        !self.key_poses.is_empty()
+            && (self.committed_closures.len() > self.closures_dispatched
+                || self.world_positions.len() > self.world_positions_dispatched
+                || self.landmark_sightings.len() > self.landmark_sightings_dispatched
+                || self.odometry_noise_rescale)
     }
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
