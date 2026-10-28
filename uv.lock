@@ -36,15 +36,15 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-can-motor-control = false
-dim-odom = false
 dimos-cdrgen = false
-dimos-lcm = false
 dimos-viewer = false
-eclipse-zenoh = false
-edgetam-dimos = false
+dimos-lcm = false
 lcm = false
+edgetam-dimos = false
+eclipse-zenoh = false
+can-motor-control = false
 md-babel-py = false
+dim-odom = false
 roboplan = false
 
 [manifest]
@@ -1862,6 +1862,7 @@ dependencies = [
     { name = "llvmlite" },
     { name = "lz4" },
     { name = "matplotlib" },
+    { name = "msgpack" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2593,6 +2594,7 @@ requires-dist = [
     { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
+    { name = "msgpack", specifier = ">=1.1.2" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
     { name = "numba", specifier = ">=0.60.0" },
     { name = "numpy", specifier = ">=1.26.4" },
