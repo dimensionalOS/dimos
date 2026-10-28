@@ -16,28 +16,52 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_lcm.sensor_msgs import Imu as RawImu
+import lz4.frame
 import numpy as np
 import pytest
 
-from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image, Imu
+from dimos.messages.std_msgs.msg import Header
+
+
+def _imu(ts: float, frame_id: str = "imu_link"):
+    raw = RawImu()
+    raw.header.stamp.sec = int(ts)
+    raw.header.stamp.nsec = int((ts - int(ts)) * 1e9)
+    raw.header.frame_id = frame_id
+    raw.angular_velocity.x = 1.0
+    raw.angular_velocity.y = 2.0
+    raw.angular_velocity.z = 3.0
+    return raw
+
+
+def _jpeg_envelope(message):
+    from dimos_lcm.sensor_msgs import Image as RawImage
+    from turbojpeg import TJPF_RGB, TurboJPEG
+
+    raw = RawImage()
+    raw.header.frame_id = message.header.frame_id
+    raw.header.stamp.sec = message.header.stamp.sec
+    raw.header.stamp.nsec = message.header.stamp.nanosec
+    raw.height, raw.width = message.height, message.width
+    raw.encoding = "jpeg"
+    raw.data = TurboJPEG().encode(image_utils.view(message), pixel_format=TJPF_RGB)
+    raw.data_length = len(raw.data)
+    return raw.lcm_encode()
+
 
 mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
 
 
 def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
-    expected = Imu(
-        ts=12.5,
-        frame_id="imu_link",
-        angular_velocity=Vector3(1.0, 2.0, 3.0),
-    )
+    expected = _imu(12.5)
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
         writer.start(profile="dimos", library="test")
@@ -60,7 +84,7 @@ def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
             channel_id=channel_id,
             log_time=14_000_000_000,
             publish_time=11_500_000_000,
-            data=Imu(ts=11.5, frame_id="earlier").lcm_encode(),
+            data=_imu(11.5, "earlier").lcm_encode(),
         )
         writer.finish()
 
@@ -68,20 +92,17 @@ def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
         assert store.list_streams() == ["imu"]
         observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
         assert observation.ts == 11.5
-        assert observation.data.frame_id == "earlier"
+        assert observation.data.header.frame_id == "earlier"
 
         latest_observation: Observation[Imu] = store.stream("imu").order_by("ts", desc=True).first()
         assert latest_observation.ts == 12.5
-        assert latest_observation.data.lcm_encode() == expected.lcm_encode()
+        assert latest_observation.data.header.frame_id == "imu_link"
+        assert latest_observation.data.angular_velocity.x == 1.0
 
 
 def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
-    expected = Imu(
-        ts=12.5,
-        frame_id="imu_link",
-        angular_velocity=Vector3(1.0, 2.0, 3.0),
-    )
+    expected = _imu(12.5)
     codec = Lz4Codec(LcmCodec(Imu))
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
@@ -99,25 +120,24 @@ def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
             channel_id=channel_id,
             log_time=13_000_000_000,
             publish_time=12_500_000_000,
-            data=codec.encode(expected),
+            data=lz4.frame.compress(expected.lcm_encode()),
         )
         writer.finish()
 
     with McapStore(path=str(path), codecs={"imu": codec}) as store:
         observation: Observation[Imu] = store.stream("imu").first()
         assert observation.ts == 12.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert type(observation.data) is Imu
+        assert observation.data.angular_velocity.x == 1.0
 
 
 def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
-    expected = Image(
-        data=np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8),
-        format=ImageFormat.RGB,
-        frame_id="camera",
-        ts=12.5,
+    expected = image_utils.from_array(
+        np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=message_time.time_from_seconds(12.5), frame_id="camera"),
     )
-    codec = JpegCodec()
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
         writer.start(profile="dimos", library="test")
@@ -134,7 +154,7 @@ def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path:
             channel_id=channel_id,
             log_time=13_000_000_000,
             publish_time=12_500_000_000,
-            data=codec.encode(expected),
+            data=_jpeg_envelope(expected),
         )
         writer.finish()
 
@@ -142,10 +162,18 @@ def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path:
         observation: Observation[Image] = store.stream("color_image").first()
         decoded = observation.data
         assert observation.ts == 12.5
-        assert decoded.frame_id == "camera"
-        assert decoded.format is ImageFormat.RGB
-        assert decoded.data.shape == expected.data.shape
-        assert np.mean(np.abs(decoded.data.astype(float) - expected.data.astype(float))) < 5
+        assert decoded.header.frame_id == "camera"
+        assert decoded.encoding == "rgb8"
+        assert image_utils.view(decoded).shape == image_utils.view(expected).shape
+        assert (
+            np.mean(
+                np.abs(
+                    image_utils.view(decoded).astype(float)
+                    - image_utils.view(expected).astype(float)
+                )
+            )
+            < 5
+        )
 
 
 def test_lcm_metadata_does_not_import_payload_module(

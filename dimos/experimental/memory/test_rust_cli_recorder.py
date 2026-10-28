@@ -30,8 +30,8 @@ from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 
 
@@ -67,8 +67,8 @@ def test_plan_uses_actual_lcm_channels_and_memory_codecs(tmp_path: Path) -> None
     assert plan.backend == "lcm"
     assert plan.topics == {"stream_0": odom.channel, "stream_1": camera.channel}
     assert [(stream.name, stream.codec) for stream in plan.streams] == [
-        ("odom", "lcm"),
-        ("color_image", "jpeg"),
+        ("odom", "cdr"),
+        ("color_image", "cdrjpeg"),
     ]
     assert plan.path == tmp_path / "memory.db"
 
@@ -183,8 +183,8 @@ def _plan(tmp_path: Path) -> RustRecordingPlan:
             RustStreamSpec(
                 port="stream_0",
                 name="odom",
-                payload_type="dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
-                codec="lcm",
+                payload_type="geometry_msgs/msg/PoseStamped",
+                codec="cdr",
             )
         ],
         payload_types={"odom": PoseStamped},

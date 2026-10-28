@@ -12,27 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+from typing import Any
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.msgs.protocol import DimosMsg
+from dimos.memory.codecs.legacy import decode_lcm
 
 
 class LcmCodec:
-    """Codec for DimosMsg types — uses lcm_encode/lcm_decode."""
+    """Read historical LCM envelopes directly into generated messages."""
 
-    def __init__(self, msg_type: type[DimosMsg]) -> None:
+    def __init__(self, msg_type: type) -> None:
         self._msg_type = msg_type
 
     @property
-    def payload_type(self) -> type[DimosMsg]:
-        """Message type encoded by this codec."""
+    def payload_type(self) -> type:
         return self._msg_type
 
-    def encode(self, value: DimosMsg) -> bytes:
-        return value.lcm_encode()
+    def encode(self, value: Any) -> bytes:
+        raise TypeError("Historical LCM codecs are read-only; use CDR for new recordings")
 
-    def decode(self, data: bytes) -> DimosMsg:
-        return self._msg_type.lcm_decode(data)
+    def decode(self, data: bytes) -> Any:
+        return decode_lcm(data, self._msg_type)

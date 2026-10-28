@@ -25,6 +25,7 @@ import time
 from typing import cast
 import uuid
 
+from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 
@@ -40,16 +41,38 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
-from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import Image, Imu
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+
+
+def _imu(ts, frame_id="imu_link"):
+    return Imu(
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=frame_id),
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        orientation_covariance=np.zeros(9),
+        angular_velocity=Vector3(1.0, 2.0, 3.0),
+        angular_velocity_covariance=np.zeros(9),
+        linear_acceleration=Vector3(0.0, 0.0, 0.0),
+        linear_acceleration_covariance=np.zeros(9),
+    )
+
+
+def _transform(translation, frame_id, child_frame_id, ts):
+    return TransformStamped(
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=frame_id),
+        child_frame_id=child_frame_id,
+        transform=Transform(translation=translation, rotation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+
+
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
@@ -162,7 +185,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store=store,
         record_tf=False,
         encoding_threads=2,
-        stream_codecs={"imu": "lz4+lcm"},
+        stream_codecs={"imu": "lz4+cdr"},
         session=ZenohConfig(
             mode="peer",
             connect=[],
@@ -220,16 +243,11 @@ def test_rust_artifact_is_readable_by_python_memory2(
         process.stdin.close()
         _wait_for_log(process, "memory recorder ready")
 
-        expected = Imu(
-            ts=12.5,
-            frame_id="imu_link",
-            angular_velocity=Vector3(1.0, 2.0, 3.0),
-        )
-        expected_image = Image(
-            data=np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
-            format=ImageFormat.RGB,
-            frame_id="camera",
-            ts=12.75,
+        expected = _imu(12.5)
+        expected_image = image_utils.from_array(
+            np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(stamp=message_time.time_from_seconds(12.75), frame_id="camera"),
         )
         publisher.broadcast(None, expected)
         image_publisher.broadcast(None, expected_image)
@@ -251,20 +269,28 @@ def test_rust_artifact_is_readable_by_python_memory2(
     else:
         memory = McapStore(
             path=str(artifact),
-            codecs={"imu": Lz4Codec(LcmCodec(Imu))},
+            codecs={"imu": Lz4Codec(CdrCodec(Imu))},
         )
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert encode(observation.data) == encode(expected)
         image_observation = cast("Observation[Image]", memory.stream("color_image").first())
         decoded_image = image_observation.data
         assert image_observation.ts == 12.75
-        assert decoded_image.frame_id == "camera"
-        assert decoded_image.format is ImageFormat.RGB
-        assert decoded_image.data.shape == expected_image.data.shape
+        assert decoded_image.header.frame_id == "camera"
+        assert decoded_image.encoding == "rgb8"
+        assert (decoded_image.height, decoded_image.width) == (
+            expected_image.height,
+            expected_image.width,
+        )
         assert (
-            np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
+            np.mean(
+                np.abs(
+                    image_utils.view(decoded_image).astype(float)
+                    - image_utils.view(expected_image).astype(float)
+                )
+            )
             < 5
         )
 
@@ -296,7 +322,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
     session = RustRecordingSession(rust_cli_recorder.make_plan({("imu", Imu): publisher}))
-    expected = Imu(ts=22.5, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    expected = _imu(22.5)
     try:
         publisher.start()
         session.start()
@@ -316,11 +342,11 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
-        memory = McapStore(path=str(artifact), codecs={"imu": LcmCodec(Imu)})
+        memory = McapStore(path=str(artifact), codecs={"imu": CdrCodec(Imu)})
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert encode(observation.data) == encode(expected)
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(
@@ -378,18 +404,20 @@ def test_tf_records_over_zenoh_and_replays_through_python(
         stderr=subprocess.PIPE,
     )
     expected = TFMessage(
-        Transform(
-            translation=Vector3(1.0, 2.0, 3.0),
-            frame_id="world",
-            child_frame_id="base_link",
-            ts=10.25,
-        ),
-        Transform(
-            translation=Vector3(4.0, 5.0, 6.0),
-            frame_id="base_link",
-            child_frame_id="camera",
-            ts=11.5,
-        ),
+        transforms=[
+            _transform(
+                translation=Vector3(1.0, 2.0, 3.0),
+                frame_id="world",
+                child_frame_id="base_link",
+                ts=10.25,
+            ),
+            _transform(
+                translation=Vector3(4.0, 5.0, 6.0),
+                frame_id="base_link",
+                child_frame_id="camera",
+                ts=11.5,
+            ),
+        ]
     )
     try:
         assert process.stdin is not None

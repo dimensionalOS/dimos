@@ -37,14 +37,18 @@ from typing import Any, Protocol, runtime_checkable
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
+from dimos.protocol.pubsub.message_types import resolve_message_type
 
 
 @runtime_checkable
@@ -76,17 +80,16 @@ class _DimosCodec:
     payload_type: type
 
     def decode(self, data: bytes) -> Any:
-        return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
+        from dimos.memory.codecs.legacy import decode_lcm
+
+        return decode_lcm(data, self.payload_type)
 
 
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
-    """Split a dimos wire topic into its port name and message type.
+    """Recognize historical ``dimos/<port>/<msg_name>`` topic suffixes.
 
-    A dimos topic embeds the type in its last segment,
-    ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
-    every dimos channel describes itself and no per-topic registry is needed.
-    None for anything that is not one, which leaves DDS and app channels to
-    the injected codecs.
+    New raw CDR channels obtain their type from the declared channel schema.
+    This reader still accepts old topic suffixes for recorded-data compatibility.
     """
     prefix, _, rest = topic.partition("/")
     port, _, msg_name = rest.rpartition("/")
@@ -238,20 +241,33 @@ class McapStore(Store):
                     # `streams=`, not something to guess at.
                     wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
                     if wire is not None and had is not None and wire[0] == had[0]:
-                        name = f"{name}_{wire[1].__name__}"
+                        name = f"{name}_{describe_message(wire[1]).name.rsplit('/', 1)[-1]}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
                         raise ValueError(
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
                         )
+                if ch.topic not in self._codecs and ch.message_encoding in {"cdr", "lz4+cdr"}:
+                    schema = summary.schemas.get(ch.schema_id)
+                    kind = resolve_message_type(schema.name) if schema is not None else None
+                    if kind is not None:
+                        self._codecs[ch.topic] = (
+                            Lz4Codec(CdrCodec(kind))
+                            if ch.message_encoding == "lz4+cdr"
+                            else CdrCodec(kind)
+                        )
+                if ch.topic not in self._codecs and ch.message_encoding == "cdrjpeg":
+                    from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
+
+                    self._codecs[ch.topic] = CdrjpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
                     kind = JsonCodec.payload_type
-                    if (
-                        ch.metadata.get("dimos.payload_type")
-                        == f"{kind.__module__}.{kind.__qualname__}"
-                    ):
+                    if ch.metadata.get("dimos.payload_type") in {
+                        kind.__msgtype__,
+                        f"{kind.__module__}.{kind.__qualname__}",
+                    }:
                         self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count

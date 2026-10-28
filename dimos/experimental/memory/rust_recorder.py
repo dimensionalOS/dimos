@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental native recorder for high-throughput LCM-backed memory streams."""
+"""Experimental native recorder for high-throughput registered generated memory streams."""
 
 from __future__ import annotations
 
@@ -27,17 +27,25 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
+from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos.messages.std_msgs.msg import String
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
+
+def is_registered_message(kind: type) -> bool:
+    from dimos_cdrgen.registry import message_types
+
+    return any(item is kind for item in message_types().values())
+
+
 logger = setup_logger()
 
-_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
+_SUPPORTED_NATIVE_CODECS = {"cdr", "cdrjpeg", "lz4+cdr", "json"}
 
 
 class RustStreamSpec(BaseModel):
@@ -49,6 +57,9 @@ class RustStreamSpec(BaseModel):
     codec: str
     timestamp_field: str | None = None
     json_schema: dict[str, Any] | None = None
+    cdr_schema: dict[str, Any] | None = None
+    # Old raw CDR configs retain reception timestamps and complete TF batches.
+    source_timestamp: bool = False
 
     @model_validator(mode="after")
     def _json_options(self) -> RustStreamSpec:
@@ -56,6 +67,8 @@ class RustStreamSpec(BaseModel):
             self.timestamp_field is not None or self.json_schema is not None
         ):
             raise ValueError("JSON options require the json codec")
+        if self.cdr_schema is not None and self.codec not in {"cdr", "lz4+cdr", "cdrjpeg"}:
+            raise ValueError("CDR schema requires a CDR storage codec")
         return self
 
 
@@ -162,7 +175,9 @@ class RustRecorderConfig(NativeModuleConfig):
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
         # Older recorder binaries reject unknown stream fields, even null ones.
-        config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        config["streams"] = [
+            stream.model_dump(exclude_none=True, exclude_defaults=True) for stream in self.streams
+        ]
         return config
 
 
@@ -179,10 +194,10 @@ class RustRecorder(NativeModule):
             color_image: In[Image]
 
     Both stores use the Python Mem2 codec configuration: images default to
-    JPEG, and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP uses
+    JPEG, and ``stream_codecs`` may select ``cdr`` or ``lz4+cdr``. MCAP uses
     indexed Zstd chunks around those storage-encoded observations. The native
     path preserves source timestamps for common stamped message types. Other
-    LCM messages use their reception timestamp. Spatial pose attachment is not
+    Messages without a supported source Header use their reception timestamp. Spatial pose attachment is not
     supported yet.
     """
 
@@ -226,8 +241,10 @@ class RustRecorder(NativeModule):
                         RustStreamSpec(
                             port=port_name,
                             name="tf",
-                            payload_type=f"{TFMessage.__module__}.{TFMessage.__qualname__}",
-                            codec="lcm",
+                            payload_type=TFMessage.__msgtype__,
+                            codec="cdr",
+                            cdr_schema=recording_schema(TFMessage),
+                            source_timestamp=True,
                         )
                     )
                 continue
@@ -239,10 +256,16 @@ class RustRecorder(NativeModule):
                 RustStreamSpec(
                     port=port_name,
                     name=stream_name,
-                    payload_type=f"{port.type.__module__}.{port.type.__qualname__}",
+                    payload_type=port.type.__msgtype__,
                     codec=codec,
                     timestamp_field=self.config.stream_timestamp_fields.get(stream_name),
                     json_schema=self.config.stream_json_schemas.get(stream_name),
+                    cdr_schema=recording_schema(
+                        CompressedImage if codec == "cdrjpeg" else port.type
+                    )
+                    if codec in {"cdr", "lz4+cdr", "cdrjpeg"}
+                    else None,
+                    source_timestamp=True,
                 )
             )
 
@@ -262,11 +285,11 @@ class RustRecorder(NativeModule):
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
         if issubclass(payload_type, Image):
-            return "jpeg"
-        if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
-            return "lcm"
+            return "cdrjpeg"
+        if is_registered_message(payload_type):
+            return "cdr"
         raise TypeError(
-            f"RustRecorder only supports LCM-backed messages, got {payload_type.__qualname__}"
+            f"RustRecorder only supports registered generated messages, got {payload_type.__qualname__}"
         )
 
     @staticmethod
@@ -278,11 +301,11 @@ class RustRecorder(NativeModule):
             )
         if codec == "json" and payload_type is not String:
             raise TypeError("JSON codec requires std_msgs.String")
-        if codec == "jpeg" and not issubclass(payload_type, Image):
+        if codec == "cdrjpeg" and not issubclass(payload_type, Image):
             raise TypeError(f"JPEG codec requires Image, got {payload_type.__qualname__}")
-        if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
+        if not is_registered_message(payload_type):
             raise TypeError(
-                f"Native codec {codec!r} requires an LCM-backed type, "
+                f"Native codec {codec!r} requires an registered generated type, "
                 f"got {payload_type.__qualname__}"
             )
 
@@ -316,7 +339,7 @@ class RustRecorder(NativeModule):
 
             ports = self.inputs
             for spec in specs:
-                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
+                tf_payload_type = TFMessage.__msgtype__
                 payload_type = (
                     TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
                 )

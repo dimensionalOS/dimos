@@ -16,7 +16,7 @@
 
 import json
 
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import String
 
 
 def _invalid_constant(value: str) -> None:

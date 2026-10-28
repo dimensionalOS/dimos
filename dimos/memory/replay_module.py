@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from reactivex import Observable
 
     from dimos.memory.replay import Replay, ReplayStream
-    from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
@@ -72,21 +71,12 @@ def dataset_path(name: str, *, explicit: bool = True) -> str:
         return ""
 
 
-def _wire_type(t: type) -> type:
-    """The class that owns *t*'s ``msg_name``: the type a port must declare so a consumer
-    of the base message shares its topic (unitree ``Odometry`` -> ``PoseStamped``)."""
-    for cls in t.__mro__:
-        if "msg_name" in vars(cls):
-            return cls
-    return t
-
-
 def stream_types_of(dataset: str) -> dict[str, type]:
     """Stream name -> port type for every stream in *dataset*."""
     store = open_dataset(dataset)
     store.start()
     try:
-        return {n: _wire_type(t) for n, t in stream_payload_types(store).items()}
+        return stream_payload_types(store)
     finally:
         store.stop()
 
@@ -137,9 +127,7 @@ class ReplayModule(Module):
         )
         # Open every stream before pinning the anchor, so setup time is not
         # counted as lateness that observable() would skip past.
-        streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
-        }
+        streams: dict[str, ReplayStream[Any]] = {name: replay.stream(name) for name in self.outputs}
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
@@ -147,7 +135,7 @@ class ReplayModule(Module):
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
         timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
+        port: Out[Any]
         for name, port in self.outputs.items():
             stream = streams[name]
             logger.info("Replaying %s -> %s", name, port)
@@ -156,7 +144,7 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, stream.first()))
                 )
                 continue
-            timed: Observable[DimosMsg] = stream.observable()
+            timed: Observable[Any] = stream.observable()
             self.register_disposable(timed.subscribe(port.publish))
 
     @rpc
@@ -235,7 +223,7 @@ def rerun_layout(stream_types: dict[str, type]) -> Any:
     """A Rerun blueprint showing every recorded stream: one 3D world view, one 2D view per image."""
     import rerun.blueprint as rrb
 
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.messages.sensor_msgs.msg import Image
 
     images = [
         rrb.Spatial2DView(origin=f"world/{n}", name=n)

@@ -54,6 +54,8 @@ we can create new streams by querying existing streams, and we can save, further
 
 ```python title="Python" session=mem output=none
 
+from dimos.message_utils import image as image_utils
+
 drawing = Space()
 drawing.add(global_map)
 
@@ -82,7 +84,7 @@ drawing.add(
   # otherwise observations only hold positions and timestamps
   .transform(throttle(0.25)) \
   # we calculate brightness
-  .map(lambda obs: obs.derive(data=obs.data.brightness)))
+  .map(lambda obs: obs.derive(data=image_utils.brightness(obs.data))))
 
 drawing.to_svg("assets/brightness.svg")
 ```
@@ -93,7 +95,8 @@ So knowing above, we can create embeddings for the full stream,
 
 ```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.message_utils import image as image_utils
 from dimos.memory.transform import QualityWindow
 from dimos.memory.embed import EmbedImages
 
@@ -102,8 +105,8 @@ clip = CLIPModel()
 
 # Downsample to 2Hz, filter dark images, then embed
 pipeline = (
-    store.streams.color_image.filter(lambda obs: obs.data.brightness > 0.1)
-    .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+    store.streams.color_image.filter(lambda obs: image_utils.brightness(obs.data) > 0.1)
+    .transform(QualityWindow(lambda img: image_utils.sharpness(img), window=0.5))
     .transform(EmbedImages(clip))
     .save(embedded)
 )

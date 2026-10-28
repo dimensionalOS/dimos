@@ -17,10 +17,8 @@
 import pytest
 
 from dimos.memory.store.mcap import McapStore, _dimos_wire, _DimosCodec, _slug
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 
 def test_a_dimos_topic_names_its_own_type():
@@ -51,16 +49,23 @@ def test_the_stream_name_is_the_port_not_the_wire_name():
 
 
 def test_the_codec_decodes_the_wire_bytes():
-    path = Path(
-        ts=1.0,
-        frame_id="odom",
-        poses=[PoseStamped(ts=1.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.0))],
-    )
+    from dimos_lcm.geometry_msgs import PoseStamped as LegacyPose
+    from dimos_lcm.nav_msgs import Path as LegacyPath
+
+    path = LegacyPath()
+    path.header.frame_id = "odom"
+    path.header.stamp.sec = 1
+    pose = LegacyPose()
+    pose.header.frame_id = "odom"
+    pose.header.stamp.sec = 1
+    pose.pose.position.x = 0.5
+    path.poses = [pose]
+    path.poses_length = 1
     _, msg_type = _dimos_wire("dimos/path/nav_msgs.Path")
     got = _DimosCodec(msg_type).decode(path.lcm_encode())
-    assert isinstance(got, Path)
-    assert got.frame_id == "odom"
-    assert abs(got.poses[0].position.x - 0.5) < 1e-9
+    assert type(got) is Path
+    assert got.header.frame_id == "odom"
+    assert got.poses[0].pose.position.x == 0.5
 
 
 def _write(path, topics):
