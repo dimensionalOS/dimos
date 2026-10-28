@@ -80,7 +80,7 @@ still restores the terminal.
    user opens a new conversation as owner, it runs `runSetup`.
 3. It calls `initTheme` with the saved theme and builds the layout on a `TuiAltScreen`. The chat column holds two header
    lines, the transcript in a `ScrollView` that follows the end, a progress slot, the action line, a hint line, the
-   input slot and the footer. The sidebar's viewport sits beside the chat when the terminal has room for 60 chat columns
+   input slot, the background panel and the footer. The sidebar's viewport sits beside the chat when the terminal has room for 60 chat columns
    plus `SIDEBAR_COLUMNS`.
 4. It shows the conversation with `switchTo`, starts the TUI and waits for an exit code.
 5. On exit it stops every subscription, disposes the components, closes `RemoteFrames`, stops the TUI and releases the
@@ -381,7 +381,9 @@ masked `ChatInput` drops its undo and kill-ring history when it leaves the mode.
 is `SwitcherOverlay`, the Ctrl+O overlay over `switcherRows`. [selection.ts](conversation/selection.ts) is
 `MessageSelection` and its `SelectionChoice`, the Esc-then-arrows selection over `selectables`, which starts at the
 newest message. [progress.ts](conversation/progress.ts) is `ProgressPanel`, a spinner, a bar and the newest finished
-frame while `/inspect` renders a clip. input.test.ts checks that a paste submits whole, that a modified Enter adds a
+frame while `/inspect` renders a clip. [background.ts](conversation/background.ts) is `BackgroundPanel`, the calls
+running in the background under the editor; Down on an empty editor focuses it, Enter opens a call's output full
+screen, and `x` stops the call. input.test.ts checks that a paste submits whole, that a modified Enter adds a
 line, and that a secret never reaches the editor history. progress.test.ts checks that the preview keeps its picture
 while the next frame loads. The timeline and selection calculations live in shared/view-models/conversation/.
 

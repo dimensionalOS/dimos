@@ -136,9 +136,9 @@ function ownedStreams(modules: readonly ModuleRow[], streams: readonly StreamRef
  * view's own subtrees (shared containers, so Chord sends ops), and `transcript` with `projectTranscript`, diffed, as
  * its new array holds the previous frame's items. `outcomes` starts from the settled inputs in the store, so a reopened
  * room still has the ones that settled while it was closed, and folds in the submission changes of later commit
- * publications. `detachable` is fed from the Detacher. The DimOS members are derivations over the store, filtered to
- * this conversation. The watch resource opens before the store reference goes live, so its `open` touches only the
- * harness.
+ * publications. `detachable` and `moved` are fed from the Detacher. The DimOS members are derivations over the store,
+ * filtered to this conversation. The watch resource opens before the store reference goes live, so its `open` touches
+ * only the harness.
  */
 export const serveRoom: ServeObject = (host, deps) =>
   host.serve(
@@ -215,6 +215,7 @@ export const serveRoom: ServeObject = (host, deps) =>
         agent: agentState,
         outcomes,
         detachable: feed(self, "detachable", ConversationState.detachable, agent.detacher.of(conversation)),
+        moved: feed(self, "moved", ConversationState.moved, agent.detacher.moved(conversation), { diff: true }),
         modules,
         jobs: self.derive([store.jobs], (rows) => ownedJobs(rows, conversation)),
         streams: self.derive([modules, store.streams], (mine, streams) => ownedStreams(mine, streams)),

@@ -1,4 +1,4 @@
-import type { CallId, Detachable } from "../conversation/calls.ts";
+import type { CallId, Detachable, MovedCall } from "../conversation/calls.ts";
 import type { ConversationId, EntryId, InboxState, LiveState } from "@earendil-works/pi-durable";
 import type { LinkStatus } from "../gateway/link.ts";
 import type { Refusal } from "../outcome.ts";
@@ -22,6 +22,7 @@ export type ConversationStanding = {
   /** User inputs in `pi.inbox`. */
   readonly userQueued: number;
   readonly detachable: readonly CallId[];
+  readonly moved: readonly CallId[];
   /** "user" for a user input in the active range, "other" for any other item there, null when it left the range. */
   readonly messageKind: (entry: EntryId) => "user" | "other" | null;
 };
@@ -34,6 +35,7 @@ export function conversationStanding(
     readonly live: LiveState;
     readonly queue: InboxState;
     readonly detachable: readonly Detachable[];
+    readonly moved: readonly MovedCall[];
   },
 ): ConversationStanding {
   let userQueued = 0;
@@ -43,6 +45,7 @@ export function conversationStanding(
     busy: values.live.run !== undefined,
     userQueued,
     detachable: values.detachable.map((call) => call.call),
+    moved: values.moved.map((call) => call.call),
     messageKind: (entry) => {
       const item = values.transcript.items.find((candidate) => candidate.entry === entry);
       if (item === undefined) return null;
@@ -88,6 +91,11 @@ export const rules = {
   /** The call is in `detachable`; otherwise `not_running`. */
   detachable: (args: { readonly call: CallId }, standing: Standing): Refusal | null =>
     standing.conversation !== null && !standing.conversation.detachable.includes(args.call)
+      ? { code: "not_running", call: args.call }
+      : null,
+  /** The call is in `moved`; otherwise `not_running`. */
+  moved: (args: { readonly call: CallId }, standing: Standing): Refusal | null =>
+    standing.conversation !== null && !standing.conversation.moved.includes(args.call)
       ? { code: "not_running", call: args.call }
       : null,
 } as const;

@@ -139,6 +139,7 @@ async function open(name: string, model: ReturnType<typeof scriptedModel>, repor
         stream_get: null,
         agent_module: null,
         job: null,
+        background: null,
       },
       limiter,
       detacher,
@@ -196,7 +197,7 @@ test("a bash call sent to the background returns at once, and its output comes b
   assert.ok(idleAfterMs < 1_500, `the run ended after ${idleAfterMs} ms, before the 1.5 s command did`);
   assert.deepEqual(requests.at(-1)?.slice(-2), [
     'assistant: bash({"command":"echo scanning; sleep 1.5; echo survey done"})',
-    "toolResult: Moved to the background. Its result arrives later as a message.",
+    "toolResult: Moved to the background as call call_bg. Its result arrives later as a message; the background tool lists it, reads its output so far, or stops it.",
   ]);
   assert.deepEqual(detachable.value, []);
   assert.equal(

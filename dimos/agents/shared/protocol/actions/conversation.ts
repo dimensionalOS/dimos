@@ -96,6 +96,15 @@ export const CONVERSATION_ACTIONS = {
     retry: "unknown",
     rule: rules.detachable,
   }),
+  /** Ends a moved call's work; the model gets its output so far as a `stopped` notice. */
+  stopBackground: action({
+    args: Type.Object({ call: CallIdSchema }),
+    value: carried<null>(),
+    executor: "gateway",
+    access: "owner",
+    retry: "unknown",
+    rule: rules.moved,
+  }),
   /** The bytes of one image the transcript carries only as a ref, in its stored format. */
   image: action({
     args: Type.Object({ at: ImageAddressSchema }),

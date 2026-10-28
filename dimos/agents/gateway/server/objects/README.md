@@ -165,6 +165,8 @@ does not mount pi-durable's view again. It holds:
 - A `commits` resource from `commitEvents`. A listener folds the settled input submissions of this conversation into
   `outcomes` and keeps the newest 50.
 - `detachable`, a `feed` of `agent.detacher.of(conversation)`.
+- `moved`, a `feed` of `agent.detacher.moved(conversation)` with `{ diff: true }`, so a moved call's growing output
+  reaches clients as appends.
 - `modules`, `jobs` and `streams`, derived from the store's cells and filtered to what this
   conversation owns.
 
@@ -416,6 +418,7 @@ export const serveConversation: ServeObject = (host, deps) =>
                 live: room.live.value,
                 queue: room.queue.value,
                 detachable: room.detachable.value,
+                moved: room.moved.value,
             }),
         });
         const { agent } = deps;
@@ -467,6 +470,8 @@ export const serveConversation: ServeObject = (host, deps) =>
                     ? done({ task: result.task })
                     : refused({ code: "not_running", call: target });
             },
+            stopBackground: async ({ call: target }) =>
+                agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
             image: async ({ at }, call) =>
                 imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
         };
@@ -487,7 +492,7 @@ export const serveConversation: ServeObject = (host, deps) =>
 `self.get(ConversationRoom, { conversation })` acts as the host, so every client of one conversation shares one room and
 one pi-durable watch. `forward(room, SHARED)` returns the room's cells, so the served object keeps no state of its own.
 `standing` reads the room's values each time a method runs, so `rules.idle` sees the current `pi.live` run. `Handlers`
-makes you write all nine executors, even though the viewer variant exposes only `image`. Each executor passes
+makes you write all ten executors, even though the viewer variant exposes only `image`. Each executor passes
 `call.context` on, so the call's abort signal, or the gateway's for a `by_request_id` action, reaches pi-durable.
 
 ### Add a served object

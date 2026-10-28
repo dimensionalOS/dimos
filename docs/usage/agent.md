@@ -66,7 +66,9 @@ Ctrl+O opens the conversation switcher. Every conversation is listed with its st
 
 With nothing running and an empty editor, Esc selects a message. The arrows move between your messages and the agent's answers, and the chat scrolls to the selected one. On a message of yours, `e` puts its text in the editor; Enter then sends the edited text and the message's images into a fork of the conversation that continues from before that message, and the terminal attaches to the fork. On any message, `u` summarizes the conversation up to it into a new fork, and `f` summarizes from it. If you switch to another conversation before the fork is ready, the terminal stays where you are and names the fork. The original conversation stays as it was.
 
-A long-running tool call that allows it, such as `bash`, shows `Ctrl+B background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
+A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /background moves this call to the background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
+
+While calls run in the background, a panel under the editor lists each with its command, how long it has run and its newest output line. With an empty editor, Down selects a call there. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also list, read and stop these calls itself with its `background` tool.
 
 `/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
 
@@ -79,6 +81,7 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B backgroun
 | Esc (sidebar) | Return to chat |
 | Ctrl+O | Open the conversation switcher |
 | Ctrl+B | Send the running tool call to the background |
+| Down | With an empty editor, select a call in the background (then ↑/↓, Enter for its output, `x` to stop it, Esc to return) |
 | Esc | While running, stop the run. With an empty editor, select a message (then ↑/↓, `e`, `u`, `f`) |
 | Up | With an empty editor, bring your queued messages back for editing |
 | Ctrl-C | Clear the editor. With an empty editor, detach; the conversation keeps running |
