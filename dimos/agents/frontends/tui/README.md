@@ -145,7 +145,7 @@ to that array. When `run` throws, main.ts shows a `RefusalError` on the action l
 | `rows()`                          | The shown conversation's `TimelineRow` list, as the chat draws it.                              |
 | `cwd()`                           | The shown conversation's directory.                                                             |
 | `switchTo(conversation, role)`    | Shows another conversation, or a new one for `null`.                                            |
-| `restore(text)`                   | Puts withdrawn text into the editor after what is typed there.                                  |
+| `restore(from, text)`             | Puts text withdrawn from `from` into the editor, or holds it until `from` shows again.          |
 | `showProgress(panel)`             | Shows a `ProgressPanel` above the editor, or removes it for `null`.                             |
 | `openMenu()`, `openSwitcher()` | Opens `/menu` or the switcher.                                                               |
 | `openPanel(index)`                | Selects view `index` of the newest rendering. 0 is the overview.                                |

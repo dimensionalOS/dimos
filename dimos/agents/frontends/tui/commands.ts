@@ -24,6 +24,8 @@ import { inspectPath } from "./inspect.ts";
 import { isRunning } from "../../shared/view-models/conversation/timeline.ts";
 import { newActionRequest, newUserRequest } from "../../shared/protocol/actions/request.ts";
 
+type Shown = { readonly conversation: Ref<typeof ConversationContract>; readonly id: ConversationId };
+
 /** What slash commands act on; main.ts provides it. */
 export type TerminalApp = {
   readonly ui: Ui;
@@ -31,15 +33,15 @@ export type TerminalApp = {
   readonly transcript: TranscriptView;
   readonly renderer: FileRenderer;
   /** The shown conversation and its number, or null before one is attached. */
-  shown(): { readonly conversation: Ref<typeof ConversationContract>; readonly id: ConversationId } | null;
+  shown(): Shown | null;
   /** The shown conversation's timeline, as the chat draws it. */
   rows(): readonly TimelineRow[];
   /** The shown conversation's directory. */
   cwd(): string;
   /** Shows another conversation, or a new one when null; the current one is released first. */
   switchTo(conversation: ConversationId | null, role: Role): Promise<void>;
-  /** Puts withdrawn text into the editor, after what is typed there. */
-  restore(text: string): void;
+  /** Puts text withdrawn from `from` into the editor after what is typed there, or holds it until `from` shows. */
+  restore(from: ConversationId, text: string): void;
   /** Shows a component above the editor while it works, or nothing. */
   showProgress(panel: ProgressPanel | null): void;
   /** Full-screen `/menu`. */
@@ -80,10 +82,7 @@ function conversationNumber(text: string, usage: string): ConversationId {
   return id as ConversationId;
 }
 
-function shownOf(app: TerminalApp): {
-  readonly conversation: Ref<typeof ConversationContract>;
-  readonly id: ConversationId;
-} {
+function shownOf(app: TerminalApp): Shown {
   const shown = app.shown();
   if (shown === null) throw new Error("No conversation is shown; /new or /resume ID first.");
   return shown;
@@ -145,14 +144,19 @@ const KEYS: readonly string[] = [
 ];
 
 /** Sends typed text: a steer while a run is in progress, so it joins the run; otherwise placed at once. */
-async function send(app: TerminalApp, text: string, images: readonly ImageContent[], followUp: boolean): Promise<void> {
-  const { conversation } = shownOf(app);
+async function send(
+  app: TerminalApp,
+  { conversation, id }: Shown,
+  text: string,
+  images: readonly ImageContent[],
+  followUp: boolean,
+): Promise<void> {
   const whenBusy: "followUp" | "steer" = followUp || !isRunning(conversation.live.value) ? "followUp" : "steer";
   const args = { request: newUserRequest(), text, images: [...images], whenBusy };
   await app.ui.actions.observe(
     whenBusy === "steer" ? "send" : "queue a follow-up",
     retryByRequestId(app.ui, args, (args) => owner(conversation).send(args)),
-    { action: "conversation.send", conversation: shownOf(app).id, sending: { request: args.request, text } },
+    { action: "conversation.send", conversation: id, sending: { request: args.request, text } },
   );
 }
 
@@ -188,12 +192,12 @@ export function slashCommands(): readonly SlashCommand[] {
       name: "abort",
       usage: "/abort  stop the current run; queued user messages come back (Esc)",
       run: async (_args, app) => {
-        const { conversation } = shownOf(app);
+        const { conversation, id } = shownOf(app);
         const back = await app.ui.actions.observe(
           "stop the run",
           retryByRequestId(app.ui, { request: newActionRequest() }, (args) => owner(conversation).abort(args)),
         );
-        if (back.ok && back.value.length > 0) app.restore(editorTextOf(back.value));
+        if (back.ok && back.value.length > 0) app.restore(id, editorTextOf(back.value));
       },
     },
     {
@@ -201,7 +205,7 @@ export function slashCommands(): readonly SlashCommand[] {
       usage: "/follow TEXT  queue TEXT for after the current run (Enter steers it)",
       run: async (args, app) => {
         if (args.trim() === "") throw new Error("Usage: /follow TEXT");
-        await send(app, args, [], true);
+        await send(app, shownOf(app), args, [], true);
       },
     },
     {
@@ -437,10 +441,13 @@ export function slashCommands(): readonly SlashCommand[] {
       run: async (args, app) => {
         const [path = "", ...words] = args.trim().split(/\s+/);
         if (path === "") throw new Error("Usage: /image PATH [TEXT]");
+        const shown = shownOf(app);
         const absolute = resolve(app.cwd(), path);
         const rendering = await app.renderer.render([{ path: absolute, sha256: null }], basename(absolute));
         if (rendering === null || rendering.images.length === 0) throw new Error(`${absolute} is not an image`);
-        await send(app, words.join(" ") || "Inspect this attached image.", rendering.images, false);
+        if (app.shown()?.conversation !== shown.conversation)
+          throw new Error(`Not sent: the chat left #${shown.id} while ${basename(absolute)} rendered.`);
+        await send(app, shown, words.join(" ") || "Inspect this attached image.", rendering.images, false);
       },
     },
   ];

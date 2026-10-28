@@ -423,6 +423,21 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui.requestRender();
   };
 
+  const withdrawnUntilShown = new Map<ConversationId, string>();
+  const restore = (from: ConversationId, text: string) => {
+    if (showing?.id === from) {
+      const typed = editor.getValue();
+      editor.setValue(typed.trim() === "" ? text : `${typed}\n\n${text}`);
+    } else {
+      const before = withdrawnUntilShown.get(from);
+      withdrawnUntilShown.set(from, before === undefined ? text : `${before}\n\n${text}`);
+      transcript.note(
+        muted(`Queued messages of #${from} came back; they return to the editor when #${from} shows:\n${clean(text)}`),
+      );
+    }
+    requestRender();
+  };
+
   /** Counts switchTo calls: one that a newer call overtook while it waited gives up, and releases what it got. */
   let switches = 0;
   const switchTo = async (conversation: ConversationId | null, role: Role): Promise<void> => {
@@ -504,6 +519,9 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     const refusal = attachRefusal(id, role, shown.variant);
     if (refusal !== null) ui.actions.refuse(`attach #${id}`, refusal);
     editor.setWorkspace(cwd());
+    const back = withdrawnUntilShown.get(id);
+    withdrawnUntilShown.delete(id);
+    if (back !== undefined) restore(id, back);
     requestRender();
   };
 
@@ -621,11 +639,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     rows,
     cwd,
     switchTo,
-    restore: (text) => {
-      const typed = editor.getValue();
-      editor.setValue(typed.trim() === "" ? text : `${typed}\n\n${text}`);
-      requestRender();
-    },
+    restore,
     showProgress: (panel: ProgressPanel | null) => {
       progressSlot.clear();
       if (panel !== null) progressSlot.addChild(panel);
@@ -789,7 +803,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     if (!matchesKey(data, "up") || !editor.focused || editor.isShowingAutocomplete() || editor.getValue() !== "")
       return undefined;
     if (showing === null || showing.conversation.variant !== "owner") return undefined;
-    const { conversation } = showing;
+    const { conversation, id } = showing;
     if (userQueued(queuedRows(conversation.queue.value)).length === 0) return undefined;
     void ui.actions
       .observe(
@@ -797,7 +811,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         retryByRequestId(ui, { request: newActionRequest() }, (args) => owner(conversation).withdraw(args)),
       )
       .then((back) => {
-        if (back.ok && back.value.length > 0) app.restore(editorTextOf(back.value));
+        if (back.ok && back.value.length > 0) restore(id, editorTextOf(back.value));
       });
     return { consume: true };
   });
