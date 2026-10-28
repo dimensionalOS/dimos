@@ -1,12 +1,12 @@
 # The on-robot agent
 
-`dimos agent` runs Dimensional's on-robot agent. It discovers the modules, streams and RPCs of the running DimOS system, reads sensors, writes Python against the DimOS API, and deploys agent modules that keep working after its turn ends. Events from those modules and from cron jobs wake it.
+`dimos agent` runs Dimensional's on-robot agent. It discovers the modules, streams and RPCs of the running dimOS system, reads sensors, writes Python against the dimOS API, and deploys agent modules that keep working after its turn ends. Events from those modules and from cron jobs wake it.
 
-The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when DimOS restarts. HarnessRuntime is a DimOS module that the gateway loads into each running system and reaches through McpServer. [On-robot agent design](/docs/development/agent-design.md) explains why it is built this way.
+The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when dimOS restarts. HarnessRuntime is a dimOS module that the gateway loads into each running system and reaches through McpServer. [On-robot agent design](/docs/development/agent-design.md) explains why it is built this way.
 
 ## Set up and start the agent
 
-You need a DimOS checkout with its `.venv`, which `bash scripts/install.sh --mode dev --project-dir .` creates, and Node.js 24 or 26 first on `PATH`. The agent runs from the checkout. A DimOS installed from a wheel does not include it.
+You need a dimOS checkout with its `.venv`, which `bash scripts/install.sh --mode dev --project-dir .` creates, and Node.js 24 or 26 first on `PATH`. The agent runs from the checkout. A dimOS installed from a wheel does not include it.
 
 1. Build the agent:
 
@@ -16,7 +16,7 @@ You need a DimOS checkout with its `.venv`, which `bash scripts/install.sh --mod
 
    Every `dimos agent` command except `gateway`, `stop` and `status` first runs `npm ci` and `npm run build` in `dimos/agents` when their inputs changed, so after a pull the next command rebuilds. The first install needs network access and uses the npm installed with your Node. While a gateway runs this checkout's build, a dependency change stops with instructions instead of installing. Build once before `dimos agent service install`, because the service's `gateway` never builds.
 
-2. Start a DimOS system. Any blueprint works. The loader adds HarnessRuntime, McpServer, and RelayBridgeModule when missing. It reuses an existing relay bridge and leaves configuration resolution to that bridge. An automatically loaded bridge uses JPEG previews and does not open a browser. No separate Zenoh bridge setup is needed.
+2. Start a dimOS system. Any blueprint works. The loader adds HarnessRuntime, McpServer, and RelayBridgeModule when missing. It reuses an existing relay bridge and leaves configuration resolution to that bridge. An automatically loaded bridge uses JPEG previews and does not open a browser. No separate Zenoh bridge setup is needed.
 
    Automatically loaded bridges use `rtc=False`, `open_browser=False`, and `web_build=False`. An existing authored bridge using RTC with an SFU must set `rtc=False` to provide Node image previews. Existing bridge configuration stays under its owner's control. The SDK reports an explanatory error for an RTC source.
 
@@ -58,7 +58,7 @@ The sidebar shows the conversation's agent modules and their streams, jobs, and 
 
 The terminal opens its own Web SDK session using `inventory.environment.relay`. The relay bridge discovers native streams and selects their codecs. Point-cloud previews show voxel centers. The local `stream_get` tool reads from the harness's SDK session and exports previews at the relay's resolution. Use `stream_get op=list` to list readable channel IDs, then `stream_get op=read channel=ID`. Reads accept `mode=latest|next`, `timeout_s`, and `export=true`. Each read closes its SDK subscription when it ends. Stream additions and removals arrive through live relay manifests.
 
-Read module diagnostics with `dimos log`. DimOS writes rotating run logs, normally in `~/.local/state/dimos/logs/<run-id>/main.jsonl`. In agent modules, use `setup_logger()` from `dimos.utils.logging_config` for diagnostics and `notify()` for meaningful alerts that need the conversation to act. Callback exceptions include the module and stream in the run log. Module notices arrive live over MCP. Inputs already admitted through InputGate use the normal persistent conversation queue.
+Read module diagnostics with `dimos log`. dimOS writes rotating run logs, normally in `~/.local/state/dimos/logs/<run-id>/main.jsonl`. In agent modules, use `setup_logger()` from `dimos.utils.logging_config` for diagnostics and `notify()` for meaningful alerts that need the conversation to act. Callback exceptions include the module and stream in the run log. Module notices arrive live over MCP. Inputs already admitted through InputGate use the normal persistent conversation queue.
 
 Image previews use the terminal's available graphics or text mode over SSH. To force text previews, run `PI_IMAGE_PROTOCOL=none dimos agent`. Add `NO_COLOR=1` for ASCII previews.
 
@@ -103,7 +103,7 @@ loginctl enable-linger "$USER"
 
 ## What the agent can do on the machine
 
-`bash` runs as the user that runs the gateway, with that user's files, network, processes and devices. The agent has no sandbox and asks for no approval before a command. `bash` has no terminal, so it cannot answer a `sudo` password prompt, and passwordless `sudo` works only as far as the host's sudo policy allows. Run commands that need a password yourself, in a local terminal. One example is DimOS's transport autoconfiguration, which changes socket buffers and multicast settings through `sudo`. Do not run the gateway as root.
+`bash` runs as the user that runs the gateway, with that user's files, network, processes and devices. The agent has no sandbox and asks for no approval before a command. `bash` has no terminal, so it cannot answer a `sudo` password prompt, and passwordless `sudo` works only as far as the host's sudo policy allows. Run commands that need a password yourself, in a local terminal. One example is dimOS's transport autoconfiguration, which changes socket buffers and multicast settings through `sudo`. Do not run the gateway as root.
 
 ## Commands
 
@@ -119,7 +119,7 @@ loginctl enable-linger "$USER"
 | `dimos agent load` | Load missing HarnessRuntime, McpServer, and RelayBridgeModule instances; reuse an existing relay bridge |
 | `dimos agent service install\|status\|uninstall` | Manages `dimos-agent.service`. |
 
-Every command except `load` and `service` runs `node dimos/agents/dist/cli.js` with the same arguments. Before it starts Node, `dimos` checks the Node version and the build. It sets `DIMOS_ROOT`, `DIMOS_PYTHON`, `DIMOS_CLI`, `DIMOS_MCP_URL` and `DIMOS_RUNS_DIR` to tell the gateway where DimOS is. `DIMOS_MCP_URL` is the endpoint of the `McpServer` that `dimos agent load` adds. Both come from `McpServerConfig`: its `host` defaults to `listen_host` and its `port` to 9990, and `MCPSERVER__HOST` and `MCPSERVER__PORT` in the environment or `.env` override them, as they do for `dimos run` (see [Configuration](/docs/usage/configuration.md)). For example, `MCPSERVER__PORT=9000` in `.env` puts the gateway and the server it loads on port 9000. If the running system already has an `McpServer` that the gateway cannot reach this way, such as one started with `--mcpserver.port 9000` while the agent has no such setting, `dimos agent load` fails and names both endpoints.
+Every command except `load` and `service` runs `node dimos/agents/dist/cli.js` with the same arguments. Before it starts Node, `dimos` checks the Node version and the build. It sets `DIMOS_ROOT`, `DIMOS_PYTHON`, `DIMOS_CLI`, `DIMOS_MCP_URL` and `DIMOS_RUNS_DIR` to tell the gateway where dimOS is. `DIMOS_MCP_URL` is the endpoint of the `McpServer` that `dimos agent load` adds. Both come from `McpServerConfig`: its `host` defaults to `listen_host` and its `port` to 9990, and `MCPSERVER__HOST` and `MCPSERVER__PORT` in the environment or `.env` override them, as they do for `dimos run` (see [Configuration](/docs/usage/configuration.md)). For example, `MCPSERVER__PORT=9000` in `.env` puts the gateway and the server it loads on port 9000. If the running system already has an `McpServer` that the gateway cannot reach this way, such as one started with `--mcpserver.port 9000` while the agent has no such setting, `dimos agent load` fails and names both endpoints.
 
 A running gateway keeps the build it started with. After a rebuild, `dimos agent`, `run` and `conversations` refuse a gateway of the old build, and `status` reports it. Restart the gateway with `dimos agent stop`, or with `systemctl --user restart dimos-agent.service` when it runs as the service.
 
@@ -137,14 +137,14 @@ A running gateway keeps the build it started with. After a rebuild, `dimos agent
 | `$XDG_RUNTIME_DIR/dimos-agent.sock` | gateway | The socket that terminals attach to |
 | `~/.local/state/dimos/harness/` | HarnessRuntime | Agent module metadata in `modules/` and notice attachments in `exports/` |
 | `~/.local/state/dimos/modules/dimos_agent/` | HarnessRuntime | Agent module source files and their revisions |
-| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | DimOS | Rotating run logs, including module diagnostics |
-| `~/.local/state/dimos/runs/` | DimOS | One file per running system, watched by the gateway |
+| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | dimOS | Rotating run logs, including module diagnostics |
+| `~/.local/state/dimos/runs/` | dimOS | One file per running system, watched by the gateway |
 
 Without `XDG_RUNTIME_DIR`, the socket is `~/.local/state/dimos/agent/dimos-agent.sock`. Only the gateway opens `agent.sqlite`. Other programs go through the gateway.
 
 ## How agent modules and events work
 
-The agent does one-off work by writing a Python script that uses `Dimos.connect()` and running it with `bash`. Work that has to continue after the turn, such as a watcher, a follower or a control loop, is an agent module. HarnessRuntime's `agent_module` tool runs each module from one source file, `~/.local/state/dimos/modules/dimos_agent/NAME.py`. The agent writes the file and creates the module, then edits the file and restarts the module. A restart compiles the file into a new revision, `NAME_rN.pyc`, and runs it inside DimOS on its own worker. A file that does not compile or import leaves the old revision running. An agent module subclasses `AgentModule`, which is a `Module`. Its `In` and `Out` ports join running streams with the same name and type, and an attribute typed with a module's Spec calls that module's RPCs.
+The agent does one-off work by writing a Python script that uses `Dimos.connect()` and running it with `bash`. Work that has to continue after the turn, such as a watcher, a follower or a control loop, is an agent module. HarnessRuntime's `agent_module` tool runs each module from one source file, `~/.local/state/dimos/modules/dimos_agent/NAME.py`. The agent writes the file and creates the module, then edits the file and restarts the module. A restart compiles the file into a new revision, `NAME_rN.pyc`, and runs it inside dimOS on its own worker. A file that does not compile or import leaves the old revision running. An agent module subclasses `AgentModule`, which is a `Module`. Its `In` and `Out` ports join running streams with the same name and type, and an attribute typed with a module's Spec calls that module's RPCs.
 
 An agent module reports back with `notify(text, **data)`. One notice takes this route:
 
@@ -156,6 +156,6 @@ EventIntake handles each live notification through EventDrafts and InputGate. Th
 
 A cron job created with the `job` tool runs either `{"notify": TEXT}` or `{"skill": {...}}`. A notify run enters the same route at step 3 and starts a turn in the conversation that created the job. A skill run calls the skill through McpServer without a turn. A run that fell due while the gateway was down runs once, late, when the gateway is back.
 
-The conversation store retains admitted inputs and queued work. Interrupted tool handling follows each tool's policy. When DimOS restarts, the gateway sees the new file in `~/.local/state/dimos/runs/` and runs `dimos agent load`. Agent modules stop with DimOS and do not come back on their own.
+The conversation store retains admitted inputs and queued work. Interrupted tool handling follows each tool's policy. When dimOS restarts, the gateway sees the new file in `~/.local/state/dimos/runs/` and runs `dimos agent load`. Agent modules stop with dimOS and do not come back on their own.
 
 Two gaps remain. Nobody sees the agent's answer to an event until someone opens the conversation. Event turns have no cost limit, so a module that notifies every 10 seconds starts a model turn every 10 seconds.
