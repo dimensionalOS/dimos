@@ -12,7 +12,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: "npm"
-    directory: "/dimos/agents"
+    directory: "/"
     schedule:
       interval: "daily"
     cooldown:
