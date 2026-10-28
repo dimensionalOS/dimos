@@ -160,17 +160,18 @@
     {
       "name": "china_drifty_pointlio",
       "tier": "main",
-      "odometry": "pointlio_odometry",
-      "lidar": "pointlio_lidar",
+      "odometry": "pointlio_odometry_drifty",
+      "lidar": "pointlio_lidar_drifty",
       "mount": "mid360",
-      "db": "~/repos/dimos/data/china_office.db (LFS data/.lfs/china_office.db.tar.gz; 35699 poses, ~35 cm tag drift)",
+      "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
       "gt": {
-        "stream": "pointlio_odometry_corrected_v5",
-        "tags": "april_tags_raw",
-        "validated": "tag spread 1.9 cm (raw 35.3, tags-only 2.4, pointlio_odometry_corrected 5.5); map consistency median cross-pass gap 8.6 cm / 26.9% within 5 cm (raw 12.3 / 22.3%)",
-        "built_by": "make_gt_mid360.py: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans, 5 nearest revisit partners per keyframe)"
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
       },
-      "status": "ready"
+      "status": "ready",
+      "note": "Point-LIO replay with real drift (35.3 cm tag spread); copied from LFS data/.lfs/china_office.db.tar.gz"
     },
     {
       "name": "office555",
@@ -290,12 +291,17 @@
     {
       "name": "china_cpu_bound_pointlio",
       "tier": "extra",
-      "odometry": "pointlio_odometry_original",
-      "lidar": "pointlio_lidar_original",
+      "odometry": "pointlio_odometry_cpu_bound",
+      "lidar": "pointlio_lidar_cpu_bound",
       "mount": "mid360",
       "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
-      "gt": null,
-      "status": "no_gt"
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
+      "status": "ready"
     },
     {
       "name": "china_perfect_pointlio",
@@ -305,9 +311,13 @@
       "mount": "mid360",
       "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
       "gt": {
-        "note": "raw odometry already 1.6 cm tag spread and the crispest map; no corrected stream beats it"
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
       },
-      "status": "no_gt"
+      "status": "ready",
+      "note": "raw already matches the correction (1.6 cm); scores how much a PGO hurts a near-perfect odometry"
     },
     {
       "name": "china_fastlio",
@@ -316,9 +326,14 @@
       "lidar": "fastlio_lidar",
       "mount": "mid360",
       "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
-      "gt": null,
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
       "note": "its fastlio diverged (77x110 m vs 35x58 m)",
-      "status": "no_gt"
+      "status": "ready"
     },
     {
       "name": "hotel_regular",
