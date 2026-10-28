@@ -158,3 +158,23 @@ def test_failed_publish_restores_previous_inputs(source_project, monkeypatch):
     with pytest.raises(OSError, match="publish failed"):
         prepare_builtin_sources(cache, offline=True, project=project)
     assert (target / "dimos_msgs/msg/Reading.msg").read_text() == "float64 value\n"
+
+
+def test_all_custom_packages_are_prepared_and_refresh_offline(source_project):
+    project, cache, _ = source_project
+    package = project / "custom/control_msgs"
+    (package / "msg").mkdir(parents=True)
+    (package / "msg/InterfaceValue.msg").write_text("string[] interface_names\nfloat64[] values\n")
+    (package / "LICENSE").write_text("Control package license\n")
+    target = prepare_builtin_sources(cache, offline=True, project=project)
+    assert (
+        target / "control_msgs/msg/InterfaceValue.msg"
+    ).read_text() == "string[] interface_names\nfloat64[] values\n"
+    assert (target / "licenses/control_msgs-LICENSE").read_text() == "Control package license\n"
+    shutil.rmtree(cache)
+    (package / "msg/InterfaceValue.msg").write_text(
+        "string[] interface_names\nfloat64[] values\nstring label\n"
+    )
+    prepare_builtin_sources(cache, offline=True, project=project)
+    assert (target / "control_msgs/msg/InterfaceValue.msg").read_text().endswith("string label\n")
+    assert (target / "dimos_msgs/msg/Reading.msg").is_file()

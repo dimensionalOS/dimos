@@ -83,14 +83,17 @@ def prepare_builtin_sources(
     upstream = {
         name: entry.sha256 for source in data.sources for name, entry in source.files.items()
     }
-    custom_root = project / "custom/dimos_msgs"
-    custom = {
-        "dimos_msgs/msg/" + path.name: sha256(path.read_bytes()).hexdigest()
-        for path in (custom_root / "msg").glob("*.msg")
+    custom_root = project / "custom"
+    custom_files = {
+        str(path.relative_to(custom_root)): path
+        for package in sorted(custom_root.iterdir())
+        if package.is_dir()
+        for path in sorted((package / "msg").glob("*.msg"))
     }
-    custom["licenses/dimos_msgs-LICENSE"] = sha256(
-        (custom_root / "LICENSE").read_bytes()
-    ).hexdigest()
+    for package in sorted(custom_root.iterdir()):
+        if package.is_dir():
+            custom_files[f"licenses/{package.name}-LICENSE"] = package / "LICENSE"
+    custom = {name: sha256(path.read_bytes()).hexdigest() for name, path in custom_files.items()}
     expected = {**upstream, **custom}
     target = project / "interfaces"
     actual = {str(path.relative_to(target)) for path in target.rglob("*") if path.is_file()}
@@ -107,9 +110,10 @@ def prepare_builtin_sources(
                 shutil.copyfile(target / name, output)
         else:
             prepare_sources(lock, stage, cache / "archives", offline=offline)
-        shutil.copytree(custom_root / "msg", stage / "dimos_msgs/msg")
-        (stage / "licenses").mkdir(exist_ok=True)
-        shutil.copyfile(custom_root / "LICENSE", stage / "licenses/dimos_msgs-LICENSE")
+        for name, source in custom_files.items():
+            output = stage / name
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, output)
         backup = Path(directory) / "previous"
         if target.exists():
             target.rename(backup)

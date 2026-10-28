@@ -1,11 +1,12 @@
 # Built-in message sources
 
-**WIP:** These messages work in standalone examples. CDR transport and application
-support are incomplete. Existing code continues to use `dimos.msgs`.
+These definitions generate the `dimos.messages` classes used by typed transports
+and recordings. Numerical helpers live in `dimos.message_utils`.
 
 The source files are:
 
-- `custom/dimos_msgs/`: message definitions owned by DimOS.
+- `custom/<package>/msg/`: local message definitions, including `dimos_msgs` and `control_msgs`.
+- `custom/<package>/LICENSE`: the license copied with each local package.
 - `schema-sources.json`: upstream revisions, file hashes, and license paths.
 
 cdrgen discovers all `.msg` files in the prepared source directory.
@@ -20,4 +21,6 @@ for install commands, example commands, and output directories.
 
 After you change a definition, install the package again.
 Then restart Python. Keep the upstream license files.
-Encoding of bounded types remains unsupported.
+External projects can define and register their own message packages. See the
+[external message guide](/docs/development/messages-external-project.md).
+Use the generator's supported-schema diagnostics for encoding limitations.

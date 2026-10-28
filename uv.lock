@@ -2542,7 +2542,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-cdrgen", specifier = "==0.1.2" },
+    { name = "dimos-cdrgen", git = "https://github.com/TomCC7/dimos-cdrgen.git?rev=825f31d441a8bc1b7075a3f11297d8272eef434f" },
     { name = "dimos-lcm", specifier = ">=0.1.6" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2689,7 +2689,7 @@ lint = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.2" },
+    { name = "dimos-cdrgen", git = "https://github.com/TomCC7/dimos-cdrgen.git?rev=825f31d441a8bc1b7075a3f11297d8272eef434f" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2765,7 +2765,7 @@ tests = [
     { name = "coverage", specifier = ">=7.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.2" },
+    { name = "dimos-cdrgen", git = "https://github.com/TomCC7/dimos-cdrgen.git?rev=825f31d441a8bc1b7075a3f11297d8272eef434f" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2826,7 +2826,7 @@ tests-self-hosted = [
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
-    { name = "dimos-cdrgen", specifier = "==0.1.2" },
+    { name = "dimos-cdrgen", git = "https://github.com/TomCC7/dimos-cdrgen.git?rev=825f31d441a8bc1b7075a3f11297d8272eef434f" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
@@ -2882,7 +2882,7 @@ tests-self-hosted = [
 [[package]]
 name = "dimos-cdrgen"
 version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/TomCC7/dimos-cdrgen.git?rev=825f31d441a8bc1b7075a3f11297d8272eef434f#825f31d441a8bc1b7075a3f11297d8272eef434f" }
 dependencies = [
     { name = "empy" },
     { name = "lark" },
@@ -2890,10 +2890,6 @@ dependencies = [
     { name = "setuptools" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "wheel" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/88/0a/ad00b03760da952948ad0a0782d49b6d0f2f465f6f2b59b865994155180c/dimos_cdrgen-0.1.2.tar.gz", hash = "sha256:5a767df0364fc32bccc286b48f204317ec8278d04fc9b9ee6a3d7fb9653b7ebf", size = 77745, upload-time = "2026-10-22T20:38:14.584Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/9f/a4fe6f8ea4dcafd3001c868ebbc751bb0af83aecb1fe6523765c12cdedba/dimos_cdrgen-0.1.2-py3-none-any.whl", hash = "sha256:9857c8cc40de58b03f94cb81e7d27ae3caac98101c96cdaa2965413a332e685f", size = 71122, upload-time = "2026-10-22T20:38:13.048Z" },
 ]
 
 [[package]]
