@@ -128,7 +128,7 @@ dimos/
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
 ├── visualization/rerun/     # Rerun bridge
-├── msgs/                    # Message types (geometry_msgs, sensor_msgs, nav_msgs)
+├── message_utils/           # Operations on generated dimos.messages values
 └── utils/                   # Logging, data loading
 docs/
 ├── usage/modules.md         # ← Module system deep dive
@@ -157,7 +157,7 @@ Autonomous subsystems. Communicate via `In[T]`/`Out[T]` typed streams. Run in fo
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.core import rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 class MyModule(Module):
     color_image: In[Image]
@@ -198,9 +198,9 @@ Shared runtime config. Values cascade: defaults → blueprint → JSON config �
 
 ### Transports
 
-- **ZenohTransport**: Default. Typed messages with LCM encoding over Zenoh.
+- **ZenohTransport**: Default. Registered generated messages with CDR encoding over Zenoh.
 - **pZenohTransport**: Pickled Zenoh — use for complex Python objects.
-- **LCMTransport**: Opt-in legacy backend. Multicast UDP.
+- **LCMTransport**: Opt-in multicast UDP carrier with typed CDR messages.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
 - **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).

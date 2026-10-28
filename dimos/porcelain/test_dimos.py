@@ -29,7 +29,9 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.porcelain.dimos import Dimos, _resolve_target
 from dimos.utils.testing.waiting import wait_until
 
@@ -60,7 +62,14 @@ class RecordingSource(Module):
 
     @rpc
     def emit(self, ts: float) -> None:
-        self.odom.publish(PoseStamped(ts=ts))
+        self.odom.publish(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        )
 
 
 class RuntimeRecordingSource(Module):
@@ -72,9 +81,30 @@ class RuntimeRecordingSource(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.odom.publish(PoseStamped(ts=2.0))
-        self.runtime_pose.publish(PoseStamped(ts=3.0))
-        self.ignored.publish(PoseStamped(ts=4.0))
+        self.odom.publish(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        )
+        self.runtime_pose.publish(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(3.0), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        )
+        self.ignored.publish(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(4.0), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        )
         self.raw.publish({"value": 5})
 
 

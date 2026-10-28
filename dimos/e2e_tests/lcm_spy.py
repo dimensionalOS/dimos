@@ -19,10 +19,11 @@ import re
 import threading
 from typing import Any
 
+from dimos_cdrgen.registry import decode
+
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.protocol import DimosMsg
+from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
 from dimos.utils.testing.waiting import wait_until
@@ -113,7 +114,7 @@ class LcmSpy:
     def wait_for_message_result(
         self,
         topic: str,
-        type: type[DimosMsg],
+        type: type[Any],
         predicate: Callable[[Any], bool],
         fail_message: str,
         timeout: float = 30.0,
@@ -121,7 +122,7 @@ class LcmSpy:
         event = threading.Event()
 
         def listener(msg: bytes) -> None:
-            data = type.lcm_decode(msg)
+            data = decode(msg, type)
             if predicate(data):
                 event.set()
 
@@ -136,7 +137,7 @@ class LcmSpy:
         self, x: float, y: float, threshold: float = 1, timeout: float = 60
     ) -> None:
         def predicate(msg: PoseStamped) -> bool:
-            pos = msg.position
+            pos = msg.pose.position
             distance = math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
             return distance < threshold
 

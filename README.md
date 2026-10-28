@@ -250,8 +250,9 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Twist
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.message_utils import image as image_utils, time as message_time
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]
@@ -263,10 +264,10 @@ class RobotConnection(Module):
 
     def _image_loop(self):
         while True:
-            img = Image.from_numpy(
+            img = image_utils.from_array(
                 np.zeros((120, 160, 3), np.uint8),
-                format=ImageFormat.RGB,
-                frame_id="camera_optical",
+                encoding="rgb8",
+                header=message_time.header_now("camera_optical"),
             )
             self.color_image.publish(img)
             time.sleep(0.2)
@@ -296,7 +297,7 @@ A blueprint example that connects the image stream from a robot to an MCP-backed
 ```py skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer

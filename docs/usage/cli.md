@@ -427,6 +427,26 @@ List deployed modules and their skills.
 dimos mcp modules
 ```
 
+## Topic messages
+
+```bash
+dimos topic echo /odom
+dimos topic echo /odom --type geometry_msgs/msg/PoseStamped
+dimos topic send /cmd_vel 'Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))'
+```
+
+`topic echo` reads the running coordinator's stream descriptors to select the
+message type and transport. This works with raw CDR channels on Zenoh and LCM.
+For an external publisher without a running DimOS coordinator, supply `--type`:
+raw CDR bytes do not identify their message schema. Tagged channels can still
+supply their declared type directly.
+
+Type names come from installed generated message packages, including third-party
+packages. Use a canonical name such as `geometry_msgs/msg/Twist`, a shorthand
+such as `geometry_msgs.Twist`, or an unambiguous short name such as `Twist`.
+Expressions passed to `topic send` also expose package namespaces, for example
+`geometry_msgs.Vector3(1, 2, 3)`.
+
 ## Standalone Tools
 
 These are installed as separate entry points and can be run directly without the `dimos` prefix.
