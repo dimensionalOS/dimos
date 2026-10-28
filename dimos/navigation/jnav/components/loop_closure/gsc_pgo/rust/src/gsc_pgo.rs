@@ -394,6 +394,11 @@ pub struct Config {
     /// their innovations: the solve splits each loop's misfit between the odometry and the closure by their stated
     /// variances, so a closure variance stated too loose would otherwise read as odometry too good.
     pub closure_noise_from_residuals: bool,
+    /// When true (with `odometry_noise_from_closures`), the pose graph is solved with the learned odometry noise's lower
+    /// bound (at `closure_gnc_inlier_probability`) instead of its estimate: the odometry is trusted at least as much as
+    /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
+    /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
+    pub odometry_noise_solve_lower_bound: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -524,6 +529,7 @@ impl Default for Config {
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: false,
             closure_noise_from_residuals: false,
+            odometry_noise_solve_lower_bound: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -1045,6 +1051,21 @@ impl GscPgo {
         if !self.config.closure_uninformative_noise_upper_bound {
             return self.odometry_noise();
         }
+        self.odometry_noise_bound(1.0)
+    }
+
+    /// The factor on each odometry variance the pose-graph solve uses: the estimate, or with
+    /// `odometry_noise_solve_lower_bound` its lower bound at `closure_gnc_inlier_probability`.
+    pub(crate) fn odometry_noise_for_solve(&self) -> [f64; 4] {
+        if !self.config.odometry_noise_solve_lower_bound {
+            return self.odometry_noise();
+        }
+        self.odometry_noise_bound(-1.0)
+    }
+
+    /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below
+    /// (-1) the estimate, from its posterior spread (the prior's before the residuals have measured it).
+    fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
         // one-sided normal quantile z: P(|Z| < z) = 2p - 1
         let p = self.config.closure_gnc_inlier_probability;
         let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
@@ -1057,7 +1078,7 @@ impl GscPgo {
                     crate::odometry_noise::standard_error(c, 0)
                 }
             });
-            (self.odometry_noise_ln[c] + z * sd).exp()
+            (self.odometry_noise_ln[c] + side * z * sd).exp()
         })
     }
 
@@ -1201,9 +1222,13 @@ impl GscPgo {
                 }
             }
         }
+        // what the next solve would use (the estimate, or its lower bound) against what the last one did
+        let previous = std::mem::replace(&mut self.odometry_noise_ln, ln_odometry);
+        let next_solve = self.odometry_noise_for_solve().map(f64::ln);
+        self.odometry_noise_ln = previous;
         let moved = (0..4).any(|c| {
             redundancy[c] > 0.5
-                && (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
+                && (next_solve[c] - self.odometry_noise_ln_dispatched[c]).abs()
                     > (2.0 / redundancy[c]).sqrt()
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
             > if self.config.closure_noise_from_residuals {

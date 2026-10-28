@@ -1503,7 +1503,8 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise());
+        let solve_noise = self.odometry_noise_for_solve();
+        let odometry = odometry_edges(&self.key_poses, config, solve_noise);
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
         let solve_config = SolveConfig {
@@ -1511,7 +1512,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             pcm_odometry_translation_variance: if config.closure_pcm {
-                mean_step_variances(&self.key_poses, config)[0] * self.odometry_noise()[0]
+                mean_step_variances(&self.key_poses, config)[0] * solve_noise[0]
             } else {
                 0.0
             },
@@ -1557,7 +1558,8 @@ impl GscPgo {
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
-        self.odometry_noise_ln_dispatched = self.odometry_noise_ln;
+        // the ln the residuals are whitened at (the solve's noise, its lower bound or the estimate)
+        self.odometry_noise_ln_dispatched = self.odometry_noise_for_solve().map(f64::ln);
         self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
         self.closure_noise_ln_rotation_scale_dispatched = self.closure_noise_ln_rotation_scale;
         self.odometry_noise_rescale = false;

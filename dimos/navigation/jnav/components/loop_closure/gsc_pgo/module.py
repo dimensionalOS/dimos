@@ -158,6 +158,8 @@ class PGOConfig(NativeModuleConfig):
     closure_uninformative_noise_upper_bound: bool = False
     # True (with odometry_noise_from_closures): learn the closures' variance scale jointly with the odometry's from the solved graph's residuals
     closure_noise_from_residuals: bool = False
+    # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
+    odometry_noise_solve_lower_bound: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5
