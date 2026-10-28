@@ -756,6 +756,27 @@ def test_write_motor_commands_grippers_routes_normalized_openings(
     assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
 
 
+def test_socketcan_queue_full_is_retried_without_changing_command(
+    active_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+    mocker: MockerFixture,
+) -> None:
+    left_arm = cast("FakeArm", dual_robot["left_arm"])
+    send = mocker.spy(left_arm, "mit_control")
+    send.side_effect = [
+        can_motor_control.TransportError(
+            "transport IO error: No buffer space available (os error 105)"
+        ),
+        None,
+    ]
+    pause = mocker.patch("dimos.hardware.whole_body.damiao.adapter.time.sleep")
+
+    assert active_dual_adapter.write_motor_commands([MotorCommand(q=0.5)] * 6)
+    assert send.call_count == 2
+    np.testing.assert_array_equal(send.call_args_list[0].args[0], send.call_args_list[1].args[0])
+    pause.assert_called_once_with(0.002)
+
+
 def test_write_motor_commands_combined_command_ticks_once(
     active_dual_adapter: DualAdapter,
     dual_robot: FakeRobot,

@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from functools import partial
 from pathlib import Path
 import sys
+import time
 from typing import Any, NoReturn
 
 import can_motor_control
@@ -362,7 +364,7 @@ class DamiaoWholeBodyAdapter(ABC):
                     ],
                     dtype=np.float64,
                 )
-                self._arms[name].mit_control(rows)
+                self._send_with_backpressure_retry(partial(self._arms[name].mit_control, rows))
                 offset += count
                 gravity_offset += count
 
@@ -381,9 +383,21 @@ class DamiaoWholeBodyAdapter(ABC):
             return False
 
     def _refresh(self) -> None:
-        self._robot.refresh()
+        self._send_with_backpressure_retry(self._robot.refresh)
         self._robot.tick(self._runtime_config.tick_deadline_us)
         self._has_state = True
+
+    @staticmethod
+    def _send_with_backpressure_retry(send: Callable[[], None]) -> None:
+        """Give a full SocketCAN transmit queue two short chances to drain."""
+        for attempt in range(3):
+            try:
+                send()
+                return
+            except can_motor_control.TransportError as exc:
+                if "No buffer space available (os error 105)" not in str(exc) or attempt == 2:
+                    raise
+                time.sleep(0.002)
 
     def _load_kinematic_model(self) -> None:
         if not self.kinematic_joint_names:
