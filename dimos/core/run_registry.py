@@ -21,11 +21,10 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import signal
 import time
 
-from dimos.constants import STATE_DIR
+from dimos.constants import LOG_DIR, RECORDINGS_DIR, STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
 from dimos.core.coordination.process_lifecycle import (
     is_pid_alive as is_pid_alive,
@@ -95,22 +94,37 @@ class RunEntry:
 
 
 def generate_run_id(blueprint: str) -> str:
-    """Generate a human-readable run ID: ``<stamp>-<4 hex>-<blueprint>``.
+    """Generate a human-readable run ID: ``<counter>-<blueprint>``, e.g. ``007-unitree-go2``.
 
-    The token keeps parallel runs of one blueprint, started in the same second,
-    out of each other's recording and log folders.
+    The counter is one past the highest in logs, recordings and the registry. The ID
+    is claimed with an empty registry file, shared by every checkout, so no two live
+    runs share one.
     """
-    ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-    return f"{ts}-{secrets.token_hex(2)}-{safe_name}"
+    taken = [
+        int(m.group(1))
+        for d in (LOG_DIR, RECORDINGS_DIR, REGISTRY_DIR)
+        if d.is_dir()
+        for p in d.iterdir()
+        if (m := re.match(r"(\d{3,6})-(?!\d)", p.name))
+    ]
+    n = max(taken, default=0) + 1
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        run_id = f"{n:03d}-{safe_name}"
+        try:
+            (REGISTRY_DIR / f"{run_id}.json").open("x").close()
+            return run_id
+        except FileExistsError:
+            n += 1
 
 
 def blueprint_from_run_id(run_id: str) -> str | None:
     """The blueprint name in a run ID, or None if it is not one.
 
-    Also reads IDs from before the token, ``<stamp>-<blueprint>``.
+    Also reads the older ``<stamp>-[<4 hex>-]<blueprint>`` IDs.
     """
-    m = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
+    m = re.fullmatch(r"(?:\d{8}-\d{6}-(?:[0-9a-f]{4}-)?|\d{3,6}-(?!\d))(.+)", run_id)
     return m.group(1) if m else None
 
 
@@ -119,6 +133,8 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     entries: list[RunEntry] = []
     for f in sorted(REGISTRY_DIR.glob("*.json")):
+        if not f.stat().st_size:
+            continue  # claimed by generate_run_id, not saved yet
         try:
             entry = RunEntry.load(f)
         except Exception:
@@ -131,7 +147,7 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
             entry.remove()
             continue
         entries.append(entry)
-    return entries
+    return sorted(entries, key=lambda e: e.started_at)
 
 
 def cleanup_stale() -> int:
@@ -146,6 +162,8 @@ def cleanup_stale() -> int:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     removed = 0
     for f in list(REGISTRY_DIR.glob("*.json")):
+        if not f.stat().st_size:
+            continue  # claimed by generate_run_id, not saved yet
         try:
             entry = RunEntry.load(f)
             if not is_pid_alive(entry.pid):
