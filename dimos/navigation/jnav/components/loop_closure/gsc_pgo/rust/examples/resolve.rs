@@ -14,7 +14,7 @@
 
 //! Re-solve a finished pgo-eval run's pose graph offline: its raw keyframe poses (`a.kf`) and committed closures
 //! (`a.json`) through `big_picture_fit::solve` at a chosen odometry noise, with or without PCM, so a solve-side change
-//! can be judged in seconds instead of a replay. Writes the solved positions (f64 x y z per keyframe) and prints the kept count.
+//! can be judged in seconds instead of a replay. Writes the solved keyframes in a.kf's format and prints the kept count.
 //! usage: resolve <run dir> <out.bin> [odometry noise factor, 1] [pcm 0|1, 0] [config overlay json, e.g.
 //! '{"closure_gnc_overtrust_check":true}']
 
@@ -120,11 +120,22 @@ fn main() {
         .filter(|&&w| w > 0.5)
         .count();
     println!("kept {kept} / {}", closures.len());
-    let out: Vec<u8> = solution
-        .positions
-        .iter()
-        .flatten()
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
+    // the same records as a.kf (ts, raw x y z qx qy qz qw, corrected likewise), the corrected pose the solve's
+    let mut out = Vec::new();
+    for (k, record) in values.chunks_exact(15).enumerate() {
+        let q = mat3::quat_from_mat(&solution.rotations[k]);
+        let corrected = [
+            solution.positions[k][0],
+            solution.positions[k][1],
+            solution.positions[k][2],
+            q[1],
+            q[2],
+            q[3],
+            q[0],
+        ];
+        for v in record[..8].iter().chain(&corrected) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
     std::fs::write(&args[2], out).unwrap();
 }
