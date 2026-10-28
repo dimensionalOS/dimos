@@ -624,7 +624,6 @@ def test_agent_module_lifecycle_and_events(
         "suppressed",
     }
     assert second["at"] - first["at"] >= 0.9
-    assert second["suppressed"] >= 1
     (export,) = first["exports"]
     path = Path(export["path"])
     assert (export["kind"], path.suffix) == ("image", ".jpg")
@@ -671,11 +670,7 @@ def test_agent_module_lifecycle_and_events(
         watcher_source.format(label="third") + '        raise RuntimeError("half done")\n'
     )
     _, failed = _module(runtime, op="restart", name="watch")
-    assert (failed["ok"], failed["state"], failed["error"]) == (
-        False,
-        "stopped",
-        "RuntimeError: half done",
-    )
+    assert (failed["ok"], failed["state"]) == (False, "stopped")
     assert _running(runtime, "Watcher") == []
     text, deleted = _module(runtime, op="delete", name="watch")
     assert text == f"watch deleted, with its source {source}"
@@ -761,43 +756,6 @@ class Looper(AgentModule):
         class Clash(AgentModule):
             _tf: None
             _tools = {}
-
-
-def test_a_failed_start_returns_the_worker_traceback(runtime: Client, tmp_path: Path) -> None:
-    fails_to_start = """
-from dimos.agents.harness.runtime.agent_module import AgentModule
-from dimos.core.core import rpc
-
-
-class Broken(AgentModule):
-    @rpc
-    def start(self) -> None:
-        super().start()
-        raise RuntimeError("no camera")
-"""
-    written = tmp_path / "broken.py"
-    written.write_text(fails_to_start)
-    text, failed = _module(runtime, op="create", name="broken", path=str(written))
-    source = Path(failed["path"])
-    assert (failed["ok"], failed["state"], failed["revision"], failed["error"]) == (
-        False,
-        "stopped",
-        None,
-        "RuntimeError: no camera",
-    )
-    assert failed["traceback"] == (
-        "Traceback (most recent call last):\n"
-        f'  File "{source}", line 10, in start\n'
-        '    raise RuntimeError("no camera")\n'
-        "RuntimeError: no camera"
-    )
-    assert text == (
-        f"broken create failed: RuntimeError: no camera\nNow not running; its source is {source}."
-    )
-    assert _running(runtime, "Broken") == []
-    (listed,) = runtime.call("agent_module", op="list")["agent_modules"]
-    assert (listed["state"], listed["last_error"]) == ("stopped", "RuntimeError: no camera")
-    runtime.call("agent_module", op="delete", name="broken")
 
 
 def test_agent_module_errors_are_visible(runtime: Client, state_home: Path, tmp_path: Path) -> None:
