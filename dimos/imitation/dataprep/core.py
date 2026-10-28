@@ -57,8 +57,9 @@ from dimos.imitation.dataprep.schema import (
     validate_source_kinds as validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import image, time as message_time
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -89,6 +90,8 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
         for dict payloads) then coerce.
     """
     value: Any
+    if isinstance(msg, Image) and ref.field in {None, "data"}:
+        return image.view(msg)
     if isinstance(msg, JointState) and ref.field in {"position", "velocity", "effort"}:
         by_name = _joint_values(msg, ref.field)
         missing = [name for name in ref.names if name not in by_name]
@@ -325,7 +328,13 @@ def _joint_position_updates(
         if not seeded and timestamp >= start_ts:
             yield (
                 start_ts,
-                JointState(ts=start_ts, name=list(targets), position=list(targets.values())),
+                JointState(
+                    header=Header(stamp=message_time.time_from_seconds(start_ts), frame_id=""),
+                    name=list(targets),
+                    position=np.asarray(list(targets.values()), dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                ),
             )
             seeded = True
         try:
@@ -340,10 +349,25 @@ def _joint_position_updates(
         if timestamp >= start_ts:
             yield (
                 timestamp,
-                JointState(ts=timestamp, name=list(targets), position=list(targets.values())),
+                JointState(
+                    header=Header(stamp=message_time.time_from_seconds(timestamp), frame_id=""),
+                    name=list(targets),
+                    position=np.asarray(list(targets.values()), dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                ),
             )
     if not seeded:
-        yield start_ts, JointState(ts=start_ts, name=list(targets), position=list(targets.values()))
+        yield (
+            start_ts,
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(start_ts), frame_id=""),
+                name=list(targets),
+                position=np.asarray(list(targets.values()), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
 
 
 def _episode_features(

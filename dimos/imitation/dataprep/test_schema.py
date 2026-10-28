@@ -20,7 +20,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
 
 
 def test_live_feature_round_trips_as_a_portable_offline_declaration():
