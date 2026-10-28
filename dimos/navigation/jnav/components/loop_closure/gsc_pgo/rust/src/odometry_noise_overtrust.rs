@@ -14,8 +14,8 @@
 
 //! Overtrust: an odometry reported 100x more accurate than it is, closed by laps of a square. The solve at that noise
 //! rejects the right closures, and once it keeps none the residuals give no evidence and the learner stays where it
-//! is. With `odometry_noise_innovation_check`, the closures' innovations against the raw odometry raise the noise and
-//! the solve keeps them; a true or undertrusted (reported less accurate) odometry is left as well off.
+//! is. With `closure_gnc_overtrust_check`, the solve keeps them and their residuals raise the learned noise; a true or
+//! undertrusted (reported less accurate) odometry keeps them too.
 
 use crate::gsc_pgo::{Config, GscPgo, KeyPoseWithCloud};
 use crate::mat3::{self, Vec3};
@@ -33,15 +33,10 @@ fn normal(k: usize, salt: f64) -> f64 {
 /// The true per-keyframe noise (xy, z, yaw, roll/pitch).
 const TRUE_NOISE: [f64; 4] = [4e-5, 1e-8, 2e-4, 1e-8];
 
-/// Runs the learner over laps of a 20 m square (a keyframe a metre), reported noise `TRUE_NOISE` x `reported_over_true`,
+/// Runs the learner (with the solve's overtrust check on or off) over laps of a 20 m square (a keyframe a metre), reported noise `TRUE_NOISE` x `reported_over_true`,
 /// committing a closure every 4th keyframe after the first lap (one in ten a look-alike place several metres off) and
 /// solving after each. Returns the share of right closures kept and the learned yaw variance over the true one.
-fn run(reported_over_true: f64, innovation_check: bool) -> (f64, f64) {
-    run_with(reported_over_true, innovation_check, false)
-}
-
-/// `run`, with the solve's overtrust check (`closure_gnc_overtrust_check`) on or off.
-fn run_with(reported_over_true: f64, innovation_check: bool, overtrust_check: bool) -> (f64, f64) {
+fn run(reported_over_true: f64, overtrust_check: bool) -> (f64, f64) {
     let config = Config {
         odom_trans_xy_var: TRUE_NOISE[0] * reported_over_true,
         odom_trans_z_var: TRUE_NOISE[1] * reported_over_true,
@@ -52,7 +47,6 @@ fn run_with(reported_over_true: f64, innovation_check: bool, overtrust_check: bo
         closure_uninformative_noise_upper_bound: true,
         closure_noise_from_residuals: true,
         odometry_noise_solve_lower_bound: true,
-        odometry_noise_innovation_check: innovation_check,
         closure_gnc_overtrust_check: overtrust_check,
         odom_noise_prior_ln_sd_xy: 1.72,
         odom_noise_prior_ln_sd_z: 2.05,
@@ -121,21 +115,6 @@ fn run_with(reported_over_true: f64, innovation_check: bool, overtrust_check: bo
             fitness,
         );
         pgo.finish();
-        if std::env::var("TRACE").is_ok() {
-            let kept = pgo
-                .committed_closures
-                .iter()
-                .filter(|c| c.gnc_weight > 0.5)
-                .count();
-            eprintln!(
-                "x{reported_over_true} {innovation_check} {overtrust_check} c{c} kept {kept}/{} noise {:?} solve {:?} mix {:?} from_mix {}",
-                pgo.committed_closures.len(),
-                pgo.odometry_noise().map(|v| (v * reported_over_true * 1000.0).round() / 1000.0),
-                pgo.odometry_noise_for_solve().map(|v| (v * reported_over_true * 1000.0).round() / 1000.0),
-                pgo.odometry_noise_mixture.as_ref().map(|(m, _)| m.odometry.map(|v| (v.exp() * reported_over_true * 1000.0).round() / 1000.0)),
-                pgo.odometry_noise_from_mixture
-            );
-        }
     }
     let kept = pgo
         .committed_closures
@@ -150,35 +129,6 @@ fn run_with(reported_over_true: f64, innovation_check: bool, overtrust_check: bo
     )
 }
 
-#[test]
-fn overtrusted_odometry_is_corrected_by_the_closures_it_rejects() {
-    let (stuck_kept, stuck_yaw) = run(0.01, false);
-    eprintln!(
-        "without the check: {stuck_kept:.2} of right closures kept, yaw x{stuck_yaw:.3} of true"
-    );
-    assert!(
-        stuck_kept < 0.1,
-        "the overtrusted solve ends rejecting the right closures ({stuck_kept})"
-    );
-    let (kept, yaw) = run(0.01, true);
-    eprintln!("with the check: {kept:.2} of right closures kept, yaw x{yaw:.3} of true");
-    assert!(kept > 0.9, "the right closures are kept ({kept})");
-    assert!(yaw.ln().abs() < 1.0, "yaw variance x{yaw} of true");
-}
-
-#[test]
-fn the_check_leaves_a_true_or_undertrusted_odometry_as_well_off() {
-    for reported_over_true in [1.0, 100.0] {
-        let (kept_off, yaw_off) = run(reported_over_true, false);
-        let (kept, yaw) = run(reported_over_true, true);
-        eprintln!(
-            "reported x{reported_over_true}: kept {kept_off:.2} -> {kept:.2}, yaw x{yaw_off:.3} -> x{yaw:.3} of true"
-        );
-        assert!(kept >= kept_off - 0.05, "kept {kept_off} -> {kept}");
-        assert!(yaw.ln().abs() < 1.0, "yaw variance x{yaw} of true");
-    }
-}
-
 /// One design for both: the solve's overtrust check keeps the right closures that an overtrusted odometry would vote
 /// out, or that GNC-TLS's odometry-led start loses once the learned noise runs low, and the noise learner, reading the
 /// residuals of the closures the solve kept, raises the odometry noise from them, so later gating and solves use the
@@ -187,8 +137,8 @@ fn the_check_leaves_a_true_or_undertrusted_odometry_as_well_off() {
 #[test]
 fn the_overtrust_check_keeps_the_right_closures_and_teaches_the_learner() {
     for reported_over_true in [0.01, 1.0, 100.0] {
-        let (kept_off, _) = run_with(reported_over_true, false, false);
-        let (kept, yaw) = run_with(reported_over_true, false, true);
+        let (kept_off, _) = run(reported_over_true, false);
+        let (kept, yaw) = run(reported_over_true, true);
         eprintln!(
             "reported x{reported_over_true}: kept {kept_off:.2} -> {kept:.2}, yaw x{yaw:.3} of true"
         );

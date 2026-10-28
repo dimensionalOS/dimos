@@ -103,8 +103,6 @@ class PGOConfig(NativeModuleConfig):
     closure_skip_known: bool = False
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
-    # True: a candidate the graph disputes (innovation beyond the graph's and ICP's combined spread) gets every extended-ICP round
-    closure_disagreement_pressure: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
@@ -164,7 +162,6 @@ class PGOConfig(NativeModuleConfig):
     closure_noise_from_residuals: bool = False
     # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
     odometry_noise_solve_lower_bound: bool = False
-    odometry_noise_innovation_check: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5

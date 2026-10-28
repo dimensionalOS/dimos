@@ -25,23 +25,6 @@ use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
 
-/// The closure's innovation squared in standard deviations of its predicted spread, v^T (P + c I)^-1 v: P the graph's
-/// covariance of the source's offset from the target (`ClosureCandidateDiag::innovation_covariance`), c the closure's
-/// variance (ICP fitness x the closure noise scale). NaN when either is missing or singular.
-pub(crate) fn innovation_z2(diag: &ClosureCandidateDiag) -> f64 {
-    let (p, v) = (&diag.innovation_covariance, diag.innovation);
-    let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
-    let covariance: Mat3 =
-        std::array::from_fn(|i| std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 }));
-    match mat3::inverse(&covariance) {
-        Some(inverse) if v.iter().chain(p.iter().flatten()).all(|x| x.is_finite()) => {
-            let iv = mat3::mat_vec(&inverse, &v);
-            (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0)
-        }
-        _ => f64::NAN,
-    }
-}
-
 impl ClosureSearch {
     /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
     /// return its yank for the scale.
@@ -56,13 +39,23 @@ impl ClosureSearch {
             .max(1.0)
             .sqrt();
         diag.yank_drift_scale = drift;
-        if self.config.closure_yank_gate_principled {
+        let predicted = self.config.closure_yank_gate_principled.then(|| {
+            let p = &diag.innovation_covariance;
+            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
+            let covariance: Mat3 = std::array::from_fn(|i| {
+                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
+            });
+            covariance
+        });
+        if let Some(covariance) = predicted {
             // the innovation against its predicted spread (the graph's, both noise scales applied, plus the closure's)
-            let z2 = innovation_z2(diag);
-            diag.yank_z = if z2.is_finite() {
-                z2.sqrt()
-            } else {
-                f64::INFINITY
+            let v = diag.innovation;
+            diag.yank_z = match mat3::inverse(&covariance) {
+                Some(inverse) if v.iter().all(|x| x.is_finite()) => {
+                    let iv = mat3::mat_vec(&inverse, &v);
+                    (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0).sqrt()
+                }
+                _ => f64::INFINITY,
             };
         } else if self.scored_yanks.is_empty() {
             // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
@@ -217,8 +210,7 @@ impl ClosureSearch {
     }
     /// Extended ICP on 2, 4, 8, ... keyframes, up to `diag.extension_budget` (closure_extended_icp_max_keyframes x
     /// pressure). Returns the extended ICP of the first round whose evidence reaches `required(evidence)` (which may
-    /// count more look-alike places now that the evidence could cover them), or None. With `exhaust`, the rounds go on
-    /// while they clear the bar and the last that did is returned (the alignment that rests on the most data).
+    /// count more look-alike places now that the evidence could cover them), or None.
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,
@@ -227,7 +219,6 @@ impl ClosureSearch {
         first: &IcpResult,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
-        exhaust: bool,
     ) -> Option<IcpResult> {
         let max_keyframes = diag
             .extension_budget
@@ -251,7 +242,6 @@ impl ClosureSearch {
         // each round starts from the previous round's alignment, which saw more of both places than the first ICP
         let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
         let mut keyframes = 2;
-        let mut passed = None;
         while keyframes <= max_keyframes {
             // never stack source keyframes into the stretch the target side is drawn from
             let window = half_range + keyframes;
@@ -259,7 +249,7 @@ impl ClosureSearch {
                 .saturating_sub(keyframes)
                 .max(target_idx + window + 1);
             if source_first >= cur_idx {
-                return passed;
+                return None;
             }
             // where the seed puts each stacked source keyframe
             let placed: Vec<Vec3> = (source_first..=cur_idx)
@@ -369,22 +359,16 @@ impl ClosureSearch {
                 0.0
             };
             if !icp.converged {
-                return passed;
+                return None;
+            }
+            if evidence >= required {
+                return Some(icp);
             }
             if !sharp {
                 (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
             }
-            if evidence >= required {
-                if !exhaust {
-                    return Some(icp);
-                }
-                passed = Some(icp);
-            } else if passed.is_some() {
-                // more data stopped agreeing: the last round that held up is the measurement
-                return passed;
-            }
             keyframes *= 2;
         }
-        passed
+        None
     }
 }
