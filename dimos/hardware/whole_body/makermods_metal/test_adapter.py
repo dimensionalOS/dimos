@@ -24,6 +24,7 @@ from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.makermods_metal import adapter as adapter_module
 from dimos.hardware.whole_body.makermods_metal.adapter import MakerModsMetalAdapter
+from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 from dimos.hardware.whole_body.spec import MotorState
 from dimos.robot.manipulators.makermods_metal.config import METAL_JOINTS
 
@@ -37,7 +38,6 @@ def adapter(mocker: MockerFixture) -> Iterator[MakerModsMetalAdapter]:
     )
     adapter = MakerModsMetalAdapter(
         runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
-        gripper_opening_direction="increasing_position",
         gripper_current=0.1,
     )
     yield adapter
@@ -108,9 +108,7 @@ def test_import_does_not_download_model(mocker) -> None:
 @pytest.mark.parametrize("current", [0.0, -0.1, 1.1, float("nan"), float("inf")])
 def test_invalid_gripper_current_is_rejected(current) -> None:
     with pytest.raises(ValueError, match="current"):
-        MakerModsMetalAdapter(
-            gripper_opening_direction="increasing_position", gripper_current=current
-        )
+        MakerModsMetalAdapter(gripper_current=current)
 
 
 def test_measured_metal_zero_feedback_is_normalized(adapter) -> None:
@@ -130,3 +128,25 @@ def test_metal_gross_feedback_violation_still_latches(adapter) -> None:
         adapter._normalize_arm_feedback([MotorState(q=-0.061)])
 
     assert not adapter.activate()
+
+
+def test_registry_accepts_fixed_topology_from_common_coordinator(mocker) -> None:
+    mocker.patch.object(
+        MakerModsMetalAdapter, "_make_can_bus", return_value=can_motor_control.MockCanBus("metal")
+    )
+    adapter = whole_body_adapter_registry.create(
+        "makermods_metal",
+        dof=7,
+        hardware_id="metal",
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+    )
+    try:
+        assert adapter.connect()
+        assert len(adapter.read_motor_states()) == 7
+    finally:
+        adapter.disconnect()
+
+
+def test_registry_rejects_incompatible_joint_count_before_connect() -> None:
+    with pytest.raises(ValueError, match="Metal requires 7 joints"):
+        whole_body_adapter_registry.create("makermods_metal", dof=6)

@@ -75,7 +75,6 @@ def test_mock_gripper_command_holds_arm_state() -> None:
 def test_physical_component_uses_common_runtime_config() -> None:
     component = metal_hardware(
         can_port="test-can",
-        gripper_opening_direction="increasing_position",
     )
     assert component.adapter_type == "makermods_metal"
     assert component.adapter_kwargs["gripper_current"] == 0.1
@@ -88,9 +87,9 @@ def test_physical_component_uses_common_runtime_config() -> None:
     assert METAL_SOURCE.ref == "bccf3c82a21453a7b1784a94966456e16ff0f008"
 
 
-def test_physical_defaults_gripper_direction() -> None:
+def test_physical_does_not_expose_fixed_gripper_direction() -> None:
     component = metal_hardware(can_port="test-can")
-    assert component.adapter_kwargs["gripper_opening_direction"] == "increasing_position"
+    assert "gripper_opening_direction" not in component.adapter_kwargs
     with pytest.raises(ValueError, match="must not be empty"):
         metal_hardware(can_port="")
 

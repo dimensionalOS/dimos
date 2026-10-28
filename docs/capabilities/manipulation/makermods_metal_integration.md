@@ -38,8 +38,7 @@ For physical hardware, finish the vendor's motor ID and zero-pose procedure,
 then use `dimos hardware can list` to obtain the device selector. Pass
 `--can-port` after the blueprint name: a configured SocketCAN interface on Linux
 or the exact USB serial on macOS. Gripper opening direction defaults to `increasing_position`; there is no
-gripper-direction CLI flag. Python integrations may override the direction
-with `metal_hardware(gripper_opening_direction="decreasing_position")`.
+gripper-direction CLI flag. The direction is fixed by the Metal topology.
 Gripper current defaults to
 `0.1` per-unit; there is no gripper-current CLI flag. Python callers may override
 `metal_hardware(gripper_current=...)` with a value in `(0, 1]`. This ratio is not

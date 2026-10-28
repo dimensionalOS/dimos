@@ -610,6 +610,22 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+    makermods_metal:
+      name: MakerMods Metal
+      description: The six-joint Metal arm and gripper, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+      blueprints:
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: A Metal arm behind a ControlCoordinator.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Motion planning, execution, and Viser for a Metal arm.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import can_motor_control
 from can_motor_control import damiao
@@ -30,6 +30,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_ARM_JOINTS,
     METAL_GRIPPER_JOINT,
+    METAL_JOINTS,
     METAL_MODEL,
 )
 
@@ -49,25 +50,18 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
         self,
         address: str | Path | None = None,
         *,
-        gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
-            "increasing_position"
-        ),
         gripper_current: float = 0.1,
         runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
-        dof: int | None = None,
         hardware_id: str = "metal",
         domain_id: int = 0,
     ) -> None:
-        if gripper_opening_direction not in ("increasing_position", "decreasing_position"):
-            raise ValueError("configure the measured Metal gripper opening direction")
         if not 0.0 < gripper_current <= 1.0:
             raise ValueError("Metal gripper current must be in (0, 1] per-unit")
-        self._gripper_opening_direction = gripper_opening_direction
         self._gripper_current = gripper_current
         super().__init__(
             address,
             runtime_config=runtime_config,
-            dof=dof,
+            dof=len(METAL_JOINTS),
             hardware_id=hardware_id,
             domain_id=domain_id,
         )
@@ -111,8 +105,15 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
                 "gripper",
                 bus="metal",
                 motor=can_motor_control.MotorSpec("gripper", gripper_profile, 0x07, 0x17),
-                opening_direction=self._gripper_opening_direction,
+                opening_direction="increasing_position",
                 default_current=self._gripper_current,
             )
             .build()
         )
+
+
+def create_metal_adapter(*, dof: int = len(METAL_JOINTS), **kwargs: Any) -> MakerModsMetalAdapter:
+    """Validate the common factory's joint count against Metal's fixed topology."""
+    if dof != len(METAL_JOINTS):
+        raise ValueError(f"Metal requires {len(METAL_JOINTS)} joints, got {dof}")
+    return MakerModsMetalAdapter(**kwargs)

@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
@@ -42,9 +40,6 @@ METAL_HARDWARE_ID = "metal"
 def metal_hardware(
     *,
     can_port: str | None = None,
-    gripper_opening_direction: Literal["increasing_position", "decreasing_position"] = (
-        "increasing_position"
-    ),
     gripper_current: float = 0.1,
 ) -> HardwareComponent:
     """Select physical hardware with an explicit CAN selector."""
@@ -58,7 +53,6 @@ def metal_hardware(
             "runtime_config": DamiaoRuntimeConfig(
                 bus_devices={"metal": can_port}, gravity_comp=False
             ),
-            "gripper_opening_direction": gripper_opening_direction,
             "gripper_current": gripper_current,
         }
     return HardwareComponent(

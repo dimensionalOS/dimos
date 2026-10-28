@@ -13,5 +13,5 @@
 # limitations under the License.
 
 ADAPTER_FACTORIES = {
-    "makermods_metal": "dimos.hardware.whole_body.makermods_metal.adapter:MakerModsMetalAdapter",
+    "makermods_metal": "dimos.hardware.whole_body.makermods_metal.adapter:create_metal_adapter",
 }
