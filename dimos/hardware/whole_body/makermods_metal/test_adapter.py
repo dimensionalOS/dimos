@@ -24,6 +24,7 @@ from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.makermods_metal import adapter as adapter_module
 from dimos.hardware.whole_body.makermods_metal.adapter import MakerModsMetalAdapter
+from dimos.hardware.whole_body.spec import MotorState
 from dimos.robot.manipulators.makermods_metal.config import METAL_JOINTS
 
 
@@ -110,3 +111,22 @@ def test_invalid_gripper_current_is_rejected(current) -> None:
         MakerModsMetalAdapter(
             gripper_opening_direction="increasing_position", gripper_current=current
         )
+
+
+def test_measured_metal_zero_feedback_is_normalized(adapter) -> None:
+    adapter._arm_position_limits = ((-3.14, 3.14), (-3.14, 0.0), (0.0, 3.14))
+    states = [MotorState(q=q) for q in (-0.00488716, 0.00316228, -0.05050065)]
+
+    normalized = adapter._normalize_arm_feedback(states)
+
+    assert [state.q for state in normalized] == [-0.00488716, 0.0, 0.0]
+    assert adapter._feedback_fault is None
+
+
+def test_metal_gross_feedback_violation_still_latches(adapter) -> None:
+    adapter._arm_position_limits = ((0.0, 3.14),)
+
+    with pytest.raises(RuntimeError, match="feedback fault"):
+        adapter._normalize_arm_feedback([MotorState(q=-0.061)])
+
+    assert not adapter.activate()

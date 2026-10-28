@@ -41,6 +41,9 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
     gripper_joints = {"gripper": METAL_GRIPPER_JOINT}
     bus_names = ("metal",)
     kinematic_joint_names = arm_joints["arm"]
+    # A connected Metal reports -0.05050 rad at joint3's nominal zero stop.
+    # Bound feedback normalization separately from the unchanged URDF limits.
+    feedback_clamp_margin_rad = 0.06
 
     def __init__(
         self,

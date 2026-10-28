@@ -1015,3 +1015,17 @@ def test_read_motor_states_inactive_adapter_pumps_feedback(
 
     assert dual_robot.refresh_count == refreshes_before + 2
     assert dual_robot.tick_count == ticks_before + 2
+
+
+def test_activate_checks_arm_limits_before_enabling_gripper(
+    dual_robot: FakeRobot,
+    gravity_adapter_factory: Callable[..., GravityDualAdapter],
+) -> None:
+    adapter = gravity_adapter_factory(model=FakePinModel(), gravity_comp=False)
+    assert adapter.connect()
+    cast("FakeArm", dual_robot["left_arm"]).position_values[0] = -1.1
+
+    assert not adapter.activate()
+    assert dual_robot.enable_count == 0
+    assert dual_robot.disable_count >= 1
+    assert adapter._feedback_fault is not None
