@@ -303,6 +303,16 @@
       "gt": null,
       "note": "its fastlio diverged (77x110 m vs 35x58 m)",
       "status": "no_gt"
+    },
+    {
+      "name": "hotel_regular",
+      "tier": "extra",
+      "odometry": "TODO",
+      "lidar": "TODO",
+      "mount": "TODO",
+      "db": "~/datasets/d455/hotel_normal/main.db",
+      "gt": null,
+      "status": "todo"
     }
   ],
   "todo": [
