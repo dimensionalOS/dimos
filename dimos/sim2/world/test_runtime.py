@@ -130,6 +130,38 @@ def test_expired_command_falls_back_to_holding_the_last_pose(worlds, mocker):
     assert world.data.ctrl[binding.actuators[0]] == pytest.approx(10 * 0 - velocity, abs=1e-6)
 
 
+def test_connection_timeout_keeps_damping_until_reset_or_a_new_command(
+    worlds, world_config, mocker
+):
+    instance = replace(world_config.robots["left"], halt_damping=4.0)
+    world = worlds(config=replace(world_config, robots={"left": instance}))
+    binding = world.robots["left"]
+    assert world.accept_command(
+        "left", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[3, 0])
+    )
+    world.step()
+    mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=time.monotonic() + 1)
+    world.step()  # The command expires.
+
+    # Moving away from the last pose must not restore startup stiffness.
+    world.data.qpos[binding.qpos[0]] += 0.2
+    world.data.qvel[binding.dofs[0]] = 0.2
+    world.step()
+    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(-0.8)
+
+    assert world.accept_command(
+        "left", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[2, 0])
+    )
+    world.step()
+    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(2.0)
+
+    world.reset()
+    world.data.qpos[binding.qpos[0]] += 0.2
+    world.data.qvel[binding.dofs[0]] = 0.0
+    world.step()
+    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(-2.0)
+
+
 def test_calibrated_actuator_lag_filters_the_control(worlds, world_config):
     instance = world_config.robots["left"]
     joint, gripper = instance.config.joints

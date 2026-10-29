@@ -440,7 +440,7 @@ class ModuleCoordinator(Resource):
         global_config.update(**global_values)
         if global_config.simulation == "mujoco":
             # sim2 imports MuJoCo, so this optional dependency is deferred until build.
-            from dimos.sim2.swap import simulate
+            from dimos.sim2.composition import simulate
 
             blueprint, module_kwargs = simulate(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
@@ -535,7 +535,7 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config, sparse_globals=True
         )
         if global_values.get("simulation", self._global_config.simulation) == "mujoco":
-            from dimos.sim2.swap import declares_twin
+            from dimos.sim2.composition import declares_twin
 
             if any(declares_twin(atom.module) for atom in blueprint.active_blueprints):
                 raise ValueError(
