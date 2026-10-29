@@ -8,7 +8,9 @@ exact shape of what a client sends and receives. Start at a `contract.ts`, such 
 [gateway/contract.ts](/dimos/agents/shared/protocol/gateway/contract.ts), and at [actions/catalog.ts](/dimos/agents/shared/protocol/actions/catalog.ts).
 
 Source: [dimos/agents/shared/protocol/](/dimos/agents/shared/protocol/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/protocol/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/protocol/demo_example.ts`.
+Remove the temporary file with `rm shared/protocol/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on Chord and TypeBox
 

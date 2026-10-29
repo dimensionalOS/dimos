@@ -8,7 +8,9 @@ them into cells, rotates clouds and paints live stream frames. The entry is `Fil
 sharp is a native addon, so this folder runs in Node, in the gateway and in the terminal.
 
 Source: [dimos/agents/shared/render/](/dimos/agents/shared/render/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/render/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/render/demo_example.ts`.
+Remove the temporary file with `rm shared/render/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on sharp
 

@@ -6,7 +6,9 @@ builds this package when it changed and runs `node dist/cli.js`, which [build.mj
 add a command.
 
 Source: [dimos/agents/cli/](/dimos/agents/cli/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs cli/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs cli/demo_example.ts`.
+Remove the temporary file with `rm cli/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on the SDK
 

@@ -9,7 +9,9 @@ CLI command computes once. Each function is imported from the file that defines 
 imports values from `shared/protocol/` and itself.
 
 Source: [dimos/agents/shared/view-models/](/dimos/agents/shared/view-models/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/view-models/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/view-models/demo_example.ts`.
+Remove the temporary file with `rm shared/view-models/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on pi-durable documents
 

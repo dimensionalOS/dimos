@@ -9,7 +9,9 @@ objects in [Agent gateway](/docs/usage/agent/gateway.md). The entry is `openAgen
 system and which the harness reaches over MCP.
 
 Source: [dimos/agents/harness/](/dimos/agents/harness/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs harness/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs harness/demo_example.ts`.
+Remove the temporary file with `rm harness/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on pi-durable
 

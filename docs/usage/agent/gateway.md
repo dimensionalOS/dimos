@@ -7,7 +7,9 @@ state, one conversation, the process itself, and the inventory. This guide is wh
 entry for running the gateway is `runGateway` in [main.ts](/dimos/agents/gateway/main.ts).
 
 Source: [dimos/agents/gateway/](/dimos/agents/gateway/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/demo_example.ts`.
+Remove the temporary file with `rm gateway/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on Chord
 

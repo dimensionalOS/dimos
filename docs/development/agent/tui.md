@@ -8,7 +8,9 @@ into rows with [view models](/docs/development/agent/view-models.md) and preview
 docs/usage/agent.md describes what a user sees and lists every key.
 
 Source: [dimos/agents/frontends/tui/](/dimos/agents/frontends/tui/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs frontends/tui/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs frontends/tui/demo_example.ts`.
+Remove the temporary file with `rm frontends/tui/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on pi-tui and pi-coding-agent
 

@@ -8,7 +8,9 @@ stream frames. The `dimos agent` commands and the terminal are built on it. The 
 [main.ts](/dimos/agents/sdk/main.ts). Everything except [node.ts](/dimos/agents/sdk/node.ts), [relay.ts](/dimos/agents/sdk/relay.ts), and [streams/](/dimos/agents/sdk/streams/) runs in a browser too.
 
 Source: [dimos/agents/sdk/](/dimos/agents/sdk/). TypeScript examples use imports relative to this source directory.
-Save example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs sdk/demo_example.ts`.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs sdk/demo_example.ts`.
+Remove the temporary file with `rm sdk/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on Chord
 
