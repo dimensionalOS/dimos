@@ -24,7 +24,7 @@ from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 
-VOXEL_SIZE_M = 0.1
+VOXEL_SIZE_M = 0.08
 WALL_CLEARANCE_M = 0.3
 PLANNER_VIZ_HZ = 0.0
 WORLD_FRAME = "map"
