@@ -124,6 +124,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
+        noise_fixed_point: None,
     };
     let mut scale = [1.0_f64; 4];
     for iteration in 0..15 {

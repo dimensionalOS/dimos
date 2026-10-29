@@ -115,6 +115,8 @@ class PGOConfig(NativeModuleConfig):
     closure_inlier_distance_from_odometry: bool = False
     # True: a submap spans as many keyframes as the sensor's mean reach covers at the mean keyframe spacing (at least closure_submap_half_range)
     closure_submap_by_reach: bool = False
+    # True (with odometry_noise_from_closures): each solve's noise evidence is iterated to its fixed point (re-solved at the noise it estimates)
+    odometry_noise_fixed_point: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

@@ -494,6 +494,10 @@ pub struct Config {
     /// as many keyframes as the keyframes' mean scan reach (`keyframe_reach`) spans at their mean spacing along the path,
     /// at least the configured half range.
     pub closure_submap_by_reach: bool,
+    /// When true (with `odometry_noise_from_closures`), each solve's noise evidence is taken at its own fixed point
+    /// (Helmert's iterated variance component estimation): the evidence copy re-solved at the noise it estimates until
+    /// the estimate stops moving, so the learner reads a noise consistent with the graph it judged.
+    pub odometry_noise_fixed_point: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -598,6 +602,7 @@ impl Default for Config {
             closure_commitments: false,
             closure_inlier_distance_from_odometry: false,
             closure_submap_by_reach: false,
+            odometry_noise_fixed_point: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -1437,7 +1442,11 @@ impl GscPgo {
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
     /// re-solve when either moved by more than its own standard error since the solve began, so the graph is solved at
     /// the noise its closures imply.
-    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 6]>) {
+    pub(crate) fn update_odometry_noise_scale(
+        &mut self,
+        evidence: Option<[(f64, f64); 6]>,
+        evidence_ln: Option<[f64; 4]>,
+    ) {
         let (fit_odometry, fit_closure) = (
             self.config.odometry_noise_from_closures,
             self.config.closure_noise_from_closures,
@@ -1548,8 +1557,9 @@ impl GscPgo {
                     let (sum, r) = evidence[c];
                     redundancy[c] = r;
                     if r > 0.5 && sum.is_finite() {
+                        // the evidence's own noise: the dispatched one, or its fixed point's
                         let (dispatched, prior_sd) = (
-                            self.odometry_noise_ln_dispatched[c],
+                            evidence_ln.map_or(self.odometry_noise_ln_dispatched[c], |ln| ln[c]),
                             self.odometry_noise_prior()[c],
                         );
                         ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
