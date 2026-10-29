@@ -381,6 +381,11 @@ def generate_dataset(
                     if localize_result is not None
                     else ()
                 )
+                color_frames_by_camera = (
+                    getattr(localize_result, "color_frames_by_camera", {})
+                    if localize_result is not None
+                    else {}
+                )
                 views_by_query = (
                     getattr(localize_result, "views_by_query", {})
                     if localize_result is not None
@@ -396,6 +401,7 @@ def generate_dataset(
                     config=config,
                     model_names=model_names,
                     color_frames=color_frames,
+                    color_frames_by_camera=color_frames_by_camera,
                     views_by_query=views_by_query,
                     localize_evidence=localize_evidence_doc,
                 )
@@ -415,6 +421,7 @@ def generate_frames_dataset(
     config: VqaGenerationConfig | None = None,
     model_names: dict[str, str] | None = None,
     color_frames: Sequence[tuple[float, Image]] = (),
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
     views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]] | None = None,
     localize_evidence: LocalizeEvidenceDocument | None = None,
 ) -> GenerationResult:
@@ -448,17 +455,13 @@ def generate_frames_dataset(
 
             if frame_count == 0:
                 raise ValueError("generation selected no frames")
-            if not all_cases:
-                raise ValueError("no selected frame produced an answerable question")
 
             coverage_k = _effective_localize_coverage_k(request)
             coverage_stats: dict[str, object] | None = None
-            if coverage_k is not None:
+            if coverage_k is not None and all_cases:
                 all_cases, all_labels, coverage_stats = _apply_localize_coverage_budget(
                     generated_frames, all_cases, all_labels, k=coverage_k
                 )
-                if not all_cases:
-                    raise ValueError("localize coverage budget removed every published case")
 
             if request.with_localize and color_frames:
                 all_cases, all_labels = _materialize_ego_memory_clips(
@@ -476,11 +479,16 @@ def generate_frames_dataset(
                     all_cases,
                     all_labels,
                     color_frames=color_frames,
+                    color_frames_by_camera=color_frames_by_camera or {},
                     views_by_query=views_by_query,
                     min_views=request.min_views,
                 )
                 if cross_view_stats.get("question_count", 0):
                     used_family_names.add("cross_view_same_object")
+
+            # Cross-view (and ego clip rewrites) may be the only published cases.
+            if not all_cases:
+                raise ValueError("no selected frame produced an answerable question")
 
             _write_jsonl(
                 staging / "cases.jsonl",
@@ -534,6 +542,25 @@ def generate_frames_dataset(
         raise
 
 
+def _color_frames_for_view(
+    view: SightingView,
+    *,
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
+) -> Sequence[tuple[float, Image]]:
+    """Pick the camera stream matching the sighting; fall back to primary frames."""
+    if view.camera_frame:
+        matched = color_frames_by_camera.get(view.camera_frame)
+        if matched is not None:
+            return matched
+        if color_frames_by_camera:
+            raise ValueError(
+                f"no color frames for sighting camera {view.camera_frame!r} "
+                f"(have {sorted(color_frames_by_camera)})"
+            )
+    return color_frames
+
+
 def _materialize_cross_view_clips(
     staging: Path,
     cases: Sequence[PublicCase],
@@ -542,12 +569,25 @@ def _materialize_cross_view_clips(
     color_frames: Sequence[tuple[float, Image]],
     views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
     min_views: int,
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
 ) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
     """Append cross-view identity cases from the shared localize window (no second localize)."""
+    by_camera = color_frames_by_camera or {}
     proposed: list[IdentityPair] = []
     n_instances = 0
     for query, by_id in views_by_query.items():
-        instances = {iid: tuple(views) for iid, views in by_id.items()}
+        # Drop sightings whose camera has no clip stream when multi-cam is available.
+        instances: dict[str, tuple[SightingView, ...]] = {}
+        for iid, views in by_id.items():
+            kept = tuple(
+                v
+                for v in views
+                if not by_camera
+                or not v.camera_frame
+                or v.camera_frame in by_camera
+            )
+            if kept:
+                instances[iid] = kept
         n_instances += len(instances)
         pairs = propose_identity_pairs(instances, min_views=min_views)
         logger.info(f"cross-view {query!r}: {len(instances)} instance(s) → {len(pairs)} pair(s)")
@@ -563,8 +603,14 @@ def _materialize_cross_view_clips(
     for pair_index, pair in enumerate(all_pairs):
         case_id = pair_case_id(pair, pair_index)
         try:
-            first_frames, _ = dense_clip_around(color_frames, pair.left.timestamp)
-            second_frames, _ = dense_clip_around(color_frames, pair.right.timestamp)
+            left_stream = _color_frames_for_view(
+                pair.left, color_frames=color_frames, color_frames_by_camera=by_camera
+            )
+            right_stream = _color_frames_for_view(
+                pair.right, color_frames=color_frames, color_frames_by_camera=by_camera
+            )
+            first_frames, _ = dense_clip_around(left_stream, pair.left.timestamp)
+            second_frames, _ = dense_clip_around(right_stream, pair.right.timestamp)
             first_dur = clip_duration_s(first_frames)
             second_dur = clip_duration_s(second_frames)
             answered = answer_cross_view_same_object(

@@ -47,6 +47,7 @@ def test_coverage_cell_maps_selectors() -> None:
 def test_case_frame_from_id() -> None:
     assert case_frame_from_id("frame-000100-chair-ego_fore_aft") == "frame-000100"
     assert case_frame_from_id("frame-000010-chair-ego_fore_aft-2") == "frame-000010"
+    assert case_frame_from_id("xview-box-same-0000-aaaa-bbbb") == "frame-unknown"
 
 
 def test_select_gives_every_frame_at_least_one() -> None:
@@ -162,6 +163,7 @@ def test_coverage_category_prefers_evidence() -> None:
 def test_case_family_from_id() -> None:
     assert case_family_from_id("frame-000010-chair-ego_fore_aft") == "ego_fore_aft"
     assert case_family_from_id("frame-000010-chair-ego_fore_aft-2") == "ego_fore_aft"
+    assert case_family_from_id("xview-box-same-0000-aaaa-bbbb") == "cross_view_same_object"
 
 
 def test_collect_coverage_candidates_from_audit() -> None:

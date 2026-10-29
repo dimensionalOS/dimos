@@ -34,7 +34,7 @@ from typing import Any, cast
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.evals.vqa.localize_coverage import case_family_from_id
+from dimos.evals.vqa.localize_coverage import case_family_from_id, case_frame_from_id
 from dimos.evals.vqa.localize_recording import robot_pose_xyz_yaw
 from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -110,7 +110,11 @@ def _evidence_for_question(full_audit: Path, frame: str, question: str) -> dict[
         if row.get("status") != "answered":
             continue
         answer = row.get("answer") or {}
-        if answer.get("question") != question:
+        original = answer.get("question")
+        # Exact match, or ego-clip prefix: "This clip covers …. {original}".
+        if original != question and not (
+            isinstance(original, str) and question.endswith(original)
+        ):
             continue
         evidence = answer.get("evidence") or {}
         return evidence if isinstance(evidence, dict) else None
@@ -188,15 +192,34 @@ def _collect_frame_meta(
                 )
                 break
 
-    frames_needed = {f"frame-{case['id'].split('-')[1]}" for case in cases}
+    frames_needed = {
+        case_frame_from_id(case["id"])
+        for case in cases
+        if case_frame_from_id(case["id"]) != "frame-unknown"
+    }
     frame_objs = {
         frame: _frame_object_ids(full_audit, frame, key_to_index) for frame in frames_needed
     }
 
     questions: list[dict[str, Any]] = []
     for case in cases:
-        frame = f"frame-{case['id'].split('-')[1]}"
-        family = case_family_from_id(case["id"])
+        case_id = str(case["id"])
+        frame = case_frame_from_id(case_id)
+        # Cross-view ids are ``xview-...`` and are not tied to frame-*/ audit folders.
+        if case_id.startswith("xview-") or frame == "frame-unknown":
+            questions.append(
+                {
+                    "id": case_id,
+                    "frame": "",
+                    "family": "cross_view_same_object",
+                    "question": case["question"],
+                    "answer": labels[case_id],
+                    "choices": case["choices"],
+                    "obj_ids": [],
+                }
+            )
+            continue
+        family = case_family_from_id(case_id)
         evidence = _evidence_for_question(full_audit, frame, case["question"])
         obj_ids: list[int] = []
         if evidence:
@@ -233,16 +256,23 @@ def _fill_missing_poses(
     robots: dict[str, tuple[tuple[float, float, float], float]],
     frames: set[str],
 ) -> None:
-    missing = sorted(frames - set(robots))
+    missing = sorted(
+        frame for frame in frames if frame and frame != "frame-unknown" and frame not in robots
+    )
     if not missing:
         return
     timestamps: list[float] = []
     frame_ts: dict[str, float] = {}
     for frame in missing:
-        meta = json.loads((dataset / "audit" / frame / "frame.json").read_text())
+        meta_path = dataset / "audit" / frame / "frame.json"
+        if not meta_path.is_file():
+            continue
+        meta = json.loads(meta_path.read_text())
         ts = float(meta["timestamp"])
         frame_ts[frame] = ts
         timestamps.append(ts)
+    if not timestamps:
+        return
     store = open_dataset(str(recording))
     after = min(timestamps) - 2.0
     before = max(timestamps) + 2.0

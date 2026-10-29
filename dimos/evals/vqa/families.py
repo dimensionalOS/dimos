@@ -554,24 +554,37 @@ def _answer_height_order(
         resolve_referent(localize_scene, object_a),
         resolve_referent(localize_scene, object_b),
     )
+    first_seen = min(
+        (
+            inst.first_seen_timestamp
+            for inst in instances
+            if inst.first_seen_timestamp is not None
+        ),
+        default=None,
+    )
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "comparison_rule": "world_z_with_height_margin",
+        "objects": cast(
+            "JsonValue",
+            [
+                {
+                    "choice": object_name,
+                    "position_world_xyz": list(instance.position_world_xyz),
+                    "first_seen_timestamp": instance.first_seen_timestamp,
+                }
+                for object_name, instance in zip(proposal.object_names, instances, strict=True)
+            ],
+        ),
+    }
+    if first_seen is not None:
+        # Ego clip materialization starts at this timestamp so both referents appear.
+        evidence["first_seen_timestamp"] = first_seen
     return FamilyAnswer(
         question=f"Which is higher, the {object_a} or the {object_b}?",
         choices=proposal.object_names,
         answer=answer,
-        evidence={
-            "primitive": "localize_scene",
-            "comparison_rule": "world_z_with_height_margin",
-            "objects": cast(
-                "JsonValue",
-                [
-                    {
-                        "choice": object_name,
-                        "position_world_xyz": list(instance.position_world_xyz),
-                    }
-                    for object_name, instance in zip(proposal.object_names, instances, strict=True)
-                ],
-            ),
-        },
+        evidence=evidence,
     )
 
 

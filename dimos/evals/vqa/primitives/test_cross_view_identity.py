@@ -194,6 +194,21 @@ def test_diff_pairs_skip_same_timestamp_frames() -> None:
     assert pairs == ()
 
 
+def test_diff_pairs_skip_when_either_endpoint_is_co_visible() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    # Both instances appear at t=1 and t=10, so every timed A/B pair is co-visible.
+    a = (
+        _view(instance_id="a", bbox=centered, ts=1.0, n_views=3, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=10.0, n_views=3, score=0.9),
+    )
+    b = (
+        _view(instance_id="b", bbox=centered, ts=1.0, n_views=3, score=0.8),
+        _view(instance_id="b", bbox=centered, ts=10.0, n_views=3, score=0.8),
+    )
+    pairs = propose_identity_pairs({"a": a, "b": b}, min_views=2)
+    assert not any(not p.same_object for p in pairs)
+
+
 def test_pair_case_id_sanitizes_slashes() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     pair = IdentityPair(

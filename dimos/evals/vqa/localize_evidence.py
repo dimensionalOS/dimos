@@ -21,7 +21,7 @@ clips from recording frames at stored sighting timestamps.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -213,11 +213,41 @@ def _nearest_frame(
     return image
 
 
+def _nearest_frame_with_camera(
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None,
+    timestamp: float,
+    *,
+    tolerance_s: float = SIGHTING_IMAGE_TOLERANCE_S,
+) -> tuple[Image, str] | None:
+    """Nearest RGB within tolerance; prefer an explicit per-camera stream when present."""
+    best: tuple[float, Image, str] | None = None
+    streams: list[tuple[str, Sequence[tuple[float, Image]]]] = []
+    if color_frames_by_camera:
+        streams.extend((frame_id, frames) for frame_id, frames in color_frames_by_camera.items())
+    elif color_frames:
+        streams.append(("", color_frames))
+    for frame_id, frames in streams:
+        if not frames:
+            continue
+        ts, image = min(frames, key=lambda row: abs(row[0] - timestamp))
+        gap = abs(ts - timestamp)
+        if gap > tolerance_s:
+            continue
+        if best is None or gap < best[0]:
+            cam = frame_id or str(getattr(image, "frame_id", "") or "")
+            best = (gap, image, cam)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def hydrate_views_and_hits(
     document: LocalizeEvidenceDocument,
     color_frames: Sequence[tuple[float, Image]],
     *,
     localize_queries: Sequence[str] = (),
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
 ) -> tuple[
     tuple[tuple[str, Localization], ...],
     dict[str, float],
@@ -237,10 +267,13 @@ def hydrate_views_and_hits(
         first_seen[instance.instance_id] = float(instance.first_seen)
         views: list[SightingView] = []
         for sighting in instance.sightings:
-            image = _nearest_frame(color_frames, sighting.timestamp)
-            if image is None:
+            matched = _nearest_frame_with_camera(
+                color_frames, color_frames_by_camera, sighting.timestamp
+            )
+            if matched is None:
                 skipped_sightings += 1
                 continue
+            image, camera_frame = matched
             views.append(
                 SightingView(
                     query=instance.object_name,
@@ -251,6 +284,7 @@ def hydrate_views_and_hits(
                     timestamp=float(sighting.timestamp),
                     n_views=instance.n_views,
                     semantic_score=instance.semantic_score,
+                    camera_frame=camera_frame,
                 )
             )
         views_by_query.setdefault(instance.object_name, {})[instance.instance_id] = tuple(views)
@@ -272,7 +306,10 @@ def localize_window_from_evidence(
     localize_queries: Sequence[str] = (),
 ) -> Iterator[LocalizeWindowResult]:
     """Open the recording, load window color frames, hydrate lightweight evidence."""
-    from dimos.evals.vqa.localize_recording import LocalizeWindowResult, color_frames_from_rig
+    from dimos.evals.vqa.localize_recording import (
+        LocalizeWindowResult,
+        color_frames_by_camera_from_rig,
+    )
 
     assert_evidence_matches_window(
         document,
@@ -289,12 +326,14 @@ def localize_window_from_evidence(
         if rig.lidar is not None:
             rig.lidar = rig.lidar.after(after).before(before)
 
-        color_frames = color_frames_from_rig(rig, after, before)
+        by_camera = color_frames_by_camera_from_rig(rig, after, before)
+        color_frames = next(iter(by_camera.values())) if by_camera else ()
 
         named_hits, first_seen, views_by_query = hydrate_views_and_hits(
             document,
             color_frames,
             localize_queries=localize_queries,
+            color_frames_by_camera=by_camera,
         )
         queries = (
             tuple(document.queries)
@@ -311,6 +350,7 @@ def localize_window_from_evidence(
             queries=queries,
             first_seen_by_instance=first_seen,
             color_frames=tuple(color_frames),
+            color_frames_by_camera=dict(by_camera),
             views_by_query=views_by_query,
         )
     finally:

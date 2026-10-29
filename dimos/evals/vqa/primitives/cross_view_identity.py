@@ -61,6 +61,8 @@ class SightingView:
     timestamp: float
     n_views: int
     semantic_score: float
+    # Optical frame of the sighting image; clips must be cut from this camera.
+    camera_frame: str = ""
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,7 @@ def views_from_localize(
                 timestamp=float(image.ts),
                 n_views=int(hit.n_views),
                 semantic_score=float(hit.semantic_score),
+                camera_frame=str(getattr(image, "frame_id", "") or ""),
             )
         )
     return tuple(rows)
@@ -189,6 +192,8 @@ def _pick_same_pairs(
         gap = abs(right.timestamp - left.timestamp)
         if gap < min_gap_s:
             continue
+        if left.camera_frame and right.camera_frame and left.camera_frame != right.camera_frame:
+            continue
         candidates.append((gap, left, right))
     # Largest gap first: earliest sighting vs a later revisit.
     candidates.sort(key=lambda row: -row[0])
@@ -205,6 +210,19 @@ def _pick_same_pairs(
         used.add(key_l)
         used.add(key_r)
     return pairs
+
+
+def _co_visible_at(
+    views_a: Sequence[SightingView],
+    views_b: Sequence[SightingView],
+    timestamp: float,
+    *,
+    tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
+) -> bool:
+    """True when both instances have a sighting near ``timestamp`` (same full frame)."""
+    a_here = any(abs(v.timestamp - timestamp) <= tol_s for v in views_a)
+    b_here = any(abs(v.timestamp - timestamp) <= tol_s for v in views_b)
+    return a_here and b_here
 
 
 def _pick_diff_pairs(
@@ -228,10 +246,19 @@ def _pick_diff_pairs(
         # Prefer distinct timestamps so A/B are not the same full frame (two
         # co-visible instances would otherwise look identical with answer "no").
         best: tuple[float, SightingView, SightingView] | None = None
-        for left in by_instance[a]:
-            for right in by_instance[b]:
+        views_a, views_b = by_instance[a], by_instance[b]
+        for left in views_a:
+            for right in views_b:
                 gap = abs(right.timestamp - left.timestamp)
                 if gap < min_gap_s:
+                    continue
+                # Either endpoint still co-visible with the other instance → ambiguous "no".
+                if _co_visible_at(views_a, views_b, left.timestamp) or _co_visible_at(
+                    views_a, views_b, right.timestamp
+                ):
+                    continue
+                # Clips must come from the same camera optical frame on both sides.
+                if left.camera_frame and right.camera_frame and left.camera_frame != right.camera_frame:
                     continue
                 score = left.confidence + right.confidence
                 if best is None or score > best[0]:

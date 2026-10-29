@@ -116,6 +116,21 @@ def test_dense_clip_and_image_clip_env(tmp_path: Path) -> None:
     env.stop()
 
 
+def test_image_clip_rejects_frame_paths_outside_clip_dir(tmp_path: Path) -> None:
+    clip_dir = tmp_path / "clip"
+    clip_dir.mkdir()
+    outside = tmp_path / "secret.png"
+    _img(1.0).save(str(outside))
+    (clip_dir / "manifest.json").write_text(
+        '{"frames":[{"file":"../secret.png","ts":1.0}],'
+        '"anchors":[1.0],"t_start":1.0,"t_end":1.0,"duration_s":0.0}\n',
+        encoding="utf-8",
+    )
+    env = ImageClip(clip_dir)
+    with pytest.raises(ValueError, match="escapes clip directory"):
+        env.start(())
+
+
 def test_load_suite_wires_clips(tmp_path: Path) -> None:
     window = [(float(t), _img(float(t))) for t in (1.0, 1.5, 2.0)]
     first = tmp_path / "assets" / "clips" / "c" / "first"

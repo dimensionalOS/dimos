@@ -91,8 +91,14 @@ class ImageClip(Environment):
         for name, clip_dir in zip(names, self.config.paths, strict=True):
             manifest = load_clip_manifest(clip_dir)
             stream = recording.stream(name, Image)
+            clip_root = clip_dir.resolve()
             for entry in manifest.frames:
-                frame_path = clip_dir / entry.file
+                # Reject absolute paths, ``..``, and symlink escapes outside the clip.
+                frame_path = (clip_dir / entry.file).resolve()
+                if not frame_path.is_relative_to(clip_root):
+                    raise ValueError(
+                        f"clip frame path escapes clip directory: {entry.file!r} -> {frame_path}"
+                    )
                 if not frame_path.is_file():
                     raise FileNotFoundError(f"clip frame missing: {frame_path}")
                 image = Image.from_file(frame_path)

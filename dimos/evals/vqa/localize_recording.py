@@ -83,7 +83,10 @@ class LocalizeWindowResult:
     # Earliest Detection3DPC.ts per Localization.instance_id in this window.
     first_seen_by_instance: dict[str, float] = field(default_factory=dict)
     # color_image frames in the window for ego / cross-view memory clips.
+    # Primary camera (first optical frame) — ego clips and single-stream callers.
     color_frames: tuple[tuple[float, Image], ...] = ()
+    # Optical-frame → frames; cross-view clips must use the sighting's camera.
+    color_frames_by_camera: dict[str, tuple[tuple[float, Image], ...]] = field(default_factory=dict)
     # query → instance_id → framing sightings (from localize traces; no second pass).
     views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = field(default_factory=dict)
 
@@ -99,17 +102,30 @@ def robot_pose_xyz_yaw(
     return (pose.x, pose.y, pose.z), float(pose.yaw)
 
 
+def color_frames_by_camera_from_rig(
+    rig: Rig, after: float, before: float
+) -> dict[str, tuple[tuple[float, Image], ...]]:
+    """Optical-frame → sorted ``(ts, Image)`` color frames in ``[after, before]``."""
+    by_camera: dict[str, tuple[tuple[float, Image], ...]] = {}
+    for frame_id, camera in rig.cameras.items():
+        frames: list[tuple[float, Image]] = []
+        for observation in camera.color.after(after).before(before):
+            image = observation.data
+            if not isinstance(image, Image):
+                continue
+            frames.append((float(observation.ts), image))
+        frames.sort(key=lambda row: row[0])
+        if frames:
+            by_camera[frame_id] = tuple(frames)
+    return by_camera
+
+
 def color_frames_from_rig(rig: Rig, after: float, before: float) -> tuple[tuple[float, Image], ...]:
     """Sorted ``(ts, Image)`` color frames from the first camera in ``[after, before]``."""
-    camera = next(iter(rig.cameras.values()))
-    frames: list[tuple[float, Image]] = []
-    for observation in camera.color.after(after).before(before):
-        image = observation.data
-        if not isinstance(image, Image):
-            continue
-        frames.append((float(observation.ts), image))
-    frames.sort(key=lambda row: row[0])
-    return tuple(frames)
+    by_camera = color_frames_by_camera_from_rig(rig, after, before)
+    if not by_camera:
+        return ()
+    return next(iter(by_camera.values()))
 
 
 def scene_at_timestamp(
@@ -305,7 +321,8 @@ def localize_window(
                         if prev is None or earliest < prev:
                             first_seen_by_instance[hit.instance_id] = earliest
 
-        color_frames = color_frames_from_rig(rig, after, before)
+        by_camera = color_frames_by_camera_from_rig(rig, after, before)
+        color_frames = next(iter(by_camera.values())) if by_camera else ()
 
         yield LocalizeWindowResult(
             named_hits=tuple(named),
@@ -313,6 +330,7 @@ def localize_window(
             queries=tuple(query_list),
             first_seen_by_instance=first_seen_by_instance,
             color_frames=tuple(color_frames),
+            color_frames_by_camera=dict(by_camera),
             views_by_query=views_by_query,
         )
     finally:

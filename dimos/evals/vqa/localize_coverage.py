@@ -43,6 +43,8 @@ CoverageCandidate = tuple[str, tuple[str, str], tuple[object, ...] | None, str]
 
 def case_family_from_id(case_id: str) -> str:
     """Parse the family suffix from a generated case id."""
+    if case_id.startswith("xview-"):
+        return "cross_view_same_object"
     parts = case_id.split("-")
     return parts[-1] if not parts[-1].isdigit() else parts[-2]
 

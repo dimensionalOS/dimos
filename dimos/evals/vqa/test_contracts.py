@@ -898,6 +898,64 @@ def test_materialize_cross_view_empty_views_is_noop(tmp_path: Path) -> None:
     assert stats["n_pairs_proposed"] == 0
 
 
+def test_generate_frames_publishes_cross_view_when_frame_cases_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Empty per-frame cases must not abort before cross-view materialization."""
+    from dimos.evals.vqa.generate import GenerationFrame, generate_frames_dataset
+    from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    def _image(ts: float) -> Image:
+        rgb = np.full((200, 200, 3), 40, dtype=np.uint8)
+        return Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts)
+
+    centered = (70.0, 70.0, 130.0, 130.0)
+
+    def _view(ts: float) -> SightingView:
+        return SightingView(
+            query="box",
+            instance_id="aaaa1111",
+            image=_image(ts),
+            bbox=centered,
+            confidence=0.7,
+            timestamp=ts,
+            n_views=5,
+            semantic_score=0.7,
+            camera_frame="camera_optical",
+        )
+
+    class _SilentAuthor:
+        def propose(self, image: Image, families: object) -> tuple[object, ...]:
+            del image, families
+            return ()
+
+    color_frames = tuple((float(t), _image(float(t))) for t in range(10, 50))
+    views_by_query = {
+        "box": {
+            "aaaa1111": (_view(20.0), _view(30.0), _view(40.0)),
+        }
+    }
+    output = tmp_path / "out"
+    result = generate_frames_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            image_index=0,
+            output=output,
+            with_localize=True,
+            min_views=3,
+        ),
+        (GenerationFrame(0, _image(25.0)),),
+        _SilentAuthor(),  # type: ignore[arg-type]
+        _Detector(present=False),
+        color_frames=color_frames,
+        color_frames_by_camera={"camera_optical": color_frames},
+        views_by_query=views_by_query,
+    )
+    assert result.cases
+    assert all(case.id.startswith("xview-") for case in result.cases)
+
+
 def test_materialize_cross_view_audits_rejected_pairs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1161,10 +1219,23 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
         dataset: object, queries: object, after: float, before: float, **_kwargs: object
     ):
         localize_windows.append((dataset, queries, after, before))
+        fake_hit = SimpleNamespace(
+            instance_id="chair-1",
+            last_seen_timestamp=105.0,
+            position_world_xyz=(1.0, 0.0, 0.5),
+            n_views=2,
+            semantic_score=0.7,
+            frame_id="camera_optical",
+            ambiguity_margin=0.1,
+        )
         yield SimpleNamespace(
-            named_hits=(("chair", object()),),
+            named_hits=(("chair", fake_hit),),
             rig=object(),
             queries=("chair", "table"),
+            first_seen_by_instance={"chair-1": 100.0},
+            color_frames=(),
+            color_frames_by_camera={},
+            views_by_query={},
         )
 
     def fake_scene_at_timestamp(
@@ -1882,6 +1953,9 @@ def test_height_order_answers_from_localize_scene() -> None:
 
     assert answer.answer == "shelf"
     assert answer.choices == ("shelf", "table")
+    objects = answer.evidence["objects"]
+    assert isinstance(objects, list) and objects
+    assert "first_seen_timestamp" in objects[0]
 
 
 def test_ego_turn_answers_from_localize_scene() -> None:
