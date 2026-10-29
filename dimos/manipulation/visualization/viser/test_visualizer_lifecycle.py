@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import trimesh
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
@@ -117,6 +118,33 @@ def materialized_model(config: RobotModelConfig) -> PreparedRobotModel:
         joint_space=JointSpace(()),
         planning_groups=(),
     )
+
+
+def test_scene_loads_attached_mesh_with_an_in_memory_root(tmp_path: Path) -> None:
+    mesh_path = tmp_path / "link.stl"
+    trimesh.creation.box().export(mesh_path)
+    urdf_path = tmp_path / "arm.urdf"
+    urdf_path.write_text(
+        '<robot name="arm"><link name="arm_base"><visual><geometry>'
+        '<mesh filename="link.stl"/></geometry></visual></link></robot>'
+    )
+    model = RobotModel.from_root_link("stand").with_attached_model(
+        RobotModel.from_file(urdf_path), parent_link="stand", joint_name="mount"
+    )
+    prepared = PreparedRobotModel(
+        config=RobotModelConfig(model=model, base_link="stand", joint_names=[]),
+        description=model.load(),
+        joint_space=JointSpace(()),
+        planning_groups=(),
+    )
+    scene = ViserManipulationScene(FakeServer(), FakeSceneUrdf)
+    try:
+        loaded = scene._load_robot_model(prepared)
+        assert loaded.base_link == "stand"
+        assert set(loaded.link_map) == {"stand", "arm_base"}
+        assert len(loaded.scene.geometry) == 1
+    finally:
+        scene.close()
 
 
 def test_visualizer_construction_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:

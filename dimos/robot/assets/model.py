@@ -83,10 +83,10 @@ class JointDescription:
 
 @dataclass(frozen=True)
 class LoadedRobotModel:
-    """Materialized model description and its resolved filesystem context."""
+    """Materialized model and resolved assets; in-memory roots have no source path."""
 
     xml: str
-    source_path: Path
+    source_path: Path | None
     package_paths: Mapping[str, Path]
 
     @cached_property
@@ -159,13 +159,30 @@ class PlanarBaseDefinition:
 
 
 @dataclass(frozen=True)
+class _AttachedModel:
+    child: RobotModel
+    parent_link: str
+    joint_name: str
+    prefix: str
+    xyz: tuple[float, float, float]
+    rpy: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class _RootModel:
+    name: str
+    root_link: str
+
+
+@dataclass(frozen=True)
 class RobotModel:
     """Lazy, immutable robot model shared by planning backends."""
 
-    _source_path: Path | str | os.PathLike[str]
+    _source_path: Path | str | os.PathLike[str] | None
+    _root_model: _RootModel | None = None
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
-    _fixed_frames: tuple[_FixedFrame, ...] = ()
+    _fixed_frames: tuple[_FixedFrame | _AttachedModel, ...] = ()
     _fixed_joints: tuple[str, ...] = ()
     _renamed_joints: tuple[tuple[str, str], ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
@@ -189,9 +206,20 @@ class RobotModel:
             _xacro_args=tuple((xacro_args or {}).items()),
         )
 
+    @classmethod
+    def from_root_link(cls, root_link: str, *, name: str = "robot") -> RobotModel:
+        """Create a lazy, single-link model in memory for attaching other trees.
+
+        No source file is required. Both this model and its loaded description
+        have ``source_path=None``; attached children resolve their own assets.
+        """
+        if not root_link.strip() or not name.strip():
+            raise ValueError("Robot name and root link must be nonempty")
+        return cls(_source_path=None, _root_model=_RootModel(name, root_link))
+
     @property
-    def source_path(self) -> Path | str | os.PathLike[str]:
-        """Return the source handle without forcing lazy asset checkout."""
+    def source_path(self) -> Path | str | os.PathLike[str] | None:
+        """Return the source handle, or None for a model created from a root link."""
         return self._source_path
 
     @property
@@ -217,6 +245,49 @@ class RobotModel:
         return replace(
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
+        )
+
+    def with_attached_model(
+        self,
+        model: RobotModel,
+        *,
+        parent_link: str,
+        joint_name: str,
+        prefix: str = "",
+        xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> RobotModel:
+        """Weld another model's root onto a link through a named fixed joint.
+
+        Fixed frames and attachments apply in declaration order to the current
+        tree; host joint transforms apply afterward. The child uses its own
+        model loader. ``prefix`` namespaces child links, joints, and materials.
+        ``xyz`` is in meters and ``rpy`` uses extrinsic xyz rotations in radians.
+        Construction is lazy and returns a new immutable model.
+        """
+        if any(not name or any(c.isspace() for c in name) for name in (parent_link, joint_name)):
+            raise ValueError(
+                "Attachment parent link and joint name must be non-empty without whitespace"
+            )
+        if any(c.isspace() for c in prefix):
+            raise ValueError("Attachment prefix must not contain whitespace")
+        if any(
+            len(vector) != 3 or not all(math.isfinite(v) for v in vector) for vector in (xyz, rpy)
+        ):
+            raise ValueError("Attachment xyz/rpy must each contain three finite values")
+        return replace(
+            self,
+            _fixed_frames=(
+                *self._fixed_frames,
+                _AttachedModel(
+                    model,
+                    parent_link,
+                    joint_name,
+                    prefix,
+                    (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                    (float(rpy[0]), float(rpy[1]), float(rpy[2])),
+                ),
+            ),
         )
 
     def with_subtree_rooted_at(self, root_link: str) -> RobotModel:
@@ -289,24 +360,36 @@ class RobotModel:
         return replace(self, _default_joint_acceleration_limit=float(value))
 
     def load(self) -> LoadedRobotModel:
-        """Materialize and memoize the model for a backend adapter."""
+        """Materialize and memoize the model for a backend adapter.
+
+        Source subtree filters and the planar base run first. Fixed frames and
+        model attachments then run in declaration order on the current tree.
+        Joint fixes, limits, renames, and acceleration defaults run afterward.
+        """
         return self._loaded
 
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
-        source_path = Path(os.fspath(self._source_path)).resolve()
-        if source_path.suffix.lower() not in {".urdf", ".xacro"}:
-            raise ValueError(
-                f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
-            )
         package_paths = _normalize_package_paths(dict(self._package_paths))
-        if not source_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {source_path}")
-
-        if source_path.suffix.lower() == ".xacro":
-            xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+        source_path = None
+        if self._source_path is not None:
+            source_path = Path(os.fspath(self._source_path)).resolve()
+            if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+                raise ValueError(
+                    f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
+                )
+            if not source_path.exists():
+                raise FileNotFoundError(f"Robot model not found: {source_path}")
+            if source_path.suffix.lower() == ".xacro":
+                xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+            else:
+                xml = source_path.read_text()
+        elif self._root_model is not None:
+            root = ET.Element("robot", name=self._root_model.name)
+            ET.SubElement(root, "link", name=self._root_model.root_link)
+            xml = ET.tostring(root, encoding="unicode")
         else:
-            xml = source_path.read_text()
+            raise ValueError("RobotModel requires a source file or root link")
         xml = _resolve_package_uris(xml, package_paths)
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
@@ -316,10 +399,15 @@ class RobotModel:
             )
         xml = _resolve_relative_asset_paths(
             xml,
-            search_directories=(source_path.parent, *package_paths.values()),
+            search_directories=(
+                *((source_path.parent,) if source_path is not None else ()),
+                *package_paths.values(),
+            ),
         )
         if self._planar_base is not None:
             xml = _add_planar_base(xml, self._planar_base)
+        if self._fixed_frames:
+            xml = _add_fixed_frames(xml, self._fixed_frames)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
@@ -330,9 +418,6 @@ class RobotModel:
             xml = _set_missing_joint_acceleration_limits(
                 xml, self._default_joint_acceleration_limit
             )
-        if self._fixed_frames:
-            xml = _add_fixed_frames(xml, self._fixed_frames)
-
         return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:
@@ -344,6 +429,71 @@ class RobotModel:
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def _attach_model_tree(host: ET.Element, child_xml: str, mount: _AttachedModel) -> None:
+    child = ET.fromstring(child_xml)
+    if mount.parent_link not in {link.get("name") for link in host.findall("link")}:
+        raise ValueError(f"Attachment references unknown parent link: {mount.parent_link}")
+    if child.tag != "robot":
+        raise ValueError("Attached model must be a URDF robot element")
+    unsupported = {node.tag for node in child} - {"link", "joint", "material"}
+    if unsupported:
+        raise ValueError(f"Unsupported attached URDF elements: {sorted(unsupported)}")
+    links = {node.get("name", "") for node in child.findall("link")}
+    children: set[str] = set()
+    edges: list[tuple[str, str]] = []
+    for joint in child.findall("joint"):
+        parent = joint.find("parent")
+        tip = joint.find("child")
+        if parent is None or tip is None:
+            raise ValueError("Attached joints must declare parent and child links")
+        if parent.get("link") not in links or tip.get("link") not in links:
+            raise ValueError("Attached joint references an unknown link")
+        child_link = tip.get("link", "")
+        if child_link in children:
+            raise ValueError("Attached links must have at most one parent")
+        children.add(child_link)
+        edges.append((parent.get("link", ""), child_link))
+    roots = links - children
+    if len(roots) != 1:
+        raise ValueError("Attached model must have exactly one root link")
+    child_root = next(iter(roots))
+    reached = {child_root}
+    while True:
+        expanded = reached | {tip for parent, tip in edges if parent in reached}
+        if expanded == reached:
+            break
+        reached = expanded
+    if reached != links:
+        raise ValueError("Attached model must be one connected tree")
+    child_joint_names = {joint.get("name") for joint in child.findall("joint")}
+    for mimic in child.findall("joint/mimic"):
+        if mimic.get("joint") not in child_joint_names:
+            raise ValueError("Attached mimic references an unknown joint")
+    for node in child:
+        for element in node.iter():
+            if element.tag in {"link", "joint", "material"} and element.get("name"):
+                element.set("name", mount.prefix + element.attrib["name"])
+            if element.tag in {"parent", "child"} and element.get("link"):
+                element.set("link", mount.prefix + element.attrib["link"])
+            if element.tag == "mimic" and element.get("joint"):
+                element.set("joint", mount.prefix + element.attrib["joint"])
+            if element.tag in {"mesh", "texture"}:
+                filename = element.get("filename", "")
+                if filename.startswith("package://") or (
+                    filename and not Path(filename).is_absolute() and "://" not in filename
+                ):
+                    raise ValueError(f"Unresolved asset in attached model: {filename!r}")
+        host.append(node)
+    joint = ET.SubElement(host, "joint", name=mount.joint_name, type="fixed")
+    ET.SubElement(joint, "parent", link=mount.parent_link)
+    ET.SubElement(joint, "child", link=mount.prefix + child_root)
+    ET.SubElement(joint, "origin", xyz=_vector_text(mount.xyz), rpy=_vector_text(mount.rpy))
+    for tag in ("link", "joint", "material"):
+        names = [element.get("name", "") for element in host.findall(tag)]
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise ValueError(f"Attached {tag} names must be non-empty and unique")
 
 
 def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
@@ -394,12 +544,17 @@ def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
-def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:
+def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame | _AttachedModel, ...]) -> str:
     root = ET.fromstring(xml)
     link_names = {link.get("name") for link in root.findall("link")}
     joint_names = {joint.get("name") for joint in root.findall("joint")}
 
     for frame in frames:
+        if isinstance(frame, _AttachedModel):
+            _attach_model_tree(root, frame.child.load().xml, frame)
+            link_names = {link.get("name") for link in root.findall("link")}
+            joint_names = {joint.get("name") for joint in root.findall("joint")}
+            continue
         if frame.name in link_names:
             raise ValueError(f"Fixed frame link already exists: {frame.name}")
         if frame.joint_name in joint_names:

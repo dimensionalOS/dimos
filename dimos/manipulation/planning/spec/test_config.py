@@ -26,10 +26,11 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 
 
-def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
+@pytest.mark.parametrize("in_memory", [False, True])
+def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path, in_memory: bool) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='arm'><link name='base'/></robot>")
-    model = RobotModel.from_file(urdf)
+    model = RobotModel.from_root_link("base") if in_memory else RobotModel.from_file(urdf)
     loaded = model.load()
     config = RobotModelConfig(
         model=model,
@@ -42,7 +43,7 @@ def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> Non
     kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs(ManipulationModule.name)))
     assert "_loaded" not in kwargs["model"]["model"]
     restored = RobotModelConfig(**kwargs["model"])
-    assert restored.model.source_path == urdf
+    assert restored.model.source_path == (None if in_memory else urdf)
     assert restored.model.load() == loaded
 
 
@@ -76,3 +77,16 @@ def test_partial_robot_model_overrides_preserve_pinned_settings(
     kwargs = parsed.module_kwargs(ManipulationModule.name)
     restored = RobotModelConfig(**kwargs["model"])
     assert restored.model == replace(model, **model_override)
+
+
+def test_attached_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
+    source = tmp_path / "single.urdf"
+    source.write_text('<robot name="single"><link name="base"/></robot>')
+    model = RobotModel.from_file(source).with_attached_model(
+        RobotModel.from_file(source), parent_link="base", joint_name="mount", prefix="other_"
+    )
+    blueprint = ManipulationModule.blueprint(model=RobotModelConfig(model=model, joint_names=[]))
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    restored = RobotModelConfig(**parsed.module_kwargs(ManipulationModule.name)["model"])
+    assert restored.model.source_path == source
+    assert restored.model._fixed_frames == model._fixed_frames
