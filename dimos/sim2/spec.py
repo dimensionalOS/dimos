@@ -20,13 +20,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import mujoco
 
 from dimos.sim2.sensors.composition import Sensor, mounted_sensors
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount as Mount
+
+if TYPE_CHECKING:
+    from dimos.sim2.module import SimulationModule
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,26 @@ class RobotInstance:
             raise ValueError("coherent control IMU feedback does not support a delayed measurement")
         if not math.isfinite(self.command_timeout) or self.command_timeout <= 0:
             raise ValueError("command_timeout must be finite and positive")
+
+
+@dataclass(frozen=True)
+class SimulatedRobot:
+    """What a hardware connection returns from ``simulated_robot(config, scene)``.
+
+    Attributes:
+        robot_id: The robot's id in the world and the prefix of the world
+            module's ports for it (``<robot_id>_motor_states`` and so on).
+        world: A ``SimulationModule`` subclass declaring those ports.
+        instance: The placed robot: body, start pose, hold gains, control IMU.
+    """
+
+    robot_id: str
+    world: type[SimulationModule]
+    instance: RobotInstance
+
+    def __post_init__(self) -> None:
+        if not self.robot_id.isidentifier():
+            raise ValueError("robot_id must be a Python identifier so it can prefix port names")
 
 
 @dataclass(frozen=True)

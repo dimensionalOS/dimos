@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -79,25 +80,40 @@ def load_scene(config: WorldConfig, description: SceneDescription | None = None)
     return model
 
 
+def _mount_frame(
+    spec: mujoco.MjSpec, mount: Mount, label: str
+) -> tuple[Any, tuple[float, float, float], NDArray[np.float64]]:
+    """The body a mount attaches to and the mount's pose in that body's frame."""
+    site = spec.site(mount.link)
+    if site is not None:
+        # A device placed relative to another device's site, in the site's frame.
+        parent = Rotation.from_quat(np.roll(np.asarray(site.quat, dtype=np.float64), -1))
+        pos = np.asarray(site.pos, dtype=np.float64) + parent.apply(mount.xyz)
+        quat = parent * Rotation.from_euler("xyz", mount.rpy)
+        return site.parent, tuple(pos.tolist()), np.roll(quat.as_quat(), 1)
+    body = spec.body(mount.link)
+    if body is None:
+        raise ValueError(f"{label}: unknown body or site {mount.link!r}")
+    return body, mount.xyz, quaternion(mount.rpy)
+
+
 def _attach_sensors(spec: mujoco.MjSpec, sensors: tuple[Sensor, ...], owner: str) -> None:
     for sensor in sensors:
         attachment = sensor.camera if isinstance(sensor, Camera) else sensor.site
         if isinstance(attachment, Mount):
-            body = spec.body(attachment.link)
-            if body is None:
-                raise ValueError(f"{owner}/{sensor.name}: unknown body {attachment.link!r}")
+            body, pos, quat = _mount_frame(spec, attachment, f"{owner}/{sensor.name}")
             if isinstance(sensor, Camera):
                 body.add_camera(
                     name=sensor.model_name,
-                    pos=attachment.xyz,
-                    quat=quaternion(attachment.rpy),
+                    pos=pos,
+                    quat=quat,
                     fovy=60.0 if sensor.fovy is None else sensor.fovy,
                 )
             else:
                 body.add_site(
                     name=sensor.model_name,
-                    pos=attachment.xyz,
-                    quat=quaternion(attachment.rpy),
+                    pos=pos,
+                    quat=quat,
                     size=(0.001, 0.001, 0.001),
                     rgba=(0, 0, 0, 0),
                 )

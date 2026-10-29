@@ -24,6 +24,16 @@ from pydantic.dataclasses import dataclass
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Mount:
+    """Where an added device sits: a body, or a named site such as another device's mount.
+
+    Attributes:
+        link: A body name, or a site name. On a site, ``xyz``/``rpy`` are in the
+            site's frame, which is how a lidar's own IMU is placed at its
+            factory offset from the laser.
+        xyz: Position in the frame of ``link``.
+        rpy: Orientation in the frame of ``link``, roll-pitch-yaw radians.
+    """
+
     link: str
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)

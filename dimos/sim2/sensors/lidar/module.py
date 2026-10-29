@@ -29,10 +29,19 @@ class LidarModuleConfig(SensorModuleConfig):
 
 
 class LidarModule(SensorModule):
+    """A lidar worker with a real driver's ports.
+
+    ``lidar`` is the sensor-frame scan with per-point offsets and channels, and
+    ``imu`` the device's own IMU, exactly what a Mid360 driver publishes.
+    ``pointcloud`` is the deskewed world-frame cloud and ``tf`` the true sensor
+    pose, both ground truth a real device cannot give; ``Lidar.truth_outputs``
+    turns them off when an estimator is under test.
+    """
+
     config: LidarModuleConfig
+    lidar: Out[PointCloud2]
+    imu: Out[Imu]
     pointcloud: Out[PointCloud2]
-    raw_pointcloud: Out[PointCloud2]
-    imu_raw: Out[Imu]
     tf: Out[TFMessage]
 
     def open(self) -> None:

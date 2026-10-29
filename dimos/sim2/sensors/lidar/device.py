@@ -167,7 +167,7 @@ class LidarDevice(SensorDevice[Lidar]):
             if self.reader.latest_episode != self._episode:
                 return
             self.emit(
-                "imu_raw",
+                "imu",
                 Imu(
                     angular_velocity=Vector3(*self.reader.data.sensor(self._gyro).data),
                     linear_acceleration=Vector3(*self.reader.data.sensor(self._accel).data),
@@ -235,7 +235,7 @@ class LidarDevice(SensorDevice[Lidar]):
         hit = (distances >= pattern.min_range) & (distances <= pattern.max_range)
         raw = rays.directions[hit] * distances[hit, None]
         self.emit(
-            "raw_pointcloud",
+            "lidar",
             PointCloud2.from_numpy(
                 raw.astype(np.float32),
                 frame_id=self._frame,
