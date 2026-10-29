@@ -15,14 +15,15 @@ uv run dimos run dual-makermods-metal-planner-coordinator
 ```
 
 Open [Viser](http://127.0.0.1:8095). Select either planning group to manipulate
-its target and independent gripper. ManipulationModule's `plan_to_joints` and
+its pose target. ManipulationModule's `plan_to_joints` and
 `plan_to_poses` accept both group IDs for a synchronized bimanual plan. Planning
 speed scale defaults to 0.2. Each arm contributes six angular joints and one
 normalized gripper; finger geometry remains fixed in the planning model.
 
 ## Geometry and dimensions
 
-The model lazily composes two copies of the same pinned official Metal URDF used
+The model uses `RobotModel.compose` and two `RobotModelInstance` mounts to lazily
+compose copies of the same pinned official Metal URDF used
 by the [single-arm integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
 Links, joints, material names, and references are prefixed `left_` / `right_`.
 The root is `dual_metal_base`, with tips `left_gripper_base` and
@@ -54,8 +55,19 @@ uv run dimos run dual-makermods-metal-planner-coordinator \
   --right-base-xyz '[0, -0.25, 0]'
 ```
 
-The combined model is cached by its content and mount transforms. Importing the
-blueprint does not download or generate assets.
+The shared RobotModel API owns namespacing, asset resolution, and composition.
+The combined model is cached by its content, including mount transforms.
+Importing the blueprint does not download or generate assets.
+
+## Gripper task bindings
+
+Both normalized gripper tasks and their separate input streams remain available
+on the ControlCoordinator. This layer does not bind them to ManipulationModule
+planning groups or enable the Viser gripper controls. Per-group bindings belong
+to [PR #4747](https://github.com/dimensionalOS/dimos/pull/4747), which introduces
+`ManipulationModuleConfig.gripper_tasks`. After that API lands, the bindings are
+`left_arm` to `left_arm_gripper` and `right_arm` to `right_arm_gripper`.
+The model and planning configuration carry no deployment-specific gripper mapping.
 
 ## Physical CAN setup
 

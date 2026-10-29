@@ -58,8 +58,6 @@ class RobotModelConfig(ModuleConfig):
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     gripper_hardware_id: str | None = None
-    # Planning group ID -> hardware/task prefix, for independently controlled grippers.
-    gripper_hardware_ids: dict[str, str] = Field(default_factory=dict)
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
@@ -78,13 +76,6 @@ class RobotModelConfig(ModuleConfig):
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""
-        unknown_grippers = set(self.gripper_hardware_ids) - {
-            group.name for group in self.planning_groups
-        }
-        if unknown_grippers or any(not name for name in self.gripper_hardware_ids.values()):
-            raise ValueError(
-                "gripper_hardware_ids must map declared groups to non-empty hardware IDs"
-            )
         assert_valid_joint_names(self.joint_names)
         if any(not name for name in self.joint_names):
             raise ValueError("RobotModelConfig.joint_names must contain non-empty names")
