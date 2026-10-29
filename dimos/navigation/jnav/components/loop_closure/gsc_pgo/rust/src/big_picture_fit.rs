@@ -727,6 +727,12 @@ pub(crate) fn solve_core(
         odometry_noise_evidence_ln.as_mut(),
     ) {
         let mut scaled_odometry = odometry.to_vec();
+        // a fixed point exists only where re-estimating contracts: a source whose step does not shrink is being driven
+        // by misfit that more noise does not absorb (wrong closures, not loose odometry), which the Gaussian model
+        // cannot explain, so it learns nothing from this solve (its evidence dropped, its noise left as dispatched)
+        let at_dispatch = odometry_noise_evidence;
+        let mut previous_step: Option<[f64; 4]> = None;
+        let mut diverged = [false; 4];
         for _ in 0..8 {
             let Some(evidence) = odometry_noise_evidence else {
                 break;
@@ -740,6 +746,15 @@ pub(crate) fn solve_core(
                     0.0
                 }
             });
+            if let Some(previous) = previous_step {
+                for c in 0..4 {
+                    diverged[c] |= step[c].abs() >= 0.01 && step[c].abs() >= previous[c].abs();
+                }
+            }
+            if diverged.iter().any(|&d| d) {
+                break;
+            }
+            previous_step = Some(step);
             if step.iter().all(|s| s.abs() < 0.01) {
                 break;
             }
@@ -774,6 +789,18 @@ pub(crate) fn solve_core(
                 sightings,
                 &sighting_kept,
             );
+        }
+        if diverged.iter().any(|&d| d) {
+            // back to the dispatched solve's evidence, with each diverged source's dropped
+            *ln = fixed.dispatched_ln;
+            odometry_noise_evidence = at_dispatch.map(|mut evidence| {
+                for c in 0..4 {
+                    if diverged[c] {
+                        evidence[c] = (0.0, 0.0);
+                    }
+                }
+                evidence
+            });
         }
     }
     Solution {
