@@ -4,6 +4,10 @@
 
 The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when dimOS restarts. HarnessRuntime is a dimOS module that the gateway loads into each running system and reaches through McpServer.
 
+For API details, see the [Python runtime](/docs/usage/agent/runtime.md), [agent harness](/docs/usage/agent/harness.md),
+[gateway](/docs/usage/agent/gateway.md), [client SDK](/docs/usage/agent/sdk.md), and [CLI](/docs/usage/agent/cli.md) guides.
+The [agent development guide](/docs/development/agent/index.md) covers the architecture and contributor documentation.
+
 ## Set up and start the agent
 
 You need a dimOS checkout with its `.venv`, which `bash scripts/install.sh --mode dev --project-dir .` creates, and Node.js 24 or 26 first on `PATH`. The agent runs from the checkout. A dimOS installed from a wheel does not include it.
