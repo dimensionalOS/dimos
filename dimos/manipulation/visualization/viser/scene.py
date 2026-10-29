@@ -572,7 +572,7 @@ class ViserManipulationScene:
         return URDF.load(
             BytesIO(description.xml.encode()),
             mesh_dir=(
-                str(description.source_path.parent) if description.source_path is not None else None
+                str(description.source_path.parent) if description.source_path is not None else ""
             ),
             build_scene_graph=True,
             build_collision_scene_graph=True,
