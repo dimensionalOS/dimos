@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
 import math
@@ -33,7 +33,6 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
-from dimos.robot.assets.composition import compose_urdf, materialize_composed_urdf
 from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger
 
@@ -160,43 +159,21 @@ class PlanarBaseDefinition:
 
 
 @dataclass(frozen=True)
-class RobotModelInstance:
-    """A namespaced model mounted on the common root of a composition.
-
-    ``xyz`` is in meters. ``rpy`` uses extrinsic xyz rotations in radians.
-    Prefixes apply to links, joints, materials, and their URDF references.
-    """
-
-    model: RobotModel
+class _AttachedModel:
+    host: RobotModel
+    child: RobotModel
+    parent_link: str
+    joint_name: str
     prefix: str
-    xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
-    def __post_init__(self) -> None:
-        if not self.prefix or any(character.isspace() for character in self.prefix):
-            raise ValueError("Composition prefixes must be non-empty and contain no whitespace")
-        if any(
-            len(vector) != 3 or not all(math.isfinite(v) for v in vector)
-            for vector in (self.xyz, self.rpy)
-        ):
-            raise ValueError("Composition xyz/rpy must each contain three finite values")
-        object.__setattr__(self, "xyz", tuple(float(value) for value in self.xyz))
-        object.__setattr__(self, "rpy", tuple(float(value) for value in self.rpy))
-
-
-@dataclass(frozen=True)
-class _ModelComposition:
-    instances: tuple[RobotModelInstance, ...]
-    name: str
-    root_link: str
+    xyz: tuple[float, float, float]
+    rpy: tuple[float, float, float]
 
 
 @dataclass(frozen=True)
 class RobotModel:
     """Lazy, immutable robot model shared by planning backends."""
 
-    _source_path: Path | str | os.PathLike[str] | None
-    _composition: _ModelComposition | None = None
+    _source_path: Path | str | os.PathLike[str]
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame, ...] = ()
@@ -207,6 +184,7 @@ class RobotModel:
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
     _default_joint_acceleration_limit: float | None = None
+    _attached_model: _AttachedModel | None = None
 
     @classmethod
     def from_file(
@@ -223,43 +201,27 @@ class RobotModel:
             _xacro_args=tuple((xacro_args or {}).items()),
         )
 
-    @classmethod
-    def compose(
-        cls,
-        instances: Sequence[RobotModelInstance],
-        *,
-        name: str = "assembly",
-        root_link: str = "base_link",
-    ) -> RobotModel:
-        """Declare a lazy assembly with one fixed mount per namespaced input.
-
-        Inputs retain their own transformations and asset resolution. Assembly
-        transformations run after composition. Loading writes the resulting
-        XML to the robot asset cache; construction performs no filesystem I/O.
-        """
-        if not instances:
-            raise ValueError("A composition requires at least one model instance")
-        if any(not value or any(c.isspace() for c in value) for value in (name, root_link)):
-            raise ValueError("Composition name/root link must be non-empty without whitespace")
-        if len({instance.prefix for instance in instances}) != len(instances):
-            raise ValueError("Composition prefixes must be unique")
-        return cls(
-            _source_path=None, _composition=_ModelComposition(tuple(instances), name, root_link)
-        )
-
     @property
-    def source_path(self) -> Path | str | os.PathLike[str] | None:
-        """Return the lazy file source, or None for an assembly with no single source."""
+    def source_path(self) -> Path | str | os.PathLike[str]:
+        """Return the source handle without forcing lazy asset checkout."""
         return self._source_path
 
     @property
     def planar_base(self) -> PlanarBaseDefinition | None:
         """Return the configured synthetic planar base, if any."""
+        if self._planar_base is None and self._attached_model is not None:
+            inherited = self._attached_model.host.planar_base
+            if inherited is not None and (
+                self._subtree_root_link not in (None, inherited.root_link)
+                or set(self._removed_joint_subtrees).intersection(inherited.joint_names)
+            ):
+                return None
+            return inherited
         return self._planar_base
 
     def with_planar_base(self, definition: PlanarBaseDefinition) -> RobotModel:
         """Return a model whose original root moves through ``x``, ``y``, and ``yaw``."""
-        if self._planar_base is not None:
+        if self.planar_base is not None:
             raise ValueError("Robot model already has a planar base")
         return replace(self, _planar_base=definition)
 
@@ -275,6 +237,46 @@ class RobotModel:
         return replace(
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
+        )
+
+    def with_attached_model(
+        self,
+        model: RobotModel,
+        *,
+        parent_link: str,
+        joint_name: str,
+        prefix: str = "",
+        xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> RobotModel:
+        """Weld another model's root onto a link through a named fixed joint.
+
+        Both inputs retain their existing transforms and asset resolution.
+        Subsequent transforms apply to the joined tree. ``prefix`` namespaces
+        the child's links, joints, and materials; ``xyz`` is in meters and
+        ``rpy`` uses extrinsic xyz rotations in radians. Construction is lazy.
+        """
+        if any(not name or any(c.isspace() for c in name) for name in (parent_link, joint_name)):
+            raise ValueError(
+                "Attachment parent link and joint name must be non-empty without whitespace"
+            )
+        if any(c.isspace() for c in prefix):
+            raise ValueError("Attachment prefix must not contain whitespace")
+        if any(
+            len(vector) != 3 or not all(math.isfinite(v) for v in vector) for vector in (xyz, rpy)
+        ):
+            raise ValueError("Attachment xyz/rpy must each contain three finite values")
+        return RobotModel(
+            _source_path=self._source_path,
+            _attached_model=_AttachedModel(
+                self,
+                model,
+                parent_link,
+                joint_name,
+                prefix,
+                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                (float(rpy[0]), float(rpy[1]), float(rpy[2])),
+            ),
         )
 
     def with_subtree_rooted_at(self, root_link: str) -> RobotModel:
@@ -352,20 +354,16 @@ class RobotModel:
 
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
-        if self._composition is not None:
-            xml = compose_urdf(
-                [
-                    (instance.prefix, instance.model.load().xml, instance.xyz, instance.rpy)
-                    for instance in self._composition.instances
-                ],
-                name=self._composition.name,
-                root_link=self._composition.root_link,
-            )
-            package_paths: dict[str, Path] = {}
-            source_path: Path | None = None
+        if self._attached_model is not None:
+            attachment = self._attached_model
+            host_model = attachment.host
+            if self._source_path != host_model.source_path:
+                host_model = replace(host_model, _source_path=self._source_path)
+            host = host_model.load()
+            xml = _attach_model_tree(host.xml, attachment.child.load().xml, attachment)
+            source_path = host.source_path
+            package_paths = dict(host.package_paths)
         else:
-            if self._source_path is None:
-                raise ValueError("RobotModel requires a file source or a composition")
             source_path = Path(os.fspath(self._source_path)).resolve()
             if source_path.suffix.lower() not in {".urdf", ".xacro"}:
                 raise ValueError(
@@ -386,10 +384,10 @@ class RobotModel:
                 root_link=self._subtree_root_link,
                 removed_joint_subtrees=self._removed_joint_subtrees,
             )
-        if source_path is not None:
-            xml = _resolve_relative_asset_paths(
-                xml, search_directories=(source_path.parent, *package_paths.values())
-            )
+        xml = _resolve_relative_asset_paths(
+            xml,
+            search_directories=(source_path.parent, *package_paths.values()),
+        )
         if self._planar_base is not None:
             xml = _add_planar_base(xml, self._planar_base)
         if self._fixed_joints:
@@ -405,9 +403,6 @@ class RobotModel:
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
-        if self._composition is not None:
-            source_path = materialize_composed_urdf(xml)
-        assert source_path is not None
         return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:
@@ -419,6 +414,73 @@ class RobotModel:
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def _attach_model_tree(host_xml: str, child_xml: str, mount: _AttachedModel) -> str:
+    host = ET.fromstring(host_xml)
+    child = ET.fromstring(child_xml)
+    if mount.parent_link not in {link.get("name") for link in host.findall("link")}:
+        raise ValueError(f"Attachment references unknown parent link: {mount.parent_link}")
+    if child.tag != "robot":
+        raise ValueError("Attached model must be a URDF robot element")
+    unsupported = {node.tag for node in child} - {"link", "joint", "material"}
+    if unsupported:
+        raise ValueError(f"Unsupported attached URDF elements: {sorted(unsupported)}")
+    links = {node.get("name", "") for node in child.findall("link")}
+    children: set[str] = set()
+    edges: list[tuple[str, str]] = []
+    for joint in child.findall("joint"):
+        parent = joint.find("parent")
+        tip = joint.find("child")
+        if parent is None or tip is None:
+            raise ValueError("Attached joints must declare parent and child links")
+        if parent.get("link") not in links or tip.get("link") not in links:
+            raise ValueError("Attached joint references an unknown link")
+        child_link = tip.get("link", "")
+        if child_link in children:
+            raise ValueError("Attached links must have at most one parent")
+        children.add(child_link)
+        edges.append((parent.get("link", ""), child_link))
+    roots = links - children
+    if len(roots) != 1:
+        raise ValueError("Attached model must have exactly one root link")
+    child_root = next(iter(roots))
+    reached = {child_root}
+    while True:
+        expanded = reached | {tip for parent, tip in edges if parent in reached}
+        if expanded == reached:
+            break
+        reached = expanded
+    if reached != links:
+        raise ValueError("Attached model must be one connected tree")
+    child_joint_names = {joint.get("name") for joint in child.findall("joint")}
+    for mimic in child.findall("joint/mimic"):
+        if mimic.get("joint") not in child_joint_names:
+            raise ValueError("Attached mimic references an unknown joint")
+    for node in child:
+        for element in node.iter():
+            if element.tag in {"link", "joint", "material"} and element.get("name"):
+                element.set("name", mount.prefix + element.attrib["name"])
+            if element.tag in {"parent", "child"} and element.get("link"):
+                element.set("link", mount.prefix + element.attrib["link"])
+            if element.tag == "mimic" and element.get("joint"):
+                element.set("joint", mount.prefix + element.attrib["joint"])
+            if element.tag in {"mesh", "texture"}:
+                filename = element.get("filename", "")
+                if filename.startswith("package://") or (
+                    filename and not Path(filename).is_absolute() and "://" not in filename
+                ):
+                    raise ValueError(f"Unresolved asset in attached model: {filename!r}")
+        host.append(node)
+    joint = ET.SubElement(host, "joint", name=mount.joint_name, type="fixed")
+    ET.SubElement(joint, "parent", link=mount.parent_link)
+    ET.SubElement(joint, "child", link=mount.prefix + child_root)
+    ET.SubElement(joint, "origin", xyz=_vector_text(mount.xyz), rpy=_vector_text(mount.rpy))
+    for tag in ("link", "joint", "material"):
+        names = [element.get("name", "") for element in host.findall(tag)]
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise ValueError(f"Attached {tag} names must be non-empty and unique")
+    return ET.tostring(host, encoding="unicode")
 
 
 def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
