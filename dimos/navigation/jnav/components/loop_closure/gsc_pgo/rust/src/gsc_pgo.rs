@@ -130,6 +130,9 @@ pub struct ClosureCandidateDiag {
     /// world axes (m), and the graph's covariance of that offset at the odometry noise in use (m²); NaN before ICP.
     pub innovation: Vec3,
     pub innovation_covariance: Mat3,
+    /// The odometry chain's covariance of that offset at the drift the config states, with nothing learned or measured
+    /// from candidates in it (`closure_yank_at_stated_drift`; m²); NaN before ICP.
+    pub stated_innovation_covariance: Mat3,
     /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
     /// scales with.
     pub target_overlap: f64,
@@ -218,6 +221,7 @@ impl ClosureCandidateDiag {
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
+            stated_innovation_covariance: [[f64::NAN; 3]; 3],
             target_overlap: 0.0,
             keep_rate: f64::NAN,
             extension_budget: 0,
@@ -527,6 +531,12 @@ pub struct Config {
     /// sqrt(v^T (s P + c fitness I)^-1 v) with both noise scales, instead of in robust spreads of earlier yanks; the gate
     /// asks for the evidence z^2 / 2 (the Gaussian log-likelihood ratio of that yank) as before.
     pub closure_yank_gate_principled: bool,
+    /// When true, yank_stdevs is the closure's yank in standard deviations of how far the odometry could have drifted
+    /// between its two ends at the drift the config states (the dead-reckoned chain's covariance, plus the closure's own
+    /// spread as `closure_yank_gate_principled` takes it), instead of in robust spreads of earlier candidates' yanks:
+    /// the candidates the gate judges, mostly wrong, no longer set its ruler (small_l1: a 2.4 m/sqrt(keyframe) ruler
+    /// passed 40-68 m yanks at about 1 standard deviation), and no learned loosening widens it.
+    pub closure_yank_at_stated_drift: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -608,6 +618,7 @@ impl Default for Config {
             odometry_noise_from_closures: false,
             closure_noise_from_closures: false,
             closure_yank_gate_principled: false,
+            closure_yank_at_stated_drift: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -1935,6 +1946,17 @@ impl GscPgo {
         // the graph's covariance of the source's offset from this target, at the odometry noise in use
         if let Some(model) = &model {
             diag.innovation_covariance = model.relative(target_idx);
+        }
+        if self.config.closure_yank_at_stated_drift && diag.source_id < self.key_poses.len() {
+            let sums =
+                crate::loop_overlap::odometry_noise_sums(&self.key_poses, &self.config, [1.0; 4]);
+            let newest = self.key_poses[diag.source_id].translation_global;
+            diag.stated_innovation_covariance = crate::loop_overlap::odometry_covariance(
+                &sums,
+                target_idx,
+                diag.source_id,
+                &newest,
+            );
         }
         // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
         // overlaps this target
