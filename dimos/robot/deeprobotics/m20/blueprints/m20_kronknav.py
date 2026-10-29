@@ -21,25 +21,14 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.navigation.embodiment.m20 import M20
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.global_planner.viz import render_path
-from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    PLANNER_VIZ_HZ,
-    VOXEL_SIZE_M,
-    WALL_CLEARANCE_M,
     _m20_nav,
+    m20_nav_overrides,
+    m20_nav_static,
 )
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
-from dimos.robot.deeprobotics.m20.constants import (
-    BASE_LINK_HEIGHT_M,
-    BODY_LENGTH_M,
-    BODY_WIDTH_M,
-    PLANNING_HEIGHT_M,
-)
 from dimos.visualization.vis_module import vis_module
 
 
@@ -61,21 +50,6 @@ def _render_rear_camera_info(msg: CameraInfo) -> Any:
         image_topic="world/rear_camera",
         optical_frame="rear_camera_optical",
     )
-
-
-def _static_robot_body(rr: Any) -> list[Any]:
-    return [
-        rr.Boxes3D(
-            half_sizes=[
-                BODY_LENGTH_M * 0.5,
-                BODY_WIDTH_M * 0.5,
-                PLANNING_HEIGHT_M * 0.5,
-            ],
-            centers=[0.0, 0.0, PLANNING_HEIGHT_M * 0.5 - BASE_LINK_HEIGHT_M],
-            colors=[(0, 255, 127)],
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
 
 
 def _m20_rerun_blueprint() -> Any:
@@ -112,22 +86,13 @@ _rerun_config = {
         "world/local_map": 0.5,
     },
     "visual_override": {
-        # The navigation view shows maps rather than the registered lidar.
-        "world/lidar": None,
-        "world/slam_body_points": None,
-        "world/planner_path": render_path,
-        **motion_visual_override(embodiment=M20),
+        **m20_nav_overrides(),
         "world/front_camera": _render_h265,
         "world/rear_camera": _render_h265,
         "world/front_camera_info": _render_front_camera_info,
         "world/rear_camera_info": _render_rear_camera_info,
-        **planner_visual_override(
-            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
-        ),
     },
-    "static": {
-        "world/robot_body": _static_robot_body,
-    },
+    "static": m20_nav_static(),
 }
 
 
