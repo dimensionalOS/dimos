@@ -113,6 +113,8 @@ class PGOConfig(NativeModuleConfig):
     closure_commitments: bool = False
     # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_score_thresh
     closure_inlier_distance_from_odometry: bool = False
+    # True: a submap spans as many keyframes as the sensor's mean reach covers at the mean keyframe spacing (at least closure_submap_half_range)
+    closure_submap_by_reach: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

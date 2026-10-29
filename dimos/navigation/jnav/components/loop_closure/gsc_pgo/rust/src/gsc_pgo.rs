@@ -490,6 +490,10 @@ pub struct Config {
     /// point with probability `closure_gnc_inlier_probability` (w^2 chi-square(1) quantile). The configured value holds
     /// until a keyframe has been measured.
     pub closure_inlier_distance_from_odometry: bool,
+    /// When true, a submap reaches as far as the sensor does instead of `closure_submap_half_range` keyframes each side:
+    /// as many keyframes as the keyframes' mean scan reach (`keyframe_reach`) spans at their mean spacing along the path,
+    /// at least the configured half range.
+    pub closure_submap_by_reach: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -593,6 +597,7 @@ impl Default for Config {
             odometry_gravity_bound: false,
             closure_commitments: false,
             closure_inlier_distance_from_odometry: false,
+            closure_submap_by_reach: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -671,6 +676,8 @@ pub struct GscPgo {
     pub(crate) keyframe_reach: (f64, usize),
     /// Each measured keyframe's right-alignment width against the keyframes before it (`closure_inlier_distance_from_odometry`).
     pub(crate) odometry_alignment_widths: Vec<f64>,
+    /// The keyframes' path length so far (`closure_submap_by_reach`).
+    pub(crate) keyframe_path_length: f64,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
@@ -814,11 +821,13 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a measured inlier distance changes every
         // fit, so it is part of the key
         let cache = self.icp_cache.clone();
-        let key_suffix = if self.config.closure_inlier_distance_from_odometry {
-            format!(":{:x}", self.config.closure_score_thresh.to_bits())
-        } else {
-            String::new()
-        };
+        let mut key_suffix = String::new();
+        if self.config.closure_inlier_distance_from_odometry {
+            key_suffix += &format!(":{:x}", self.config.closure_score_thresh.to_bits());
+        }
+        if self.config.closure_submap_by_reach {
+            key_suffix += &format!(":h{}", self.config.closure_submap_half_range);
+        }
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -1362,7 +1371,7 @@ impl GscPgo {
         let Some(v_new) = newest.variances else {
             return;
         };
-        let half = self.config.closure_submap_half_range.max(0) as usize;
+        let half = self.submap_half_range().max(0) as usize;
         let local = |k: usize| {
             (
                 self.key_poses[k].rotation_local,
@@ -1928,6 +1937,7 @@ impl GscPgo {
             key_poses: self.key_poses.clone(),
             config: Config {
                 closure_score_thresh: self.closure_inlier_squared_distance(),
+                closure_submap_half_range: self.submap_half_range(),
                 ..self.config.clone()
             },
             scored_yanks: self.yank_scale_sample(),
@@ -2074,6 +2084,7 @@ impl GscPgo {
             }
         }
         let measure = self.config.closure_inlier_distance_from_odometry;
+        let previous_position = self.key_poses.last().map(|k| k.translation_global);
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,
@@ -2086,6 +2097,12 @@ impl GscPgo {
             ),
         });
 
+        if let Some(previous) = previous_position {
+            self.keyframe_path_length += mat3::norm(&mat3::sub(
+                &self.key_poses.last().unwrap().translation_global,
+                &previous,
+            ));
+        }
         if measure {
             self.measure_odometry_alignment();
         }
@@ -2115,6 +2132,23 @@ impl GscPgo {
         self.scan_context_descriptors.push(Arc::new(descriptor));
     }
 
+    /// Keyframes each side of a submap's centre: `closure_submap_half_range`, or with `closure_submap_by_reach` as many
+    /// as the mean scan reach spans at the mean keyframe spacing (never fewer).
+    pub fn submap_half_range(&self) -> i32 {
+        let configured = self.config.closure_submap_half_range;
+        let (reach_sum, reach_count) = self.keyframe_reach;
+        let steps = self.key_poses.len().saturating_sub(1);
+        if !self.config.closure_submap_by_reach
+            || reach_count == 0
+            || steps == 0
+            || !(self.keyframe_path_length > 0.0)
+        {
+            return configured;
+        }
+        let spacing = self.keyframe_path_length / steps as f64;
+        let spanned = (reach_sum / reach_count as f64 / spacing).ceil();
+        (spanned.min(i32::MAX as f64) as i32).max(configured)
+    }
     /// The closure ICP's inlier distance squared: measured (`closure_inlier_distance_from_odometry`) once a keyframe has
     /// been, else `closure_score_thresh`.
     pub fn closure_inlier_squared_distance(&self) -> f64 {
