@@ -254,6 +254,7 @@ fn divergence(label: &str, cpu: &AHashSet<VoxelKey>, gpu: &AHashSet<VoxelKey>) -
 fn check_box(
     map: &mut BrickMap,
     healthy: &AHashSet<VoxelKey>,
+    normals: &ahash::AHashMap<VoxelKey, [f32; 3]>,
     center: Point,
     voxel_size: f32,
 ) -> bool {
@@ -324,20 +325,32 @@ fn check_box(
         &result,
         &cpu_walls,
         &gpu_walls,
+        &cpu_standable,
+        &gpu_standable,
         step,
         config.step_threshold_m,
     );
-    explain_standable(&occupied, &cpu_standable, &gpu_standable, clearance);
+    explain_standable(
+        &occupied,
+        normals,
+        &cpu_standable,
+        &gpu_standable,
+        clearance,
+        config.max_slope_deg,
+    );
     standable <= STANDABLE_DIVERGENCE && walls <= WALL_DIVERGENCE
 }
 
 /// Splits the walls only the GPU has: a neighbor the CPU links (within its
 /// whole-voxel step) that the GPU's plane heights put more than the step
-/// threshold in meters away, versus the rest.
+/// threshold in meters away, or one the GPU turned down as standable.
+#[allow(clippy::too_many_arguments)]
 fn explain_walls(
     result: &dimos_gpu_mls::surfaces::SurfaceResult,
     cpu_walls: &AHashSet<VoxelKey>,
     gpu_walls: &AHashSet<VoxelKey>,
+    cpu_standable: &AHashSet<VoxelKey>,
+    gpu_standable: &AHashSet<VoxelKey>,
     step_cells: i32,
     step_m: f32,
 ) {
@@ -361,10 +374,35 @@ fn explain_walls(
             })
         })
         .count();
+    let neighbors = |k: &VoxelKey| {
+        let k = *k;
+        [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .flat_map(move |(dx, dy)| {
+                (-step_cells..=step_cells).map(move |dz| (k.0 + dx, k.1 + dy, k.2 + dz))
+            })
+    };
+    let beside_lost = only_gpu
+        .iter()
+        .filter(|k| neighbors(k).any(|n| cpu_standable.contains(&n) && !gpu_standable.contains(&n)))
+        .count();
+    let either = only_gpu
+        .iter()
+        .filter(|k| {
+            let h = height[k];
+            neighbors(k).any(|n| {
+                (cpu_standable.contains(&n) && !gpu_standable.contains(&n))
+                    || height.get(&n).is_some_and(|m| (m - h).abs() > step_m)
+            })
+        })
+        .count();
+    let share = |n: usize| 100.0 * n as f64 / only_gpu.len().max(1) as f64;
     println!(
-        "    of the {} walls only on the gpu, {in_band} ({:.0}%) face a neighbor the cpu links by whole voxels but that rises more than {step_m} m",
+        "    of the {} walls only on the gpu: {in_band} ({:.0}%) face a cpu-linked neighbor rising more than {step_m} m, {beside_lost} ({:.0}%) border a cell the gpu turned down as standable, {either} ({:.0}%) either",
         only_gpu.len(),
-        100.0 * in_band as f64 / only_gpu.len().max(1) as f64
+        share(in_band),
+        share(beside_lost),
+        share(either)
     );
 }
 
@@ -373,25 +411,31 @@ fn explain_walls(
 /// headroom in meters can fall short, versus the rest.
 fn explain_standable(
     occupied: &AHashSet<VoxelKey>,
+    normals: &ahash::AHashMap<VoxelKey, [f32; 3]>,
     cpu: &AHashSet<VoxelKey>,
     gpu: &AHashSet<VoxelKey>,
     clearance: i32,
+    max_slope_deg: f32,
 ) {
     let only_cpu: Vec<VoxelKey> = cpu.difference(gpu).copied().collect();
-    let near_ceiling = only_cpu
-        .iter()
-        .filter(|k| {
-            (clearance + 1..=clearance + 2).any(|dz| occupied.contains(&(k.0, k.1, k.2 + dz)))
-        })
-        .count();
-    let covered = only_cpu
-        .iter()
-        .filter(|k| occupied.contains(&(k.0, k.1, k.2 + 1)))
-        .count();
+    let min_up = max_slope_deg.to_radians().cos();
+    let near_ceiling = |k: &VoxelKey| {
+        (clearance + 1..=clearance + 2).any(|dz| occupied.contains(&(k.0, k.1, k.2 + dz)))
+    };
+    let steep = |k: &VoxelKey| normals.get(k).is_some_and(|n| n[2].abs() < min_up);
+    let planeless = |k: &VoxelKey| !normals.contains_key(k);
+    let count = |f: &dyn Fn(&VoxelKey) -> bool| only_cpu.iter().filter(|k| f(k)).count();
+    let (c_steep, c_planeless, c_ceiling) =
+        (count(&steep), count(&planeless), count(&near_ceiling));
+    let either = count(&|k| steep(k) || planeless(k) || near_ceiling(k));
+    let share = |n: usize| 100.0 * n as f64 / only_cpu.len().max(1) as f64;
     println!(
-        "    of the {} standable cells only on the cpu, {near_ceiling} ({:.0}%) have a voxel 1 to 2 cells above the cpu's clearance, {covered} have one right above",
+        "    of the {} standable cells only on the cpu: {c_steep} ({:.0}%) steeper than {max_slope_deg} deg by their voxel's plane, {c_planeless} ({:.0}%) planeless, {c_ceiling} ({:.0}%) a voxel 1 to 2 cells past the cpu's clearance, {either} ({:.0}%) any",
         only_cpu.len(),
-        100.0 * near_ceiling as f64 / only_cpu.len().max(1) as f64
+        share(c_steep),
+        share(c_planeless),
+        share(c_ceiling),
+        share(either)
     );
 }
 
@@ -467,11 +511,16 @@ fn run_parity(path: &str, voxel_size: f32, max_frames: usize) {
         .filter(|v| v.health > 0)
         .map(|v| v.key)
         .collect();
+    let normals: ahash::AHashMap<VoxelKey, [f32; 3]> = snapshot
+        .iter()
+        .filter(|v| v.health > 0)
+        .filter_map(|v| v.normal.map(|n| (v.key, n)))
+        .collect();
     drop(snapshot);
     let mut boxes_ok = 0;
     for b in 0..BOXES {
         let center = origins[(b * origins.len() + origins.len() / 2) / BOXES];
-        boxes_ok += check_box(&mut map, &healthy, center, voxel_size) as usize;
+        boxes_ok += check_box(&mut map, &healthy, &normals, center, voxel_size) as usize;
     }
     let map_ok = mismatch <= MAP_MISMATCH && d.moment_rel_err < MOMENT_TOLERANCE && overflow == 0;
     println!(
