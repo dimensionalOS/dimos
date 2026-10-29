@@ -24,7 +24,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
-from dimos.sim2.messages import StateFrame
+from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.world.runtime import STATE
 
 
@@ -48,6 +48,7 @@ class WorldReader:
         self.sequence = -1
         self.timestamp = 0.0
         self.episode = -1
+        self.metadata: FrameMetadata | None = None
         self._history: tuple[StateFrame, ...] = ()
         self._next: mujoco.MjData | None = None
 
@@ -104,6 +105,7 @@ class WorldReader:
         self.restore(frame)
         self.sequence = frame.metadata.sequence
         self.episode = frame.metadata.episode_id
+        self.metadata = frame.metadata
         return changed
 
     def restore(self, frame: StateFrame) -> None:

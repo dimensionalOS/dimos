@@ -375,6 +375,7 @@ all_modules = {
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
+    "unreal-camera-module": "dimos.sim2.unreal.module.UnrealCameraModule",
     "urdf-manager": "dimos.robot.urdf_manager.UrdfManager",
     "urdf-manager-point-clearing": "dimos.robot.urdf_manager_point_clearing.UrdfManagerPointClearing",
     "v4-l2-camera": "dimos.hardware.sensors.camera.v4l2.module.V4L2Camera",

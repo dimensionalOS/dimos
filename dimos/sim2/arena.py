@@ -52,6 +52,14 @@ class AuthoredArena(Arena):
             expanded = Path(directory) / "arena.xml"
             expanded.write_text(spec.to_xml())
             super().__init__(str(expanded))
+        # Arena recolors collision geoms and removes their materials after its
+        # postprocessing hook. Keep the authored appearance on the same objects.
+        for geom, appearance in self._authored_appearance.items():
+            for attribute, value in appearance.items():
+                if value is None:
+                    geom.attrib.pop(attribute, None)
+                else:
+                    geom.set(attribute, value)
 
     def _get_default_classes(self, default: ET.Element) -> Defaults:
         result: Defaults = {}
@@ -69,6 +77,10 @@ class AuthoredArena(Arena):
         return result
 
     def _replace_defaults_inline(self, default_dic: Defaults) -> None:
+        # Arena later appends UI target bodies. Keep element identities so even
+        # an authored body with the same name is preserved by our cleanup hook.
+        self._authored_bodies = set(self.worldbody.findall("body"))
+
         def visit(node: ET.Element, inherited: str) -> None:
             if node.tag == "default":
                 return
@@ -79,3 +91,17 @@ class AuthoredArena(Arena):
                 visit(child, children)
 
         visit(self.root, "main")
+        self._authored_appearance = {
+            geom: {attribute: geom.get(attribute) for attribute in ("rgba", "material")}
+            for geom in self.worldbody.iter("geom")
+        }
+
+    def _postprocess_arena(self) -> None:
+        # These are robosuite mjviewer control gizmos, not authored scene objects.
+        # MotorScene controls robots through motor commands and does not use them.
+        for body in self.worldbody.findall("body"):
+            if body not in self._authored_bodies and body.get("name") in (
+                "left_eef_target",
+                "right_eef_target",
+            ):
+                self.worldbody.remove(body)

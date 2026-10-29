@@ -4,6 +4,9 @@ DimOS runs a **robosuite environment**. Robosuite owns model composition, physic
 controllers, observations, reset and task behavior. DimOS connects that environment
 to the existing robot application and its typed streams.
 
+For a native Unreal RGB-D camera attached to the same world, see
+[Unreal cameras for sim2](/docs/usage/sim2-unreal.md).
+
 ## Use an existing robosuite task
 
 This is the shipped `robosuite-lift` example:
