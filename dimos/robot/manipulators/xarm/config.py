@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dimos.control.components import (
     HardwareComponent,
@@ -56,7 +56,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 
-def xarm_gripper_config(prefix: str = "") -> GripperConfig:
+def xarm_gripper_config(prefix: str = "", *, robot: str | None = None) -> GripperConfig:
     """Which xArm Gripper links may touch a grasped object, and how it closes.
 
     drive_joint runs 0.0 (open) to 0.85 rad (closed); the other knuckles and
@@ -64,10 +64,13 @@ def xarm_gripper_config(prefix: str = "") -> GripperConfig:
 
     Args:
         prefix: Prefix the robot model puts on every link and joint name.
+        robot: The robot the model names its joints under, e.g. "arm" for
+            "arm/drive_joint"; see ``xarm_model``.
     """
+    joint_prefix = f"{robot}/" if robot else prefix
     return GripperConfig(
         pad_links=(f"{prefix}left_finger", f"{prefix}right_finger"),
-        finger_joints={f"{prefix}drive_joint": (0.0, 0.85)},
+        finger_joints={f"{joint_prefix}drive_joint": (0.0, 0.85)},
     )
 
 
@@ -87,6 +90,79 @@ _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
+
+XArmType = Literal["xarm5", "xarm6", "xarm7", "lite6", "uf850"]
+XArmGripper = Literal["xarm", "bio"]
+
+#: Each arm's joint count and the ``robot_type`` the xarm_ros2 description takes for it.
+XARM_ARMS: dict[XArmType, tuple[int, str]] = {
+    "xarm5": (5, "xarm"),
+    "xarm6": (6, "xarm"),
+    "xarm7": (7, "xarm"),
+    "lite6": (6, "lite"),
+    "uf850": (6, "uf850"),
+}
+
+# The joints each gripper adds that move: the one driven, then those that copy it.
+_GRIPPER_JOINTS: dict[XArmGripper, tuple[str, ...]] = {
+    "xarm": (
+        "drive_joint",
+        "left_finger_joint",
+        "left_inner_knuckle_joint",
+        "right_outer_knuckle_joint",
+        "right_finger_joint",
+        "right_inner_knuckle_joint",
+    ),
+    "bio": ("right_finger_joint", "left_finger_joint"),
+}
+
+
+def xarm_model(
+    arm: XArmType,
+    gripper: XArmGripper | None = None,
+    *,
+    robot: str | None = None,
+    prefix: str = "",
+) -> RobotModel:
+    """The arm's URDF, from UFACTORY's xarm_ros2 description.
+
+    Args:
+        arm: Which arm, e.g. "xarm7".
+        gripper: What is on its flange: "xarm" for the xArm Gripper (on a Lite 6,
+            the Lite 6's own gripper, which has no joint), "bio" for the BIO gripper.
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
+        prefix: Put in front of every link and joint name, e.g. "left/" for one
+            of two arms in one model. Not with ``robot``.
+    """
+    if robot and prefix:
+        raise ValueError("name the joints with robot or prefix, not both")
+    if arm == "lite6" and gripper == "bio":
+        raise ValueError("the xArm description has no BIO gripper for the Lite 6")
+    dof, robot_type = XARM_ARMS[arm]
+    xacro_args = {
+        "dof": str(dof),
+        "robot_type": robot_type,
+        "prefix": prefix,
+        "limited": "true",
+        "attach_xyz": "0 0 0",
+        "attach_rpy": "0 0 0",
+    }
+    if gripper == "xarm":
+        xacro_args["add_gripper"] = "true"
+    elif gripper == "bio":
+        xacro_args["add_bio_gripper"] = "true"
+    model = RobotModel.from_file(
+        XARM_MODEL_PATH, package_paths=XARM_PACKAGE_PATHS, xacro_args=xacro_args
+    )
+    if not robot:
+        return model
+    moving = joint_names(dof)
+    if gripper is not None and arm != "lite6":
+        moving.extend(_GRIPPER_JOINTS[gripper])
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
@@ -305,6 +381,7 @@ def make_xarm_model_config(
     *,
     robot_type: str = "xarm",
     prefix: str = "",
+    robot: str | None = None,
     add_gripper: bool = True,
     gripper_hardware_id: str | None = None,
     base_pose: PoseStamped | None = None,
@@ -312,27 +389,24 @@ def make_xarm_model_config(
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
 ) -> RobotModelConfig:
-    xacro_args = {
-        "dof": str(dof),
-        "robot_type": robot_type,
-        "prefix": prefix,
-        "limited": "true",
-        "attach_xyz": "0 0 0",
-        "attach_rpy": "0 0 0",
-    }
-    if add_gripper:
-        xacro_args["add_gripper"] = "true"
+    """The planning model of the xArm with ``dof`` joints and ``robot_type``, from ``xarm_model``.
 
-    model_joint_names = joint_names(dof, prefix=f"{prefix}joint")
+    ``robot`` names the joints under that robot (e.g. "arm/joint1"), with
+    links left bare; ``prefix`` renames both. See ``xarm_model``.
+    """
+    arm = next((a for a, spec in XARM_ARMS.items() if spec == (dof, robot_type)), None)
+    if arm is None:
+        raise ValueError(f"no xArm has {dof} joints and robot_type {robot_type!r}")
+    joint_prefix = f"{robot}/" if robot else prefix
+    model_joint_names = joint_names(dof, prefix=f"{joint_prefix}joint")
     tip_link = f"{prefix}link_tcp" if add_gripper else f"{prefix}link{dof}"
     collision_exclusions = [
         (f"{prefix}{left}", f"{prefix}{right}") for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
     ]
+    xarm_gripper = add_gripper and robot_type == "xarm"
     return RobotModelConfig(
-        model=RobotModel.from_file(
-            XARM_MODEL_PATH,
-            package_paths=XARM_PACKAGE_PATHS,
-            xacro_args=xacro_args,
+        model=xarm_model(
+            arm, "xarm" if add_gripper else None, robot=robot, prefix=prefix
         ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
@@ -346,10 +420,8 @@ def make_xarm_model_config(
             )
         ],
         auto_convert_meshes=True,
-        collision_exclusion_pairs=(
-            collision_exclusions if add_gripper and robot_type == "xarm" else []
-        ),
-        gripper=xarm_gripper_config(prefix) if add_gripper and robot_type == "xarm" else None,
+        collision_exclusion_pairs=collision_exclusions if xarm_gripper else [],
+        gripper=xarm_gripper_config(prefix, robot=robot) if xarm_gripper else None,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
