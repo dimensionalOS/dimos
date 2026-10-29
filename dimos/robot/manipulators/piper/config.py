@@ -161,6 +161,5 @@ def make_piper_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
-        gripper_hardware_id="arm",
         home_joints=model_home_joints,
     )

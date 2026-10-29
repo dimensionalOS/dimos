@@ -101,6 +101,10 @@ def build_dual_openyam_webxr(
             ],
         ),
         ManipulationModule.blueprint(
+            gripper_tasks={
+                "left_manipulator": "left_arm_gripper",
+                "right_manipulator": "right_arm_gripper",
+            },
             model=_dual_openyam_webxr_model,
             kinematics=_dual_openyam_webxr_pink,
             visualization=visualization,

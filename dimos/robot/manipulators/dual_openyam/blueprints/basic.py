@@ -27,6 +27,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_GRIPPER_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
@@ -86,12 +87,30 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
 
 
 coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
-    tasks=[dual_openyam_trajectory_task()],
+    tasks=[
+        dual_openyam_trajectory_task(),
+        TaskConfig(
+            name="left_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+            priority=20,
+        ),
+        TaskConfig(
+            name="right_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+            priority=20,
+        ),
+    ],
 )
 
 dual_openyam_planner_coordinator = autoconnect(
-    planner(model=dual_openyam_model_config()),
-    DualOpenYamCoordinator.blueprint(
-        tasks=[dual_openyam_trajectory_task()],
+    planner(
+        model=dual_openyam_model_config(),
+        gripper_tasks={
+            "left_manipulator": "left_arm_gripper",
+            "right_manipulator": "right_arm_gripper",
+        },
     ),
+    coordinator_dual_openyam,
 )
