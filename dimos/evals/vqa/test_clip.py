@@ -101,6 +101,21 @@ def test_ego_memory_clip_keeps_anchors_when_truncated() -> None:
     assert picked[-1][0] == 19.0
 
 
+def test_ego_memory_clip_keeps_extra_anchors_when_truncated() -> None:
+    frames = [(float(t), _img(float(t))) for t in range(0, 20)]
+    picked, _t0 = ego_memory_clip(
+        frames,
+        first_spot_ts=0.0,
+        query_ts=19.0,
+        max_frames=5,
+        extra_anchors=(7.0,),
+    )
+    assert len(picked) == 5
+    assert picked[0][0] == 0.0
+    assert picked[-1][0] == 19.0
+    assert 7.0 in {ts for ts, _ in picked}
+
+
 def test_dense_clip_and_image_clip_env(tmp_path: Path) -> None:
     window = [(float(t), _img(float(t))) for t in (10.0, 10.5, 11.0, 11.5, 12.0)]
     picked, _ = dense_clip_around(window, 11.0, radius_s=1.0, max_frames=8)

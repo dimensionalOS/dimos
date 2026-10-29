@@ -56,6 +56,8 @@ class SightingEvidence(BaseModel):
 
     timestamp: float
     bbox: tuple[float, float, float, float]
+    # Optical frame of the sighting RGB; empty on older evidence dumps.
+    camera_frame: str = ""
 
 
 class InstanceEvidence(BaseModel):
@@ -103,7 +105,11 @@ def evidence_from_window_result(
         by_id = views_by_query.get(object_name) or {}
         views = by_id.get(hit.instance_id) or ()
         sightings = tuple(
-            SightingEvidence(timestamp=float(view.timestamp), bbox=tuple(view.bbox))  # type: ignore[arg-type]
+            SightingEvidence(
+                timestamp=float(view.timestamp),
+                bbox=tuple(view.bbox),  # type: ignore[arg-type]
+                camera_frame=str(getattr(view, "camera_frame", "") or ""),
+            )
             for view in views
         )
         earliest = first_seen.get(hit.instance_id)
@@ -218,13 +224,19 @@ def _nearest_frame_with_camera(
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None,
     timestamp: float,
     *,
+    preferred_camera: str = "",
     tolerance_s: float = SIGHTING_IMAGE_TOLERANCE_S,
 ) -> tuple[Image, str] | None:
-    """Nearest RGB within tolerance; prefer an explicit per-camera stream when present."""
+    """Nearest RGB within tolerance; prefer ``preferred_camera`` then per-camera streams."""
+    by_camera = color_frames_by_camera or {}
+    if preferred_camera and preferred_camera in by_camera:
+        image = _nearest_frame(by_camera[preferred_camera], timestamp, tolerance_s=tolerance_s)
+        if image is not None:
+            return image, preferred_camera
     best: tuple[float, Image, str] | None = None
     streams: list[tuple[str, Sequence[tuple[float, Image]]]] = []
-    if color_frames_by_camera:
-        streams.extend((frame_id, frames) for frame_id, frames in color_frames_by_camera.items())
+    if by_camera:
+        streams.extend((frame_id, frames) for frame_id, frames in by_camera.items())
     elif color_frames:
         streams.append(("", color_frames))
     for frame_id, frames in streams:
@@ -268,7 +280,10 @@ def hydrate_views_and_hits(
         views: list[SightingView] = []
         for sighting in instance.sightings:
             matched = _nearest_frame_with_camera(
-                color_frames, color_frames_by_camera, sighting.timestamp
+                color_frames,
+                color_frames_by_camera,
+                sighting.timestamp,
+                preferred_camera=str(sighting.camera_frame or ""),
             )
             if matched is None:
                 skipped_sightings += 1

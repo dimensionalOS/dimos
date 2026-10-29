@@ -20,7 +20,7 @@ far from image center are rejected - no crop / privileged box for the agent.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import itertools
 import re
@@ -179,20 +179,53 @@ def filter_instance_views(
     return tuple(v for v in views if sighting_framing_ok(v))
 
 
+def _instance_visible_at(
+    views: Sequence[SightingView],
+    timestamp: float,
+    *,
+    tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
+) -> bool:
+    return any(abs(v.timestamp - timestamp) <= tol_s for v in views)
+
+
+def _competing_instance_visible_at(
+    by_instance: Mapping[str, Sequence[SightingView]],
+    instance_id: str,
+    timestamp: float,
+    *,
+    tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
+) -> bool:
+    """True when another same-category instance also has a sighting near ``timestamp``."""
+    for other_id, views in by_instance.items():
+        if other_id == instance_id:
+            continue
+        if _instance_visible_at(views, timestamp, tol_s=tol_s):
+            return True
+    return False
+
+
 def _pick_same_pairs(
     views: tuple[SightingView, ...],
     *,
+    by_instance: Mapping[str, Sequence[SightingView]] | None = None,
     max_pairs: int = MAX_SAME_PAIRS_PER_INSTANCE,
     min_gap_s: float = MIN_SAME_PAIR_TIME_GAP_S,
 ) -> list[IdentityPair]:
     """Prefer first↔last revisit pairs (largest time gap) for same-instance identity."""
     ordered = sorted(views, key=lambda v: v.timestamp)
+    competitors = by_instance or {}
     candidates: list[tuple[float, SightingView, SightingView]] = []
     for left, right in itertools.combinations(ordered, 2):
         gap = abs(right.timestamp - left.timestamp)
         if gap < min_gap_s:
             continue
         if left.camera_frame and right.camera_frame and left.camera_frame != right.camera_frame:
+            continue
+        # Competing same-category instance in either full frame → ambiguous "yes".
+        if competitors and (
+            _competing_instance_visible_at(competitors, left.instance_id, left.timestamp)
+            or _competing_instance_visible_at(competitors, right.instance_id, right.timestamp)
+        ):
             continue
         candidates.append((gap, left, right))
     # Largest gap first: earliest sighting vs a later revisit.
@@ -220,9 +253,9 @@ def _co_visible_at(
     tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
 ) -> bool:
     """True when both instances have a sighting near ``timestamp`` (same full frame)."""
-    a_here = any(abs(v.timestamp - timestamp) <= tol_s for v in views_a)
-    b_here = any(abs(v.timestamp - timestamp) <= tol_s for v in views_b)
-    return a_here and b_here
+    return _instance_visible_at(views_a, timestamp, tol_s=tol_s) and _instance_visible_at(
+        views_b, timestamp, tol_s=tol_s
+    )
 
 
 def _pick_diff_pairs(
@@ -317,7 +350,8 @@ def propose_identity_pairs(
     same: list[IdentityPair] = []
     for views in kept.values():
         if len(views) >= 2:
-            same.extend(_pick_same_pairs(views))
+            # Reject "yes" when another same-category instance shares either endpoint.
+            same.extend(_pick_same_pairs(views, by_instance=kept))
 
     # Diff only among instances that have ≥1 framing-OK view.
     diff_pool = {i: v for i, v in kept.items() if v}

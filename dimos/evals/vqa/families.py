@@ -554,9 +554,21 @@ def _answer_height_order(
         resolve_referent(localize_scene, object_a),
         resolve_referent(localize_scene, object_b),
     )
+    # Ego clips must include both first sightings; reject if either is unknown.
+    missing = [
+        name
+        for name, inst in zip(proposal.object_names, instances, strict=True)
+        if inst.first_seen_timestamp is None
+    ]
+    if missing:
+        raise InsufficientEvidenceError(
+            "height_order requires first_seen_timestamp on both compared instances "
+            f"(missing: {', '.join(missing)})"
+        )
     first_seen = min(
-        (inst.first_seen_timestamp for inst in instances if inst.first_seen_timestamp is not None),
-        default=None,
+        float(inst.first_seen_timestamp)
+        for inst in instances
+        if inst.first_seen_timestamp is not None
     )
     evidence: dict[str, JsonValue] = {
         "primitive": "localize_scene",
@@ -572,10 +584,9 @@ def _answer_height_order(
                 for object_name, instance in zip(proposal.object_names, instances, strict=True)
             ],
         ),
-    }
-    if first_seen is not None:
         # Ego clip materialization starts at this timestamp so both referents appear.
-        evidence["first_seen_timestamp"] = first_seen
+        "first_seen_timestamp": first_seen,
+    }
     return FamilyAnswer(
         question=f"Which is higher, the {object_a} or the {object_b}?",
         choices=proposal.object_names,

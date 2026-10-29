@@ -66,6 +66,13 @@ def _as_xyz(value: object) -> tuple[float, float, float]:
     return (float(coords[0]), float(coords[1]), float(coords[2]))
 
 
+def _frame_button_label(frame: str) -> str:
+    """Short UI label for frame-NNNNNN (or cross-view / other non-frame keys)."""
+    if frame.startswith("frame-"):
+        return frame[len("frame-") :].lstrip("0") or "0"
+    return frame or "—"
+
+
 def _evidence_xyz_rows(evidence: dict[str, Any]) -> list[tuple[str, tuple[float, float, float]]]:
     """Collect (name, xyz) from fore/aft, turn, height_order, and any-ahead evidence."""
     rows: list[tuple[str, tuple[float, float, float]]] = []
@@ -208,7 +215,8 @@ def _collect_frame_meta(
             questions.append(
                 {
                     "id": case_id,
-                    "frame": "",
+                    # Stable non-empty label; not a frame-*/ audit folder.
+                    "frame": "cross-view",
                     "family": "cross_view_same_object",
                     "question": case["question"],
                     "answer": labels[case_id],
@@ -255,7 +263,9 @@ def _fill_missing_poses(
     frames: set[str],
 ) -> None:
     missing = sorted(
-        frame for frame in frames if frame and frame != "frame-unknown" and frame not in robots
+        frame
+        for frame in frames
+        if frame.startswith("frame-") and frame != "frame-unknown" and frame not in robots
     )
     if not missing:
         return
@@ -361,12 +371,12 @@ def render(
 
     robot_marks: list[str] = []
     for frame in sorted(frames):
-        if frame not in robots:
+        if not frame.startswith("frame-") or frame not in robots:
             continue
         (x, y, _z), yaw = robots[frame]
         px, py = _world_to_px(x, y, grid_msg)
         deg = -math.degrees(yaw)
-        idx = frame.split("-")[1].lstrip("0") or "0"
+        idx = _frame_button_label(frame)
         title = html.escape(f"{frame}  yaw={yaw:.2f}")
         # Short dashed heading + light FOV rays (map px; +x is forward after yaw rotate).
         robot_marks.append(
@@ -389,12 +399,13 @@ def render(
 
     q_rows: list[str] = []
     for frame in sorted(by_frame):
-        pose = robots.get(frame)
+        pose = robots.get(frame) if frame.startswith("frame-") else None
         pose_s = ""
         if pose is not None:
             (x, y, _z), yaw = pose
             pose_s = f"{x:.2f},{y:.2f} θ={math.degrees(yaw):.0f}°"
         frame_obj_csv = ",".join(str(i) for i in frame_objs.get(frame, []))
+        frame_label = _frame_button_label(frame)
         for qi, q in enumerate(by_frame[frame]):
             # Question-specific referents only. Image-path families (presence, …)
             # have no 3D evidence — do not fall back to every localize object on
@@ -402,13 +413,18 @@ def render(
             raw_ids = cast("list[Any] | tuple[Any, ...]", q.get("obj_ids") or ())
             q_ids = [int(i) for i in raw_ids]
             q_objs = ",".join(str(i) for i in q_ids)
+            pose_line = (
+                f'<div class="pose">{html.escape(pose_s)} · objs {len(frame_objs.get(frame, []))}</div>'
+                if pose_s
+                else ""
+            )
             frame_cell = (
                 f'<td class="fr">'
                 f'<button type="button" class="frame-btn" data-frame="{html.escape(frame)}" '
                 f'data-objs="{html.escape(frame_obj_csv)}">'
-                f"{html.escape(frame.split('-')[1])}"
+                f"{html.escape(frame_label)}"
                 f"</button>"
-                f'<div class="pose">{html.escape(pose_s)} · objs {len(frame_objs.get(frame, []))}</div></td>'
+                f"{pose_line}</td>"
                 if qi == 0
                 else "<td></td>"
             )

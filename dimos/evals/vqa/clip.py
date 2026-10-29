@@ -108,6 +108,7 @@ def ego_memory_clip(
     first_spot_ts: float,
     query_ts: float,
     max_frames: int = DEFAULT_CLIP_MAX_FRAMES,
+    extra_anchors: Sequence[float] = (),
 ) -> tuple[tuple[tuple[float, Image], ...], float]:
     """Frames covering first sighting of the referent through the question time.
 
@@ -115,9 +116,9 @@ def ego_memory_clip(
     answering an ego-spatial question, so the clip spans
     ``[first_spot_ts, query_ts]`` (not a fixed pad ending at query alone).
 
-    If the span has more frames than ``max_frames``, keeps both endpoints
-    (nearest frames to first spot and query) and fills evenly between — never
-    drops the first-spot or query anchors.
+    If the span has more frames than ``max_frames``, keeps first-spot, query,
+    and any ``extra_anchors`` (e.g. the other height-order object's first seen)
+    and fills evenly between — never drops those anchors.
     """
     if max_frames < 1:
         raise ValueError("max_frames must be >= 1")
@@ -131,13 +132,14 @@ def ego_memory_clip(
     if not in_window:
         raise ValueError("no frames between first spot and query time")
     timestamps = [ts for ts, _ in in_window]
+    anchors = (first_spot_ts, query_ts, *extra_anchors)
     if len(in_window) <= max_frames:
         picked = tuple(in_window)
         return picked, float(picked[0][0])
-    # Bound length but never drop first-spot / query anchors.
+    # Bound length but never drop first-spot / query / extra anchors.
     indices = _pick_with_anchors(
         timestamps,
-        anchors=(first_spot_ts, query_ts),
+        anchors=anchors,
         max_frames=max_frames,
     )
     picked = tuple(in_window[i] for i in indices)

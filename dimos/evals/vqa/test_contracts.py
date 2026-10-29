@@ -1859,15 +1859,33 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
     ]
 
 
-def _localize_scene() -> LocalizeSceneEvidence:
+def _localize_scene(*, with_first_seen: bool = True) -> LocalizeSceneEvidence:
+    # Distinct first_seen times so height_order clips can keep both object anchors.
+    seen = {"chair": 10.0, "shelf": 12.0, "table": 14.0, "door": 11.0} if with_first_seen else {}
     return LocalizeSceneEvidence(
         robot_position_xyz=(0.0, 0.0, 0.0),
         robot_yaw_rad=0.0,
         instances=(
-            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.5, 0.5)),
-            LocalizeInstanceEvidence(object_name="shelf", position_world_xyz=(1.5, -0.5, 1.6)),
-            LocalizeInstanceEvidence(object_name="table", position_world_xyz=(1.5, 0.8, 0.7)),
-            LocalizeInstanceEvidence(object_name="door", position_world_xyz=(1.0, 1.5, 1.0)),
+            LocalizeInstanceEvidence(
+                object_name="chair",
+                position_world_xyz=(2.0, 0.5, 0.5),
+                first_seen_timestamp=seen.get("chair"),
+            ),
+            LocalizeInstanceEvidence(
+                object_name="shelf",
+                position_world_xyz=(1.5, -0.5, 1.6),
+                first_seen_timestamp=seen.get("shelf"),
+            ),
+            LocalizeInstanceEvidence(
+                object_name="table",
+                position_world_xyz=(1.5, 0.8, 0.7),
+                first_seen_timestamp=seen.get("table"),
+            ),
+            LocalizeInstanceEvidence(
+                object_name="door",
+                position_world_xyz=(1.0, 1.5, 1.0),
+                first_seen_timestamp=seen.get("door"),
+            ),
         ),
     )
 
@@ -1904,7 +1922,21 @@ def test_height_order_answers_from_localize_scene() -> None:
     assert answer.choices == ("shelf", "table")
     objects = answer.evidence["objects"]
     assert isinstance(objects, list) and objects
-    assert "first_seen_timestamp" in objects[0]
+    assert objects[0]["first_seen_timestamp"] == 12.0
+    assert objects[1]["first_seen_timestamp"] == 14.0
+    assert answer.evidence["first_seen_timestamp"] == 12.0
+
+
+def test_height_order_rejects_missing_first_seen() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="height_order", object_names=("shelf", "table"))
+    with pytest.raises(InsufficientEvidenceError, match="first_seen_timestamp"):
+        answer_question(
+            proposal,
+            image,
+            _Detector(present=True),
+            localize_scene=_localize_scene(with_first_seen=False),
+        )
 
 
 def test_ego_turn_answers_from_localize_scene() -> None:
