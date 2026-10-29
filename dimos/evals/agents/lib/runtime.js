@@ -79,10 +79,25 @@ export default function (pi) {
   });
   pi.on("before_provider_request", (event) => {
     const cap = config.max_output_tokens;
-    if (cap === null) return;
-    if (!event.payload || typeof event.payload !== "object")
+    if (!event.payload || typeof event.payload !== "object") {
+      if (cap === null) return;
       throw new Error("Invalid provider payload");
+    }
     const payload = /** @type {Record<string, unknown>} */ (event.payload);
+    const tools = payload.tools;
+    const visibleTools = Array.isArray(tools)
+      ? tools.filter(
+          (tool) =>
+            !tool ||
+            typeof tool !== "object" ||
+            tool.name !== "__pi_deferred_placeholder__",
+        )
+      : undefined;
+    const request =
+      visibleTools && visibleTools.length !== tools.length
+        ? { ...payload, tools: visibleTools }
+        : payload;
+    if (cap === null) return request === payload ? undefined : request;
     const field = [
       "max_output_tokens",
       "max_tokens",
@@ -90,9 +105,9 @@ export default function (pi) {
     ].find((name) => name in payload);
     if (!field)
       throw new Error("Provider does not expose an output token limit");
-    const requested = payload[field];
+    const requested = request[field];
     return {
-      ...payload,
+      ...request,
       [field]: typeof requested === "number" ? Math.min(requested, cap) : cap,
     };
   });

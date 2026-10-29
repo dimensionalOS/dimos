@@ -198,7 +198,6 @@ class NativeHarness:
             provider=provider.name,
             model=provider.model,
             max_steps=10,
-            max_output_tokens=1024,
             **overrides,
         )
 
