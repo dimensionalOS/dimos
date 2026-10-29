@@ -26,7 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.msgs.sim_msgs.Contacts import Part
-from dimos.simulation.sensors.mid360.lidar import HOUSING_HALF_EXTENTS, Raycaster, SimMid360
+from dimos.simulation.sensors.lidar import Raycaster, SimLidar
 
 Vec3 = tuple[float, float, float]
 CloudFrame = Literal["sensor", "base"]
@@ -48,13 +48,13 @@ class BodyShape:
 
 @dataclass(frozen=True)
 class Sensor:
-    """A Mid-360 mounted on the robot's base."""
+    """A lidar mounted on the robot's base."""
 
     name: str
     mount_xyz: NDArray[np.float64]
     mount_r: NDArray[np.float64]
-    lidar: Callable[[Raycaster, int], SimMid360]
-    housing_half_extents: Vec3 = HOUSING_HALF_EXTENTS
+    lidar: Callable[[Raycaster, int], SimLidar]
+    housing_half_extents: Vec3
     lio_blind_range: float = 0.0
 
 
