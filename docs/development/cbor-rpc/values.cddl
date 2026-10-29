@@ -1,0 +1,6 @@
+; Native values recurse; only the two explicit extensions are allowed.
+; No `any`: unexpected semantic tags must not bypass this contract.
+rpc-value = null / bool / int / float / tstr / bstr
+          / [* rpc-value]
+          / {* tstr => rpc-value}
+          / lcm-value / pickle-value

@@ -1,0 +1,39 @@
+; Concatenate rpc.cddl, values.cddl and extensions.cddl in this order.
+; The first rule is the validation root. This draft has no batch messages.
+rpc-message = rpc-request / rpc-notification / rpc-success / rpc-failure
+
+rpc-request = {
+  rpc: "dimos-cbor/1",
+  id: rpc-id,
+  method: rpc-method,
+  params: rpc-params
+}
+
+rpc-notification = {
+  rpc: "dimos-cbor/1",
+  method: rpc-method,
+  params: rpc-params
+}
+
+rpc-success = {
+  rpc: "dimos-cbor/1",
+  id: rpc-id,
+  result: rpc-value
+}
+
+rpc-failure = {
+  rpc: "dimos-cbor/1",
+  id: rpc-id / null,
+  error: {
+    code: int,
+    message: tstr,
+    ? data: rpc-value
+  }
+}
+
+rpc-id = tstr .size (1..128)
+rpc-method = tstr .size (1..1024)
+rpc-params = {
+  args: [* rpc-value],
+  kwargs: {* tstr => rpc-value}
+}

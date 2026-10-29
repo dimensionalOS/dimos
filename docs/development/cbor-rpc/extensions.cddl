@@ -1,0 +1,11 @@
+; Provisional draft numbers: unassigned in IANA's registry on 2026-10-26.
+; These are NOT private-use numbers or registered DimOS assignments.
+; Resolve allocations before publishing an interoperable protocol.
+lcm-value = #6.60003([
+  type-id: tstr .size (1..1024),
+  payload: bstr
+])
+
+; Protocol 5 is the sender convention for v1. CDDL only checks the wrapper;
+; it cannot inspect pickle opcodes or prove deserialization is safe.
+pickle-value = #6.60004(bstr)

@@ -172,6 +172,8 @@ dependencies = [
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
     "websockets>=16.0", # Rerun viewer bridge (visualization/rerun/websocket_server.py)
+    "pycddl>=0.6.4",
+    "cbor2>=6.1.5",
 ]
 
 
