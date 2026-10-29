@@ -254,6 +254,9 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
+    # Cancel the robot's own weight, as real arm firmware does; without it the position
+    # actuators settle below their targets (about 1-2 cm at the xArm7's TCP).
+    gravity_compensation: bool = False
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -501,6 +504,7 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            gravity_compensation=self.config.gravity_compensation,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)

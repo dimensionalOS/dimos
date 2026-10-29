@@ -14,6 +14,11 @@
 
 """Tunables for the eval harness. Literals only; nothing here imports dimos."""
 
+from dataclasses import asdict, replace
+import json
+
+from dimos.perception.localize.types import LocalizeParams
+
 # Model providers: API key variable and default upstream base URL, by provider name.
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
@@ -69,6 +74,17 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
 
 There is no other interface to this robot.
 """
+
+# The xArm7 gripper's geometry, stated the same way to every agent that drives it.
+XARM7_GRIPPER_NOTES = (
+    "Gripper: the TCP is 0.172 m along the gripper axis from its root; the finger pads sit "
+    "11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open)."
+)
+
+# Localize in MuJoCo: the wrist camera starts parked, so confirm objects from one view, and
+# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the desk defaults' 0.40.
+SIM_LOCALIZE_PARAMS = replace(LocalizeParams(), min_views=1, candidate_floor=0.2, accept_score=0.25)
+SIM_LOCALIZE_ENV = {"PERCEPTIONLOCALIZE__PARAMS": json.dumps(asdict(SIM_LOCALIZE_PARAMS))}
 
 RAW_ARM_README = """\
 Robot interface: a robot arm with a parallel gripper and a wrist RGB-D camera, as a Zenoh peer

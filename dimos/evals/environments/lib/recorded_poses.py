@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
     from dimos.msgs.geometry_msgs.Transform import Transform
 
 
@@ -33,10 +34,15 @@ def first_body_transform(recording: Store, body: str) -> Transform:
     return _body_transform(recording, body, newest=False)
 
 
-def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
+def body_pose_stream(recording: Store) -> Stream[Any, Any]:
+    """The recorded stream that carries tracked-body poses."""
     if "body_poses" not in recording.streams:
         raise LookupError("No body_poses recorded")
-    for record in recording.streams.body_poses.order_by("ts", desc=newest):
+    return cast("Stream[Any, Any]", recording.streams.body_poses)
+
+
+def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
+    for record in body_pose_stream(recording).order_by("ts", desc=newest):
         for transform in record.data.transforms:
             if transform.child_frame_id == body:
                 return cast("Transform", transform)
