@@ -155,15 +155,17 @@ step sweeps of the same calibration. The package's `SOURCE.md` records where
 every number comes from. v5 restored the i2rt model's prismatic fingertip joints
 (zero closed, 47 mm open each) so the pick's grasp contact check can open and
 close the fingers; the planner lists the arm joints only and keeps them closed.
-The model's `GripperConfig` (fingertip links as the pads) is what `robot=` on
-`PickAndPlaceModule` needs to turn the check on, and the GraspGenX stack hands
-it all 500 samples. The check is off in the grasp stacks for now: replaying the
-scene 56 runs of 2026-10-28/29 through it showed the arm's own base in the
-overhead frame staying in the scene, since the checker only clears a 15 cm
-sphere at each tool tip, so the arm collides with its own image at every grasp.
-That needs the checker, or the pick module, to take a scene with the robot's
-body filtered out, as the planner's map already is. v6 dropped the table slab
-from the model, which the same replay found swallowing the camera's table points.
+The model's `GripperConfig` (fingertip links as the pads) and `robot=` on
+`PickAndPlaceModule` turn the grasp contact check on, and the GraspGenX stack
+hands it all 500 samples, as the xArm stack does. One thing differs from the
+xArm: its wrist camera never sees the arm, while the overhead D405 sees the
+arms' bases and links, and the raw depth frame the check reads as its scene
+put the arm on its own image at every grasp (scene 56 replay, 2026-10-29). So
+the grasp stacks register the scene through `SelfClearedSceneRegistrationModule`
+(robot folder): the registration module with the robot's returns removed from
+the scene cloud by main's `RoboPlanBodyFilter`, the filter the planner's map
+chain already runs, padded 2 cm for this camera. v6 dropped the table slab from
+the model, which the same replay found swallowing the camera's table points.
 A revised model ships under a new package name, because LFS extraction caches
 by directory name.
 

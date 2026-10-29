@@ -159,20 +159,25 @@ def test_rerun_bridge_throttles_the_image_streams() -> None:
     assert "world/color_image" in atom.kwargs["max_hz"]
 
 
-def test_registration_keeps_the_default_mask_erosion() -> None:
-    from dimos.perception.experimental.object_scene_registration import (
-        ObjectSceneRegistrationModule,
+def test_registration_is_self_cleared_for_the_overhead_camera() -> None:
+    from dimos.robot.manipulators.dual_openyam.scene_registration import (
+        SelfClearedSceneRegistrationModule,
     )
 
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
-        atom = _atom(stack, ObjectSceneRegistrationModule)
+        atom = _atom(stack, SelfClearedSceneRegistrationModule)
         assert "mask_erode_pixels" not in atom.kwargs
         assert atom.kwargs["distance_threshold"] == 0.03
+        assert atom.kwargs["padding_m"] == 0.02
+        xml = atom.kwargs["model"].load().xml
+        assert 'name="right_base"' in xml and 'name="right_gripper"' not in xml
 
 
-def test_contact_check_is_off_until_the_checker_filters_the_arm_out_of_the_scene() -> None:
+def test_pick_checks_grasps_against_the_self_cleared_scene() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
-        assert "robot" not in _atom(stack, PickAndPlaceModule).kwargs
+        robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
+        assert robot.gripper is not None
+        assert robot is _atom(stack, ManipulationModule).kwargs["model"]
 
 
 def test_planner_model_carries_the_gripper_config_for_the_check() -> None:

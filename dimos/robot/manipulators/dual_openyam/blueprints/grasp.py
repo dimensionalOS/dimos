@@ -42,7 +42,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.blueprints import manipulation_mapping, planner
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
@@ -57,6 +56,9 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.scene_overlay import SceneOverlayModule
+from dimos.robot.manipulators.dual_openyam.scene_registration import (
+    SelfClearedSceneRegistrationModule,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
@@ -263,10 +265,10 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(
             planning_frame="world",
-            # robot=model would turn on the grasp contact check. Off: the checker takes
-            # the raw overhead frame as the scene and clears only a 15 cm sphere at each
-            # tool tip, so the arm's own base in the image collides with the arm at every
-            # grasp (scene 56 replay, 2026-10-29).
+            # The contact check drops grasps the arm cannot reach or that would hit the
+            # table, a neighbour, or the object off the fingertips, before any IK. Its
+            # scene comes from the self-cleared registration below.
+            robot=model,
             pregrasp_offset=0.05,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
@@ -290,7 +292,14 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # Ghost of a saved scene over the overhead image, for rebuilding benchmark scenes;
         # pass-through until --sceneoverlaymodule.scene names a capture in scenes-dir.
         SceneOverlayModule.blueprint(),
-        ObjectSceneRegistrationModule.blueprint(
+        # The overhead camera sees the arms, so the scene the contact check reads has
+        # the robot's returns removed, as the planner's map has. 2 cm, not the wrist
+        # camera's 1 cm: this camera's returns from the arm sit 1 to 2 cm off the model
+        # (1.3 deg extrinsic roll at 0.5 m plus depth noise; scene 56 replay 2026-10-29,
+        # 1 cm left 150 arm points and the check still failed, 2 cm cleared it).
+        SelfClearedSceneRegistrationModule.blueprint(
+            model=dual_openyam_self_filter_model(),
+            padding_m=0.02,
             target_frame="world",
             detector_backend="moondream",
             segmentation_backend="edgetam",
