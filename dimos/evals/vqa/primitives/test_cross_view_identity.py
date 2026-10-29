@@ -19,13 +19,16 @@ import pytest
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.primitives.cross_view_identity import (
+    IdentityPair,
     SightingView,
     answer_cross_view_same_object,
     bbox_framing_ok,
     collect_query_instances,
+    dedupe_identity_pairs,
     filter_instance_views,
     instance_pool_ok,
     pair_case_id,
+    path_token,
     propose_identity_pairs,
     views_from_localize,
 )
@@ -85,23 +88,47 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
     b = (
         _view(instance_id="b", bbox=centered, ts=3.0, score=0.62),
         _view(instance_id="b", bbox=centered, ts=5.5, score=0.62),
+        _view(instance_id="b", bbox=centered, ts=12.0, score=0.62),
     )
-    # Corner-only instance should vanish from same-pair pool.
-    corner = (_view(instance_id="c", bbox=(0.0, 0.0, 25.0, 25.0), ts=4.0, score=0.9),)
+    # Enough raw sightings that exclusion is from framing, not min_views.
+    corner = tuple(
+        _view(instance_id="c", bbox=(0.0, 0.0, 25.0, 25.0), ts=float(ts), score=0.9)
+        for ts in (4.0, 5.0, 6.0)
+    )
+    assert filter_instance_views(corner) == ()
 
     pairs = propose_identity_pairs({"a": a, "b": b, "c": corner})
     assert any(p.same_object and p.left.instance_id == "a" for p in pairs)
     assert any(not p.same_object for p in pairs)
-    # Corner-only instance c is framing-rejected, so it is never a pair endpoint.
-    assert all("c" not in {p.left.instance_id, p.right.instance_id} for p in pairs)
-    assert not any(p.same_object and p.left.instance_id == "c" for p in pairs)
+    # Corner-framed instance c never appears as a same/diff endpoint.
+    endpoints = {(p.left.instance_id, p.right.instance_id) for p in pairs}
+    assert all("c" not in ends for ends in endpoints)
+
+
+def test_dedupe_identity_pairs_prefers_same_over_conflicting_diff() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    left = _view(instance_id="a", bbox=centered, ts=1.0)
+    same_right = _view(instance_id="a", bbox=centered, ts=10.0)
+    diff_right = _view(instance_id="b", bbox=centered, ts=10.0)
+    same = IdentityPair(query="box", left=left, right=same_right, same_object=True)
+    different = IdentityPair(query="box", left=left, right=diff_right, same_object=False)
+    kept = dedupe_identity_pairs((different, same, different))
+    assert len(kept) == 1
+    assert kept[0].same_object is True
+    assert kept[0].left.instance_id == "a"
+    assert kept[0].right.instance_id == "a"
+
+
+def test_path_token_strips_slashes_and_spaces() -> None:
+    assert "/" not in path_token("cup/mug")
+    assert " " not in path_token("storage box")
+    assert path_token("cup/mug") == "cup-mug"
 
 
 def test_answer_cross_view_same_object() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     left = _view(instance_id="a", bbox=centered, ts=1.0)
     right = _view(instance_id="a", bbox=centered, ts=10.0)
-    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
 
     same = IdentityPair(query="storage box", left=left, right=right, same_object=True)
     answered = answer_cross_view_same_object(
@@ -121,8 +148,6 @@ def test_answer_cross_view_same_object() -> None:
 
 
 def test_answer_rejects_bad_framing() -> None:
-    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
-
     bad = _view(instance_id="a", bbox=(0.0, 0.0, 20.0, 20.0), ts=1.0)
     good = _view(instance_id="a", bbox=(70.0, 70.0, 130.0, 130.0), ts=10.0)
     pair = IdentityPair(query="storage box", left=bad, right=good, same_object=True)
@@ -149,6 +174,17 @@ def test_filter_instance_views_honors_min_views() -> None:
     assert len(filter_instance_views(two, min_views=2)) == 2
 
 
+def test_filter_instance_views_ignores_stale_n_views_metadata() -> None:
+    """``--min-views`` must use sighting count, not Localization.n_views."""
+    centered = (70.0, 70.0, 130.0, 130.0)
+    two = (
+        _view(instance_id="a", bbox=centered, ts=1.0, n_views=99, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=4.0, n_views=99, score=0.9),
+    )
+    assert filter_instance_views(two, min_views=3) == ()
+    assert len(filter_instance_views(two, min_views=2)) == 2
+
+
 def test_diff_pairs_skip_same_timestamp_frames() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     # Two instances co-visible in one frame only → must not emit a "no" pair.
@@ -159,8 +195,6 @@ def test_diff_pairs_skip_same_timestamp_frames() -> None:
 
 
 def test_pair_case_id_sanitizes_slashes() -> None:
-    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
-
     centered = (70.0, 70.0, 130.0, 130.0)
     pair = IdentityPair(
         query="cup/mug",
@@ -197,8 +231,6 @@ def test_views_from_localize_and_collect_query_instances() -> None:
 
 
 def test_pair_case_id_and_answer_mismatched_ids() -> None:
-    from dimos.evals.vqa.primitives.cross_view_identity import IdentityPair
-
     centered = (70.0, 70.0, 130.0, 130.0)
     left = _view(instance_id="a", bbox=centered, ts=1.0)
     right = _view(instance_id="b", bbox=centered, ts=10.0)

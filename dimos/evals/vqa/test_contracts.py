@@ -848,8 +848,17 @@ def test_materialize_cross_view_from_shared_localize_views(tmp_path: Path) -> No
     color_frames = tuple((float(t), _image(float(t))) for t in range(10, 50))
     views_by_query = {
         "storage box": {
-            "aaaa1111": (_view("aaaa1111", 20.0), _view("aaaa1111", 40.0)),
-            "bbbb2222": (_view("bbbb2222", 25.0),),
+            # min_views gates on sighting count (not Localization.n_views metadata).
+            "aaaa1111": (
+                _view("aaaa1111", 20.0),
+                _view("aaaa1111", 30.0),
+                _view("aaaa1111", 40.0),
+            ),
+            "bbbb2222": (
+                _view("bbbb2222", 25.0),
+                _view("bbbb2222", 26.0),
+                _view("bbbb2222", 27.0),
+            ),
         }
     }
     staging = tmp_path / "staging"
@@ -1772,6 +1781,25 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
         )
 
     assert not output.exists()
+
+
+def test_generation_failure_does_not_erase_completed_dataset(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    output.mkdir()
+    (output / "cases.jsonl").write_text("{}\n", encoding="utf-8")
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+
+    with pytest.raises(FileExistsError, match="already exists|is not empty"):
+        generate_frames_dataset(
+            request,
+            (GenerationFrame(4, image),),
+            _Author(),
+            _Detector(present=True),
+        )
+
+    assert output.exists()
+    assert (output / "cases.jsonl").read_text(encoding="utf-8") == "{}\n"
 
 
 def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) -> None:

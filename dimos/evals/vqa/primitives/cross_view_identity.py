@@ -15,11 +15,12 @@
 """Cross-view same-object identity pairs from localize sightings.
 
 Keeps original full-frame images. Sightings that are too small, clipped, or
-far from image center are rejected — no crop / privileged box for the agent.
+far from image center are rejected - no crop / privileged box for the agent.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import itertools
 import re
@@ -109,7 +110,11 @@ def sighting_framing_ok(view: SightingView) -> bool:
 
 
 def instance_pool_ok(*, n_views: int, min_views: int = MIN_INSTANCE_VIEWS) -> bool:
-    """True when localize reported enough distinct views (≥ ``min_views``, default 3)."""
+    """True when there are enough sightings for the pool (≥ ``min_views``, default 3).
+
+    ``n_views`` is the count of available sightings (trace length), not a stale
+    Localization metadata field that would ignore a lowered ``--min-views``.
+    """
     return n_views >= min_views
 
 
@@ -164,11 +169,8 @@ def filter_instance_views(
     *,
     min_views: int = MIN_INSTANCE_VIEWS,
 ) -> tuple[SightingView, ...]:
-    """Keep framing-OK sightings from a high-certainty instance."""
-    if not views:
-        return ()
-    head = views[0]
-    if not instance_pool_ok(n_views=head.n_views, min_views=min_views):
+    """Keep framing-OK sightings when the instance has enough raw sightings."""
+    if not instance_pool_ok(n_views=len(views), min_views=min_views):
         return ()
     # Framing still picks agent-visible full frames; it is not an identity gate.
     return tuple(v for v in views if sighting_framing_ok(v))
@@ -243,6 +245,29 @@ def _pick_diff_pairs(
     return pairs
 
 
+def _clip_pair_key(pair: IdentityPair) -> tuple[str, float, float]:
+    """Visual key for dense clips: category + ordered sighting timestamps."""
+    left_ts, right_ts = pair.left.timestamp, pair.right.timestamp
+    if left_ts > right_ts:
+        left_ts, right_ts = right_ts, left_ts
+    return pair.query.casefold(), round(left_ts, 3), round(right_ts, 3)
+
+
+def dedupe_identity_pairs(pairs: Sequence[IdentityPair]) -> tuple[IdentityPair, ...]:
+    """One pair per visual clip key; prefer same-object when yes/no would conflict."""
+    best: dict[tuple[str, float, float], IdentityPair] = {}
+    for pair in pairs:
+        key = _clip_pair_key(pair)
+        previous = best.get(key)
+        if previous is None:
+            best[key] = pair
+            continue
+        # Identical clip windows must not publish both "yes" and "no".
+        if pair.same_object and not previous.same_object:
+            best[key] = pair
+    return tuple(best.values())
+
+
 def propose_identity_pairs(
     instances: dict[str, tuple[SightingView, ...]],
     *,
@@ -266,7 +291,7 @@ def propose_identity_pairs(
     # Diff only among instances that have ≥1 framing-OK view.
     diff_pool = {i: v for i, v in kept.items() if v}
     different = _pick_diff_pairs(diff_pool)
-    return tuple(same + different)
+    return dedupe_identity_pairs(tuple(same + different))
 
 
 def answer_cross_view_same_object(
@@ -336,15 +361,15 @@ def answer_cross_view_same_object(
     )
 
 
-def _path_token(value: str) -> str:
-    """Filesystem-safe token for asset paths (no slashes or spaces)."""
+def path_token(value: str) -> str:
+    """Filesystem-safe token for asset paths (no slashes, spaces, or odd Unicode)."""
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
     return cleaned or "query"
 
 
 def pair_case_id(pair: IdentityPair, index: int) -> str:
     kind = "same" if pair.same_object else "diff"
-    q = _path_token(pair.query)
-    left_id = _path_token(pair.left.instance_id[:8])
-    right_id = _path_token(pair.right.instance_id[:8])
+    q = path_token(pair.query)
+    left_id = path_token(pair.left.instance_id[:8])
+    right_id = path_token(pair.right.instance_id[:8])
     return f"xview-{q}-{kind}-{index:04d}-{left_id}-{right_id}"

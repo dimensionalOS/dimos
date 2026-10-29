@@ -69,6 +69,7 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
     IdentityPair,
     SightingView,
     answer_cross_view_same_object,
+    dedupe_identity_pairs,
     pair_case_id,
     propose_identity_pairs,
 )
@@ -420,9 +421,11 @@ def generate_frames_dataset(
     """Generate and write one dataset from already loaded indexed images."""
     config = config or VqaGenerationConfig()
     output = request.output_directory()
-    _prepare_output(output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    claimed_output = False
     try:
+        _prepare_output(output)
+        claimed_output = True
         with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
             staging = Path(temporary)
             all_cases: list[PublicCase] = []
@@ -521,10 +524,13 @@ def generate_frames_dataset(
             if output.exists():
                 output.rmdir()
             staging.replace(output)
+            claimed_output = False
         return GenerationResult(output=output, cases=tuple(all_cases))
     except Exception:
-        if output.exists():
-            shutil.rmtree(output)
+        # Only remove the exclusive claim this run created — never wipe a finished
+        # dataset (e.g. concurrent FileExistsError, or failure after publish).
+        if claimed_output:
+            _remove_incomplete_output(output)
         raise
 
 
@@ -538,14 +544,16 @@ def _materialize_cross_view_clips(
     min_views: int,
 ) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
     """Append cross-view identity cases from the shared localize window (no second localize)."""
-    all_pairs: list[IdentityPair] = []
+    proposed: list[IdentityPair] = []
     n_instances = 0
     for query, by_id in views_by_query.items():
         instances = {iid: tuple(views) for iid, views in by_id.items()}
         n_instances += len(instances)
         pairs = propose_identity_pairs(instances, min_views=min_views)
         logger.info(f"cross-view {query!r}: {len(instances)} instance(s) → {len(pairs)} pair(s)")
-        all_pairs.extend(pairs)
+        proposed.extend(pairs)
+    # Collapse same/diff collisions across queries that reuse the same clip windows.
+    all_pairs = list(dedupe_identity_pairs(proposed))
 
     out_cases = list(cases)
     out_labels = list(labels)
@@ -949,6 +957,16 @@ def _prepare_output(output: Path) -> None:
     except FileExistsError as exc:
         detail = "is not empty" if output.is_dir() and any(output.iterdir()) else "already exists"
         raise FileExistsError(f"VQA output directory {detail}: {output}") from exc
+
+
+def _remove_incomplete_output(output: Path) -> None:
+    """Delete this run's failed claim without removing a published dataset."""
+    if not output.exists():
+        return
+    # A finished publish always has cases.jsonl at the dataset root.
+    if (output / "cases.jsonl").is_file():
+        return
+    shutil.rmtree(output)
 
 
 def _write_frame(output: Path, frame: _GeneratedFrame, image: Image) -> None:
