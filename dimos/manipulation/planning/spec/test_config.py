@@ -23,7 +23,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import RobotModel, RobotModelInstance
 
 
 def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
@@ -76,3 +76,19 @@ def test_partial_robot_model_overrides_preserve_pinned_settings(
     kwargs = parsed.module_kwargs(ManipulationModule.name)
     restored = RobotModelConfig(**kwargs["model"])
     assert restored.model == replace(model, **model_override)
+
+
+def test_composed_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
+    source = tmp_path / "single.urdf"
+    source.write_text('<robot name="single"><link name="base"/></robot>')
+    model = RobotModel.compose(
+        [
+            RobotModelInstance(RobotModel.from_file(source), "left_"),
+            RobotModelInstance(RobotModel.from_file(source), "right_"),
+        ]
+    )
+    blueprint = ManipulationModule.blueprint(model=RobotModelConfig(model=model, joint_names=[]))
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    restored = RobotModelConfig(**parsed.module_kwargs(ManipulationModule.name)["model"])
+    assert restored.model.source_path is None
+    assert restored.model._composition == model._composition

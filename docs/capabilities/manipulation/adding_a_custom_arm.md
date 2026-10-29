@@ -505,6 +505,36 @@ an explicit robot-level default before building `RobotModelConfig`:
 model = RobotModel.from_file(urdf_path).with_default_joint_acceleration_limit(2.0)
 ```
 
+For an assembly of existing models, use `RobotModel.compose` with one
+`RobotModelInstance` per fixed mount. Each input is loaded through its own
+`RobotModel` first, preserving source transforms and resolving mesh/texture
+paths against that input's packages. This lets two inputs use the same package
+name without conflating their assets.
+
+```python skip
+from dimos.robot.assets.model import RobotModel, RobotModelInstance
+
+model = RobotModel.compose(
+    [
+        RobotModelInstance(single_arm, prefix="left_", xyz=(0.0, 0.3, 0.0)),
+        RobotModelInstance(single_arm, prefix="right_", xyz=(0.0, -0.3, 0.0)),
+    ],
+    name="two_arms",
+    root_link="base",
+)
+```
+
+Mount translations are in meters; `rpy` accepts extrinsic xyz rotations in
+radians. Choose transforms from the actual rig. Construction performs no asset
+checkout or filesystem writes. `load()` joins the namespaced trees, applies any
+assembly-level transformations, and caches the resulting URDF by content.
+`model.source_path` is `None` for an assembly because it has no single source;
+`model.load().source_path` is the materialized URDF path. Loaded models are
+memoized and their materialized state is excluded when pickled across workers.
+Core URDF links, joints, materials, and mimic references are supported. Inputs
+must each form one tree. Controller/simulator extensions are rejected explicitly;
+compose the kinematic description separately from deployment configuration.
+
 The model is materialized and validated once. All planning backends then use
 the same compiled position, velocity, and acceleration semantics. Missing,
 zero, negative, or non-finite limits fail startup and identify the affected
