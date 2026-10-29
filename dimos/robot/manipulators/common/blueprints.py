@@ -195,6 +195,7 @@ def manipulation_mapping(
     self_filter_model: RobotModel,
     voxel_size: float,
     world_frame: str = "world",
+    padding_m: float = 0.01,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -211,12 +212,15 @@ def manipulation_mapping(
             same ``voxel_map_resolution``, or its octree will not line up with
             the map.
         world_frame: Fixed frame the map is built and published in.
+        padding_m: How far past the model's collision geometry a return still
+            counts as the robot.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
             # ManipulationModule already publishes the arm's frames.
             publish_joint_tf=False,
             model=self_filter_model,
+            padding_m=padding_m,
             state_tolerance_s=0.1,
             # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
             # tolerance cannot bracket a ~92ms publish period and drops most

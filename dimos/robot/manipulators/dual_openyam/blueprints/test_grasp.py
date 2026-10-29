@@ -170,7 +170,7 @@ def test_registration_is_self_cleared_for_the_overhead_camera() -> None:
         assert atom.kwargs["distance_threshold"] == 0.03
         assert atom.kwargs["padding_m"] == 0.02
         xml = atom.kwargs["model"].load().xml
-        assert 'name="right_base"' in xml and 'name="right_gripper"' not in xml
+        assert 'name="right_base"' in xml and 'name="right_gripper"' in xml
 
 
 def test_pick_checks_grasps_against_the_self_cleared_scene() -> None:
@@ -204,11 +204,16 @@ def test_planner_maps_the_overhead_cloud_like_the_xarm_stack() -> None:
 
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         voxel = _atom(stack, RayTracingVoxelMap).kwargs["voxel_size"]
-        assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.025
+        assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.01
         assert PointCloudBoxFilter in _modules(stack)
-        xml = _atom(stack, UrdfManagerPointClearing).kwargs["model"].load().xml
+        clearing = _atom(stack, UrdfManagerPointClearing).kwargs
+        assert clearing["padding_m"] == 0.02
+        loaded = clearing["model"].load()
+        xml = loaded.xml
+        # The whole rig, grippers and workcell included, with the fingers fixed.
         assert 'name="left_link5"' in xml and 'name="workcell"' in xml
-        assert 'name="left_gripper"' not in xml and 'name="right_tip_left"' not in xml
+        assert 'name="right_gripper"' in xml and 'name="right_tip_left"' in xml
+        assert all(joint.type == "fixed" for joint in loaded.joints if "finger" in joint.name)
         assert _atom(stack, RealSenseCamera).kwargs["enable_pointcloud"] is True
 
 

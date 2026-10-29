@@ -117,7 +117,14 @@ grasp success is judged from the jaw readback alone. The planner knows the
 arms, the wrist cameras, the post and the overhead camera from the workcell
 model; the table, the bin and everything else on the bench reach it from the
 overhead D405 through the same self filter, voxel map and box filter chain the
-xArm stack runs (`manipulation_mapping`, 2.5 cm cells). The
+xArm stack runs (`manipulation_mapping`). Two settings differ from the xArm
+because its wrist camera never sees the rest of the robot while the overhead
+camera sees all of it: the self filter model is the whole rig with the fingers
+fixed, not the arm alone, since the grippers' and wrist cameras' own cells
+otherwise pin the arm at its start pose, and the cells are 1 cm, not 2.5, since
+a 2.5 cm cell on the table straddles the feet of the post and the arm bases
+and reaches the fingertips of the lowest grasps. The filter padding is 2 cm
+for this camera (scene 56 replays, 2026-10-29). The
 place target is a taped tray square on the table on the arm's side (0.26,
 -0.20 for the right arm, 0.26, 0.20 for the left, tcp released at z 0.05):
 the pick-and-place module places top-down with the grasp orientation and a

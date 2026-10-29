@@ -63,8 +63,14 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
-# Planner map cell, the xArm grasp stack's value.
-DUAL_OPENYAM_VOXEL_SIZE = 0.025
+# Planner map cell. 1 cm, not the xArm stack's 2.5: the overhead camera maps the table
+# around the post and the arm bases, and a 2.5 cm cell there straddles those static
+# links; the benchmark's lowest grasps put the fingertips 1.5 cm above the table.
+DUAL_OPENYAM_VOXEL_SIZE = 0.01
+# How far past the model a return still counts as the robot, for the map and the
+# check's scene. This camera's arm returns sit 1 to 2 cm off the model (1.3 deg
+# extrinsic roll at 0.5 m plus depth noise; scene 56 replay 2026-10-29).
+DUAL_OPENYAM_SELF_PADDING = 0.02
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
@@ -149,15 +155,15 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
 
 
 def dual_openyam_self_filter_model() -> RobotModel:
-    """The arms without their grippers: what the voxel map drops from the overhead cloud.
+    """The whole rig, fingers fixed: what the map and the check's scene drop as the robot.
 
-    As the xArm stack filters only the arm, gripper returns stay in the map and the
-    ray tracing clears them once the arm moves. The fixed post and camera housing stay
-    in, so the map does not hold what the model already protects.
+    The xArm stack filters only its arm because a wrist camera never sees the rest.
+    The overhead camera sees the grippers, the wrist cameras and the post, and their
+    cells pin the arm at its start pose. The fingers are fixed because the joint state
+    carries no finger positions.
     """
-    # The rig model, not the grasp one: the tcp frames hang off the removed grippers.
-    return dual_openyam_model_config().model.without_joint_subtrees(
-        *(f"{arm}_joint6" for arm in DUAL_OPENYAM_SIDES)
+    return dual_openyam_model_config().model.with_fixed_joints(
+        *(f"{arm}_finger_{jaw}_joint" for arm in DUAL_OPENYAM_SIDES for jaw in ("left", "right"))
     )
 
 
@@ -286,6 +292,7 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         manipulation_mapping(
             self_filter_model=dual_openyam_self_filter_model(),
             voxel_size=DUAL_OPENYAM_VOXEL_SIZE,
+            padding_m=DUAL_OPENYAM_SELF_PADDING,
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
@@ -293,13 +300,10 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # pass-through until --sceneoverlaymodule.scene names a capture in scenes-dir.
         SceneOverlayModule.blueprint(),
         # The overhead camera sees the arms, so the scene the contact check reads has
-        # the robot's returns removed, as the planner's map has. 2 cm, not the wrist
-        # camera's 1 cm: this camera's returns from the arm sit 1 to 2 cm off the model
-        # (1.3 deg extrinsic roll at 0.5 m plus depth noise; scene 56 replay 2026-10-29,
-        # 1 cm left 150 arm points and the check still failed, 2 cm cleared it).
+        # the robot's returns removed, as the planner's map has.
         SelfClearedSceneRegistrationModule.blueprint(
             model=dual_openyam_self_filter_model(),
-            padding_m=0.02,
+            padding_m=DUAL_OPENYAM_SELF_PADDING,
             target_frame="world",
             detector_backend="moondream",
             segmentation_backend="edgetam",
