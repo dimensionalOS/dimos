@@ -25,7 +25,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 import json
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -211,22 +210,3 @@ def load_clip_manifest(clip_dir: Path) -> ClipManifest:
     if not path.is_file():
         raise FileNotFoundError(f"clip manifest missing: {path}")
     return ClipManifest.model_validate_json(path.read_text(encoding="utf-8"))
-
-
-def observations_in_window(
-    images: Sequence[Any],
-    t_start: float,
-    t_end: float,
-) -> list[tuple[float, Image]]:
-    """Collect ``(ts, Image)`` from stream-like observations in ``[t_start, t_end]``."""
-    selected: list[tuple[float, Image]] = []
-    for obs in images:
-        ts = float(obs.ts)
-        if ts < t_start or ts > t_end:
-            continue
-        data = obs.data if hasattr(obs, "data") else obs
-        if not isinstance(data, Image):
-            raise TypeError(f"expected Image in clip window, got {type(data).__name__}")
-        selected.append((ts, data))
-    selected.sort(key=lambda row: row[0])
-    return selected

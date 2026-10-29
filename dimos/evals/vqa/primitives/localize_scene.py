@@ -24,8 +24,8 @@ Referent strings (``object_names`` entries) may be:
 - ``nearest <category>``: closest hit to the robot
 - ``<anchor> next to <landmark>``: anchor instance nearest a landmark category
 
-``left`` / ``right`` ``<category>`` referents are parsed only so legacy audits can be
-ignored; they are not resolved or proposed.
+Lateral ``left`` / ``right`` ``<category>`` referents are rejected: they leak turn
+answers and are never proposed.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 ForeAft = Literal["ahead", "behind"]
 EgoTurn = Literal["left", "right", "ahead", "turn around"]
-ReferentSelector = Literal["unique", "nearest", "left", "right", "next_to"]
+ReferentSelector = Literal["unique", "nearest", "next_to"]
 
 # Shared ego cones: ahead |θ|<=45°, behind |θ|>=135°, else side; range [0.5, 5] m.
 AHEAD_ABS_DEG = 45.0
@@ -56,13 +56,9 @@ NEXT_TO_MAX_RANGE_M = 1.50
 NEXT_TO_UNIQUENESS_MARGIN_M = 0.35
 NEAREST_UNIQUENESS_MARGIN_M = 0.35
 _NEXT_TO_TOKEN = " next to "
+_UNSUPPORTED_LATERAL_PREFIXES = ("left ", "right ")
 
-# left/right kept for legacy audit parsing only — not proposed or resolved.
-_SELECTOR_PREFIXES: tuple[tuple[ReferentSelector, str], ...] = (
-    ("nearest", "nearest "),
-    ("left", "left "),
-    ("right", "right "),
-)
+_SELECTOR_PREFIXES: tuple[tuple[ReferentSelector, str], ...] = (("nearest", "nearest "),)
 
 
 @dataclass(frozen=True)
@@ -135,12 +131,27 @@ def instances_named(
     return tuple(inst for inst in scene.instances if inst.object_name.casefold() == key)
 
 
+def instances_by_category(
+    scene: LocalizeSceneEvidence,
+) -> tuple[dict[str, list[LocalizeInstanceEvidence]], dict[str, str]]:
+    """Group instances by casefolded name; return ``(by_category, display_name)``."""
+    by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
+    display_name: dict[str, str] = {}
+    for instance in scene.instances:
+        key = instance.object_name.casefold()
+        display_name.setdefault(key, instance.object_name)
+        by_category.setdefault(key, []).append(instance)
+    return by_category, display_name
+
+
 def parse_referent(referent: str) -> ParsedReferent:
-    """Parse bare / nearest / left / right / ``A next to B`` referents."""
+    """Parse bare / nearest / ``A next to B`` referents."""
     text = referent.strip()
     if not text:
         raise InsufficientEvidenceError("localize referent must be non-empty")
     lower = text.casefold()
+    if any(lower.startswith(prefix) for prefix in _UNSUPPORTED_LATERAL_PREFIXES):
+        raise InsufficientEvidenceError("left/right category referents are not supported")
     split_at = lower.find(_NEXT_TO_TOKEN)
     if split_at >= 0:
         anchor = text[:split_at].strip()
@@ -171,8 +182,6 @@ def format_referent(
     landmark: str | None = None,
 ) -> str:
     """Build the canonical referent string used in proposals and questions."""
-    if selector in ("left", "right"):
-        raise ValueError("left/right category referents are not supported")
     if selector == "unique":
         return category
     if selector == "next_to":
@@ -182,11 +191,14 @@ def format_referent(
     return f"{selector} {category}"
 
 
-def resolve_referent(scene: LocalizeSceneEvidence, referent: str) -> LocalizeInstanceEvidence:
+def resolve_referent(
+    scene: LocalizeSceneEvidence,
+    referent: str,
+    *,
+    parsed: ParsedReferent | None = None,
+) -> LocalizeInstanceEvidence:
     """Resolve a unique / nearest / next-to referent to one instance."""
-    parsed = parse_referent(referent)
-    if parsed.selector in ("left", "right"):
-        raise InsufficientEvidenceError("left/right category referents are not supported")
+    parsed = parse_referent(referent) if parsed is None else parsed
     if parsed.selector == "next_to":
         assert parsed.landmark is not None
         return _resolve_next_to(scene, parsed.category, parsed.landmark, referent=referent)
@@ -249,16 +261,11 @@ def _resolve_next_to(
     return best_anchor
 
 
-def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 8) -> tuple[str, ...]:
+def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 6) -> tuple[str, ...]:
     """Unambiguous ``<anchor> next to <landmark>`` strings, nearest pairs first."""
     if max_pairs < 1:
         return ()
-    by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
-    display_name: dict[str, str] = {}
-    for instance in scene.instances:
-        key = instance.object_name.casefold()
-        display_name.setdefault(key, instance.object_name)
-        by_category.setdefault(key, []).append(instance)
+    by_category, display_name = instances_by_category(scene)
     categories = sorted(display_name, key=lambda key: display_name[key].casefold())
     candidates: list[tuple[int, float, str]] = []
     for anchor_key in categories:
@@ -331,9 +338,14 @@ def _in_ahead_cone(theta_deg: float, range_m: float) -> bool:
     return RANGE_MIN_M <= range_m <= RANGE_MAX_M and abs(theta_deg) <= AHEAD_ABS_DEG
 
 
-def fore_aft_of(scene: LocalizeSceneEvidence, referent: str) -> ForeAft:
+def fore_aft_of(
+    scene: LocalizeSceneEvidence,
+    referent: str,
+    *,
+    instance: LocalizeInstanceEvidence | None = None,
+) -> ForeAft:
     """Whether the resolved referent lies in the ahead or behind cone."""
-    inst = resolve_referent(scene, referent)
+    inst = instance if instance is not None else resolve_referent(scene, referent)
     theta_deg, range_m = robot_bearing_deg(scene, inst.position_world_xyz)
     _require_eligible_range(range_m, referent)
     abs_theta = abs(theta_deg)
@@ -347,9 +359,14 @@ def fore_aft_of(scene: LocalizeSceneEvidence, referent: str) -> ForeAft:
     )
 
 
-def ego_turn_to(scene: LocalizeSceneEvidence, referent: str) -> EgoTurn:
+def ego_turn_to(
+    scene: LocalizeSceneEvidence,
+    referent: str,
+    *,
+    instance: LocalizeInstanceEvidence | None = None,
+) -> EgoTurn:
     """Turn needed for the robot yaw to face the resolved referent."""
-    inst = resolve_referent(scene, referent)
+    inst = instance if instance is not None else resolve_referent(scene, referent)
     theta_deg, range_m = robot_bearing_deg(scene, inst.position_world_xyz)
     _require_eligible_range(range_m, referent)
     abs_theta = abs(theta_deg)
@@ -361,20 +378,18 @@ def ego_turn_to(scene: LocalizeSceneEvidence, referent: str) -> EgoTurn:
 
 
 def instances_in_ahead_cone(
-    scene: LocalizeSceneEvidence, category: str
+    scene: LocalizeSceneEvidence,
+    category: str,
+    *,
+    hits: Sequence[LocalizeInstanceEvidence] | None = None,
 ) -> tuple[LocalizeInstanceEvidence, ...]:
     """Verified instances of ``category`` that lie in the ahead cone."""
-    hits = instances_named(scene, category)
-    if not hits:
+    named = tuple(hits) if hits is not None else instances_named(scene, category)
+    if not named:
         raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
     return tuple(
-        inst for inst in hits if _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz))
+        inst for inst in named if _in_ahead_cone(*robot_bearing_deg(scene, inst.position_world_xyz))
     )
-
-
-def any_ahead(scene: LocalizeSceneEvidence, category: str) -> bool:
-    """Whether any verified instance of ``category`` lies in the ahead cone."""
-    return bool(instances_in_ahead_cone(scene, category))
 
 
 def higher_object(scene: LocalizeSceneEvidence, object_a: str, object_b: str) -> str:

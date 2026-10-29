@@ -27,7 +27,6 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
     instance_pool_ok,
     pair_case_id,
     propose_identity_pairs,
-    stack_pair_image,
     views_from_localize,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -98,7 +97,7 @@ def test_filter_and_propose_same_and_diff_pairs() -> None:
     assert not any(p.same_object and p.left.instance_id == "c" for p in pairs)
 
 
-def test_answer_and_stack() -> None:
+def test_answer_cross_view_same_object() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     left = _view(instance_id="a", bbox=centered, ts=1.0)
     right = _view(instance_id="a", bbox=centered, ts=10.0)
@@ -110,8 +109,6 @@ def test_answer_and_stack() -> None:
     )
     assert answered.answer == "yes"
     assert "first_clip" in answered.question and "t=0.0s" in answered.question
-    stacked = stack_pair_image(left.image, right.image)
-    assert stacked.to_rgb().data.shape[1] > left.image.to_rgb().data.shape[1]
 
     other = _view(instance_id="b", bbox=centered, ts=12.0)
     diff = IdentityPair(query="storage box", left=left, right=other, same_object=False)

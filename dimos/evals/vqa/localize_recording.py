@@ -34,9 +34,9 @@ from pathlib import Path
 from dimos.evals.vqa.contracts import QuestionProposal
 from dimos.evals.vqa.primitives.cross_view_identity import SightingView
 from dimos.evals.vqa.primitives.localize_scene import (
-    LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
     format_referent,
+    instances_by_category,
     next_to_referents,
     scene_from_named_hits,
 )
@@ -52,7 +52,7 @@ BASE_FRAME = "base_link"
 _DISCOVERY_MAX_FRAMES = 12
 _DISCOVERY_MAX_QUERIES = 12
 # Room-scale Go2 defaults used by the aa5f offline bench (not xArm desktop defaults).
-# min_views=1 matches the prior LocalizePolicy overrides for single-frame VQA windows.
+# min_views=1 so short VQA windows can accept single-sighting hits.
 _ROOM_LOCALIZE_PARAMS = LocalizeParams(
     candidate_floor=0.18,
     accept_score=0.32,
@@ -99,6 +99,19 @@ def robot_pose_xyz_yaw(
     return (pose.x, pose.y, pose.z), float(pose.yaw)
 
 
+def color_frames_from_rig(rig: Rig, after: float, before: float) -> tuple[tuple[float, Image], ...]:
+    """Sorted ``(ts, Image)`` color frames from the first camera in ``[after, before]``."""
+    camera = next(iter(rig.cameras.values()))
+    frames: list[tuple[float, Image]] = []
+    for observation in camera.color.after(after).before(before):
+        image = observation.data
+        if not isinstance(image, Image):
+            continue
+        frames.append((float(observation.ts), image))
+    frames.sort(key=lambda row: row[0])
+    return tuple(frames)
+
+
 def scene_at_timestamp(
     named_hits: Sequence[tuple[str, Localization]],
     rig: Rig,
@@ -126,13 +139,8 @@ _MAX_NEXT_TO_PAIRS = 6
 
 
 def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[QuestionProposal, ...]:
-    """Deterministic localize proposals: unique, nearest, next-to, any-ahead."""
-    by_category: dict[str, list[LocalizeInstanceEvidence]] = {}
-    display_name: dict[str, str] = {}
-    for instance in scene.instances:
-        key = instance.object_name.casefold()
-        display_name.setdefault(key, instance.object_name)
-        by_category.setdefault(key, []).append(instance)
+    """Deterministic localize proposals: unique, nearest, next-to, existential."""
+    by_category, display_name = instances_by_category(scene)
 
     singles = sorted(
         (display_name[key] for key, hits in by_category.items() if len(hits) == 1),
@@ -297,14 +305,7 @@ def localize_window(
                         if prev is None or earliest < prev:
                             first_seen_by_instance[hit.instance_id] = earliest
 
-        color_frames: list[tuple[float, Image]] = []
-        camera = next(iter(rig.cameras.values()))
-        for observation in camera.color.after(after).before(before):
-            image = observation.data
-            if not isinstance(image, Image):
-                continue
-            color_frames.append((float(observation.ts), image))
-        color_frames.sort(key=lambda row: row[0])
+        color_frames = color_frames_from_rig(rig, after, before)
 
         yield LocalizeWindowResult(
             named_hits=tuple(named),

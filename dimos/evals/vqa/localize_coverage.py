@@ -35,9 +35,6 @@ _LOCALIZE_FAMILIES = frozenset(
     family.name for family in AVAILABLE_FAMILIES if family.requires_localize
 )
 
-# Dropped from publish path (awkward wording); ignore if present in older audits.
-_DROPPED_SELECTORS = frozenset({"left", "right"})
-
 DEFAULT_LOCALIZE_COVERAGE_K = 5
 
 # case_id, (family, selector), pose_bucket, category
@@ -61,7 +58,9 @@ def case_frame_from_id(case_id: str) -> str:
 def coverage_cell(family: str, object_names: Sequence[str]) -> tuple[str, str]:
     """Return ``(family, selector)`` for a localize proposal."""
     if family == "ego_any_fore_aft":
-        return family, "any_ahead"
+        # Budget cell key (not a ReferentSelector); keeps existential cases distinct
+        # from unique/nearest/next_to cells of other ego families.
+        return family, "existential"
     if family == "height_order":
         return family, "unique"
     if not object_names:
@@ -127,8 +126,6 @@ def select_localize_coverage_ids(
     cells_present: set[tuple[str, str]] = set()
     for candidate in candidates:
         case_id, cell, _pose, _category = candidate
-        if cell[1] in _DROPPED_SELECTORS:
-            continue
         by_frame[case_frame_from_id(case_id)].append(candidate)
         cells_present.add(cell)
     if not by_frame:

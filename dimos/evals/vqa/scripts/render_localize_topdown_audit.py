@@ -57,10 +57,6 @@ _CAT_COLORS = [
 ]
 
 
-def _family(case_id: str) -> str:
-    return case_family_from_id(case_id)
-
-
 def _obj_key(name: str, x: float, y: float) -> tuple[object, ...]:
     return (round(x, 1), round(y, 1), name.casefold())
 
@@ -200,7 +196,7 @@ def _collect_frame_meta(
     questions: list[dict[str, Any]] = []
     for case in cases:
         frame = f"frame-{case['id'].split('-')[1]}"
-        family = _family(case["id"])
+        family = case_family_from_id(case["id"])
         evidence = _evidence_for_question(full_audit, frame, case["question"])
         obj_ids: list[int] = []
         if evidence:

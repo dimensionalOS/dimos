@@ -72,6 +72,8 @@ def test_scene_at_timestamp_builds_named_evidence(monkeypatch: pytest.MonkeyPatc
             position_world_xyz=(2.0, 0.5, 0.4),
             n_views=2,
             semantic_score=0.9,
+            instance_id="g0",
+            last_seen_timestamp=1.0,
         ),
     )
 

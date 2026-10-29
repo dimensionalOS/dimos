@@ -272,7 +272,7 @@ def localize_window_from_evidence(
     localize_queries: Sequence[str] = (),
 ) -> Iterator[LocalizeWindowResult]:
     """Open the recording, load window color frames, hydrate lightweight evidence."""
-    from dimos.evals.vqa.localize_recording import LocalizeWindowResult
+    from dimos.evals.vqa.localize_recording import LocalizeWindowResult, color_frames_from_rig
 
     assert_evidence_matches_window(
         document,
@@ -289,14 +289,7 @@ def localize_window_from_evidence(
         if rig.lidar is not None:
             rig.lidar = rig.lidar.after(after).before(before)
 
-        color_frames: list[tuple[float, Image]] = []
-        camera = next(iter(rig.cameras.values()))
-        for observation in camera.color.after(after).before(before):
-            image = observation.data
-            if not isinstance(image, Image):
-                continue
-            color_frames.append((float(observation.ts), image))
-        color_frames.sort(key=lambda row: row[0])
+        color_frames = color_frames_from_rig(rig, after, before)
 
         named_hits, first_seen, views_by_query = hydrate_views_and_hits(
             document,

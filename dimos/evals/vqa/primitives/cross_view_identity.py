@@ -25,8 +25,6 @@ import itertools
 import re
 from typing import Any
 
-import numpy as np
-
 from dimos.evals.vqa.contracts import FamilyAnswer, InsufficientEvidenceError
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -48,8 +46,6 @@ MAX_DIFF_PAIRS_PER_QUERY = 8
 MIN_SAME_PAIR_TIME_GAP_S = 8.0
 # Different-instance: only avoid the same full frame (co-visible A/B → ambiguous "no").
 MIN_DIFF_PAIR_TIME_GAP_S = 1.0
-# Back-compat alias used by answer_cross_view_same_object for either band.
-MIN_PAIR_TIME_GAP_S = MIN_DIFF_PAIR_TIME_GAP_S
 
 
 @dataclass(frozen=True)
@@ -103,9 +99,7 @@ def bbox_framing_ok(
         return False
     mx = edge_margin_frac * width
     my = edge_margin_frac * height
-    if x1 < mx or y1 < my or x2 > width - mx or y2 > height - my:
-        return False
-    return True
+    return not (x1 < mx or y1 < my or x2 > width - mx or y2 > height - my)
 
 
 def sighting_framing_ok(view: SightingView) -> bool:
@@ -265,7 +259,7 @@ def propose_identity_pairs(
             kept[instance_id] = filtered
 
     same: list[IdentityPair] = []
-    for _instance_id, views in kept.items():
+    for views in kept.values():
         if len(views) >= 2:
             same.extend(_pick_same_pairs(views))
 
@@ -273,38 +267,6 @@ def propose_identity_pairs(
     diff_pool = {i: v for i, v in kept.items() if v}
     different = _pick_diff_pairs(diff_pool)
     return tuple(same + different)
-
-
-def stack_pair_image(left: Image, right: Image) -> Image:
-    """Side-by-side full frames (no object crop). Heights matched; tiny A/B tags."""
-    import cv2
-
-    left_bgr = left.to_opencv()
-    right_bgr = right.to_opencv()
-    h = min(left_bgr.shape[0], right_bgr.shape[0])
-
-    def _resize(img: np.ndarray) -> np.ndarray:
-        if img.shape[0] == h:
-            return img
-        scale = h / float(img.shape[0])
-        return cv2.resize(img, (max(1, int(img.shape[1] * scale)), h))
-
-    a = _resize(left_bgr)
-    b = _resize(right_bgr)
-    gap = np.full((h, 8, 3), 32, dtype=np.uint8)
-    canvas = np.concatenate([a, gap, b], axis=1)
-    cv2.putText(canvas, "A", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
-    cv2.putText(
-        canvas,
-        "B",
-        (a.shape[1] + 20, 28),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.9,
-        (0, 255, 255),
-        2,
-    )
-    ts = max(float(left.ts), float(right.ts))
-    return Image.from_opencv(canvas, frame_id=left.frame_id, ts=ts)
 
 
 def answer_cross_view_same_object(

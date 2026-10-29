@@ -30,6 +30,7 @@ from dimos.evals.vqa.contracts import (
     QuestionProposal,
 )
 from dimos.evals.vqa.primitives.localize_scene import (
+    LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
     ego_turn_to,
     fore_aft_of,
@@ -493,13 +494,15 @@ def _distance_bucket(distance_m: float) -> int:
     return 3
 
 
-def _answer_ego_fore_aft(
-    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
-) -> FamilyAnswer:
-    referent = proposal.object_names[0]
+def _localize_referent_evidence(
+    localize_scene: LocalizeSceneEvidence,
+    referent: str,
+    *,
+    answer_rule: str,
+) -> tuple[LocalizeInstanceEvidence, dict[str, JsonValue]]:
+    """Parse + resolve once; shared geometry fields for ego family audits."""
     parsed = parse_referent(referent)
-    answer = fore_aft_of(localize_scene, referent)
-    instance = resolve_referent(localize_scene, referent)
+    instance = resolve_referent(localize_scene, referent, parsed=parsed)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
     evidence: dict[str, JsonValue] = {
         "primitive": "localize_scene",
@@ -511,7 +514,7 @@ def _answer_ego_fore_aft(
         "robot_yaw_rad": localize_scene.robot_yaw_rad,
         "robot_relative_forward_m": forward,
         "robot_relative_left_m": left,
-        "answer_rule": "ahead_behind_cones_45_135",
+        "answer_rule": answer_rule,
     }
     if parsed.landmark is not None:
         evidence["landmark"] = parsed.landmark
@@ -521,6 +524,19 @@ def _answer_ego_fore_aft(
         evidence["first_seen_timestamp"] = instance.first_seen_timestamp
     if instance.last_seen_timestamp is not None:
         evidence["last_seen_timestamp"] = instance.last_seen_timestamp
+    return instance, evidence
+
+
+def _answer_ego_fore_aft(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    referent = proposal.object_names[0]
+    instance, evidence = _localize_referent_evidence(
+        localize_scene,
+        referent,
+        answer_rule="ahead_behind_cones_45_135",
+    )
+    answer = fore_aft_of(localize_scene, referent, instance=instance)
     return FamilyAnswer(
         question=f"Is the {referent} ahead of the robot or behind it?",
         choices=("ahead", "behind"),
@@ -563,30 +579,12 @@ def _answer_ego_turn(
     proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
 ) -> FamilyAnswer:
     referent = proposal.object_names[0]
-    parsed = parse_referent(referent)
-    answer = ego_turn_to(localize_scene, referent)
-    instance = resolve_referent(localize_scene, referent)
-    forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
-    evidence: dict[str, JsonValue] = {
-        "primitive": "localize_scene",
-        "object_name": referent,
-        "selector": parsed.selector,
-        "category": parsed.category,
-        "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
-        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
-        "robot_yaw_rad": localize_scene.robot_yaw_rad,
-        "robot_relative_forward_m": forward,
-        "robot_relative_left_m": left,
-        "answer_rule": "bearing_cones_45_with_turn_around",
-    }
-    if parsed.landmark is not None:
-        evidence["landmark"] = parsed.landmark
-    if instance.instance_id is not None:
-        evidence["instance_id"] = instance.instance_id
-    if instance.first_seen_timestamp is not None:
-        evidence["first_seen_timestamp"] = instance.first_seen_timestamp
-    if instance.last_seen_timestamp is not None:
-        evidence["last_seen_timestamp"] = instance.last_seen_timestamp
+    instance, evidence = _localize_referent_evidence(
+        localize_scene,
+        referent,
+        answer_rule="bearing_cones_45_with_turn_around",
+    )
+    answer = ego_turn_to(localize_scene, referent, instance=instance)
     return FamilyAnswer(
         question=(
             f"To face the {referent}, should the robot turn left, turn right, "
@@ -605,12 +603,11 @@ def _answer_ego_any_fore_aft(
     parsed = parse_referent(category)
     if parsed.selector != "unique":
         raise InsufficientEvidenceError(
-            "ego_any_fore_aft requires a bare category name, not a nearest/left/right/"
-            "next-to referent"
+            "ego_any_fore_aft requires a bare category name, not a nearest/next-to referent"
         )
     bare = parsed.category
     hits = instances_named(localize_scene, bare)
-    ahead = instances_in_ahead_cone(localize_scene, bare)
+    ahead = instances_in_ahead_cone(localize_scene, bare, hits=hits)
     ahead_xyz = {inst.position_world_xyz for inst in ahead}
     answer = "yes" if ahead else "no"
     first_seen = min(
@@ -620,8 +617,9 @@ def _answer_ego_any_fore_aft(
     evidence: dict[str, JsonValue] = {
         "primitive": "localize_scene",
         "object_name": bare,
-        "selector": "any_ahead",
+        "selector": "unique",
         "answer_rule": "exists_instance_in_ahead_cone_45",
+        "coverage_mode": "existential",
         "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
         "robot_yaw_rad": localize_scene.robot_yaw_rad,
         "instances": cast(

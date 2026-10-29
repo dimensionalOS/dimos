@@ -22,10 +22,10 @@ from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
-    any_ahead,
     ego_turn_to,
     fore_aft_of,
     higher_object,
+    instances_in_ahead_cone,
     next_to_referents,
     parse_referent,
     resolve_referent,
@@ -166,28 +166,29 @@ def test_resolve_rejects_left_right_referents() -> None:
         resolve_referent(scene, "left chair")
 
 
-def test_any_ahead_true_when_one_instance_ahead() -> None:
+def test_instances_in_ahead_cone_keeps_ahead_hits() -> None:
+    ahead = LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.5, 0.0))
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
-        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.5, 0.0)),
+        ahead,
     )
-    assert any_ahead(scene, "chair") is True
+    assert instances_in_ahead_cone(scene, "chair") == (ahead,)
 
 
-def test_any_ahead_false_when_all_behind() -> None:
+def test_instances_in_ahead_cone_empty_when_all_behind() -> None:
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-1.0, 0.5, 0.0)),
     )
-    assert any_ahead(scene, "chair") is False
+    assert instances_in_ahead_cone(scene, "chair") == ()
 
 
-def test_any_ahead_false_when_only_lateral() -> None:
+def test_instances_in_ahead_cone_empty_when_only_lateral() -> None:
     # Old half-plane rule would count forward>0; ahead cone rejects |θ|>45°.
     scene = _scene(
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.0)),
     )
-    assert any_ahead(scene, "chair") is False
+    assert instances_in_ahead_cone(scene, "chair") == ()
 
 
 def test_next_to_picks_anchor_nearest_landmark() -> None:

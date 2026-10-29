@@ -18,14 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from dimos.evals.agents.base import Agent
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
 from dimos.evals.vqa.clip import DEFAULT_CLIP_MAX_FRAMES, load_clip_manifest
-
-if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
 
 _MULTI_STREAM_NAMES = ("first_clip", "second_clip", "third_clip", "fourth_clip")
 

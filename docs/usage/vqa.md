@@ -101,7 +101,7 @@ Generation then:
    - **nearest** `<category>` when multiple hits exist (closest to the robot)
    - **`<anchor> next to <landmark>`** relational referents for `ego_fore_aft` / `ego_turn`
      when a unique nearby pair exists (disambiguates without leaking turn direction)
-   - **any-ahead** yes/no for each selected category (`ego_any_fore_aft`)
+   - **existential** yes/no for each selected category (`ego_any_fore_aft`: any instance in the ahead cone)
    - **height_order** pairs among unique categories only
 
 Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m): ahead
@@ -137,11 +137,11 @@ Image-path families are never budgeted.
 After ego clips, the same localize evidence materializes **cross-view identity** pairs
 (`cross_view_same_object`): propose same/different instance pairs from multi-view
 sightings (≥ `--min-views` distinct poses), then cut two short dense clips from the
-cached `color_frames` at each sighting timestamp — **no second localize / `--query` pass**.
+cached `color_frames` at each sighting timestamp - **no second localize / `--query` pass**.
 
 Each `--with-localize` run also writes a lightweight
 `audit/localize_evidence.json` (object name, instance id, world xyz, first_seen,
-sighting timestamps + bbox — no RGB/point clouds). Reuse it to skip Dan:
+sighting timestamps + bbox - no RGB/point clouds). Reuse it to skip Dan:
 
 ```bash skip
 dimos evals vqa generate /path/to/calibrated-recording.db \

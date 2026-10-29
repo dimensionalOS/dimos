@@ -37,11 +37,9 @@ from dimos.evals.vqa.localize_coverage import (
 
 
 def test_coverage_cell_maps_selectors() -> None:
-    assert coverage_cell("ego_any_fore_aft", ("chair",)) == ("ego_any_fore_aft", "any_ahead")
+    assert coverage_cell("ego_any_fore_aft", ("chair",)) == ("ego_any_fore_aft", "existential")
     assert coverage_cell("height_order", ("chair", "table")) == ("height_order", "unique")
     assert coverage_cell("ego_fore_aft", ("nearest chair",)) == ("ego_fore_aft", "nearest")
-    # left/right still parse for legacy audits; publish path drops these selectors.
-    assert coverage_cell("ego_fore_aft", ("left chair",)) == ("ego_fore_aft", "left")
     assert coverage_cell("ego_fore_aft", ("chair next to table",)) == ("ego_fore_aft", "next_to")
     assert coverage_cell("ego_fore_aft", ("chair",)) == ("ego_fore_aft", "unique")
 
@@ -69,7 +67,7 @@ def test_select_gives_every_frame_at_least_one() -> None:
 
 def test_select_rotates_cells_across_frames() -> None:
     nearest = ("ego_fore_aft", "nearest")
-    any_ahead = ("ego_any_fore_aft", "any_ahead")
+    existential = ("ego_any_fore_aft", "existential")
     turn = ("ego_turn", "nearest")
     candidates = []
     for index, frame in enumerate(("000100", "000200", "000300", "000400", "000500", "000600")):
@@ -77,7 +75,7 @@ def test_select_rotates_cells_across_frames() -> None:
         candidates.extend(
             [
                 (f"frame-{frame}-n-ego_fore_aft", nearest, (index, 0, 0), "box"),
-                (f"frame-{frame}-a-ego_any_fore_aft", any_ahead, (index, 0, 0), "box"),
+                (f"frame-{frame}-a-ego_any_fore_aft", existential, (index, 0, 0), "box"),
                 (f"frame-{frame}-t-ego_turn", turn, (index, 0, 0), "box"),
             ]
         )
@@ -89,7 +87,7 @@ def test_select_rotates_cells_across_frames() -> None:
             if cand[0] == case_id:
                 cells.append(cand[1])
                 break
-    # Sorted cell_order: any_ahead, nearest fore_aft, turn nearest — rotates across frames.
+    # Sorted cell_order: existential, nearest fore_aft, turn nearest — rotates across frames.
     assert cells[0] != cells[1] or cells[1] != cells[2]
     assert len(set(cells)) >= 2
 
@@ -102,15 +100,6 @@ def test_select_respects_per_frame_k() -> None:
     kept = select_localize_coverage_ids(candidates, k=2)
     assert sum(1 for case_id in kept if case_id.startswith("frame-000100-")) == 2
     assert sum(1 for case_id in kept if case_id.startswith("frame-000200-")) == 2
-
-
-def test_select_skips_left_right_cells() -> None:
-    candidates = [
-        ("frame-000100-l-ego_fore_aft", ("ego_fore_aft", "left"), (0, 0, 0), "box"),
-        ("frame-000100-n-ego_fore_aft", ("ego_fore_aft", "nearest"), (0, 0, 0), "box"),
-    ]
-    kept = select_localize_coverage_ids(candidates, k=1)
-    assert kept == {"frame-000100-n-ego_fore_aft"}
 
 
 def test_select_balances_categories_when_same_cell() -> None:
