@@ -93,9 +93,8 @@ fn trace_rays(
     var tz = first_crossing(origin.z, d.z, cell.z, step.z);
     let dt = vec3<f32>(crossing_interval(d.x), crossing_interval(d.y), crossing_interval(d.z));
 
-    let endpoint_center = voxel_center(endpoint);
-    let shadow_sq = params.shadow_depth * params.shadow_depth;
-    let grace_sq = params.grace_depth * params.grace_depth;
+    let shadow_sq = params.shadow_cells_sq;
+    let grace_sq = params.grace_cells_sq;
     let ray_len = sqrt(dot(d, d));
     let t_max = 1.0 + params.shadow_depth / max(ray_len, 1.1920929e-7);
     let ray_unit = d / max(ray_len, 1.1920929e-7);
@@ -131,13 +130,14 @@ fn trace_rays(
             past_endpoint = true;
             continue;
         }
-        let offset = voxel_center(cell) - endpoint_center;
-        let dist_sq = dot(offset, offset);
+        // Whole cells, as the CPU walk, so radius ties agree with it.
+        let offset = cell - endpoint;
+        let dist_sq = f32(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
         if (past_endpoint) {
-            if (dist_sq > shadow_sq) {
+            if (dist_sq >= shadow_sq) {
                 return;
             }
-        } else if (dist_sq < grace_sq) {
+        } else if (dist_sq <= grace_sq) {
             continue;
         }
 

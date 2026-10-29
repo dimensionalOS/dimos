@@ -98,7 +98,9 @@ struct MapParams {
     list_capacity: u32,
     trace_pass: u32,
     voxel_capacity: u32,
-    pad: [u32; 3],
+    grace_cells_sq: f32,
+    shadow_cells_sq: f32,
+    pad: u32,
 }
 
 /// One voxel read back from the GPU, moments in meters about its center.
@@ -581,7 +583,9 @@ impl BrickMap {
             list_capacity: c.list_capacity,
             trace_pass: 0,
             voxel_capacity: self.voxel_pool,
-            pad: [0; 3],
+            grace_cells_sq: depth_cells_sq(c.grace_depth, c.voxel_size),
+            shadow_cells_sq: depth_cells_sq(c.shadow_depth, c.voxel_size),
+            pad: 0,
         }
     }
 
@@ -788,6 +792,12 @@ impl BrickMap {
     pub fn gpu_bytes(&self) -> u64 {
         self.buffers.storage().iter().map(|b| b.size()).sum()
     }
+}
+
+/// The CPU walk's depth_cells_sq, the same expression so the threshold
+/// matches it bit for bit.
+fn depth_cells_sq(depth: f32, voxel_size: f32) -> f32 {
+    (depth / voxel_size).powi(2)
 }
 
 /// The shader's octahedral unpack, for readbacks.

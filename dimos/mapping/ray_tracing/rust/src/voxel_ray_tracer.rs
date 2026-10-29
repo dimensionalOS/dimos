@@ -1352,6 +1352,14 @@ struct RayFrame<'a> {
 /// the endpoint are spared from being marked as misses, as are voxels hit this
 /// frame. With a fine divisor, a voxel is also spared when the ray misses all of
 /// its observed fine cells.
+/// A depth squared in cells. The walks compare whole-cell distances against
+/// it, so a voxel exactly at the grace or shadow radius gets the same verdict
+/// whatever the float rounding (a tie is spared: inside the grace radius,
+/// outside the shadow one), and the GPU map's walk matches this one.
+pub fn depth_cells_sq(depth: f32, voxel_size: f32) -> f32 {
+    (depth / voxel_size).powi(2)
+}
+
 fn find_misses_along_ray(
     walk: &mut RayWalk,
     frame: &RayFrame,
@@ -1416,14 +1424,8 @@ fn find_misses_along_ray(
         voxel_size / dz.abs()
     };
 
-    let half = voxel_size * 0.5;
-    let endpoint_center = (
-        endpoint.0 as f32 * voxel_size + half,
-        endpoint.1 as f32 * voxel_size + half,
-        endpoint.2 as f32 * voxel_size + half,
-    );
-    let shadow_sq = shadow_depth.powi(2);
-    let grace_sq = grace_depth.powi(2);
+    let shadow_sq = depth_cells_sq(shadow_depth, voxel_size);
+    let grace_sq = depth_cells_sq(grace_depth, voxel_size);
 
     let ray_len = (dx * dx + dy * dy + dz * dz).sqrt();
     let t_max = 1.0 + shadow_depth / ray_len.max(f32::EPSILON);
@@ -1461,20 +1463,15 @@ fn find_misses_along_ray(
             continue;
         }
 
-        let cx = x as f32 * voxel_size + half;
-        let cy = y as f32 * voxel_size + half;
-        let cz = z as f32 * voxel_size + half;
-        let ddx = cx - endpoint_center.0;
-        let ddy = cy - endpoint_center.1;
-        let ddz = cz - endpoint_center.2;
-        let dist_sq = ddx * ddx + ddy * ddy + ddz * ddz;
+        let (ddx, ddy, ddz) = (x - endpoint.0, y - endpoint.1, z - endpoint.2);
+        let dist_sq = (ddx * ddx + ddy * ddy + ddz * ddz) as f32;
 
         if past_endpoint {
             // Past the endpoint, keep going until we leave the shadow region.
-            if dist_sq > shadow_sq {
+            if dist_sq >= shadow_sq {
                 return;
             }
-        } else if dist_sq < grace_sq {
+        } else if dist_sq <= grace_sq {
             // Too close to the endpoint to safely mark a miss, we might be clipping another voxel's ray.
             continue;
         }

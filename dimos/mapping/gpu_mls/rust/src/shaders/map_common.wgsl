@@ -19,9 +19,10 @@ struct MapParams {
     list_capacity: u32,
     trace_pass: u32,
     voxel_capacity: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // The grace and shadow depths squared, in cells.
+    grace_cells_sq: f32,
+    shadow_cells_sq: f32,
+    pad: u32,
 }
 
 const MODE_TRACE: u32 = 0u;
