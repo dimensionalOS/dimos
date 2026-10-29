@@ -22,8 +22,8 @@ normalized gripper; finger geometry remains fixed in the planning model.
 
 ## Geometry and dimensions
 
-The model starts from a base-only URDF and calls `with_attached_model` twice
-to weld copies of the same pinned official Metal URDF used
+The model creates its base in memory with `RobotModel.from_root_link`, then calls
+`with_attached_model` twice to weld copies of the same pinned official Metal URDF used
 by the [single-arm integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
 Links, joints, material names, and references are prefixed `left_` / `right_`.
 The root is `dual_metal_base`, with tips `left_gripper_base` and

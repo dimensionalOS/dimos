@@ -14,15 +14,13 @@
 
 """Two official Metal arm trees fixed to the configured mounting base."""
 
-from pathlib import Path
-
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS, ARM_JOINTS, SIDES
 from dimos.robot.manipulators.makermods_metal.model import make_metal_model_config
 
-DUAL_METAL_BASE = RobotModel.from_file(Path(__file__).with_name("base.urdf"))
+DUAL_METAL_BASE = RobotModel.from_root_link("dual_metal_base", name="dual_makermods_metal")
 
 Vector3 = tuple[float, float, float]
 # Example bench layout only; no published official bimanual mount transform was found.
