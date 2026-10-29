@@ -209,6 +209,33 @@ def test_diff_pairs_skip_when_either_endpoint_is_co_visible() -> None:
     assert not any(not p.same_object for p in pairs)
 
 
+def test_same_pairs_skip_when_competing_instance_co_visible() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    # Competing instance B shares both endpoints → ambiguous "yes" for A.
+    a = (
+        _view(instance_id="a", bbox=centered, ts=1.0, n_views=3, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=20.0, n_views=3, score=0.9),
+    )
+    b = (
+        _view(instance_id="b", bbox=centered, ts=1.0, n_views=3, score=0.8),
+        _view(instance_id="b", bbox=centered, ts=20.0, n_views=3, score=0.8),
+    )
+    pairs = propose_identity_pairs({"a": a, "b": b}, min_views=2)
+    assert not any(p.same_object for p in pairs)
+
+
+def test_same_pairs_keep_when_competitor_only_mid_span() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    a = (
+        _view(instance_id="a", bbox=centered, ts=1.0, n_views=3, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=20.0, n_views=3, score=0.9),
+    )
+    # Competitor only mid-span — endpoints stay unambiguous for "yes".
+    b = (_view(instance_id="b", bbox=centered, ts=10.0, n_views=3, score=0.8),)
+    pairs = propose_identity_pairs({"a": a, "b": b}, min_views=2)
+    assert any(p.same_object for p in pairs)
+
+
 def test_pair_case_id_sanitizes_slashes() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     pair = IdentityPair(

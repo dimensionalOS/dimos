@@ -261,6 +261,8 @@ class _GeneratedFrame:
     labels: tuple[PrivateLabel, ...]
     audit_rows: tuple[dict[str, object], ...]
     families: tuple[FamilySpec, ...]
+    # Optical frame of the generation RGB; ego clips must use this camera's stream.
+    camera_frame: str = ""
 
 
 def generate_dataset(
@@ -470,6 +472,7 @@ def generate_frames_dataset(
                     all_cases,
                     all_labels,
                     color_frames=color_frames,
+                    color_frames_by_camera=color_frames_by_camera or {},
                 )
 
             cross_view_stats: dict[str, object] | None = None
@@ -749,6 +752,7 @@ def _generate_frame(
             labels=labels,
             audit_rows=tuple(audit_rows),
             families=tuple(families),
+            camera_frame=str(getattr(image, "frame_id", "") or ""),
         ),
         image,
     )
@@ -789,6 +793,36 @@ def _balance_ego_memory_bands(hard: Sequence[_T], soft: Sequence[_T]) -> list[_T
     return list(hard[:n]) + list(soft[:n])
 
 
+def _height_object_first_seens(evidence: Mapping[str, object]) -> tuple[float, ...] | None:
+    """Per-object first_seen times for height_order; None if either referent is missing."""
+    objects = evidence.get("objects")
+    if not isinstance(objects, list) or len(objects) < 2:
+        return None
+    times: list[float] = []
+    for obj in objects:
+        if not isinstance(obj, Mapping):
+            return None
+        raw = obj.get("first_seen_timestamp")
+        if not isinstance(raw, (int, float)):
+            return None
+        times.append(float(raw))
+    return tuple(times)
+
+
+def _ego_clip_stream(
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
+    camera_frame: str,
+) -> Sequence[tuple[float, Image]]:
+    """Use the generation camera's stream when multi-cam clips are available."""
+    if camera_frame and camera_frame in color_frames_by_camera:
+        return color_frames_by_camera[camera_frame]
+    if color_frames_by_camera and camera_frame:
+        # Multi-cam present but generation optical frame has no stream → reject later.
+        return ()
+    return color_frames
+
+
 def _materialize_ego_memory_clips(
     staging: Path,
     frames: Sequence[_GeneratedFrame],
@@ -796,13 +830,17 @@ def _materialize_ego_memory_clips(
     labels: Sequence[PrivateLabel],
     *,
     color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
 ) -> tuple[list[PublicCase], list[PrivateLabel]]:
     """Publish ego cases as first-spot→query clips; balance hard/soft; no image fallback."""
+    by_camera = color_frames_by_camera or {}
     audit_by_id: dict[str, dict[str, object]] = {}
     frame_ts_by_id: dict[str, float] = {}
+    frame_cam_by_id: dict[str, str] = {}
     for frame in frames:
         for case in frame.cases:
             frame_ts_by_id[case.id] = frame.image_ts
+            frame_cam_by_id[case.id] = frame.camera_frame
             family = case_family_from_id(case.id)
             if family not in _EGO_CLIP_FAMILIES:
                 continue
@@ -820,7 +858,9 @@ def _materialize_ego_memory_clips(
     non_ego_cases: list[PublicCase] = []
     non_ego_labels: list[PrivateLabel] = []
     # Defer disk write until after 1:1 hard/soft balance so unused clips are not left behind.
-    EgoClipRow = tuple[PublicCase, PrivateLabel, tuple[tuple[float, Image], ...], float, float]
+    EgoClipRow = tuple[
+        PublicCase, PrivateLabel, tuple[tuple[float, Image], ...], tuple[float, ...]
+    ]
     hard: list[EgoClipRow] = []
     soft: list[EgoClipRow] = []
 
@@ -844,20 +884,34 @@ def _materialize_ego_memory_clips(
 
         evidence = answered.get("evidence")
         first_spot = None
+        extra_anchors: tuple[float, ...] = ()
         if isinstance(evidence, dict):
-            raw = evidence.get("first_seen_timestamp")
-            if isinstance(raw, (int, float)):
-                first_spot = float(raw)
+            if family == "height_order":
+                # Both compared objects must appear; reject if either first_seen is missing.
+                height_times = _height_object_first_seens(evidence)
+                if height_times is None:
+                    continue
+                first_spot = min(height_times)
+                extra_anchors = height_times
+            else:
+                raw = evidence.get("first_seen_timestamp")
+                if isinstance(raw, (int, float)):
+                    first_spot = float(raw)
         if first_spot is None:
             first_spot = query_ts
         if query_ts - first_spot > MAX_EGO_MEMORY_SPAN_S:
             continue
 
+        stream = _ego_clip_stream(color_frames, by_camera, frame_cam_by_id.get(case.id, ""))
+        if not stream:
+            continue
+
         try:
             picked, _t0 = ego_memory_clip(
-                color_frames,
+                stream,
                 first_spot_ts=first_spot,
                 query_ts=query_ts,
+                extra_anchors=extra_anchors,
             )
         except ValueError:
             continue
@@ -878,17 +932,18 @@ def _materialize_ego_memory_clips(
             choices=case.choices,
         )
         bucket = hard if band == "hard" else soft
-        bucket.append((clip_case, label, picked, first_spot, query_ts))
+        anchors = (first_spot, query_ts, *extra_anchors)
+        bucket.append((clip_case, label, picked, anchors))
 
     balanced = _balance_ego_memory_bands(hard, soft)
     out_cases: list[PublicCase] = list(non_ego_cases)
     out_labels: list[PrivateLabel] = list(non_ego_labels)
-    for clip_case, label, picked, first_spot, query_ts in balanced:
+    for clip_case, label, picked, anchors in balanced:
         assert clip_case.clip is not None
         write_image_clip(
             staging / clip_case.clip,
             picked,
-            anchors=(first_spot, query_ts),
+            anchors=anchors,
         )
         out_cases.append(clip_case)
         out_labels.append(label)

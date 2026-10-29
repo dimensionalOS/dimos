@@ -66,6 +66,7 @@ def test_evidence_roundtrip_includes_name_coords_and_sightings(tmp_path) -> None
         timestamp=10.0,
         n_views=4,
         semantic_score=0.7,
+        camera_frame="camera_optical",
     )
     result = SimpleNamespace(
         named_hits=(("storage box", _hit()),),
@@ -83,7 +84,9 @@ def test_evidence_roundtrip_includes_name_coords_and_sightings(tmp_path) -> None
     assert doc.instances[0].position_world_xyz == (1.0, 2.0, 0.5)
     assert doc.instances[0].first_seen == 10.0
     assert doc.instances[0].sightings == (
-        SightingEvidence(timestamp=10.0, bbox=(5.0, 5.0, 20.0, 20.0)),
+        SightingEvidence(
+            timestamp=10.0, bbox=(5.0, 5.0, 20.0, 20.0), camera_frame="camera_optical"
+        ),
     )
     path = tmp_path / "localize_evidence.json"
     write_localize_evidence(path, doc)
@@ -132,3 +135,21 @@ def test_hydrate_rebuilds_views_from_color_frames() -> None:
     assert first_seen == {"bbbb2222": 5.0}
     assert len(views["chair"]["bbbb2222"]) == 2
     assert views["chair"]["bbbb2222"][0].bbox == (1.0, 1.0, 10.0, 10.0)
+
+
+def test_nearest_frame_prefers_sighting_camera_stream() -> None:
+    from dimos.evals.vqa.localize_evidence import _nearest_frame_with_camera
+
+    cam_a = ((5.0, _image(5.0)),)
+    # Closer timestamp on the wrong camera must not win when preferred is set.
+    cam_b = ((4.99, _image(4.99)),)
+    matched = _nearest_frame_with_camera(
+        cam_b,
+        {"cam_a": cam_a, "cam_b": cam_b},
+        5.0,
+        preferred_camera="cam_a",
+    )
+    assert matched is not None
+    image, camera_frame = matched
+    assert camera_frame == "cam_a"
+    assert float(image.ts) == 5.0
