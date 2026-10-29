@@ -15,7 +15,7 @@
 //! Headless wgpu device plus the buffer, pipeline and readback helpers the
 //! map and surface stages share.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bytemuck::Pod;
 
@@ -151,6 +151,7 @@ impl Gpu {
     }
 
     pub fn module(&self, label: &str, source: &str) -> wgpu::ShaderModule {
+        let _compiling = compile_lock();
         self.device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
@@ -164,6 +165,7 @@ impl Gpu {
         entry: &str,
         layouts: &[&wgpu::BindGroupLayout],
     ) -> wgpu::ComputePipeline {
+        let _compiling = compile_lock();
         let layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -262,6 +264,13 @@ impl Gpu {
 
     #[cfg(not(target_os = "linux"))]
     fn host_read_barrier(&self) {}
+}
+
+/// Held while compiling shaders. The Tegra Vulkan driver deadlocks when
+/// threads build compute pipelines at once against a cold shader cache.
+fn compile_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Workgroup counts covering `threads` 1D threads, folded into y past the
