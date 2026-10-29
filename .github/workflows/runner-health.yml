@@ -25,4 +25,4 @@ jobs:
       - name: Count the self-hosted job results per runner and file issues
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 bin/runner-health --days 7 --create-issues
+        run: python3 bin/ci/runner-health --days 7 --create-issues
