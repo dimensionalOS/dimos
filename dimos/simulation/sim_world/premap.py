@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""What a robot's Mid-360s return walking a route through a scene, as a prior map for the stack."""
+"""What a robot's lidars return walking a route through a scene, as a prior map for the stack."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ from numpy.typing import NDArray
 
 from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import Scene
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.simulation.sim_world.body import Rig
 
@@ -60,7 +59,7 @@ def base_poses(
 
 
 def premap_cloud(scene: Scene, rig: Rig, route: NDArray[np.float64]) -> NDArray[np.float32]:
-    """The rig's Mid-360 returns walking the route through the scene, one world-frame point per voxel."""
+    """The rig's lidar returns walking the route through the scene, one world-frame point per voxel."""
     spec = mujoco.MjSpec()
     add_boxes(spec, scene)
     model = spec.compile()
@@ -70,7 +69,6 @@ def premap_cloud(scene: Scene, rig: Rig, route: NDArray[np.float64]) -> NDArray[
         sensor.lidar(MujocoRaycaster(model, data, SCENE_GROUPS), PREMAP_SEED + i)
         for i, sensor in enumerate(rig.sensors)
     ]
-    per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
     lo, hi = scene.bounds()
     dims = np.ceil((hi - lo) / VOXEL_M).astype(np.int64) + 3
     seen = np.zeros(dims, dtype=bool)
@@ -78,6 +76,7 @@ def premap_cloud(scene: Scene, rig: Rig, route: NDArray[np.float64]) -> NDArray[
     for base, turn in base_poses(route, rig.shape.base_height, PREMAP_STEP_M):
         for sensor, lidar in zip(rig.sensors, lidars, strict=True):
             position, rotation = base + turn @ sensor.mount_xyz, turn @ sensor.mount_r
+            per_pose = int(lidar.pattern.point_rate * PREMAP_STEP_M / PREMAP_SPEED)
             returns = lidar.cast(position, rotation, per_pose).astype(np.float64)
             returns = returns[np.linalg.norm(returns, axis=1) >= sensor.lio_blind_range]
             points = position + returns @ rotation.T
