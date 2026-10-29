@@ -76,9 +76,7 @@ def _tf_root(store: Any, camera: str) -> str:
     return chain[-1] if len(chain) > 1 else WORLD_FRAME
 
 
-def _republish_static_across(
-    tf: MultiTBuffer, transform: Transform, lo: float, hi: float
-) -> None:
+def _republish_static_across(tf: MultiTBuffer, transform: Transform, lo: float, hi: float) -> None:
     """Re-stamp a static edge across ``[lo, hi]`` so timed lookups within ``TF_TOLERANCE`` hit."""
     if hi < lo:
         return
