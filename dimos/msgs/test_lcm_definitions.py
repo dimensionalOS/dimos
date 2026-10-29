@@ -54,13 +54,15 @@ def test_dimos_lcm_packages_hold_only_dimos_lcm_messages() -> None:
     new = sorted(missing - KNOWN)
     packages = sorted({m.split(".")[0] for m in new})
     assert not new, (
-        f"{new} are not defined in dimos-lcm.\n"
-        f"{packages} mirror ROS packages from dimos-lcm, which generates every language's "
-        "bindings from them, so nothing new goes in there.\n"
-        "New messages can be added temporarily, but not in a ROS package:\n"
-        "  - first look for an existing ROS message that fits, often one already does\n"
-        "  - the right way: add it to dimos-lcm, new ROS namespaces are welcome there\n"
-        "  - meanwhile, a package dimos-lcm doesn't have, e.g. dimos/msgs/<yours>_msgs/\n",
+        (
+            f"{new} are not defined in dimos-lcm.\n"
+            f"{packages} mirror ROS packages from dimos-lcm, which generates every language's "
+            "bindings from them, so nothing new goes in there.\n"
+            "New messages can be added temporarily, but not in a ROS package:\n"
+            "  - first look for an existing ROS message that fits, often one already does\n"
+            "  - the right way: add it to dimos-lcm, new ROS namespaces are welcome there\n"
+            "  - meanwhile, a package dimos-lcm doesn't have, e.g. dimos/msgs/<yours>_msgs/\n"
+        ),
         "but keep in mind, this breaks native module support so a lot of the system will not work with it and it will be removed eventually.\n",
     )
     assert not KNOWN - missing, f"{sorted(KNOWN - missing)} are defined now, drop from KNOWN"

@@ -51,9 +51,7 @@ transformed: [6, 8]
 ### Transform: `map`
 
 ```python session=rx
-rx.of(1, 2, 3).pipe(
-    ops.map(lambda x: f"item_{x}")
-).subscribe(print)
+rx.of(1, 2, 3).pipe(ops.map(lambda x: f"item_{x}")).subscribe(print)
 ```
 
 ```results
@@ -66,9 +64,7 @@ item_3
 ### Filter: `filter`
 
 ```python session=rx
-rx.of(1, 2, 3, 4, 5).pipe(
-    ops.filter(lambda x: x % 2 == 0)
-).subscribe(print)
+rx.of(1, 2, 3, 4, 5).pipe(ops.filter(lambda x: x % 2 == 0)).subscribe(print)
 ```
 
 ```results
@@ -80,9 +76,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ### Limit emissions: `take`
 
 ```python session=rx
-rx.of(1, 2, 3, 4, 5).pipe(
-    ops.take(3)
-).subscribe(print)
+rx.of(1, 2, 3, 4, 5).pipe(ops.take(3)).subscribe(print)
 ```
 
 ```results
@@ -96,9 +90,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 
 ```python session=rx
 # For each input, emit multiple values
-rx.of(1, 2).pipe(
-    ops.flat_map(lambda x: rx.of(x, x * 10, x * 100))
-).subscribe(print)
+rx.of(1, 2).pipe(ops.flat_map(lambda x: rx.of(x, x * 10, x * 100))).subscribe(print)
 ```
 
 ```results
@@ -119,11 +111,15 @@ Takes the most recent value at each interval. Good for continuous streams where 
 
 ```python session=rx
 # Use blocking .run() to collect results properly
-results = rx.interval(0.05).pipe(
-    ops.take(10),
-    ops.sample(0.2),
-    ops.to_list(),
-).run()
+results = (
+    rx.interval(0.05)
+    .pipe(
+        ops.take(10),
+        ops.sample(0.2),
+        ops.to_list(),
+    )
+    .run()
+)
 print("sample() got:", results)
 ```
 
@@ -136,11 +132,15 @@ sample() got: [2, 6, 9]
 Takes the first value then ignores subsequent values for the interval. Good for user input debouncing.
 
 ```python session=rx
-results = rx.interval(0.05).pipe(
-    ops.take(10),
-    ops.throttle_first(0.15),
-    ops.to_list(),
-).run()
+results = (
+    rx.interval(0.05)
+    .pipe(
+        ops.take(10),
+        ops.throttle_first(0.15),
+        ops.to_list(),
+    )
+    .run()
+)
 print("throttle_first() got:", results)
 ```
 
@@ -228,7 +228,7 @@ Here's the full subscribe signature with all three callbacks:
 rx.of(1, 2, 3).subscribe(
     on_next=lambda x: print(f"value: {x}"),
     on_error=lambda e: print(f"error: {e}"),
-    on_completed=lambda: print("done")
+    on_completed=lambda: print("done"),
 )
 ```
 
@@ -275,11 +275,13 @@ import time
 import reactivex as rx
 from dimos.core.module import Module
 
+
 class MyModule(Module):
     def start(self) -> None:
         super().start()
         source = rx.interval(0.05)
         self.register_disposable(source.subscribe(lambda x: print(f"got {x}")))
+
 
 module = MyModule()
 module.start()
@@ -314,23 +316,25 @@ import reactivex as rx
 from reactivex import operators as ops
 from dimos.utils.reactive import callback_to_observable
 
+
 class MockSensor:
     def __init__(self):
         self._callbacks = []
+
     def register(self, cb):
         self._callbacks.append(cb)
+
     def unregister(self, cb):
         self._callbacks.remove(cb)
+
     def emit(self, value):
         for cb in self._callbacks:
             cb(value)
 
+
 sensor = MockSensor()
 
-obs = callback_to_observable(
-    start=sensor.register,
-    stop=sensor.unregister
-)
+obs = callback_to_observable(start=sensor.register, stop=sensor.unregister)
 
 received = []
 sub = obs.subscribe(lambda x: received.append(x))
@@ -355,15 +359,19 @@ Use `to_observable` when the subscribe function returns an unsubscribe callable:
 ```python session=create
 from dimos.utils.reactive import to_observable
 
+
 class MockPubSub:
     def __init__(self):
         self._callbacks = []
+
     def subscribe(self, cb):
         self._callbacks.append(cb)
         return lambda: self._callbacks.remove(cb)  # returns unsub function
+
     def publish(self, value):
         for cb in self._callbacks:
             cb(value)
+
 
 pubsub = MockPubSub()
 
@@ -390,19 +398,18 @@ callbacks after dispose: 0
 ```python session=create
 from reactivex.disposable import Disposable
 
+
 def custom_subscribe(observer, scheduler=None):
     observer.on_next("first")
     observer.on_next("second")
     observer.on_completed()
     return Disposable(lambda: print("cleaned up"))
 
+
 obs = rx.create(custom_subscribe)
 
 results = []
-obs.subscribe(
-    on_next=lambda x: results.append(x),
-    on_completed=lambda: results.append("DONE")
-)
+obs.subscribe(on_next=lambda x: results.append(x), on_completed=lambda: results.append("DONE"))
 print("results:", results)
 ```
 
@@ -442,8 +449,8 @@ from reactivex.disposable import CompositeDisposable
 
 disposables = CompositeDisposable()
 
-s1 = rx.of(1,2,3).subscribe(lambda x: None)
-s2 = rx.of(4,5,6).subscribe(lambda x: None)
+s1 = rx.of(1, 2, 3).subscribe(lambda x: None)
+s2 = rx.of(4, 5, 6).subscribe(lambda x: None)
 
 disposables.add(s1)
 disposables.add(s2)

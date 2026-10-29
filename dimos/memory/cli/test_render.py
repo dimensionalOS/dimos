@@ -207,9 +207,7 @@ def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) ->
     attaches = [a for p, a in logged if p == "lidar" and isinstance(a, rr.Transform3D)]
     assert len(attaches) == 1  # once per frame, not per message
     assert any(
-        p.endswith("/world/utlidar_lidar") or p.endswith("utlidar_lidar")
-        for p, _ in logged
-        if p != "lidar"
+        p.endswith(("/world/utlidar_lidar", "utlidar_lidar")) for p, _ in logged if p != "lidar"
     )
 
 

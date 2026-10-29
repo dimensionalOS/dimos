@@ -134,13 +134,13 @@ def test_odometry_str_repr() -> None:
 
 
 def test_odometry_equality() -> None:
-    kwargs = dict(
-        ts=1000.0,
-        frame_id="odom",
-        child_frame_id="base_link",
-        pose=Pose(1.0, 2.0, 3.0),
-        twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
-    )
+    kwargs = {
+        "ts": 1000.0,
+        "frame_id": "odom",
+        "child_frame_id": "base_link",
+        "pose": Pose(1.0, 2.0, 3.0),
+        "twist": Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
+    }
 
     assert Odometry(**kwargs) == Odometry(**kwargs)
     assert Odometry(**kwargs) != Odometry(**{**kwargs, "pose": Pose(1.1, 2.0, 3.0)})

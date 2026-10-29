@@ -392,7 +392,7 @@ class ModuleCoordinator(Resource):
                 if isinstance(remapped_name, str):
                     streams[remapped_name, conn.type].append((bp.name, conn.name))
 
-        for remapped_name, stream_type in streams.keys():
+        for remapped_name, stream_type in streams:
             key = (remapped_name, stream_type)
             if key in self._transport_registry:
                 transport = self._transport_registry[key]

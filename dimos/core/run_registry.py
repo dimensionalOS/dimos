@@ -28,7 +28,7 @@ import time
 from dimos.constants import STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
 from dimos.core.coordination.process_lifecycle import (
-    is_pid_alive as is_pid_alive,
+    is_pid_alive,
     kill_run_processes,
 )
 from dimos.utils.logging_config import setup_logger

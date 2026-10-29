@@ -482,7 +482,7 @@ def _wait_then_tell(child: subprocess.Popen[bytes]) -> None:
         child.wait()
     finally:
         _reaped[child.pid].set()
-    for listener in list(exit_listeners):
+    for listener in exit_listeners:
         listener()
 
 

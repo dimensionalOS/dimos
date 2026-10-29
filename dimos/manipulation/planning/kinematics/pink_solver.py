@@ -82,7 +82,7 @@ class _PinkSolverCore:
     def __init__(
         self,
         config: PinkKinematicsConfig | None = None,
-        **overrides: bool | float | int | str,
+        **overrides: bool | float | str,
     ) -> None:
         """Create a Pink IK backend.
 

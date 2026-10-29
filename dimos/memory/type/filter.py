@@ -184,7 +184,7 @@ class StreamQuery:
             key = self.order_field
             desc = self.order_desc
             items = sorted(
-                list(it),
+                it,
                 key=lambda obs: getattr(obs, key) if getattr(obs, key, None) is not None else 0,
                 reverse=desc,
             )

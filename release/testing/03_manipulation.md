@@ -17,6 +17,7 @@ uv run dimos shell
 
 ```python
 from dimos.manipulation.sdk import Arm
+
 arm = Arm.from_app(app)
 q = arm.joints()
 q[0] += 0.3
@@ -55,10 +56,16 @@ uv run dimos shell
 
 ```python
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
+
 scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)
-for o in scan.metadata["objects"]:   # labels are unreliable, so pick by position
-    print(o["object_id"], app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(o["object_id"]).points_f32().mean(axis=0))
-app.PickAndPlaceModule.pick_object("<object_id>")   # the can, near x=0.57 y=0.00
+for o in scan.metadata["objects"]:  # labels are unreliable, so pick by position
+    print(
+        o["object_id"],
+        app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(o["object_id"])
+        .points_f32()
+        .mean(axis=0),
+    )
+app.PickAndPlaceModule.pick_object("<object_id>")  # the can, near x=0.57 y=0.00
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 

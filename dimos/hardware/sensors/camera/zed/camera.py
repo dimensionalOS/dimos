@@ -19,7 +19,7 @@ import threading
 import time
 
 from pydantic import Field
-import pyzed.sl as sl
+from pyzed import sl
 import reactivex as rx
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT

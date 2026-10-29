@@ -35,6 +35,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 import typer
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from dimos.navigation.bench.runner import Keep, Progress, Report
@@ -311,7 +312,7 @@ class _Bar:
         )
         self._task = self._bar.add_task(name, total=None, status="")
 
-    def __enter__(self) -> _Bar:
+    def __enter__(self) -> Self:
         self._bar.start()
         return self
 

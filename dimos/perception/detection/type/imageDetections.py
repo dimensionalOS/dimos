@@ -40,7 +40,7 @@ else:
     T = TypeVar("T", bound=Detection2D)
 
 
-class ImageDetections(Generic[T], TableStr):
+class ImageDetections(TableStr, Generic[T]):
     image: Image
     detections: list[T]
 

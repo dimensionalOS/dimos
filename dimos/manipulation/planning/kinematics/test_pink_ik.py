@@ -29,7 +29,7 @@ from pink.exceptions import NoSolutionFound
 import pytest
 from pytest_mock import MockerFixture
 
-import dimos.control.tasks.pose_target_ik as pose_target_ik
+from dimos.control.tasks import pose_target_ik
 from dimos.control.tasks.pose_target_ik import (
     PinkJointLimitError,
     PinkPoseTargetSolver,

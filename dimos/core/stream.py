@@ -31,9 +31,8 @@ from reactivex.disposable import Disposable
 from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.resource import Resource
-from dimos.utils import colors
+from dimos.utils import colors, reactive
 from dimos.utils.logging_config import setup_logger
-import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:

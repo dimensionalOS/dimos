@@ -58,9 +58,8 @@ def test_host_lock_is_exclusive(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not machine._locked()
     with machine.host_lock():
         assert machine._locked()
-        with pytest.raises(RuntimeError, match="already running"):
-            with machine.host_lock():
-                pass
+        with pytest.raises(RuntimeError, match="already running"), machine.host_lock():
+            pass
     assert not machine._locked()
 
 
