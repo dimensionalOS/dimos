@@ -555,11 +555,7 @@ def _answer_height_order(
         resolve_referent(localize_scene, object_b),
     )
     first_seen = min(
-        (
-            inst.first_seen_timestamp
-            for inst in instances
-            if inst.first_seen_timestamp is not None
-        ),
+        (inst.first_seen_timestamp for inst in instances if inst.first_seen_timestamp is not None),
         default=None,
     )
     evidence: dict[str, JsonValue] = {

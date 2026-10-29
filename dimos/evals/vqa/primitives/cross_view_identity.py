@@ -258,7 +258,11 @@ def _pick_diff_pairs(
                 ):
                     continue
                 # Clips must come from the same camera optical frame on both sides.
-                if left.camera_frame and right.camera_frame and left.camera_frame != right.camera_frame:
+                if (
+                    left.camera_frame
+                    and right.camera_frame
+                    and left.camera_frame != right.camera_frame
+                ):
                     continue
                 score = left.confidence + right.confidence
                 if best is None or score > best[0]:

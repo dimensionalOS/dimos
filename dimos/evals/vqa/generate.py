@@ -582,9 +582,7 @@ def _materialize_cross_view_clips(
             kept = tuple(
                 v
                 for v in views
-                if not by_camera
-                or not v.camera_frame
-                or v.camera_frame in by_camera
+                if not by_camera or not v.camera_frame or v.camera_frame in by_camera
             )
             if kept:
                 instances[iid] = kept

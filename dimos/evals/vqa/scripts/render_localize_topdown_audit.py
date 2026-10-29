@@ -112,9 +112,7 @@ def _evidence_for_question(full_audit: Path, frame: str, question: str) -> dict[
         answer = row.get("answer") or {}
         original = answer.get("question")
         # Exact match, or ego-clip prefix: "This clip covers …. {original}".
-        if original != question and not (
-            isinstance(original, str) and question.endswith(original)
-        ):
+        if original != question and not (isinstance(original, str) and question.endswith(original)):
             continue
         evidence = answer.get("evidence") or {}
         return evidence if isinstance(evidence, dict) else None
