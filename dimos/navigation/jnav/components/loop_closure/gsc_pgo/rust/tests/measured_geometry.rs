@@ -155,3 +155,19 @@ fn submap_spans_the_sensor_reach_at_the_keyframe_spacing() {
         Config::default().closure_submap_half_range
     );
 }
+
+#[test]
+fn odometry_drift_is_a_random_walk_in_distance_and_turn_and_starts_the_next_run_from_the_config() {
+    let config = Config {
+        odom_xy_drift_per_sqrt_m: 0.01,
+        odom_xy_drift_per_sqrt_rad: 0.02,
+        ..Config::default()
+    };
+    // 4 m travelled while turning 0.25 rad: (1 cm)^2 x 4 + (2 cm)^2 x 0.25
+    let [xy, ..] = dimos_gsc_pgo::big_picture_fit::motion_variances(&config, 4.0, 0.25);
+    assert!((xy - (1e-4 * 4.0 + 4e-4 * 0.25)).abs() < 1e-12, "{xy}");
+    // before any loop the next run's drift is the configured one, measured nowhere
+    let (drift, measured) = GscPgo::new(config.clone()).odometry_drift_for_next_run();
+    assert_eq!(drift[0], [0.01, 0.02]);
+    assert_eq!(measured, [false; 4]);
+}

@@ -156,16 +156,6 @@ class PGOConfig(NativeModuleConfig):
     # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
     closure_robust_huber_k: float = 1.345
 
-    # Odometry drift per keyframe (variance): Point-LIO's measured against ground truth on gir_stairs2 (roll/pitch
-    # 1.4e-6, yaw 3.5e-6, xy 2.9e-4 over 50-keyframe spans, z 2.8e-5..1.6e-4). Locking roll/pitch and z tighter (a
-    # level-robot assumption) makes a loop's vertical drift unabsorbable: office_555_loop1's start-to-end gap then
-    # stays at 18.5 m instead of closing to 7 cm.
-    odom_rot_roll_pitch_var: float = 1e-6
-    odom_rot_yaw_var: float = 3e-6
-    odom_trans_xy_var: float = 1e-4
-    odom_trans_z_var: float = 1e-4
-    # True: odometry noise per unit of motion (rate per metre travelled + rate per radian turned, per source) instead of per keyframe
-    odom_noise_per_motion: bool = False
     # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
     closure_informative_by_graph_covariance: bool = False
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
@@ -176,15 +166,18 @@ class PGOConfig(NativeModuleConfig):
     closure_noise_from_residuals: bool = False
     # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
     odometry_noise_solve_lower_bound: bool = False
-    # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
-    odom_xy_var_per_m: float = 1.53e-7
-    odom_xy_var_per_rad: float = 4.03e-5
-    odom_z_var_per_m: float = 4.12e-7
-    odom_z_var_per_rad: float = 1.49e-5
-    odom_yaw_var_per_m: float = 1e-12
-    odom_yaw_var_per_rad: float = 7.5e-5
-    odom_tilt_var_per_m: float = 4.78e-7
-    odom_tilt_var_per_rad: float = 1.09e-5
+    # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
+    # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
+    # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve
+    # that keeps loops, debug_log (kind "odometry_drift") gives the values the run measured, to start the next run from.
+    odom_xy_drift_per_sqrt_m: float = 3.91e-4
+    odom_xy_drift_per_sqrt_rad: float = 6.35e-3
+    odom_z_drift_per_sqrt_m: float = 6.42e-4
+    odom_z_drift_per_sqrt_rad: float = 3.86e-3
+    odom_yaw_drift_per_sqrt_m: float = 1e-6
+    odom_yaw_drift_per_sqrt_rad: float = 8.66e-3
+    odom_tilt_drift_per_sqrt_m: float = 6.91e-4
+    odom_tilt_drift_per_sqrt_rad: float = 3.3e-3
     # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
     odom_noise_prior_ln_sd_xy: float = 2.4
     odom_noise_prior_ln_sd_z: float = 1.6

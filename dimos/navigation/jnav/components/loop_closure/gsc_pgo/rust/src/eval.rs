@@ -144,6 +144,10 @@ struct EvalOutput {
     /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
     icp_cache_hits: usize,
     icp_cache_misses: usize,
+    /// The odometry drift the run measured, as next run's config inputs (`GscPgo::odometry_drift_for_next_run`): per
+    /// source xy, z, yaw, tilt, [per sqrt m, per sqrt rad], and whether a kept closure measured it.
+    odometry_drift: [[f64; 2]; 4],
+    odometry_drift_measured: [bool; 4],
 }
 
 struct Args {
@@ -756,7 +760,10 @@ fn run() -> Result<(), String> {
         }
         None => (0, 0),
     };
+    let (odometry_drift, odometry_drift_measured) = pgo.odometry_drift_for_next_run();
     let output = EvalOutput {
+        odometry_drift,
+        odometry_drift_measured,
         icp_cache_hits,
         icp_cache_misses,
         db: args.db.display().to_string(),

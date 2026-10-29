@@ -371,19 +371,9 @@ pub struct Config {
     /// Probability that a true inlier's residual falls under GNC's chi-squared
     /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
     pub closure_gnc_inlier_probability: f64,
-    /// Odometry drift per keyframe (variance; rad², m²); see module.py for where the defaults come from.
-    pub odom_rot_roll_pitch_var: f64,
-    pub odom_rot_yaw_var: f64,
-    pub odom_trans_xy_var: f64,
-    pub odom_trans_z_var: f64,
-    /// When true, the odometry's noise is per unit of motion instead of per keyframe: each keyframe step's variance is
-    /// a per-metre rate times the distance travelled plus a per-radian rate times the angle turned, for xy translation
-    /// (m²), z translation (m²), yaw (rad²) and roll/pitch (rad²), so it does not depend on how far apart keyframes are
-    /// (the per-keyframe variances above are then unused).
-    pub odom_noise_per_motion: bool,
     /// When true, a closure is uninformative only where the graph's own covariance of its two ends (heading swing and
     /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
-    /// keyframe gap (always on with `odom_noise_per_motion`).
+    /// keyframe gap.
     pub closure_informative_by_graph_covariance: bool,
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
@@ -403,16 +393,22 @@ pub struct Config {
     /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
     /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
     pub odometry_noise_solve_lower_bound: bool,
-    /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
-    /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
-    pub odom_xy_var_per_m: f64,
-    pub odom_xy_var_per_rad: f64,
-    pub odom_z_var_per_m: f64,
-    pub odom_z_var_per_rad: f64,
-    pub odom_yaw_var_per_m: f64,
-    pub odom_yaw_var_per_rad: f64,
-    pub odom_tilt_var_per_m: f64,
-    pub odom_tilt_var_per_rad: f64,
+    /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
+    /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
+    /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
+    /// turned (m/√rad, rad/√rad); a step's variance is the first squared times its distance plus the second squared
+    /// times its turn. Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five
+    /// recordings (small_mid, gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all
+    /// from turning. After each solve that keeps closures, the module logs the values these measure (debug_log kind
+    /// "odometry_drift"), to start the next run from.
+    pub odom_xy_drift_per_sqrt_m: f64,
+    pub odom_xy_drift_per_sqrt_rad: f64,
+    pub odom_z_drift_per_sqrt_m: f64,
+    pub odom_z_drift_per_sqrt_rad: f64,
+    pub odom_yaw_drift_per_sqrt_m: f64,
+    pub odom_yaw_drift_per_sqrt_rad: f64,
+    pub odom_tilt_drift_per_sqrt_m: f64,
+    pub odom_tilt_drift_per_sqrt_rad: f64,
     /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
     /// the next (xy, z, yaw, roll/pitch): the prior that `odometry_noise_from_closures` holds its estimate to. 0 = one
     /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
@@ -565,24 +561,19 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            odom_rot_roll_pitch_var: 1e-6,
-            odom_rot_yaw_var: 3e-6,
-            odom_trans_xy_var: 1e-4,
-            odom_trans_z_var: 1e-4,
-            odom_noise_per_motion: false,
             closure_informative_by_graph_covariance: false,
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: false,
             closure_noise_from_residuals: false,
             odometry_noise_solve_lower_bound: false,
-            odom_xy_var_per_m: 1.53e-7,
-            odom_xy_var_per_rad: 4.03e-5,
-            odom_z_var_per_m: 4.12e-7,
-            odom_z_var_per_rad: 1.49e-5,
-            odom_yaw_var_per_m: 1e-12,
-            odom_yaw_var_per_rad: 7.5e-5,
-            odom_tilt_var_per_m: 4.78e-7,
-            odom_tilt_var_per_rad: 1.09e-5,
+            odom_xy_drift_per_sqrt_m: 3.91e-4,
+            odom_xy_drift_per_sqrt_rad: 6.35e-3,
+            odom_z_drift_per_sqrt_m: 6.42e-4,
+            odom_z_drift_per_sqrt_rad: 3.86e-3,
+            odom_yaw_drift_per_sqrt_m: 1e-6,
+            odom_yaw_drift_per_sqrt_rad: 8.66e-3,
+            odom_tilt_drift_per_sqrt_m: 6.91e-4,
+            odom_tilt_drift_per_sqrt_rad: 3.3e-3,
             odom_noise_prior_ln_sd_xy: 2.4,
             odom_noise_prior_ln_sd_z: 1.6,
             odom_noise_prior_ln_sd_yaw: 2.4,
@@ -998,13 +989,11 @@ impl ClosureSearch {
         let gate_noise = diag.odometry_noise_gate;
         let odometry_step = self.mean_step_xy_variance * gate_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let by_graph = (self.config.odom_noise_per_motion
-            || self.config.closure_informative_by_graph_covariance)
-            && diag
-                .innovation_covariance
-                .iter()
-                .flatten()
-                .all(|v| v.is_finite());
+        let by_graph = diag
+            .innovation_covariance
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite());
         // at the upper bound: scaled by the most any component's bound exceeds its estimate
         let widen = (0..4)
             .map(|c| gate_noise[c] / diag.odometry_noise[c])
@@ -1311,6 +1300,26 @@ impl GscPgo {
             });
             (self.odometry_noise_ln[c] + side * z * sd).exp()
         })
+    }
+
+    /// The odometry drift this run's learned noise implies, in the config's own units (`odom_*_drift_per_sqrt_m` and
+    /// `_per_sqrt_rad`, per source xy, z, yaw, tilt), to start the next run from; and per source whether the closures
+    /// measured it (an unmeasured source repeats the configured drift).
+    pub fn odometry_drift_for_next_run(&self) -> ([[f64; 2]; 4], [bool; 4]) {
+        let c = &self.config;
+        let stated = [
+            [c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad],
+            [c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad],
+            [c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad],
+            [c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad],
+        ];
+        let noise = self.odometry_noise();
+        let measured = std::array::from_fn(|k| self.odometry_noise_ln_sd[k].is_some());
+        // the learned noise scales each source's variances, so its drift (a standard deviation) by the square root
+        (
+            std::array::from_fn(|k| stated[k].map(|d| d * noise[k].sqrt())),
+            measured,
+        )
     }
 
     pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {

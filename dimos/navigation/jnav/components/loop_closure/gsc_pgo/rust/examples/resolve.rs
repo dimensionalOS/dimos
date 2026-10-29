@@ -60,12 +60,12 @@ fn main() {
         .enumerate()
         .map(|(i, p)| {
             let back = mat3::transpose(&p[0].0);
-            let (xy, z, yaw, tilt) = (
-                config.odom_trans_xy_var * noise,
-                config.odom_trans_z_var * noise,
-                config.odom_rot_yaw_var * noise,
-                config.odom_rot_roll_pitch_var * noise,
+            let step = dimos_gsc_pgo::big_picture_fit::motion_variances(
+                &config,
+                mat3::norm(&mat3::sub(&p[1].1, &p[0].1)),
+                mat3::angular_distance(&p[0].0, &p[1].0),
             );
+            let [xy, z, yaw, tilt] = step.map(|v| v * noise);
             Edge {
                 from: i,
                 to: i + 1,
@@ -97,7 +97,11 @@ fn main() {
         gnc_inlier_probability: config.closure_gnc_inlier_probability,
         huber_k: config.closure_robust_huber_k,
         pcm_odometry_translation_variance: if pcm {
-            config.odom_trans_xy_var * noise
+            dimos_gsc_pgo::big_picture_fit::motion_variances(
+                &config,
+                config.keyframe_min_distance_meters,
+                config.keyframe_min_rotation_degrees.to_radians(),
+            )[0] * noise
         } else {
             0.0
         },
