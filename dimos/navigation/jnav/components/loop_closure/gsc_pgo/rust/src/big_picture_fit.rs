@@ -222,6 +222,20 @@ pub(crate) fn solve_core(
         &landmark_dims,
         &config.gravity,
     );
+    // the noise evidence never sees the gravity factors: they are the raw odometry's own tilt, not a second measurement
+    // of it, so as redundancy they would vouch for the odometry's tilt steps with the steps' own data (the learner then
+    // collapses the tilt noise towards 0); it reads the odometry and closures alone, re-solved without them
+    let evidence_pattern = (!config.gravity.is_empty()).then(|| {
+        Pattern::new(
+            free,
+            odometry.iter().chain(closures),
+            unary,
+            sightings,
+            &landmark_dims,
+            &[],
+        )
+    });
+    let evidence_pattern = evidence_pattern.as_ref().unwrap_or(&pattern);
 
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
     // until each closure is clearly in or out. Odometry is always in.
@@ -465,9 +479,17 @@ pub(crate) fn solve_core(
         // not need (look-alike floors that agree with each other)
         let overtrusted =
             |state: &mut State, weights: &[f64], unary_w: &[f64], sighting_w: &[f64]| {
+                // the evidence's own re-solve, without the gravity factors, on a copy: the verdict's state keeps them
+                let mut without_gravity;
+                let state = if config.gravity.is_empty() {
+                    state
+                } else {
+                    without_gravity = state.clone();
+                    &mut without_gravity
+                };
                 odometry_overtrusted(
                     state,
-                    &pattern,
+                    evidence_pattern,
                     odometry,
                     closures,
                     weights,
@@ -585,9 +607,25 @@ pub(crate) fn solve_core(
     } else {
         huber.clone()
     };
+    // without the gravity factors the evidence reads the odometry and closures' own solve
+    let mut without_gravity = state.clone();
+    if !config.gravity.is_empty() {
+        levenberg_marquardt(
+            &mut without_gravity,
+            evidence_pattern,
+            odometry,
+            closures,
+            &evidence_weights,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+            1e-5,
+        );
+    }
     let odometry_noise_evidence = odometry_noise_evidence(
-        &state,
-        &pattern,
+        &without_gravity,
+        evidence_pattern,
         odometry,
         closures,
         &evidence_weights,
@@ -636,9 +674,9 @@ fn odometry_noise_evidence(
     sighting_weights: &[f64],
 ) -> Option<[(f64, f64); 6]> {
     let size = pattern.size;
-    let factor = |cw: &[f64], uw: &[f64], sw: &[f64], gw: f64| {
+    let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
         let (mut values, _, diagonal) = normal_equations(
-            state, pattern, odometry, closures, cw, unary, uw, sightings, sw, gw,
+            state, pattern, odometry, closures, cw, unary, uw, sightings, sw,
         );
         values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
         let hessian =
@@ -646,13 +684,12 @@ fn odometry_noise_evidence(
                 .ok()?;
         Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower).ok()
     };
-    let full = factor(closure_weights, unary_weights, sighting_weights, 1.0)?;
-    // the odometry alone: everything else, gravity too, at weight 0 (keeping the pattern's fill order)
+    let full = factor(closure_weights, unary_weights, sighting_weights)?;
+    // the odometry alone: everything else at weight 0 (keeping the pattern's fill order)
     let odometry_only = factor(
         &vec![0.0; closures.len()],
         &vec![0.0; unary.len()],
         &vec![0.0; sightings.len()],
-        0.0,
     )?;
     let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
         odometry.iter().map(|e| linearize(e, state)).collect();
@@ -932,7 +969,6 @@ fn relative_position_covariances(
         unary_weights,
         sightings,
         sighting_weights,
-        1.0,
     );
     // the pattern's damping diagonal, at Levenberg-Marquardt's smallest damping
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
@@ -1058,6 +1094,7 @@ fn relative_position_covariances(
     )
 }
 
+#[derive(Clone)]
 pub(crate) struct State {
     pub(crate) rotation: Vec<Mat3>,
     pub(crate) position: Vec<Vec3>,
@@ -1324,7 +1361,6 @@ fn levenberg_marquardt(
             unary_weights,
             sightings,
             sighting_weights,
-            1.0,
         );
         let filled = values.len();
         values.resize(filled + size, 0.0);
@@ -1407,7 +1443,6 @@ fn normal_equations(
     unary_weights: &[f64],
     sightings: &[Sighting],
     sighting_weights: &[f64],
-    gravity_weight: f64,
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let mut values: Vec<f64> = Vec::new();
     let mut gradient = vec![0.0; pattern.size];
@@ -1526,7 +1561,7 @@ fn normal_equations(
             &mat3::transpose(&state.rotation[g.keyframe]),
             &g.up,
         ));
-        let w = gravity_weight / g.variance;
+        let w = 1.0 / g.variance;
         for (i, j, row, col) in block_entries(slot, slot) {
             let v = if i < 3 && j < 3 {
                 w * (0..3).map(|m| jacobian[m][i] * jacobian[m][j]).sum::<f64>()

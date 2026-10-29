@@ -116,3 +116,91 @@ fn a_look_alike_floor_is_kept_by_tilting_unless_tilt_is_held_to_gravity() {
     assert_eq!(verdict(truth, None), 1.0);
     assert_eq!(verdict(truth, Some(bound)), 1.0);
 }
+
+/// The gravity factors are the raw odometry's own tilt, not a second measurement of it, so the noise evidence must not
+/// count them: with them in its redundancy the odometry's tilt steps look explained by their own data and the learner
+/// collapses the roll/pitch noise towards 0. A square walk whose tilt drifts as a random walk (what the learner models),
+/// closed by one true closure: the solve's tilt evidence (residual sum and redundancy) is the same with the gravity
+/// factors as without.
+#[test]
+fn the_noise_evidence_ignores_the_gravity_factors() {
+    let normal = |k: usize, salt: f64| {
+        let u = |k: usize, s: f64| {
+            ((k as f64 * 12.9898 + s * 78.233).sin() * 43758.5453)
+                .rem_euclid(1.0)
+                .max(1e-12)
+        };
+        (-2.0 * u(k, salt).ln()).sqrt() * (std::f64::consts::TAU * u(k, salt + 0.5)).cos()
+    };
+    let tilt_step = 1e-3;
+    let truth = spiral();
+    let last = truth.len() - 1;
+    // the odometry: the true steps with a random-walk tilt error
+    let mut odometry = vec![truth[0]];
+    for k in 1..=last {
+        let step = between(&truth, k - 1, k, [1.0; 6]);
+        let error = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, -tilt_step * normal(k, 1.0)],
+            [0.0, tilt_step * normal(k, 1.0), 1.0],
+        ];
+        let (r, p) = odometry[k - 1];
+        odometry.push((
+            mat3::mat_mul(&r, &mat3::mat_mul(&step.rotation, &error)),
+            mat3::add(&p, &mat3::mat_vec(&r, &step.translation)),
+        ));
+    }
+    let edges: Vec<Edge> = (1..=last)
+        .map(|k| {
+            between(
+                &odometry,
+                k - 1,
+                k,
+                [tilt_step.powi(2), tilt_step.powi(2), 1e-6, 1e-4, 1e-4, 1e-6],
+            )
+        })
+        .collect();
+    let closure = between(&truth, 0, last, [1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4]);
+    let tilt_evidence = |gravity: Vec<GravityPrior>| {
+        let solution = solve(
+            &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
+            &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
+            &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
+            &edges,
+            &[closure],
+            &SolveConfig {
+                gnc_variance_scale: 10.0,
+                gnc_inlier_probability: 0.95,
+                huber_k: 0.0,
+                pcm_odometry_translation_variance: 0.0,
+                gnc_overtrust_check: false,
+                overtrust_noise_headroom: [1.0; 4],
+                gravity,
+            },
+        );
+        assert_eq!(solution.closure_weights, vec![1.0]);
+        solution.odometry_noise_evidence.expect("evidence")[3]
+    };
+    let without = tilt_evidence(Vec::new());
+    let with = tilt_evidence(
+        (1..=last)
+            .map(|k| GravityPrior {
+                keyframe: k,
+                up: [0.0, 0.0, 1.0],
+                body_up: mat3::mat_vec(&mat3::transpose(&odometry[k].0), &[0.0, 0.0, 1.0]),
+                variance: 0.5f64.to_radians().powi(2),
+            })
+            .collect(),
+    );
+    eprintln!("tilt evidence (sum, redundancy): {without:?} without the gravity factors, {with:?} with them");
+    assert!(
+        without.1 > 0.5,
+        "the closure gives the tilt some redundancy: {without:?}"
+    );
+    for (a, b) in [(without.0, with.0), (without.1, with.1)] {
+        assert!(
+            (a - b).abs() <= 1e-3 * a.abs().max(1e-9),
+            "{without:?} vs {with:?}"
+        );
+    }
+}
