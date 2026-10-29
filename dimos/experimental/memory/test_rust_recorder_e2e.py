@@ -46,9 +46,8 @@ from dimos.experimental.memory.rust_recorder import (
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
-from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import extract_episodes
-from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec
+from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec, RecordingSchema
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.replay_module import ReplayModule

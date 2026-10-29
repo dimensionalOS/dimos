@@ -28,8 +28,7 @@ from dimos.core.stream import Out, RemoteIn
 from dimos.imitation.collection import recorder as recorder_module
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect
-from dimos.imitation.collection.recording import RecordingSchema
-from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig
+from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String

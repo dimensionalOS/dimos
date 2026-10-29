@@ -37,7 +37,6 @@ from dimos.imitation.collection.episode import (
 )
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
-from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     extract_episodes,
@@ -131,11 +130,11 @@ def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
                 **feature.model_dump(),
                 message_type=Image if name == "camera" else JointState,
             )
-            for name, feature in config.observation.items()
+            for name, feature in config.recording_schema.observation.items()
         },
         actions={
             name: FeatureSpec(**feature.model_dump(), message_type=JointState)
-            for name, feature in config.action.items()
+            for name, feature in config.recording_schema.action.items()
         },
     )
     atom = collect(profile=profile, recording=db_path.parent, format="sqlite").active_blueprints[0]
@@ -325,8 +324,15 @@ def test_collection_to_hdf5_roundtrip(
 ) -> None:
     db_path, recorded_images = recorded_session
 
+    schema = RecordingSchema.read(db_path.parent)
+    # This synthetic fixture publishes at 1 Hz; configure offline preparation
+    # explicitly rather than using collection's fixed 30 Hz defaults.
+    offline_schema = _dataprep_config(db_path, OutputConfig(path=tmp_path)).recording_schema
+    schema = schema.model_copy(
+        update={"sync": offline_schema.sync, "quality": offline_schema.quality}
+    )
     hdf5_path = run_dataprep(
-        RecordingSchema.read(db_path.parent).dataprep_config(
+        schema.dataprep_config(
             db_path.parent,
             OutputConfig(
                 format="hdf5",

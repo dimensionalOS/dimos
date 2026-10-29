@@ -28,9 +28,8 @@ import pytest
 
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import run_dataprep
-from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig
+from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState

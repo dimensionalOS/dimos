@@ -15,7 +15,7 @@
 
 import pytest
 
-from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.schema import RecordingSchema
 
 
 @pytest.mark.parametrize("payload", ["../elsewhere.db", "/tmp/elsewhere.mcap"])

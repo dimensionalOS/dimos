@@ -18,7 +18,12 @@ import pytest
 
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.core import resolve_field
-from dimos.imitation.dataprep.schema import DataPrepConfig, FeatureSpec, OutputConfig
+from dimos.imitation.dataprep.schema import (
+    DataPrepConfig,
+    FeatureSpec,
+    OutputConfig,
+    RecordingSchema,
+)
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -86,15 +91,19 @@ def test_profile_lowers_to_existing_json_protocol_and_preserves_projections(prof
         "measured": JointState,
         "commanded": JointState,
     }
-    assert restored.observation["positions"].names == ["b", "a"]
-    assert restored.action["target"].names == ["b"]
-    assert restored.action["target"].source_kind == "joint_position_updates"
-    assert restored.observation["positions"].source_kind == "snapshot"
-    assert restored.observation["positions"].message_type is None
-    assert restored.action["target"].message_type is None
+    assert restored.recording_schema.observation["positions"].names == ["b", "a"]
+    assert restored.recording_schema.action["target"].names == ["b"]
+    assert restored.recording_schema.action["target"].source_kind == "joint_position_updates"
+    assert restored.recording_schema.observation["positions"].source_kind == "snapshot"
+    assert restored.recording_schema.observation["positions"].message_type is None
+    assert restored.recording_schema.action["target"].message_type is None
     message = JointState(name=["a", "b"], position=[1.0, 2.0], velocity=[3.0, 4.0])
-    np.testing.assert_array_equal(resolve_field(message, restored.observation["positions"]), [2, 1])
-    np.testing.assert_array_equal(resolve_field(message, restored.observation["velocities"]), [3])
+    np.testing.assert_array_equal(
+        resolve_field(message, restored.recording_schema.observation["positions"]), [2, 1]
+    )
+    np.testing.assert_array_equal(
+        resolve_field(message, restored.recording_schema.observation["velocities"]), [3]
+    )
 
 
 def test_profile_rejects_conflicting_raw_types(profile, profile_values):
@@ -147,3 +156,15 @@ def test_offline_features_require_message_types_when_used_for_capture(profile, p
 
     with pytest.raises(ValueError, match="Collection stream 'commanded' requires message_type"):
         CollectionProfile(**values)
+
+
+def test_preparation_uses_shared_portable_schema(profile, tmp_path):
+    config = profile.dataprep_config(
+        source="input.mcap", output=OutputConfig(path=tmp_path / "dataset")
+    )
+    assert config.recording_schema == profile.to_schema()
+    assert config.source == "input.mcap"
+    assert config.output.path == tmp_path / "dataset"
+    restored = RecordingSchema.model_validate_json(config.recording_schema.model_dump_json())
+    assert restored.action["target"].names == ["b"]
+    assert restored.observation["positions"].names == ["b", "a"]

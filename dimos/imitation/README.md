@@ -7,7 +7,7 @@ for collection, custom profiles, dataset preparation, and existing LeRobot rollo
 
 - `collection/profile.py`: typed source streams and dataset feature projections.
 - `collection/recorder.py`: profile-to-Blueprint recorder factory.
-- `collection/recording.py`: portable recording directory and saved schema.
+- `dataprep/schema.py`: shared portable recording schema and preparation config.
 - `dataprep/`: MCAP and SQLite preparation for LeRobot or HDF5.
 - `tui.py`: attached episode and rollout controls, discovered through typed Specs.
 - `policy/lerobot/`: isolated single-camera policy runtime.

@@ -20,12 +20,12 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.schema import (
     DEFAULT_FPS,
     DataPrepConfig,
     FeatureSpec,
     OutputConfig,
+    RecordingSchema,
     SyncConfig,
     validate_source_kinds,
 )
@@ -93,7 +93,7 @@ class CollectionProfile(BaseConfig):
         """Prepare an explicit raw artifact with the same persisted interpretation."""
         schema = self.to_schema()
         return DataPrepConfig(
-            **schema.model_dump(exclude={"name", "robot_type", "metadata", "payload"}),
+            recording_schema=schema,
             source=source,
             output=output.model_copy(update={"metadata": {**self.metadata, **output.metadata}}),
         )

@@ -139,7 +139,7 @@ The collection API exposes no `sync` or `quality` options. Existing low-level
 preparation APIs retain their alignment and quality settings for offline use.
 
 ```python session=profile no-result
-from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.schema import RecordingSchema
 from dimos.imitation.dataprep.schema import OutputConfig
 
 schema = RecordingSchema.model_validate_json(profile.to_schema().model_dump_json())
@@ -147,8 +147,8 @@ config = schema.dataprep_config(
     Path("recordings/session-001"),
     OutputConfig(format="lerobot", path=Path("datasets/custom-arm")),
 )
-assert config.action["action"].names == joints
-assert config.sync.rate_hz == 30
+assert config.recording_schema.action["action"].names == joints
+assert config.recording_schema.sync.rate_hz == 30
 assert "message_type" not in schema.model_dump_json()
 ```
 
