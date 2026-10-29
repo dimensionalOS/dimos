@@ -7,7 +7,7 @@ Results like:
 
 Run:
 
-  GITHUB_REPOSITORY=dimensionalOS/dimos bin/runner-health --days 30
+  GITHUB_REPOSITORY=dimensionalOS/dimos bin/ci/runner-health --days 30
 
 With --create-issues (the weekly runner-health workflow) a runner that failed
 every job of a kind (the labels asked for), or significantly more of them than
@@ -137,7 +137,7 @@ def file_issues(
     except urllib.error.HTTPError as err:
         if err.code != 404:
             raise
-        label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/runner-health"}
+        label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/ci/runner-health"}
         fetch(repo, "labels", token, label)
     run = os.environ.get("GITHUB_RUN_ID")
     filed_by = f"[runner-health](https://github.com/{repo}/actions/runs/{run})" if run else "hand"
