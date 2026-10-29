@@ -21,6 +21,7 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
 from dimos.simulation.m20_sim.body import LeggedM20
 from dimos.simulation.m20_sim.policy import M20Policy
@@ -80,6 +81,18 @@ def test_deskew_keeps_the_floor_flat_while_walking(sim: Sim) -> None:
     for _ in range(75):
         sim.tick(FORWARD)
     _floor_is_flat(_next_frame(sim, FORWARD), sim)
+
+
+def test_no_return_off_the_robot_rises_out_of_the_floor_voxel(sim: Sim) -> None:
+    for command in (STILL, FORWARD):
+        for _ in range(25):
+            sim.tick(command)
+        p = _next_frame(sim, command).points
+        floor = sim.scene.params["z0"] - sim.base_pose()[0][2]
+        inside = (
+            (np.abs(p[:, 0]) < 0.5) & (np.abs(p[:, 1]) < 0.32) & (p[:, 2] > floor + VOXEL_SIZE_M)
+        )
+        assert inside.sum() == 0
 
 
 def test_standing_robot_touches_the_floor_only_with_its_wheels(sim: Sim) -> None:

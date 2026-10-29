@@ -44,6 +44,8 @@ STAND_HEIGHT = 0.566
 CLEARANCE_HEIGHT = 0.66
 TRUNK_HALF_EXTENTS = (0.41, 0.121, 0.087)
 VENDOR_COLLISION_GROUP = 1
+# past the farthest wheel return, 0.57 m, as the vendor LIO's blind of 0.5 would not be
+LIO_BLIND_RANGE = 0.6
 COLLISION_RGBA = (0.3, 0.3, 0.3, 1.0)
 
 FRONT = Sensor(
@@ -52,6 +54,7 @@ FRONT = Sensor(
     Rotation.from_euler("y", 90, degrees=True).as_matrix(),
     sim_airy,
     HOUSING_HALF_EXTENTS,
+    lio_blind_range=LIO_BLIND_RANGE,
     sees_base=False,
 )
 REAR = Sensor(
@@ -60,6 +63,7 @@ REAR = Sensor(
     Rotation.from_euler("y", -90, degrees=True).as_matrix(),
     sim_airy,
     HOUSING_HALF_EXTENTS,
+    lio_blind_range=LIO_BLIND_RANGE,
     sees_base=False,
 )
 
