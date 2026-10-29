@@ -219,7 +219,8 @@ impl ClosureSearch {
         first: &IcpResult,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
-        memo: &dyn Fn(&str, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
+        // an alignment's cloud computation through the cache, its encoded alignment starting at the given index
+        memo: &dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
     ) -> Option<IcpResult> {
         let max_keyframes = diag
             .extension_budget
@@ -282,7 +283,7 @@ impl ClosureSearch {
             let sharp = self.config.closure_sharpness_half > 0.0;
             let likelihood = self.config.closure_likelihood_confidence;
             let overlap = self.config.closure_overlap_score && !likelihood;
-            let round = memo(&format!("x{keyframes}"), &mut || {
+            let round = memo(&format!("xr{keyframes}"), 2, &mut || {
                 // the stacked source is thinned to about the single scan's size, so a round costs about what the first
                 // ICP did; the target keeps full resolution so the inlier test below means the same thing in every round
                 let clearance = self.config.closure_ground_clearance_m;

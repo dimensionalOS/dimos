@@ -478,6 +478,11 @@ pub struct Config {
     /// a look-alike floor cannot be fitted by tilting a chain of keyframes. The bound is the committed closures' own
     /// (`odometry_gravity_variance`); the odometry frame's z must be up.
     pub odometry_gravity_bound: bool,
+    /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
+    /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
+    /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
+    /// by newer wrong closures) no longer drops it (huge overtrust: 24 kept, 0, 24, 0).
+    pub closure_commitments: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -579,6 +584,7 @@ impl Default for Config {
             closure_gnc_overtrust_check: false,
             closure_icp_covariance: false,
             odometry_gravity_bound: false,
+            closure_commitments: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -803,6 +809,39 @@ impl ClosureSearch {
                 None => compute(),
             }
         };
+        // an alignment through the cache: stored as the source's pose relative to the target (`relative_icp`), the
+        // computed value itself returned when it was computed here
+        let (source_pose, target_pose) = (
+            (
+                &self.key_poses[cur_idx].rotation_global,
+                &self.key_poses[cur_idx].translation_global,
+            ),
+            (
+                &self.key_poses[target_idx].rotation_global,
+                &self.key_poses[target_idx].translation_global,
+            ),
+        );
+        let memo_alignment = |tag: &str,
+                              at: usize,
+                              compute: &mut dyn FnMut() -> Vec<f64>|
+         -> Vec<f64> {
+            let Some(cache) = &cache else {
+                return compute();
+            };
+            let mut computed = None;
+            let stored = cache.get_or(format!("{cur_idx}:{target_idx}:{tag}"), || {
+                let value = compute();
+                let mut relative = value.clone();
+                crate::icp_cache::relative_icp(&mut relative[at..], source_pose, target_pose, true);
+                computed = Some(value);
+                relative
+            });
+            computed.unwrap_or_else(|| {
+                let mut value = stored;
+                crate::icp_cache::relative_icp(&mut value[at..], source_pose, target_pose, false);
+                value
+            })
+        };
 
         // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
         // lies. It reads only the source scan, so it runs before ICP (computed for every candidate, gate on or off)
@@ -823,7 +862,7 @@ impl ClosureSearch {
         }
 
         let t0 = std::time::Instant::now();
-        let icp = crate::icp_cache::decode_icp(&memo("icp", &mut || {
+        let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
             crate::icp_cache::encode_icp(&icp(
                 source_cloud,
@@ -1139,7 +1178,7 @@ impl ClosureSearch {
                 &icp,
                 &mut diag,
                 &mut required,
-                &memo,
+                &memo_alignment,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {

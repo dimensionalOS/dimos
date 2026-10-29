@@ -22,6 +22,47 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::connection_fit::IcpResult;
+use crate::mat3::{self, Mat3, Vec3};
+
+/// An encoded alignment's correction (`encode_icp`'s rotation and translation, world axes, moving the source cloud) turned
+/// into the source keyframe's pose relative to the target keyframe's (`forward`), or back. The cache stores the
+/// relative pose: the correction alone depends on where the graph had put the two keyframes when it was computed, so a
+/// replay under any other noise or verdict (a differently corrected graph) read it back tens of metres off (huge).
+pub fn relative_icp(
+    encoded: &mut [f64],
+    source: (&Mat3, &Vec3),
+    target: (&Mat3, &Vec3),
+    forward: bool,
+) {
+    let rotation: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| encoded[1 + 3 * i + j]));
+    let translation: Vec3 = [encoded[10], encoded[11], encoded[12]];
+    let ((rs, ps), (rt, pt)) = (source, target);
+    let back = mat3::transpose(rt);
+    let (rotation, translation) = if forward {
+        // R_rel = Rt^T R Rs, t_rel = Rt^T (R ps + t - pt)
+        (
+            mat3::mat_mul(&back, &mat3::mat_mul(&rotation, rs)),
+            mat3::mat_vec(
+                &back,
+                &mat3::sub(&mat3::add(&mat3::mat_vec(&rotation, ps), &translation), pt),
+            ),
+        )
+    } else {
+        // R = Rt R_rel Rs^T, t = pt + Rt t_rel - R ps
+        let r = mat3::mat_mul(&mat3::mat_mul(rt, &rotation), &mat3::transpose(rs));
+        let t = mat3::sub(
+            &mat3::add(pt, &mat3::mat_vec(rt, &translation)),
+            &mat3::mat_vec(&r, ps),
+        );
+        (r, t)
+    };
+    for i in 0..3 {
+        for j in 0..3 {
+            encoded[1 + 3 * i + j] = rotation[i][j];
+        }
+        encoded[10 + i] = translation[i];
+    }
+}
 
 /// Whether the cache stores what is computed or answers from what was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,4 +170,70 @@ pub fn from_bytes(bytes: &[u8]) -> Result<HashMap<String, Vec<f64>>, String> {
         entries.insert(key, value);
     }
     Ok(entries)
+}
+
+#[cfg(test)]
+mod relative_icp_tests {
+    use super::relative_icp;
+    use crate::mat3::{self, Mat3, Vec3};
+
+    fn rot(axis: Vec3, angle: f64) -> Mat3 {
+        let n = mat3::norm(&axis);
+        let k = mat3::skew(&mat3::scale(&axis, 1.0 / n));
+        let k2 = mat3::mat_mul(&k, &k);
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                (i == j) as u8 as f64 + angle.sin() * k[i][j] + (1.0 - angle.cos()) * k2[i][j]
+            })
+        })
+    }
+
+    /// The same alignment read back under a differently corrected graph (both keyframes moved by one rigid motion, as a
+    /// solve moves them) gives the same source pose relative to the target, where replaying the raw correction would not.
+    #[test]
+    fn a_cached_alignment_keeps_its_relative_pose_under_a_moved_graph() {
+        let (rs, ps) = (rot([0.2, 0.1, 1.0], 0.7), [12.0, -3.0, 1.5]);
+        let (rt, pt) = (rot([0.0, 0.3, 1.0], -1.2), [2.0, 4.0, 0.2]);
+        let (rc, tc) = (rot([1.0, -0.4, 0.2], 0.05), [0.8, -0.3, 0.1]);
+        let mut encoded = vec![1.0];
+        encoded.extend(rc.iter().flatten());
+        encoded.extend(tc);
+        encoded.extend([0.02, 0.9]);
+        let mut stored = encoded.clone();
+        relative_icp(&mut stored, (&rs, &ps), (&rt, &pt), true);
+        // back at the same graph: the correction itself
+        let mut same = stored.clone();
+        relative_icp(&mut same, (&rs, &ps), (&rt, &pt), false);
+        for (a, b) in same.iter().zip(&encoded) {
+            assert!((a - b).abs() < 1e-12, "{same:?} vs {encoded:?}");
+        }
+        // under a graph moved by g (rotation rg, then translation pg): the source moved relative to the target the same
+        let (rg, pg) = (rot([0.1, 1.0, 0.3], 0.9), [40.0, -25.0, 7.0]);
+        let moved = |r: &Mat3, p: &Vec3| {
+            (
+                mat3::mat_mul(&rg, r),
+                mat3::add(&mat3::mat_vec(&rg, p), &pg),
+            )
+        };
+        let ((rs2, ps2), (rt2, pt2)) = (moved(&rs, &ps), moved(&rt, &pt));
+        let mut replayed = stored.clone();
+        relative_icp(&mut replayed, (&rs2, &ps2), (&rt2, &pt2), false);
+        let relative = |r: &Mat3, t: &Vec3, rs: &Mat3, ps: &Vec3, rt: &Mat3, pt: &Vec3| {
+            let back = mat3::transpose(rt);
+            (
+                mat3::mat_mul(&back, &mat3::mat_mul(r, rs)),
+                mat3::mat_vec(&back, &mat3::sub(&mat3::add(&mat3::mat_vec(r, ps), t), pt)),
+            )
+        };
+        let r2: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| replayed[1 + 3 * i + j]));
+        let t2 = [replayed[10], replayed[11], replayed[12]];
+        let (want_r, want_t) = relative(&rc, &tc, &rs, &ps, &rt, &pt);
+        let (got_r, got_t) = relative(&r2, &t2, &rs2, &ps2, &rt2, &pt2);
+        assert!(
+            mat3::norm(&mat3::sub(&want_t, &got_t)) < 1e-9,
+            "{want_t:?} vs {got_t:?}"
+        );
+        assert!(mat3::angular_distance(&want_r, &got_r) < 1e-9);
+        assert_eq!(replayed[13..], encoded[13..]);
+    }
 }

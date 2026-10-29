@@ -109,6 +109,8 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_covariance: bool = False
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
     odometry_gravity_bound: bool = False
+    # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
+    closure_commitments: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

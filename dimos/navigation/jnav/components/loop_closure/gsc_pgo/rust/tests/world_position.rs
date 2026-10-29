@@ -120,6 +120,7 @@ fn config() -> SolveConfig {
         gnc_overtrust_check: false,
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
+        committed: Vec::new(),
     }
 }
 
