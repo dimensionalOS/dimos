@@ -14,13 +14,10 @@
 
 """DimOS lifecycle owner of one MuJoCo world.
 
-Robot IO is ordinary ports. For each robot in its world a subclass declares
-``<robot_id>_motor_command: In[MotorCommandArray]`` and any of
-``<robot_id>_motor_states: Out[JointState]``, ``<robot_id>_imu: Out[Imu]``,
-``<robot_id>_odom: Out[PoseStamped]`` and ``<robot_id>_tf: Out[TFMessage]``.
-Those are the messages a hardware connection publishes, so the coordinator's
-transport adapter drives a simulated robot exactly like a real one. A robot
-without ports holds its start pose. Sensor workers read the ``snapshots`` stream.
+Retained connections use the private standard-message transports in
+``robot_topics``. Explicit compositions may instead declare per-robot ports on
+a subclass, e.g. ``g1_motor_command: In[MotorCommandArray]``. A robot without
+either IO configuration holds its start pose. Sensor workers read snapshots.
 """
 
 from __future__ import annotations
@@ -39,6 +36,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -56,6 +55,13 @@ logger = setup_logger()
 COMMAND_PORT = "motor_command"
 FEEDBACK_PORTS = ("motor_states", "imu", "odom", "tf")
 PORT_KINDS = (COMMAND_PORT, *FEEDBACK_PORTS)
+PORT_TYPES: dict[str, type] = {
+    COMMAND_PORT: MotorCommandArray,
+    "motor_states": JointState,
+    "imu": Imu,
+    "odom": PoseStamped,
+    "tf": TFMessage,
+}
 
 
 def robot_ports(module: type[Module], robots: Iterable[str]) -> dict[str, dict[str, str]]:
@@ -84,6 +90,7 @@ def robot_ports(module: type[Module], robots: Iterable[str]) -> dict[str, dict[s
 
 class SimulationModuleConfig(ModuleConfig):
     world: WorldConfig
+    robot_topics: dict[str, dict[str, str]] = {}
 
 
 class SimulationModule(Module):
@@ -99,7 +106,7 @@ class SimulationModule(Module):
         self._thread: threading.Thread | None = None
         self._lifecycle_lock = threading.RLock()
         self._failure: str | None = None
-        self._outputs: dict[str, dict[str, Out[Any]]] = {}
+        self._outputs: dict[str, dict[str, Out[Any] | PubSubTransport[Any]]] = {}
         self._rejected: dict[str, int] = {}
 
     @rpc
@@ -178,7 +185,7 @@ class SimulationModule(Module):
         self.build()
         runtime = self._require_runtime()
         for robot_id, names in robot_ports(type(self), self.config.world.robots).items():
-            outputs: dict[str, Out[Any]] = {}
+            outputs: dict[str, Out[Any] | PubSubTransport[Any]] = {}
             for kind, attribute in names.items():
                 port = getattr(self, attribute)
                 if kind == COMMAND_PORT:
@@ -190,6 +197,24 @@ class SimulationModule(Module):
                     assert isinstance(port, Out)
                     outputs[kind] = port
             self._outputs[robot_id] = outputs
+        for robot_id, topics in self.config.robot_topics.items():
+            if robot_id not in self.config.world.robots:
+                raise ValueError(f"stream configuration names unknown robot {robot_id!r}")
+            declared = robot_ports(type(self), self.config.world.robots)[robot_id]
+            if declared.keys() & topics.keys():
+                raise ValueError(f"{robot_id}: ports and robot_topics configure the same IO")
+            for kind, topic in topics.items():
+                if kind not in PORT_TYPES:
+                    raise ValueError(f"unknown robot IO kind {kind!r}")
+                transport = make_transport(topic, PORT_TYPES[kind], g=self.config.g)
+                self.register_disposable(Disposable(transport.stop))
+                transport.start()
+                if kind == COMMAND_PORT:
+                    self.register_disposable(
+                        Disposable(transport.subscribe(functools.partial(self._command, robot_id)))
+                    )
+                else:
+                    self._outputs[robot_id][kind] = transport
         runtime.publish_feedback = self._publish_feedback
         runtime.publish_snapshot = self.snapshots.publish
         self._stop.clear()

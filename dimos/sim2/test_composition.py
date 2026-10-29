@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware modules that declare a twin are swapped for simulation on the same streams."""
+"""Simulation retains robot connections and replaces only standalone sensors."""
 
 from dataclasses import replace
 from pathlib import Path
@@ -20,16 +20,17 @@ from typing import ClassVar
 
 import pytest
 
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.composition import declares_twin, simulate
+from dimos.sim2.device import SimulatedDeviceFactory
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
@@ -39,23 +40,16 @@ from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import RobotConfig, RobotInstance, SimulatedRobot
-from dimos.sim2.swap import declares_twin, simulate
 
 
-class _LeftWorld(SimulationModule):
-    left_motor_command: In[MotorCommandArray]
-    left_motor_states: Out[JointState]
-    left_imu: Out[ImuMessage]
-    left_odom: Out[PoseStamped]
-    left_tf: Out[TFMessage]
-
-
-class _ArmConfig(ModuleConfig):
+class _ArmConfig(ConnectionConfig):
+    source: str = "left"
+    pd: bool = True
     robot: RobotConfig
     frame_id: str = "arm/base"
 
 
-class _Arm(Module):
+class _Arm(ConnectionModule):
     """A hardware connection: it knows how it stands in a world."""
 
     config: _ArmConfig
@@ -74,7 +68,7 @@ class _Arm(Module):
             control_imu="imu",
             frame_id=config.frame_id,
         )
-        return SimulatedRobot("left", _LeftWorld, instance)
+        return SimulatedRobot("left", instance)
 
 
 class _ScannerConfig(ModuleConfig):
@@ -111,6 +105,10 @@ class _Skill(Module):
     _arm: _Arm
 
 
+class _SensorSkill(Module):
+    _scanner: _Scanner
+
+
 @pytest.fixture
 def hardware(world_config):
     return autoconnect(
@@ -132,25 +130,33 @@ def test_declaring_modules_are_recognized():
 
 def test_blueprint_without_twins_is_returned_unchanged(world_config, mujoco):
     blueprint = _Mapper.blueprint()
-    assert simulate(blueprint, {}, mujoco) is blueprint
+    kwargs = {"_mapper": {}}
+    assert simulate(blueprint, kwargs, mujoco) == (blueprint, kwargs)
 
 
-def test_twins_replace_hardware_modules_on_the_same_streams(hardware, mujoco):
-    result = simulate(hardware, {}, mujoco)
+def test_connection_is_retained_with_private_world_io_and_public_sensor_streams(hardware, mujoco):
+    result, kwargs = simulate(hardware, {"scanner": {"frame_id": "scan"}, "_mapper": {}}, mujoco)
 
+    assert set(kwargs) == {"arm", "_mapper"}
+    device = kwargs["arm"]["simulation_device"]
+    assert isinstance(device, SimulatedDeviceFactory)
     names = {atom.name: atom.module for atom in result.blueprints}
-    world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
-    assert "arm" not in names
+    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
+    assert names["arm"] is _Arm
     assert names["scanner"] is LidarModule
     assert names["_mapper"] is _Mapper or _Mapper in names.values()
     remaps = result.remapping_map
-    # The robot's ports take the connection's stream names, remapped or not.
-    assert remaps[world.name, "left_motor_states"] == "arm/motor_states"
-    assert remaps[world.name, "left_motor_command"] == "motor_command"
-    assert remaps[world.name, "left_imu"] == "imu"
-    # Truth the hardware never published keeps the plain kind as its stream.
-    assert remaps[world.name, "left_odom"] == "odom"
-    assert remaps[world.name, "left_tf"] == "tf"
+    assert remaps["arm", "motor_states"] == "arm/motor_states"
+    assert device.topics == {
+        "motor_command": "_sim2/arm/motor_command",
+        "motor_states": "_sim2/arm/motor_states",
+        "imu": "_sim2/arm/imu",
+    }
+    assert world.kwargs["robot_topics"]["left"] == {
+        **device.topics,
+        "odom": "odom",
+        "tf": "tf",
+    }
     # The sensor keeps the driver's names; its truth extras are robot-qualified.
     assert remaps["scanner", "lidar"] == "lidar_raw"
     assert remaps["scanner", "imu"] == "imu"
@@ -165,8 +171,8 @@ def test_twins_replace_hardware_modules_on_the_same_streams(hardware, mujoco):
 
 
 def test_cli_overrides_reach_the_twin(hardware, mujoco):
-    result = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
-    world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
+    result, _ = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
+    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
     assert world.kwargs["world"].robots["left"].frame_id == "robot/pelvis"
 
 
@@ -180,8 +186,8 @@ def test_a_sensor_with_its_own_imu_gets_both_named_after_the_driver(world_config
         _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
         _Scanner.blueprint(instance_name="mid360", rolling=True),
     )
-    result = simulate(blueprint, {}, mujoco)
-    world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
+    result, _ = simulate(blueprint, {}, mujoco)
+    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
     attached = next(
         s for s in world.kwargs["world"].robots["left"].config.sensors if s.name == "mid360"
     )
@@ -208,15 +214,22 @@ def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
         simulate(blueprint, {}, mujoco)
 
 
-def test_direct_dependency_on_a_swapped_module_is_an_error(world_config, mujoco):
+def test_direct_dependency_on_the_retained_connection_is_preserved(world_config, mujoco):
     blueprint = autoconnect(
         _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
         _Skill.blueprint(),
     )
+    result, _ = simulate(blueprint, {}, mujoco)
+    assert next(a for a in result.blueprints if a.name == "arm").module is _Arm
+    assert next(a for a in result.blueprints if a.module is _Skill) == blueprint.blueprints[1]
+
+
+def test_direct_dependency_on_a_replaced_sensor_is_an_error(hardware, mujoco):
+    blueprint = autoconnect(hardware, _SensorSkill.blueprint())
     with pytest.raises(ValueError, match="no simulated counterpart"):
         simulate(blueprint, {}, mujoco)
 
 
 def test_robot_id_must_be_usable_as_a_port_prefix(world_config):
     with pytest.raises(ValueError, match="identifier"):
-        SimulatedRobot("left/arm", _LeftWorld, replace(world_config.robots["left"]))
+        SimulatedRobot("left/arm", replace(world_config.robots["left"]))

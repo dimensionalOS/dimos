@@ -14,16 +14,15 @@
 
 """The base every connection module is built on: one module per robot.
 
-A connection module subclasses ``ConnectionModule``, gives it a config that
-says what the robot is told, and fills in ``connect``, ``write`` and
-``halt``. It declares its own ports, hands their messages to ``command`` as
-named values (``dimos.control.contract.convert``), and publishes its
-readings however suits its SDK.
+A connection module declares its own ports and hands their messages to
+``command`` as named values (``dimos.control.contract.convert``). It can
+supply a hardware device, letting this base select hardware or simulation,
+or implement ``connect``, ``write`` and ``halt`` itself.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 import asyncio
 from dataclasses import dataclass
 import threading
@@ -31,6 +30,9 @@ import time
 from typing import Any, ClassVar
 import uuid
 
+from pydantic import Field
+
+from dimos.control.connection.device import ConnectionDevice, DeviceFactory
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
@@ -61,6 +63,9 @@ class ConnectionConfig(ModuleConfig):
             speed past it is clamped. ``None`` for a robot with no base.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
+        simulation_device: Internal device factory injected by simulation
+            composition. Used only under ``--simulation mujoco``.
+        halt_damping: Effort-motor damping used when halting, in Nm per rad/s.
     """
 
     source: str
@@ -69,6 +74,8 @@ class ConnectionConfig(ModuleConfig):
     pd: bool = False
     base_range: Twist | None = None
     deadman_timeout_s: float = 0.1
+    simulation_device: DeviceFactory | None = None
+    halt_damping: float = Field(default=1.0, ge=0, allow_inf_nan=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,9 +105,12 @@ class ConnectionStatus:
 class ConnectionModule(Module, ABC):
     """One robot: commands go through ``command``, and it halts when they stop.
 
-    Subclass it, give it a config, declare the ports, fill in ``connect``,
-    ``write`` and ``halt``, and pass each command port's messages to
-    ``command`` as named values::
+    Subclass it, give it a config, declare the ports, and implement
+    ``create_hardware_device``. The base selects the injected simulation device
+    under MuJoCo, otherwise the hardware device. Both deliver readings through
+    ``publish_feedback`` and accept the same named commands. Drivers that manage
+    their own lifecycle may still override ``connect``, ``write`` and ``halt``.
+    Pass each command port's messages to ``command`` as named values::
 
         class ArmConfig(ConnectionConfig):
             source: str = "arm"
@@ -119,10 +129,11 @@ class ConnectionModule(Module, ABC):
                     lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
                 )))
 
-    Readings are the module's own: publish them from wherever the SDK
-    delivers them, stamped with ``frame``. Once a command is accepted, if no
+    Readings use the module's own declared ports, stamped by the device with
+    its configured frames. Once a command is accepted, if no
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
-    the hardware, override ``stop`` and close it after ``super().stop()``.
+    an explicitly managed driver, override ``stop`` and close it after
+    ``super().stop()``. The base stops devices it creates itself.
     """
 
     config: ConnectionConfig
@@ -140,6 +151,7 @@ class ConnectionModule(Module, ABC):
         self._hardware_lock = threading.Lock()
         self._stopping = False
         self._connected = False
+        self._device: ConnectionDevice | None = None
         # Only touched on the module's event loop.
         self._deadman: asyncio.TimerHandle | None = None
         # Counts accepted commands; a deadman timer only halts if no command
@@ -159,11 +171,38 @@ class ConnectionModule(Module, ABC):
             self._limits = limits_of(self.config)
         return self._limits
 
-    @abstractmethod
-    def connect(self) -> None:
-        """Open the connection to the hardware without making anything move."""
+    def create_hardware_device(self) -> ConnectionDevice:
+        """Construct the hardware device, passing it ``self.publish_feedback``.
 
-    @abstractmethod
+        The device must wait until ``start`` to open hardware. This hook is
+        never called when a simulation device is selected.
+        """
+        raise NotImplementedError(
+            f"{self._label} must provide a hardware device or override connect"
+        )
+
+    def connect(self) -> None:
+        """Select and start the configured device without commanding motion."""
+        mode = self.config.g.simulation
+        if mode == "mujoco":
+            factory = self.config.simulation_device
+            if factory is None:
+                raise ValueError(
+                    f"{self._label} has no simulation device; build its simulated world"
+                )
+            device = factory(self.publish_feedback)
+        elif mode:
+            raise ValueError(f"{self._label} does not support simulation backend {mode!r}")
+        else:
+            device = self.create_hardware_device()
+        self._device = device
+        try:
+            device.start()
+        except BaseException:
+            self._call_halt()
+            self._stop_device()
+            raise
+
     def write(self, values: Values) -> None:
         """Send one checked command to the hardware and return at once.
 
@@ -174,8 +213,10 @@ class ConnectionModule(Module, ABC):
             values: Named values from one command, e.g.
                 ``{"arm/joint1/position": 0.3}``, already within their limits.
         """
+        if self._device is None:
+            raise RuntimeError(f"{self._label} has no connected device")
+        self._device.write(values)
 
-    @abstractmethod
     def halt(self) -> None:
         """Stop the robot moving now, e.g. hold its position or zero its speeds.
 
@@ -183,14 +224,38 @@ class ConnectionModule(Module, ABC):
         command. Called when commands stop arriving, after a failed ``write``,
         and when the module stops.
         """
+        if self._device is not None:
+            self._device.halt()
+
+    def publish_feedback(self, port: str, message: Any) -> None:
+        """Publish device feedback on an output declared by this connection."""
+        output = self.outputs.get(port)
+        if output is None:
+            raise ValueError(f"{self._label} has no output port {port!r}")
+        with self._lock:
+            if self._stopping:
+                return
+        output.publish(message)
+
+    def _stop_device(self) -> None:
+        device, self._device = self._device, None
+        if device is not None:
+            try:
+                device.stop()
+            except Exception as error:
+                self._report(f"device stop failed: {type(error).__name__}: {error}")
 
     @rpc
     def start(self) -> None:
         super().start()
         self._session_id = uuid.uuid4().hex
         # A bad config fails here, before the hardware is touched.
-        self._limits = limits_of(self.config)
-        self.connect()
+        try:
+            self._limits = self.limits
+            self.connect()
+        except BaseException:
+            self.stop()
+            raise
         with self._hardware_lock:
             self._connected = True
 
@@ -204,6 +269,7 @@ class ConnectionModule(Module, ABC):
             if self._connected:
                 self._call_halt()
             self._connected = False
+        self._stop_device()
         self._on_loop(self._disarm_deadman)
         super().stop()
 

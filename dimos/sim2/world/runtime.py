@@ -64,6 +64,8 @@ class RobotBinding:
     idle_position: NDArray[np.float64]
     hold_kp: NDArray[np.float64]
     hold_kd: NDArray[np.float64]
+    halt_damping: float | None = None
+    received_command: bool = False
     # Rows: position, velocity, kp, kd, effort, in public joint units.
     action: NDArray[np.float64] | None = None
     # Monotonic time after which the action no longer applies and the robot holds.
@@ -163,6 +165,7 @@ class SimulationRuntime:
                 positions,
                 np.array([g[0] for g in hold_gains]),
                 np.array([g[1] for g in hold_gains]),
+                halt_damping=instance.halt_damping,
             )
         mujoco.mj_resetData(self.model, self.data)
         for binding in self.robots.values():
@@ -213,6 +216,7 @@ class SimulationRuntime:
                 return False
             binding.action = values
             binding.action_expires = time.monotonic() + binding.command_timeout
+            binding.received_command = True
             return True
 
     def reset(self) -> None:
@@ -239,6 +243,7 @@ class SimulationRuntime:
         for binding in self.robots.values():
             binding.action = None
             binding.command_active = False
+            binding.received_command = False
             binding.idle_position = self.data.qpos[binding.qpos].copy()
         self._publish(force_snapshot=True)
 
@@ -336,6 +341,9 @@ class SimulationRuntime:
             target = b.idle_position
             velocity = np.zeros_like(dq)
             kp, kd = b.hold_kp, b.hold_kd
+            if b.received_command and b.halt_damping is not None:
+                kp = np.zeros_like(kp)
+                kd = np.full_like(kd, b.halt_damping)
             ff = np.zeros_like(dq)
         torque = kp * (target - q) + kd * (velocity - dq) + ff
         for i, (joint, aid) in enumerate(zip(b.config.joints, b.actuators, strict=True)):

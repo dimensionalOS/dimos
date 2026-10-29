@@ -33,6 +33,7 @@ def simulation(
     module: type[SimulationModule] = SimulationModule,
     instance_name: str | None = None,
     names: Mapping[tuple[str | None, str], str] | None = None,
+    robot_topics: dict[str, dict[str, str]] | None = None,
 ) -> Blueprint:
     """Build physics and the declared sensor workers.
 
@@ -43,9 +44,13 @@ def simulation(
         names: Instance names for particular sensor workers, keyed by
             ``(robot_id or None, sensor name)``. A named worker keeps its port
             names as stream names; the caller wires them.
+        robot_topics: Private motor/feedback streams for retained connections.
+            These do not require a robot-specific world subclass.
     """
     names = names or {}
-    modules = [module.blueprint(world=world, instance_name=instance_name)]
+    modules = [
+        module.blueprint(world=world, instance_name=instance_name, robot_topics=robot_topics or {})
+    ]
     for robot_id, sensor in world.devices:
         owner = robot_id or "world"
         named = names.get((robot_id, sensor.name))
