@@ -605,6 +605,9 @@ pub struct GscPgo {
     pub(crate) closure_yank_z: Vec<f64>,
     /// Per committed closure: its innovation against the raw odometry, for `odometry_noise_from_closures`.
     pub(crate) closure_innovations: Vec<crate::odometry_noise::Innovation>,
+    /// Per pair of committed closures one submap apart at both ends (`closure_icp_covariance`): their disagreement in
+    /// rotation and in translation, squared and whitened by their two fits' own variances (chi-square, 3 DoF each).
+    pub(crate) closure_pair_disagreement: [Vec<f64>; 2],
     /// ln of each odometry variance's ratio to the reported one (0: the reported noise), set from the kept closures
     /// after each solve.
     pub(crate) odometry_noise_ln: [f64; 4],
@@ -664,6 +667,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// ICP fitness of every accepted closure: the variance a real closure is expected to add (`closure_skip_known`).
     pub(crate) scored_fitness: Vec<f64>,
+    /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
+    pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -714,6 +719,8 @@ pub struct ClosureSearch {
     pub(crate) judged_yanks: Vec<(f64, bool)>,
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
+    /// The ICP cache the search's cloud computations go through (`icp_cache`), if any.
+    pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -762,18 +769,34 @@ impl ClosureSearch {
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
         let mut scored_yank = None;
-        let t0 = std::time::Instant::now();
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let clearance = self.config.closure_ground_clearance_m;
-        let target_cloud = above_floor(
-            &self.stacked_cloud(
-                target_idx.saturating_sub(half_range)
-                    ..=(target_idx + half_range).min(self.key_poses.len() - 1),
-            ),
-            clearance,
-        );
-        let source_cloud = above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
-        timing.submap_s += t0.elapsed().as_secs_f64();
+        // the source scan, the target submap and its tree, built only when a computation needs them (never when every
+        // result comes from the ICP cache)
+        let clouds_cell = std::cell::OnceCell::new();
+        let clouds = || -> &(PointCloud, PointCloud, KdTree) {
+            clouds_cell.get_or_init(|| {
+                let target_cloud = above_floor(
+                    &self.stacked_cloud(
+                        target_idx.saturating_sub(half_range)
+                            ..=(target_idx + half_range).min(self.key_poses.len() - 1),
+                    ),
+                    clearance,
+                );
+                let source_cloud =
+                    above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
+                let target_tree = KdTree::build(&target_cloud);
+                (source_cloud, target_cloud, target_tree)
+            })
+        };
+        // a cloud computation, through the ICP cache when there is one
+        let cache = self.icp_cache.clone();
+        let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
+            match &cache {
+                Some(cache) => cache.get_or(format!("{cur_idx}:{target_idx}:{tag}"), compute),
+                None => compute(),
+            }
+        };
 
         // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
         // lies. It reads only the source scan, so it runs before ICP (computed for every candidate, gate on or off)
@@ -784,7 +807,9 @@ impl ClosureSearch {
         };
         if !self.config.closure_hessian_observability {
             let t0 = std::time::Instant::now();
-            diag.degeneracy_min = uniqueness::degeneracy(&source_cloud);
+            diag.degeneracy_min = memo("deg", &mut || {
+                vec![uniqueness::degeneracy(&clouds().0) as f64]
+            })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
                 return rejected(diag, "degeneracy_reject", scored_yank, timing);
@@ -792,27 +817,30 @@ impl ClosureSearch {
         }
 
         let t0 = std::time::Instant::now();
-        let target_tree = KdTree::build(&target_cloud);
-        let icp = icp(
-            &source_cloud,
-            &target_cloud,
-            &target_tree,
-            &init_rotation,
-            &init_translation,
-            &IcpParams {
-                max_iterations: self.config.closure_icp_max_iterations as usize,
-                max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
-                inlier_squared_distance: self.config.closure_score_thresh,
-            },
-        );
+        let icp = crate::icp_cache::decode_icp(&memo("icp", &mut || {
+            let (source_cloud, target_cloud, target_tree) = clouds();
+            crate::icp_cache::encode_icp(&icp(
+                source_cloud,
+                target_cloud,
+                target_tree,
+                &init_rotation,
+                &init_translation,
+                &IcpParams {
+                    max_iterations: self.config.closure_icp_max_iterations as usize,
+                    max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+                    inlier_squared_distance: self.config.closure_score_thresh,
+                },
+            ))
+        }));
         timing.icp_s += t0.elapsed().as_secs_f64();
-        if !self.config.closure_icp_dump_dir.is_empty() {
+        if !self.config.closure_icp_dump_dir.is_empty() && cache.is_none() {
+            let (source_cloud, target_cloud, _) = clouds();
             dump_icp(
                 &self.config.closure_icp_dump_dir,
                 cur_idx,
                 target_idx,
-                &source_cloud,
-                &target_cloud,
+                source_cloud,
+                target_cloud,
                 &icp,
                 "",
             );
@@ -825,12 +853,15 @@ impl ClosureSearch {
         // Observability gate, Hessian form: how well the ICP alignment pins x, y, z and yaw (needs the alignment)
         if self.config.closure_hessian_observability {
             let t0 = std::time::Instant::now();
-            diag.degeneracy_min = connection_fit::observability(
-                &transform_cloud(&source_cloud, &icp.rotation, &icp.translation),
-                &target_cloud,
-                &target_tree,
-                self.config.closure_score_thresh,
-            ) as f32;
+            diag.degeneracy_min = memo("obs", &mut || {
+                let (source_cloud, target_cloud, target_tree) = clouds();
+                vec![connection_fit::observability(
+                    &transform_cloud(source_cloud, &icp.rotation, &icp.translation),
+                    target_cloud,
+                    target_tree,
+                    self.config.closure_score_thresh,
+                )]
+            })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
                 return rejected(diag, "degeneracy_reject", scored_yank, timing);
@@ -841,32 +872,42 @@ impl ClosureSearch {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
         // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
-        let closure_variances = |rotation: &Mat3, translation: &Vec3| -> Option<[f64; 6]> {
-            if !self.config.closure_icp_covariance {
-                return None;
-            }
-            let origin = mat3::add(
-                &mat3::mat_vec(rotation, &self.key_poses[cur_idx].translation_global),
-                translation,
-            );
-            let world = connection_fit::alignment_covariance(
-                &transform_cloud(&source_cloud, rotation, translation),
-                &target_cloud,
-                &target_tree,
-                self.config.closure_score_thresh,
-                &origin,
-            )?;
-            // each 3x3 block's diagonal turned into the target's frame: R^T C R
-            let frame = &self.key_poses[target_idx].rotation_global;
-            Some(std::array::from_fn(|k| {
-                let (block, axis) = (3 * (k / 3), k % 3);
-                (0..3)
-                    .flat_map(|i| (0..3).map(move |j| (i, j)))
-                    .map(|(i, j)| frame[i][axis] * world[block + i][block + j] * frame[j][axis])
-                    .sum()
-            }))
-        };
-        let mut variances = closure_variances(&icp.rotation, &icp.translation);
+        let closure_variances =
+            |tag: &str, rotation: &Mat3, translation: &Vec3| -> Option<[f64; 6]> {
+                if !self.config.closure_icp_covariance {
+                    return None;
+                }
+                let origin = mat3::add(
+                    &mat3::mat_vec(rotation, &self.key_poses[cur_idx].translation_global),
+                    translation,
+                );
+                let flat = memo(tag, &mut || {
+                    let (source_cloud, target_cloud, target_tree) = clouds();
+                    connection_fit::alignment_covariance(
+                        &transform_cloud(source_cloud, rotation, translation),
+                        target_cloud,
+                        target_tree,
+                        self.config.closure_score_thresh,
+                        &origin,
+                    )
+                    .map_or(Vec::new(), |c| c.iter().flatten().copied().collect())
+                });
+                if flat.len() != 36 {
+                    return None;
+                }
+                let world: [[f64; 6]; 6] =
+                    std::array::from_fn(|i| std::array::from_fn(|j| flat[6 * i + j]));
+                // each 3x3 block's diagonal turned into the target's frame: R^T C R
+                let frame = &self.key_poses[target_idx].rotation_global;
+                Some(std::array::from_fn(|k| {
+                    let (block, axis) = (3 * (k / 3), k % 3);
+                    (0..3)
+                        .flat_map(|i| (0..3).map(move |j| (i, j)))
+                        .map(|(i, j)| frame[i][axis] * world[block + i][block + j] * frame[j][axis])
+                        .sum()
+                }))
+            };
+        let mut variances = closure_variances("cov", &icp.rotation, &icp.translation);
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
         // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
         // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
@@ -912,22 +953,34 @@ impl ClosureSearch {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
         if self.config.closure_sharpness_half > 0.0 {
-            diag.sharpness = self.sharpness(&source_cloud, &target_tree, &icp);
+            diag.sharpness = memo("sharp", &mut || {
+                let (source_cloud, _, target_tree) = clouds();
+                vec![self.sharpness(source_cloud, target_tree, &icp)]
+            })[0];
         }
         if self.config.closure_likelihood_confidence {
             let window: Vec<usize> = (target_idx.saturating_sub(half_range)
                 ..=(target_idx + half_range).min(self.key_poses.len() - 1))
                 .collect();
-            let (ratio, _, width) =
-                self.likelihood_ratio(&source_cloud, &target_cloud, &target_tree, &icp, &window);
+            let lr = memo("lr", &mut || {
+                let (source_cloud, target_cloud, target_tree) = clouds();
+                let (ratio, count, width) =
+                    self.likelihood_ratio(source_cloud, target_cloud, target_tree, &icp, &window);
+                vec![ratio, count as f64, width]
+            });
+            let (ratio, width) = (lr[0], lr[2]);
             diag.likelihood_ratio = ratio;
             diag.likelihood_width = width;
         }
         if self.config.closure_overlap_score {
-            let overlap = self.overlap_score(&source_cloud, &target_cloud, &icp);
-            diag.overlap_points = overlap.points;
-            diag.overlap_quality = overlap.quality;
-            diag.overlap_score = overlap.score;
+            let overlap = memo("ovl", &mut || {
+                let (source_cloud, target_cloud, _) = clouds();
+                let o = self.overlap_score(source_cloud, target_cloud, &icp);
+                vec![o.points, o.quality, o.score]
+            });
+            diag.overlap_points = overlap[0];
+            diag.overlap_quality = overlap[1];
+            diag.overlap_score = overlap[2];
         }
 
         let mut score = icp.fitness;
@@ -1038,13 +1091,15 @@ impl ClosureSearch {
         diag.required_confidence = 1.0 - (-single_required).exp();
         if evidence < single_required {
             let t0 = std::time::Instant::now();
+            let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
             let extended = self.extended_icp(
                 cur_idx,
                 target_idx,
-                &source_cloud,
+                source_points,
                 &icp,
                 &mut diag,
                 &mut required,
+                &memo,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
@@ -1054,7 +1109,7 @@ impl ClosureSearch {
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
             score = extended.fitness;
-            variances = closure_variances(&extended.rotation, &extended.translation);
+            variances = closure_variances("covx", &extended.rotation, &extended.translation);
         }
 
         diag.outcome = "accepted";
@@ -1084,6 +1139,12 @@ impl GscPgo {
             rotation_offset: mat3::identity(),
             ..Default::default()
         }
+    }
+
+    /// Send every closure search's cloud computations through `cache` (`icp_cache`): recording them, or answering from
+    /// a recording.
+    pub fn set_icp_cache(&mut self, cache: Arc<crate::icp_cache::IcpCache>) {
+        self.icp_cache = Some(cache);
     }
 
     /// The odometry noise in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
@@ -1142,15 +1203,98 @@ impl GscPgo {
 
     /// The factor on a closure's ICP-fitness variance (`closure_noise_from_closures`); 1 when off or before a kept closure.
     pub fn closure_noise_scale(&self) -> f64 {
-        self.closure_noise_ln_scale.exp()
+        self.closure_noise_ln_scale.exp() * self.closure_disagreement_scale(1)
+    }
+
+    /// How far the closures' fit variances understate their real error (`closure_icp_covariance`; group 0 rotation, 1
+    /// translation): the median whitened disagreement of closure pairs one submap apart over chi-square(3)'s median.
+    /// Two closures of one revisit that close the same place through a few keyframes of odometry should agree to
+    /// within their fits' noise, and that comparison never touches the long-loop odometry whose noise is in question,
+    /// so it measures the closures' own error (the fit's spread is per-point noise only; it misses submap distortion
+    /// and partial overlap) even while that odometry is overtrusted. The median ignores a wrong closure among them.
+    /// 1 before any pair.
+    pub(crate) fn closure_disagreement_scale(&self, group: usize) -> f64 {
+        let pairs = &self.closure_pair_disagreement[group];
+        if !self.config.closure_icp_covariance || pairs.is_empty() {
+            return 1.0;
+        }
+        let mut sorted = pairs.clone();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        // chi-square(3)'s median
+        let chi2_3_median = crate::landmarks::chi2_inverse(0.5, 3);
+        (median / chi2_3_median).max(1.0)
+    }
+
+    /// Record how the newest committed closure disagrees with each earlier one whose two ends lie within a submap
+    /// (`closure_submap_half_range` keyframes) of its own, through the raw odometry between them.
+    fn record_closure_pair_disagreement(&mut self) {
+        let Some(newest) = self.committed_closures.last().copied() else {
+            return;
+        };
+        let Some(v_new) = newest.variances else {
+            return;
+        };
+        let half = self.config.closure_submap_half_range.max(0) as usize;
+        let local = |k: usize| {
+            (
+                self.key_poses[k].rotation_local,
+                self.key_poses[k].translation_local,
+            )
+        };
+        // the odometry from keyframe a to b in a's frame
+        let between = |a: usize, b: usize| {
+            let ((ra, pa), (rb, pb)) = (local(a), local(b));
+            let back = mat3::transpose(&ra);
+            (
+                mat3::mat_mul(&back, &rb),
+                mat3::mat_vec(&back, &mat3::sub(&pb, &pa)),
+            )
+        };
+        let mut found = [Vec::new(), Vec::new()];
+        for earlier in &self.committed_closures[..self.committed_closures.len() - 1] {
+            let Some(v_old) = earlier.variances else {
+                continue;
+            };
+            if earlier.source_id.abs_diff(newest.source_id) > half
+                || earlier.target_id.abs_diff(newest.target_id) > half
+            {
+                continue;
+            }
+            // the newest closure predicted from the earlier one: target odometry back, earlier closure, source odometry
+            let (rt, pt) = between(newest.target_id, earlier.target_id);
+            let (rs, ps) = between(earlier.source_id, newest.source_id);
+            let (rc, pc) = (earlier.rotation_offset, earlier.translation_offset);
+            let rotation = mat3::mat_mul(&mat3::mat_mul(&rt, &rc), &rs);
+            let translation = mat3::add(
+                &pt,
+                &mat3::mat_vec(&rt, &mat3::add(&pc, &mat3::mat_vec(&rc, &ps))),
+            );
+            let turn = crate::big_picture_fit::log(&mat3::mat_mul(
+                &mat3::transpose(&rotation),
+                &newest.rotation_offset,
+            ));
+            let shift = mat3::sub(&newest.translation_offset, &translation);
+            for (group, d) in [(0, turn), (1, shift)] {
+                let q: f64 = (0..3)
+                    .map(|k| d[k] * d[k] / (v_new[3 * group + k] + v_old[3 * group + k]))
+                    .sum();
+                if q.is_finite() {
+                    found[group].push(q);
+                }
+            }
+        }
+        for group in 0..2 {
+            self.closure_pair_disagreement[group].append(&mut found[group]);
+        }
     }
     /// The factor on a closure's ICP-fitness variance for its rotation: its own with `closure_noise_from_residuals`,
     /// else the translation's.
     pub fn closure_noise_rotation_scale(&self) -> f64 {
         if self.config.closure_noise_from_residuals {
-            self.closure_noise_ln_rotation_scale.exp()
+            self.closure_noise_ln_rotation_scale.exp() * self.closure_disagreement_scale(0)
         } else {
-            self.closure_noise_scale()
+            self.closure_noise_ln_scale.exp() * self.closure_disagreement_scale(0)
         }
     }
 
@@ -1670,6 +1814,7 @@ impl GscPgo {
                 .collect(),
             alternatives,
             tries: tries + 1,
+            icp_cache: self.icp_cache.clone(),
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
@@ -1856,6 +2001,7 @@ impl GscPgo {
             gnc_weight: f64::NAN,
             variances,
         });
+        self.record_closure_pair_disagreement();
         self.closure_innovations
             .push(crate::odometry_noise::innovation(
                 &self.key_poses,

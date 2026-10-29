@@ -141,6 +141,9 @@ struct EvalOutput {
     /// Every committed closure's refined relative pose (target->source), in commit
     /// order — the raw constraints an offline consistency pass needs.
     committed_closure_edges: Vec<CommittedClosureEdge>,
+    /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
+    icp_cache_hits: usize,
+    icp_cache_misses: usize,
 }
 
 struct Args {
@@ -160,6 +163,9 @@ struct Args {
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
+    /// `--icp-cache-record <path>`: write every closure search's cloud computations there (`icp_cache`).
+    /// `--icp-cache-replay <path>`: answer them from such a file, computing (and counting) any it lacks.
+    icp_cache: Option<(dimos_gsc_pgo::icp_cache::Mode, PathBuf)>,
     /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
     odom_scale: f64,
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
@@ -296,6 +302,7 @@ fn parse_args() -> Result<Args, String> {
     let mut live = false;
     let mut world_positions = None;
     let mut landmark_sightings = None;
+    let mut icp_cache = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -314,6 +321,18 @@ fn parse_args() -> Result<Args, String> {
             "--live" => live = true,
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
+            "--icp-cache-record" => {
+                icp_cache = Some((
+                    dimos_gsc_pgo::icp_cache::Mode::Record,
+                    PathBuf::from(value()?),
+                ))
+            }
+            "--icp-cache-replay" => {
+                icp_cache = Some((
+                    dimos_gsc_pgo::icp_cache::Mode::Replay,
+                    PathBuf::from(value()?),
+                ))
+            }
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -332,6 +351,7 @@ fn parse_args() -> Result<Args, String> {
         live,
         world_positions,
         landmark_sightings,
+        icp_cache,
     })
 }
 
@@ -446,7 +466,30 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let mut pgo = GscPgo::new(config.pgo.clone());
+    // with an ICP cache the clouds are not dumped: the cache stands in for them (and the dumps run to gigabytes)
+    let mut pgo_config = config.pgo.clone();
+    if args.icp_cache.is_some() {
+        pgo_config.closure_icp_dump_dir.clear();
+    }
+    let mut pgo = GscPgo::new(pgo_config);
+    // the ICP cache: recorded, or loaded to answer from
+    let icp_cache = match &args.icp_cache {
+        Some((mode, path)) => {
+            let entries: std::collections::HashMap<String, Vec<f64>> =
+                if *mode == dimos_gsc_pgo::icp_cache::Mode::Replay {
+                    let bytes = std::fs::read(path).map_err(|e| format!("read {path:?}: {e}"))?;
+                    dimos_gsc_pgo::icp_cache::from_bytes(&bytes)
+                        .map_err(|e| format!("parse {path:?}: {e}"))?
+                } else {
+                    Default::default()
+                };
+            let cache =
+                std::sync::Arc::new(dimos_gsc_pgo::icp_cache::IcpCache::new(*mode, entries));
+            pgo.set_icp_cache(cache.clone());
+            Some(cache)
+        }
+        None => None,
+    };
     let mut cursor = 0usize;
     let mut scans_processed = 0usize;
     let mut recorder = Recorder::new(args.event_dump.as_deref())?;
@@ -699,7 +742,23 @@ fn run() -> Result<(), String> {
         .map(CommittedClosureEdge::from)
         .collect();
 
+    let (icp_cache_hits, icp_cache_misses) = match &icp_cache {
+        Some(cache) => {
+            if cache.mode == dimos_gsc_pgo::icp_cache::Mode::Record {
+                let (_, path) = args.icp_cache.as_ref().unwrap();
+                std::fs::write(path, dimos_gsc_pgo::icp_cache::to_bytes(&cache.entries()))
+                    .map_err(|e| format!("write {path:?}: {e}"))?;
+            }
+            (
+                cache.hits.load(std::sync::atomic::Ordering::Relaxed),
+                cache.misses.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        }
+        None => (0, 0),
+    };
     let output = EvalOutput {
+        icp_cache_hits,
+        icp_cache_misses,
         db: args.db.display().to_string(),
         odom_stream: args.odom_stream.clone(),
         lidar_stream: args.lidar_stream.clone(),

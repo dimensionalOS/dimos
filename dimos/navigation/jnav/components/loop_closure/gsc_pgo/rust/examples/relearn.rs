@@ -89,9 +89,11 @@ fn main() {
         .filter(|c| c.gnc_weight > 0.5)
         .count();
     println!(
-        "kept {kept} / {} noise {:?}",
+        "kept {kept} / {} noise {:?} closure scale rotation {:.3} translation {:.3}",
         pgo.committed_closures().len(),
-        pgo.odometry_noise().map(|v| (v * 1000.0).round() / 1000.0)
+        pgo.odometry_noise().map(|v| (v * 1000.0).round() / 1000.0),
+        pgo.closure_noise_rotation_scale(),
+        pgo.closure_noise_scale()
     );
     let mut out = Vec::new();
     for (k, record) in records.iter().enumerate() {
