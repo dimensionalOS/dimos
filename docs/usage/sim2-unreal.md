@@ -73,6 +73,42 @@ The camera publishes ordinary `color_image`, `depth_image`, `camera_info`,
 source episode, physics tick and simulation time. `renderer_status()` reports
 capture time, round-trip time, acquisition age and any error.
 
+## Run G1 with GR00T and Point-LIO
+
+After building the renderer, run the existing robot application with one camera
+module added:
+
+```bash
+renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
+.venv/bin/python -m dimos.sim2.unreal.demo_g1 \
+  --executable "$renderer" --walk --reset \
+  --output /tmp/dimos-g1-unreal
+```
+
+The default camera observes the robot. Add `--camera front` to use the existing
+G1 `front_camera`, including its authored mount and calibration. Both use the
+same G1 model, connection, GR00T controller, Mid360 and Point-LIO. The demo forces
+simulation and uses isolated transports.
+
+Outputs: `preview.gif`, `rgb.png`, metric `depth.npy`, `calibration.json`, and
+`report.json`. The report checks actual walking displacement, controller and
+physics health, matching image timestamps, reset epochs and live lidar/odometry.
+
+Source: [demo_g1.py](/dimos/sim2/unreal/demo_g1.py). The only robot-specific model
+code is still [simulation.py](/dimos/robot/unitree/g1/simulation.py); Unreal has no
+G1 class or separate robot asset definition.
+
+Measured on an M4 Max with UE 5.7.4, 640×480 RGB-D requested at 10 Hz:
+
+| Packaged run | Physics | Control | RGB-D | Median capture |
+|---|---:|---:|---:|---:|
+| 30 s, walking + reset | 199.8 Hz | 50.0 Hz | 9.15 fps | 28.9 ms |
+| 10 s, existing front camera | 199.9 Hz | 50.0 Hz | 9.72 fps | 27.8 ms |
+
+The reset run includes scene reload time. These are local measurements, not a
+hardware-independent throughput guarantee. The calibrated 5 m plane read
+5.0000005 m in the packaged renderer.
+
 ## Timing and reset
 
 - Physics runs independently of capture and GPU readback. The camera takes the

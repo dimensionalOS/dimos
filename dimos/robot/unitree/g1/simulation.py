@@ -56,6 +56,16 @@ class G1Model(RobotModel):
             for joint in source.findall(".//worldbody//joint")
         }
         super().__init__(str(path), idn=idn)
+        # RobotModel uses diagnostic colors on contact geoms and removes their
+        # materials. Restore the same imported elements, including unnamed ones.
+        for geom, appearance in self._authored_appearance.items():
+            for attribute, value in appearance.items():
+                if value is None:
+                    geom.attrib.pop(attribute, None)
+                else:
+                    geom.set(
+                        attribute, self.correct_naming(value) if attribute == "material" else value
+                    )
         # robosuite removes anonymous defaults and supplies its own joint
         # dynamics. Restore the source values instead of changing the G1 plant.
         named_attributes = {self.correct_naming(name): attrs for name, attrs in attributes.items()}
@@ -84,6 +94,16 @@ class G1Model(RobotModel):
             objtype="site",
             objname=site,
         )
+
+    def _replace_defaults_inline(
+        self, default_dic: dict[str | None, dict[str, ET.Element]], root: ET.Element | None = None
+    ) -> None:
+        super()._replace_defaults_inline(default_dic=default_dic, root=root)
+        if root is None:
+            self._authored_appearance = {
+                geom: {attribute: geom.get(attribute) for attribute in ("rgba", "material")}
+                for geom in self.worldbody.iter("geom")
+            }
 
     @property
     def sensors(self) -> list[str]:

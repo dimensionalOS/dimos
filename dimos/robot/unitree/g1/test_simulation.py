@@ -14,6 +14,7 @@
 
 """G1 model composition preserves the hardware motor order and original dynamics."""
 
+from contextlib import closing
 from functools import partial
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -42,7 +43,9 @@ from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
+from dimos.sim2.unreal.assets import export_scene
 from dimos.sim2.world.runtime import SimulationRuntime
+from dimos.sim2.world.scene import scene_path
 from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.data import LfsPath
 
@@ -101,6 +104,42 @@ def test_robosuite_loading_preserves_anonymous_joint_defaults(model):
         expected = originals[joint.attrib["name"]]
         for field in ("damping", "armature", "frictionloss"):
             assert float(joint.attrib[field]) == float(expected[field])
+
+
+def test_upstream_model_preserves_visual_and_contact_geom_colors(model):
+    source = ET.parse(Path(__file__).parent / "assets" / "g1_29dof.xml").getroot()
+    for body in source.findall(".//worldbody//body"):
+        imported = model.worldbody.find(
+            f".//body[@name='{model.correct_naming(body.attrib['name'])}']"
+        )
+        assert [geom.get("rgba") for geom in imported.findall("geom")] == [
+            geom.get("rgba") for geom in body.findall("geom")
+        ]
+
+
+def test_contact_geom_material_reference_survives_robot_prefixing(model, mocker):
+    original_parse = ET.parse
+
+    def painted_source(path):
+        tree = original_parse(path)
+        source = tree.getroot()
+        ET.SubElement(source.find("asset"), "material", name="paint", rgba=".2 .4 .6 1")
+        # Give both the visual and contact instances an authored material.
+        for geom in source.findall(".//worldbody//geom[@mesh='pelvis_contour_link']"):
+            geom.set("material", "paint")
+            geom.attrib.pop("rgba")
+        return tree
+
+    mocker.patch.object(ET, "parse", side_effect=painted_source)
+    painted = G1Model(idn="painted")
+    copies = painted.worldbody.findall(
+        f".//geom[@mesh='{painted.correct_naming('pelvis_contour_link')}']"
+    )
+
+    assert len(copies) == 2
+    assert [geom.get("material") for geom in copies] == ["robotpainted_paint", "robotpainted_paint"]
+    assert [geom.get("rgba") for geom in copies] == [None, None]
+    assert painted.asset.find("material[@name='robotpainted_paint']") is not None
 
 
 def test_groot_startup_uses_existing_home_and_motor_gains(model):
@@ -188,6 +227,15 @@ def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu():
         "dof_armature",
         "dof_frictionloss",
         "jnt_range",
+        "geom_type",
+        "geom_size",
+        "geom_pos",
+        "geom_quat",
+        "geom_contype",
+        "geom_conaffinity",
+        "geom_group",
+        "geom_rgba",
+        "geom_matid",
         "geom_friction",
         "actuator_gainprm",
         "actuator_biasprm",
@@ -259,3 +307,24 @@ def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene):
         assert reader.model.sensor(prefix + "sensor/imu/accel").dim == 3
         assert reader.model.sensor(prefix + "control_imu_quat").dim == 4
         assert np.isfinite(reader.data.sensordata).all()
+
+
+@pytest.mark.self_hosted
+def test_full_g1_logistics_world_exports_after_reset_without_injected_ui_targets():
+    path = scene_path(None, "logistics.xml")
+    with closing(MotorScene(path, {"g1": partial(g1_model, path)})) as environment:
+        environment.reset()
+        model, data = environment.sim.model._model, environment.sim.data._data
+        manifest = export_scene(model, data)
+
+        assert model.nu == 29
+        assert {geom["id"] for geom in manifest["geoms"]} == set(range(model.ngeom))
+        assert any(model.geom(geom["id"]).name.startswith("robotg1_") for geom in manifest["geoms"])
+        assert {model.geom(i).name for i in range(model.ngeom)}.isdisjoint(
+            {
+                "left_eef_target_box",
+                "left_eef_target_sphere",
+                "right_eef_target_box",
+                "right_eef_target_sphere",
+            }
+        )
