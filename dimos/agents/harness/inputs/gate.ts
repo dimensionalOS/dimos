@@ -132,9 +132,26 @@ export class InputGate {
     run: "keep" | "abort",
     context: Context,
   ): Promise<Withdrawn> {
+    const record = await this.takeUser(conversation, request, run, context);
+    return { texts: await wholeTexts(record.taken), aborts: record.aborts };
+  }
+
+  /** `withdrawUser` with `"abort"` that aborts the named run before reading any withdrawn text back. */
+  async abortUser(conversation: ConversationId, request: string, context: Context): Promise<QueuedText[]> {
+    const record = await this.takeUser(conversation, request, "abort", context);
+    if (record.aborts !== null) await this.options.harness.abortTask(record.aborts, context);
+    return wholeTexts(record.taken);
+  }
+
+  private async takeUser(
+    conversation: ConversationId,
+    request: string,
+    run: "keep" | "abort",
+    context: Context,
+  ): Promise<{ taken: Taken[]; aborts: TaskId | null }> {
     const handle = await this.options.harness.conversation(conversation, context);
-    if (handle === undefined) return { texts: [], aborts: null };
-    const record = await handle.commit(async (tx) => {
+    if (handle === undefined) return { taken: [], aborts: null };
+    return handle.commit(async (tx) => {
       const withdrawn = await tx.doc(WithdrawnDoc);
       const kept = withdrawn.requests[request];
       if (kept !== undefined)
@@ -157,13 +174,6 @@ export class InputGate {
       withdrawn.requests[request] = { taken, aborts };
       return { taken, aborts };
     }, context);
-    const texts = await Promise.all(
-      record.taken.map(async ({ mode, text, fullText }) => ({
-        mode,
-        text: fullText === null ? text : await readFile(fullText, "utf8"),
-      })),
-    );
-    return { texts, aborts: record.aborts };
   }
 
   /** Admits a write and waits for it to be placed; a repeated `requestId` answers with the first write's settlement. */
@@ -209,6 +219,16 @@ export class InputGate {
       context,
     );
   }
+}
+
+/** Each input's whole text from its spill file, or the cut text when that file cannot be read. */
+function wholeTexts(taken: readonly Taken[]): Promise<QueuedText[]> {
+  return Promise.all(
+    taken.map(async ({ mode, text, fullText }) => ({
+      mode,
+      text: fullText === null ? text : await readFile(fullText, "utf8").catch(() => text),
+    })),
+  );
 }
 
 /** The data of a queued user input. Only this gate writes `dimos.input`, so its data is a DimosInput. */
