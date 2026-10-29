@@ -50,8 +50,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.testing.cbor import roundtrip
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -801,7 +801,7 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     np.testing.assert_array_equal(stored.points, [(0.0, 0.0, 0.0)])
     assert stored.octree_resolution == 0.05
     # The reason for the array: the map crosses worker RPC as one ndarray tag.
-    assert decode(encode(stored)) == stored
+    assert roundtrip(stored) == stored
 
 
 def test_octree_obstacle_rejects_geometry_it_cannot_build(

@@ -48,6 +48,7 @@ from dimos.protocol.encode.cbor import (
     register_codec,
 )
 from dimos.types.robot_location import RobotLocation
+from dimos.utils.testing.cbor import roundtrip
 
 T = TypeVar("T")
 
@@ -221,10 +222,6 @@ def module_fn(a: int, k: int = 0) -> int:
 class Plain:
     def method(self) -> None:
         pass
-
-
-def roundtrip(value: Any) -> Any:
-    return decode(encode(value))
 
 
 @pytest.mark.parametrize(
