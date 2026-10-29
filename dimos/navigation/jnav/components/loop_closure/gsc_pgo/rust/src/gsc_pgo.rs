@@ -114,8 +114,8 @@ pub struct ClosureCandidateDiag {
     pub scan_context_second: f32,
     pub lowe_ratio: f32,
     /// The search's inputs from the rest of the run: the loop-overlap pressure when it started (`GscPgo::pressure`, 0
-    /// before any), the share of judged closures with a similar yank_z that the solve kept ((kept + 1) / (judged + 2),
-    /// each weighted by e^(-(yank_z difference)^2 / 2)), the extension budget in
+    /// before any), the share of judged closures with a similar yank_stdevs that the solve kept ((kept + 1) / (judged + 2),
+    /// each weighted by e^(-(yank_stdevs difference)^2 / 2)), the extension budget in
     /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
     /// this target, counted only as far as the decision needed (0 when it was never counted).
     pub pressure: f64,
@@ -159,13 +159,13 @@ pub struct ClosureCandidateDiag {
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
     /// yank_drift_scale = sqrt(keyframe gap);
     /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
-    /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
+    /// yank_stdevs = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
     /// (infinite before any, so the first candidate only seeds the scale); each factor is its metric normalized by its own gate and clamped to [0, 1];
-    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `closure_yank_gate_width`.
+    /// confidence = their product; required_confidence = 1 - exp(-yank_stdevs^2 / 2k^2), k = `closure_yank_gate_width`.
     pub yank_drift_scale: f64,
     pub sigma_rotation_deg: f64,
     pub sigma_translation_m: f64,
-    pub yank_z: f64,
+    pub yank_stdevs: f64,
     pub scan_context_factor: f64,
     pub icp_factor: f64,
     pub degeneracy_factor: f64,
@@ -233,7 +233,7 @@ impl ClosureCandidateDiag {
             yank_drift_scale: f64::NAN,
             sigma_rotation_deg: f64::NAN,
             sigma_translation_m: f64::NAN,
-            yank_z: f64::NAN,
+            yank_stdevs: f64::NAN,
             scan_context_factor: f64::NAN,
             icp_factor: f64::NAN,
             degeneracy_factor: f64::NAN,
@@ -292,8 +292,8 @@ pub struct ClosureEdgeEvent {
     /// ICP fitness against the fitness its yank requires once ICP ran, then GNC's weight times that.
     pub confidence: f64,
     /// How hard the edge pulls the accepted pose graph, in robust standard deviations of the
-    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_z`); NaN before ICP.
-    pub yank_z: f64,
+    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_stdevs`); NaN before ICP.
+    pub yank_stdevs: f64,
 }
 
 /// Bytes per packed closure-edge record (`ClosureEdgeEvent::put_record`).
@@ -301,7 +301,7 @@ pub const CLOSURE_EDGE_RECORD_BYTES: usize = 52;
 
 impl ClosureEdgeEvent {
     /// Append this event as one packed record: both keyframes where they are now (x y z, then
-    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_z f32, time f64.
+    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_stdevs f32, time f64.
     pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &[KeyPoseWithCloud]) {
         let at = |id: usize| {
             key_poses
@@ -315,7 +315,7 @@ impl ClosureEdgeEvent {
         data.extend_from_slice(&(self.target_id as u32).to_le_bytes());
         data.extend_from_slice(&(self.state as u32).to_le_bytes());
         data.extend_from_slice(&(self.confidence as f32).to_le_bytes());
-        data.extend_from_slice(&(self.yank_z as f32).to_le_bytes());
+        data.extend_from_slice(&(self.yank_stdevs as f32).to_le_bytes());
         data.extend_from_slice(&self.time.to_le_bytes());
     }
 }
@@ -338,7 +338,7 @@ pub struct Config {
     pub closure_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
     pub closure_min_degeneracy: f64,
-    /// A closure's match confidence must clear 1 - exp(-yank_z^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
+    /// A closure's match confidence must clear 1 - exp(-yank_stdevs^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
     /// needs little confidence, a large one a near-perfect match. This is k, the sigmas of yank before that.
     /// Yank is measured per sqrt(keyframe gap), since odometry drift is a random walk (on huge_loop this ranks
     /// closures that help above closures that hurt at AUC 0.82 vs 0.70).
@@ -523,7 +523,7 @@ pub struct Config {
     /// When true, a closure's variance (its ICP fitness) is scaled the same way, by the factor fitted jointly with the
     /// odometry's from the same innovations (short loops pin the closure's share, long loops the odometry's).
     pub closure_noise_from_closures: bool,
-    /// When true, yank_z is the closure's innovation in standard deviations of its predicted spread,
+    /// When true, yank_stdevs is the closure's innovation in standard deviations of its predicted spread,
     /// sqrt(v^T (s P + c fitness I)^-1 v) with both noise scales, instead of in robust spreads of earlier yanks; the gate
     /// asks for the evidence z^2 / 2 (the Gaussian log-likelihood ratio of that yank) as before.
     pub closure_yank_gate_principled: bool,
@@ -628,8 +628,8 @@ pub struct GscPgo {
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) committed_closures: Vec<CommittedClosure>,
-    /// Per committed closure: its yank_z and gate confidence, for its closure-edge events.
-    pub(crate) closure_yank_z: Vec<f64>,
+    /// Per committed closure: its yank_stdevs and gate confidence, for its closure-edge events.
+    pub(crate) closure_yank_stdevs: Vec<f64>,
     /// Per committed closure: its innovation against the raw odometry, for `odometry_noise_from_closures`.
     pub(crate) closure_innovations: Vec<crate::odometry_noise::Innovation>,
     /// Per pair of committed closures one submap apart at both ends (`closure_icp_covariance`): their disagreement in
@@ -746,7 +746,7 @@ pub struct ClosureSearch {
     pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) ranked: Vec<(f32, usize)>,
-    /// Every closure the solve has judged: its yank_z when committed, and whether the solve kept it.
+    /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
     pub(crate) judged_yanks: Vec<(f64, bool)>,
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
@@ -1136,7 +1136,7 @@ impl ClosureSearch {
             self.judged_yanks
                 .iter()
                 .fold((0.0, 0.0), |(kept, judged), &(z, was_kept)| {
-                    let weight = (-0.5 * (z - diag.yank_z).powi(2)).exp();
+                    let weight = (-0.5 * (z - diag.yank_stdevs).powi(2)).exp();
                     (kept + weight * was_kept as u8 as f64, judged + weight)
                 });
         diag.keep_rate = (kept + 1.0) / (judged + 2.0);
@@ -1644,7 +1644,7 @@ impl GscPgo {
         target_id: usize,
         state: ClosureEdgeState,
         confidence: f64,
-        yank_z: f64,
+        yank_stdevs: f64,
     ) {
         self.closure_edge_events.push(ClosureEdgeEvent {
             time: self.newest_keyframe_time(),
@@ -1652,7 +1652,7 @@ impl GscPgo {
             target_id,
             state,
             confidence: confidence.clamp(0.0, 1.0),
-            yank_z,
+            yank_stdevs,
         });
     }
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
@@ -1690,14 +1690,14 @@ impl GscPgo {
             };
             if outcome == ClosureEdgeState::Committed {
                 self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
-                self.closure_yank_z.push(diag.yank_z);
+                self.closure_yank_stdevs.push(diag.yank_stdevs);
                 let drift = diag.yank_drift_scale.max(f64::EPSILON);
                 self.closure_yanks.push((
                     diag.yank_rotation_deg / drift,
                     diag.yank_translation / drift,
                 ));
             }
-            self.push_edge(source, target, outcome, checked, diag.yank_z);
+            self.push_edge(source, target, outcome, checked, diag.yank_stdevs);
         }
         self.closure_diagnostics.push(diag);
     }
@@ -1990,7 +1990,7 @@ impl GscPgo {
             judged_yanks: self
                 .committed_closures
                 .iter()
-                .zip(&self.closure_yank_z)
+                .zip(&self.closure_yank_stdevs)
                 .filter(|(c, z)| !c.gnc_weight.is_nan() && z.is_finite())
                 .map(|(c, z)| (*z, c.gnc_weight > 0.5))
                 .collect(),

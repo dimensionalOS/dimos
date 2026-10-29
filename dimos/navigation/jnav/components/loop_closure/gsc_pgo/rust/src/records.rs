@@ -291,7 +291,7 @@ const CLOSURE_EDGE_FIELDS: [(&str, u8); 12] = [
     ("target_id", PointField::UINT32 as u8),
     ("state", PointField::UINT32 as u8),
     ("confidence", F32),
-    ("yank_z", F32),
+    ("yank_stdevs", F32),
     ("ts", PointField::FLOAT64 as u8),
 ];
 

@@ -110,7 +110,7 @@ fn run(reported_over_true: f64, overtrust_check: bool) -> (f64, f64) {
         }
         right.push(!wrong);
         pgo.closure_fit_confidence.push(1.0);
-        pgo.closure_yank_z.push(0.0);
+        pgo.closure_yank_stdevs.push(0.0);
         pgo.commit_closure(
             source,
             target,
