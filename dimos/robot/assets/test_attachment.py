@@ -151,7 +151,7 @@ def test_attachment_can_target_existing_fixed_frames_and_attached_links(tmp_path
             prefix="tool_",
         )
         .with_fixed_frame("camera", "tool_tip")
-        .with_joint_position_limits("axis", lower=-0.5, upper=0.5)
+        .with_joint_position_limits("left_joint1", lower=-0.5, upper=0.5)
     )
     loaded = model.load()
     assert loaded.get_joint("left_mount").parent_link == "socket"
@@ -176,8 +176,7 @@ def test_pickle_and_configuration_keep_declarations_but_drop_materialized_state(
     loaded = model.load()
     restored = pickle.loads(pickle.dumps(model))
     assert "_loaded" not in restored.__dict__
-    assert "_loaded" not in restored._attached_model.host.__dict__
-    assert "_loaded" not in restored._attached_model.child.__dict__
+    assert "_loaded" not in restored._fixed_frames[0].child.__dict__
     assert restored.load() == loaded
     adapter = TypeAdapter(RobotModel)
     from_config = adapter.validate_python(adapter.dump_python(model))
@@ -287,7 +286,7 @@ def test_host_source_override_propagates_through_attachment_views(tmp_path):
     assert model.load().get_joint("stand").origin_xyz == (1, 0, 0)
 
 
-def test_subtree_view_drops_removed_inherited_planar_base_metadata(tmp_path):
+def test_source_filters_and_planar_base_precede_fixed_additions(tmp_path):
     definition = PlanarBaseDefinition(velocity_limits=(1, 1, 1), acceleration_limits=(2, 2, 2))
     model = (
         base(tmp_path)
@@ -297,6 +296,24 @@ def test_subtree_view_drops_removed_inherited_planar_base_metadata(tmp_path):
         )
     )
     selected = model.with_subtree_rooted_at("world")
-    assert selected.planar_base is None
-    assert selected.load().root_link == "world"
+    assert selected.planar_base is definition
+    assert selected.load().root_link == definition.root_link
     assert model.planar_base is definition
+
+
+def test_loading_attached_view_does_not_load_a_wrapped_host_model(tmp_path):
+    host, child = base(tmp_path), arm(tmp_path)
+    attached = host.with_attached_model(child, parent_link="world", joint_name="mount")
+    attached.load()
+    assert "_loaded" not in host.__dict__
+    assert attached.source_path is host.source_path
+
+
+def test_fixed_additions_require_parents_in_declaration_order(tmp_path):
+    model = (
+        base(tmp_path)
+        .with_attached_model(arm(tmp_path), parent_link="socket", joint_name="mount")
+        .with_fixed_frame("socket", "mount_link")
+    )
+    with pytest.raises(ValueError, match="unknown parent link: socket"):
+        model.load()

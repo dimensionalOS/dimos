@@ -88,4 +88,4 @@ def test_attached_model_survives_blueprint_config_round_trip(tmp_path: Path) -> 
     parsed = BlueprintConfigParser(blueprint).parse([], environ={})
     restored = RobotModelConfig(**parsed.module_kwargs(ManipulationModule.name)["model"])
     assert restored.model.source_path == source
-    assert restored.model._attached_model == model._attached_model
+    assert restored.model._fixed_frames == model._fixed_frames

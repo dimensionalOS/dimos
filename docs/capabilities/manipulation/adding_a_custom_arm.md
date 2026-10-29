@@ -524,9 +524,13 @@ The named fixed joint connects the parent's specified link to the child's root.
 The optional prefix namespaces the child's links, joints, materials, and mimic
 references. Translations are in meters; `rpy` uses extrinsic xyz rotations in
 radians. Construction returns a new immutable model without loading assets.
-Both inputs keep their already declared transforms; subsequent transforms apply
-to the joined tree. Further attachments can target links introduced by earlier
-attachments or fixed frames.
+The host's source subtree filters and planar base compile first. Fixed frames
+and attachments then apply in declaration order to the current XML tree. Host
+joint fixes, position limits, joint renames, and acceleration defaults compile
+last, in that order, and can address namespaced child joints. Child models use
+their own complete load pipeline before attachment. Further attachments can
+target links introduced by earlier attachments or fixed frames. No host-model
+wrapper or replay of nested host snapshots is involved.
 
 `load()` uses the existing in-memory model pipeline. It does not write a generated
 URDF or introduce a separate cache. The model retains its host's `source_path`;
