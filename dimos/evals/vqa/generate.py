@@ -858,9 +858,7 @@ def _materialize_ego_memory_clips(
     non_ego_cases: list[PublicCase] = []
     non_ego_labels: list[PrivateLabel] = []
     # Defer disk write until after 1:1 hard/soft balance so unused clips are not left behind.
-    EgoClipRow = tuple[
-        PublicCase, PrivateLabel, tuple[tuple[float, Image], ...], tuple[float, ...]
-    ]
+    EgoClipRow = tuple[PublicCase, PrivateLabel, tuple[tuple[float, Image], ...], tuple[float, ...]]
     hard: list[EgoClipRow] = []
     soft: list[EgoClipRow] = []
 
