@@ -415,6 +415,34 @@ impl GscPgo {
         }
         self.graph_error = solution.error;
         self.update_odometry_noise_scale(solution.odometry_noise_evidence);
+        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise and
+        // closure scales), for tracing the noise learner against ground truth offline
+        if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
+            use std::io::Write;
+            let kept: Vec<usize> = self
+                .committed_closures
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.gnc_weight > 0.5)
+                .map(|(i, _)| i)
+                .collect();
+            let line = format!(
+                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}]}}\n",
+                n,
+                self.committed_closures.len(),
+                kept,
+                self.odometry_noise(),
+                self.closure_noise_rotation_scale(),
+                self.closure_noise_scale()
+            );
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
         true
     }
 }
