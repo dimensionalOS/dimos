@@ -149,7 +149,10 @@ fn trace_rays(
         if (cached_slot == NO_SLOT) {
             continue;
         }
-        let v = cached_slot * BRICK_VOXELS + local_index(cell);
+        let v = voxel_at(cached_slot * BRICK_VOXELS + local_index(cell));
+        if (v == NO_SLOT) {
+            continue;
+        }
         let state = atomicLoad(&voxel_state[v]);
         if ((state & S_EXISTS) == 0u) {
             continue;
@@ -172,7 +175,7 @@ fn trace_rays(
             }
             continue;
         }
-        let spare = (state & S_PLANAR) != 0u && abs(dot(ray_unit, unpack_normal(normals[v]))) < params.graze_cos;
+        let spare = (state & S_PLANAR) != 0u && abs(dot(ray_unit, unpack_normal(normal_of(v)))) < params.graze_cos;
         if (!spare && atomicExchange(&stamps[v * 3u + STAMP_MISS], params.frame) != params.frame) {
             push(L_MISSES, C_MISSES, v);
         }

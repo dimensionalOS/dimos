@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex};
 
 use ahash::AHashMap;
-use dimos_gpu_mls::brick_map::{MapConfig, VoxelKey, VoxelSnapshot};
+use dimos_gpu_mls::brick_map::{BrickMap, MapConfig, VoxelKey, VoxelSnapshot};
 use dimos_gpu_mls::gpu::Gpu;
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{Config, VoxelMap};
 
@@ -64,6 +64,9 @@ pub fn gpu_config(cfg: &Config, brick_capacity: u32, max_points: u32) -> MapConf
         max_health: cfg.max_health,
         graze_cos: cfg.graze_cos,
         brick_capacity,
+        voxel_capacity: brick_capacity
+            .saturating_mul(512)
+            .min(BrickMap::max_voxel_capacity(&gpu())),
         max_points,
         list_capacity: 1 << 22,
     }

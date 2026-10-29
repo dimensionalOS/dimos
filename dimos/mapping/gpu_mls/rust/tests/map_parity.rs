@@ -175,6 +175,70 @@ fn seed_matches_cpu() {
     assert!(d.moment_rel_err < MOMENT_TOLERANCE, "{}", summary(&d));
 }
 
+/// A floor and ceiling far bigger than the 65536-brick pool the map once had
+/// fixed, seeded in pieces so the pools grow several times between frames,
+/// then ray traced over: the grown map still matches the CPU.
+#[test]
+fn map_grows_past_the_old_fixed_pool_and_matches_cpu() {
+    const OLD_POOL_BRICKS: u32 = 1 << 16;
+    const ROOM_M: f32 = 110.0;
+    const SPACING_M: f32 = 0.25;
+    const SEED_PIECES: usize = 8;
+    let cfg = cpu_config(0.05);
+    let steps = (ROOM_M / SPACING_M) as usize;
+    let cloud: Vec<(f32, f32, f32)> = [0.02f32, 2.48]
+        .iter()
+        .flat_map(|&z| {
+            (0..steps * steps).map(move |i| {
+                let (x, y) = ((i / steps) as f32, (i % steps) as f32);
+                (x * SPACING_M + 0.01, y * SPACING_M + 0.01, z)
+            })
+        })
+        .collect();
+    let piece = cloud.len().div_ceil(SEED_PIECES);
+    let mut cpu = VoxelMap::default();
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 20, piece as u32))
+        .expect("brick map fits the device");
+    for chunk in cloud.chunks(piece) {
+        seed_points(&mut cpu, chunk, &cfg);
+        map.seed(chunk);
+    }
+    let scene = Scene::room(ROOM_M, 2.5);
+    let mut rng = Lcg(5);
+    for origin in scene.trajectory(FRAMES, 0.4) {
+        let pts = scene.scan(
+            origin,
+            POINTS_PER_FRAME,
+            &mut rng,
+            0.01,
+            cfg.max_range + 5.0,
+        );
+        update_map(&mut cpu, origin, &pts, &cfg);
+        map.integrate(origin, &pts);
+    }
+    map.finish();
+    let stats = map.stats();
+    assert_eq!(stats.overflow, 0);
+    assert!(
+        stats.bricks > OLD_POOL_BRICKS,
+        "only {} bricks",
+        stats.bricks
+    );
+    let d = diff_maps(&cpu, &map.snapshot(), cfg.voxel_size);
+    eprintln!(
+        "grown to {} bricks, {} voxels: {}",
+        stats.bricks,
+        stats.voxels,
+        summary(&d)
+    );
+    assert!(
+        d.mismatched() as f64 <= 1e-3 * d.cpu_voxels as f64,
+        "{}",
+        summary(&d)
+    );
+    assert!(d.moment_rel_err < MOMENT_TOLERANCE, "{}", summary(&d));
+}
+
 pub fn summary(d: &common::MapDiff) -> String {
     format!(
         "cpu {} gpu {} only_cpu {} only_gpu {} health {} count {} fine {} moment_rel_err {:.2e}",

@@ -132,10 +132,10 @@ fn build_occupancy(
     @builtin(local_invocation_index) li: u32,
 ) {
     let v = thread_index(wg, nwg, li);
-    if (v >= min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity) * BRICK_VOXELS) {
+    if (v >= voxel_count()) {
         return;
     }
-    if (!voxel_exists(v) || health[v] <= 0) {
+    if (!voxel_exists(v) || health_of(v) <= 0) {
         return;
     }
     let local = key_of_voxel(v) - sp.window_min.xyz;
@@ -372,11 +372,15 @@ fn fit_cells(
         return;
     }
     for (var r = 0u; r < TILE_SLABS; r++) {
-        let v = first + r * 64u + li;
-        if (slot >= bricks || !voxel_exists(v) || health[v] <= 0) {
+        if (slot >= bricks) {
             continue;
         }
-        let local = key_of_voxel(v) - sp.window_min.xyz;
+        let site = first + r * 64u + li;
+        let v = voxel_at(site);
+        if (v == NO_SLOT || !voxel_exists(v) || health_of(v) <= 0) {
+            continue;
+        }
+        let local = key_of_site(site) - sp.window_min.xyz;
         if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
             continue;
         }
@@ -410,8 +414,10 @@ fn fit_cells(
         let b = tile_bricks[u32((step.x + 1) * 9 + (step.y + 1) * 3 + (step.z + 1))];
         var count = 0u;
         if (b != NO_SLOT) {
-            let nv = b * BRICK_VOXELS + local_index(brick_local);
-            count = moment_count(nv);
+            let nv = voxel_at(b * BRICK_VOXELS + local_index(brick_local));
+            if (nv != NO_SLOT) {
+                count = moment_count(nv);
+            }
             if (count > 0u) {
                 tile_store(c, nv, p);
             }
@@ -422,8 +428,7 @@ fn fit_cells(
 
     for (var j = li; j < len; j += 64u) {
         let offset = tile_list[j];
-        let fv = first + offset;
-        let key = key_of_voxel(fv);
+        let key = key_of_site(first + offset);
         let cell = key - sp.window_min.xyz;
         let ci = cell_index(cell.x, cell.y, cell.z);
         let cell_bottom = bottom_face(cell.z);

@@ -601,7 +601,7 @@ impl SurfaceExtractor {
             pass.set_bind_group(0, &map.bind_group, &[]);
             map.prepare(&mut pass);
             self.bind(&mut pass, Some(map), 1);
-            map.dispatch_pool(&mut pass, &self.pipelines.build_occupancy);
+            map.dispatch_voxels(&mut pass, &self.pipelines.build_occupancy);
             map.dispatch_pool(&mut pass, &self.pipelines.fit_cells);
         }
         {

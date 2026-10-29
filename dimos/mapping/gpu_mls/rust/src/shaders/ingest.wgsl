@@ -4,6 +4,7 @@
 const SEED_HEALTH: i32 = 1;
 const OVERFLOW_TABLE: u32 = 256u;
 const OVERFLOW_BRICKS: u32 = 512u;
+const OVERFLOW_VOXELS: u32 = 1024u;
 
 @group(1) @binding(0) var<storage, read_write> dispatch_args: array<u32>;
 
@@ -14,14 +15,16 @@ fn write_args(slot: u32, threads: u32) {
     dispatch_args[slot * 3u + 2u] = 1u;
 }
 
-// Indirect sizes for every list, then the whole brick pool at one thread per voxel.
+// Indirect sizes for every list, the brick pool at one thread per site, then
+// one thread per voxel.
 @compute @workgroup_size(1)
 fn prepare_dispatch() {
-    for (var list = 0u; list < 5u; list++) {
+    for (var list = 0u; list < LISTS; list++) {
         write_args(list, list_len(list + 1u));
     }
     let bricks = min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity);
-    write_args(5u, bricks * BRICK_VOXELS);
+    write_args(LISTS, bricks * BRICK_VOXELS);
+    write_args(LISTS + 1u, voxel_count());
 }
 
 @compute @workgroup_size(64)
@@ -99,6 +102,79 @@ fn assign_bricks(
     brick_coords[slot] = vec4<i32>(b, 0);
 }
 
+// The first point into a site without a voxel reserves it for assign_voxels.
+@compute @workgroup_size(64)
+fn reserve_voxels(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    let i = thread_index(wg, nwg, li);
+    if (i >= params.point_count) {
+        return;
+    }
+    let key = voxel_of(points[i].xyz);
+    let slot = find_brick(brick_of(key));
+    if (slot == NO_SLOT) {
+        return;
+    }
+    let site = slot * BRICK_VOXELS + local_index(key);
+    if (atomicLoad(&brick_voxels[site]) != 0u) {
+        return;
+    }
+    if (atomicCompareExchangeWeak(&brick_voxels[site], 0u, RESERVED_VOXEL).exchanged) {
+        push(L_NEW_VOXELS, C_NEW_VOXELS, site);
+    }
+}
+
+// Ids are never reused, so a new id's per-voxel words are still zero.
+@compute @workgroup_size(64)
+fn assign_voxels(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    let i = thread_index(wg, nwg, li);
+    if (i >= list_len(C_NEW_VOXELS)) {
+        return;
+    }
+    let site = lists[L_NEW_VOXELS * params.list_capacity + i];
+    let v = atomicAdd(&counters[C_VOXELS], 1u);
+    if (v >= params.voxel_capacity) {
+        atomicStore(&brick_voxels[site], 0u);
+        atomicOr(&counters[C_OVERFLOW], OVERFLOW_VOXELS);
+        return;
+    }
+    voxel_data[v * VOXEL_DATA_WORDS + 3u] = site;
+    atomicStore(&brick_voxels[site], v + 1u);
+}
+
+// Every pool brick back into an empty, larger table.
+@compute @workgroup_size(64)
+fn rehash(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    let slot = thread_index(wg, nwg, li);
+    if (slot >= min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity)) {
+        return;
+    }
+    let key = pack_brick(brick_coords[slot].xyz);
+    var entry = hash_key(key) & params.table_mask;
+    for (var probe = 0u; probe <= params.table_mask; probe++) {
+        let r = atomicCompareExchangeWeak(&table_keys[entry], EMPTY_KEY, key);
+        if (r.exchanged) {
+            table_slots[entry] = slot;
+            return;
+        }
+        if (r.old_value != EMPTY_KEY) {
+            entry = (entry + 1u) & params.table_mask;
+        }
+    }
+    atomicOr(&counters[C_OVERFLOW], OVERFLOW_TABLE);
+}
+
 // First point into a voxel this frame lists it as hit, creating it when absent.
 @compute @workgroup_size(64)
 fn mark_hits(
@@ -120,9 +196,9 @@ fn mark_hits(
     push(L_HITS, C_HITS, v);
     if (!voxel_exists(v)) {
         atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_CREATED);
-        health[v] = select(params.min_health, SEED_HEALTH, params.mode == MODE_SEED);
-        next_fit[v] = NORMAL_MIN_POINTS;
-        normals[v] = 0u;
+        set_health(v, select(params.min_health, SEED_HEALTH, params.mode == MODE_SEED));
+        set_next_fit(v, NORMAL_MIN_POINTS);
+        set_normal(v, 0u);
     }
 }
 
@@ -137,7 +213,7 @@ fn apply_hits(
         return;
     }
     let v = lists[L_HITS * params.list_capacity + i];
-    health[v] = min(health[v] + 1, params.max_health);
+    set_health(v, min(health_of(v) + 1, params.max_health));
 }
 
 fn add_fixed(word: u32, value: i32) {
@@ -204,7 +280,7 @@ fn settle_hits(
     }
     let v = lists[L_HITS * params.list_capacity + i];
     let count = moment_count(v);
-    var milestone = next_fit[v];
+    var milestone = next_fit_of(v);
     var crossed = false;
     while (milestone <= count) {
         crossed = true;
@@ -219,7 +295,7 @@ fn settle_hits(
         }
         milestone = max(milestone >> 1u, (count >> 1u) + 1u);
     }
-    next_fit[v] = milestone;
+    set_next_fit(v, milestone);
     let created = (atomicAnd(&voxel_state[v], ~S_CREATED) & S_CREATED) != 0u;
     if (created || (crossed && params.mode != MODE_SEED)) {
         push(L_CHANGED, C_CHANGED, v);
@@ -237,20 +313,20 @@ fn apply_misses(
         return;
     }
     let v = lists[L_MISSES * params.list_capacity + i];
-    let h = health[v] - 1;
+    let h = health_of(v) - 1;
     if (h > params.min_health) {
-        health[v] = h;
+        set_health(v, h);
         return;
     }
     atomicStore(&voxel_state[v], 0u);
-    health[v] = 0;
+    set_health(v, 0);
     for (var w = 0u; w < MOMENT_WORDS; w++) {
         atomicStore(&moments[v * MOMENT_WORDS + w], 0u);
     }
     atomicStore(&fine[v * 2u], 0u);
     atomicStore(&fine[v * 2u + 1u], 0u);
-    next_fit[v] = NORMAL_MIN_POINTS;
-    normals[v] = 0u;
+    set_next_fit(v, NORMAL_MIN_POINTS);
+    set_normal(v, 0u);
     push(L_CHANGED, C_CHANGED, v);
 }
 

@@ -176,6 +176,7 @@ fn main() {
                 max_health: 5,
                 graze_cos: 0.7,
                 brick_capacity: 1 << 15,
+                voxel_capacity: 1 << 24,
                 max_points: cloud.len() as u32,
                 list_capacity: 1 << 22,
             },

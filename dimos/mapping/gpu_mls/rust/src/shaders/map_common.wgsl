@@ -18,6 +18,10 @@ struct MapParams {
     brick_capacity: u32,
     list_capacity: u32,
     trace_pass: u32,
+    voxel_capacity: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 }
 
 const MODE_TRACE: u32 = 0u;
@@ -26,6 +30,9 @@ const MODE_INGEST: u32 = 2u;
 
 const EMPTY_KEY: u32 = 0xffffffffu;
 const NO_SLOT: u32 = 0xffffffffu;
+// A brick_voxels entry: 0 for no voxel, else its voxel id plus one, or this
+// while the voxel's id is being assigned.
+const RESERVED_VOXEL: u32 = 0xffffffffu;
 const BRICK_BITS: i32 = 3;
 const BRICK_VOXELS: u32 = 512u;
 
@@ -35,13 +42,17 @@ const C_HITS: u32 = 2u;
 const C_FITS: u32 = 3u;
 const C_MISSES: u32 = 4u;
 const C_CHANGED: u32 = 5u;
-const C_OVERFLOW: u32 = 6u;
+const C_NEW_VOXELS: u32 = 6u;
+const C_OVERFLOW: u32 = 7u;
+const C_VOXELS: u32 = 8u;
 
 const L_NEW: u32 = 0u;
 const L_HITS: u32 = 1u;
 const L_FITS: u32 = 2u;
 const L_MISSES: u32 = 3u;
 const L_CHANGED: u32 = 4u;
+const L_NEW_VOXELS: u32 = 5u;
+const LISTS: u32 = 6u;
 
 const S_EXISTS: u32 = 1u;
 const S_STALE: u32 = 2u;
@@ -63,21 +74,24 @@ const MOMENT_HALVING_COUNT: u32 = 16384u;
 
 const NORMAL_MIN_POINTS: u32 = 3u;
 
+// voxel_data words: health, next refit count, packed normal, brick site.
+const VOXEL_DATA_WORDS: u32 = 4u;
+
 @group(0) @binding(0) var<uniform> params: MapParams;
 @group(0) @binding(1) var<storage, read_write> table_keys: array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
 @group(0) @binding(3) var<storage, read_write> brick_coords: array<vec4<i32>>;
-@group(0) @binding(4) var<storage, read_write> counters: array<atomic<u32>>;
-@group(0) @binding(5) var<storage, read_write> lists: array<u32>;
-@group(0) @binding(6) var<storage, read_write> points: array<vec4<f32>>;
-@group(0) @binding(7) var<storage, read_write> voxel_state: array<atomic<u32>>;
-@group(0) @binding(8) var<storage, read_write> health: array<i32>;
+// Per brick site (slot * BRICK_VOXELS + local index), its voxel's id.
+@group(0) @binding(4) var<storage, read_write> brick_voxels: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> counters: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> lists: array<u32>;
+@group(0) @binding(7) var<storage, read_write> points: array<vec4<f32>>;
+// Per voxel id from here on.
+@group(0) @binding(8) var<storage, read_write> voxel_state: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> stamps: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> fine: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> moments: array<atomic<u32>>;
-@group(0) @binding(12) var<storage, read_write> next_fit: array<u32>;
-// Octahedral-packed unit normals, meaningful where S_PLANAR is set.
-@group(0) @binding(13) var<storage, read_write> normals: array<u32>;
+@group(0) @binding(12) var<storage, read_write> voxel_data: array<u32>;
 
 fn thread_index(wg: vec3<u32>, nwg: vec3<u32>, local: u32) -> u32 {
     return (wg.y * nwg.x + wg.x) * 64u + local;
@@ -137,13 +151,51 @@ fn find_brick(b: vec3<i32>) -> u32 {
     return NO_SLOT;
 }
 
-// Global voxel index of a key, NO_SLOT when its brick is absent.
+// The voxel id at a brick site, NO_SLOT when it has none.
+fn voxel_at(site: u32) -> u32 {
+    let entry = atomicLoad(&brick_voxels[site]);
+    if (entry == 0u || entry == RESERVED_VOXEL) {
+        return NO_SLOT;
+    }
+    return entry - 1u;
+}
+
+// The voxel id of a key, NO_SLOT when it has none.
 fn find_voxel(key: vec3<i32>) -> u32 {
     let slot = find_brick(brick_of(key));
     if (slot == NO_SLOT) {
         return NO_SLOT;
     }
-    return slot * BRICK_VOXELS + local_index(key);
+    return voxel_at(slot * BRICK_VOXELS + local_index(key));
+}
+
+fn health_of(v: u32) -> i32 {
+    return bitcast<i32>(voxel_data[v * VOXEL_DATA_WORDS]);
+}
+
+fn set_health(v: u32, h: i32) {
+    voxel_data[v * VOXEL_DATA_WORDS] = bitcast<u32>(h);
+}
+
+fn next_fit_of(v: u32) -> u32 {
+    return voxel_data[v * VOXEL_DATA_WORDS + 1u];
+}
+
+fn set_next_fit(v: u32, count: u32) {
+    voxel_data[v * VOXEL_DATA_WORDS + 1u] = count;
+}
+
+// Octahedral-packed unit normal, meaningful where S_PLANAR is set.
+fn normal_of(v: u32) -> u32 {
+    return voxel_data[v * VOXEL_DATA_WORDS + 2u];
+}
+
+fn set_normal(v: u32, packed: u32) {
+    voxel_data[v * VOXEL_DATA_WORDS + 2u] = packed;
+}
+
+fn site_of(v: u32) -> u32 {
+    return voxel_data[v * VOXEL_DATA_WORDS + 3u];
 }
 
 fn voxel_exists(v: u32) -> bool {
@@ -167,11 +219,19 @@ fn voxel_center(key: vec3<i32>) -> vec3<f32> {
     return (vec3<f32>(key) + vec3<f32>(0.5)) * params.voxel_size;
 }
 
-// The key of global voxel index v from its brick's recorded coordinate.
-fn key_of_voxel(v: u32) -> vec3<i32> {
-    let b = brick_coords[v / BRICK_VOXELS].xyz;
-    let l = v % BRICK_VOXELS;
+// The key of a brick site from its brick's recorded coordinate.
+fn key_of_site(site: u32) -> vec3<i32> {
+    let b = brick_coords[site / BRICK_VOXELS].xyz;
+    let l = site % BRICK_VOXELS;
     return (b << vec3<u32>(3u)) | vec3<i32>(i32(l >> 6u), i32((l >> 3u) & 7u), i32(l & 7u));
+}
+
+fn key_of_voxel(v: u32) -> vec3<i32> {
+    return key_of_site(site_of(v));
+}
+
+fn voxel_count() -> u32 {
+    return min(atomicLoad(&counters[C_VOXELS]), params.voxel_capacity);
 }
 
 // Read a fixed-point moment word as f32 in voxel units.
