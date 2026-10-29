@@ -12,31 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The G1 connection stays in simulation while its device and lidar use the world."""
+"""G1 model composition preserves the hardware motor order and original dynamics."""
 
-from dataclasses import replace
+from functools import partial
+from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import mujoco
+import numpy as np
 import pytest
+from robosuite.models.robots.robot_model import RobotModel
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.connection.connection_module import ConnectionModule
 from dimos.core.global_config import GlobalConfig
 from dimos.hardware.sensors.lidar.livox.module import MID360_IMU_OFFSET, Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import unitree_g1_groot_wbc
 from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
-from dimos.robot.unitree.g1.simulation import G1_SIM, g1_groot_instance
+from dimos.robot.unitree.g1.simulation import G1Model, g1_model
 from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
 from dimos.sim2.composition import simulate
+from dimos.sim2.environment import MotorScene
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.module import LidarModule
+from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.spec import WorldConfig
-from dimos.sim2.world.scene import load_scene
+from dimos.sim2.world.runtime import SimulationRuntime
+from dimos.sim2.world.scene_types import SceneDescription
+from dimos.utils.data import LfsPath
+
+
+@pytest.fixture
+def model(tmp_path, mocker):
+    # Model parsing is local; these tests never fetch robot mesh assets.
+    mocker.patch("dimos.robot.unitree.g1.simulation.LfsPath", return_value=tmp_path)
+    return G1Model(idn="g1")
 
 
 @pytest.fixture
@@ -48,35 +63,80 @@ def scene(tmp_path):
     return path
 
 
-def test_definition_binds_every_coordinator_joint_and_only_the_control_imu():
-    assert [joint.name for joint in G1_SIM.joints] == make_humanoid_joints("g1")
-    for joint in G1_SIM.joints:
-        assert joint.model_name == joint.actuator == joint.name.split("/", 1)[1] + "_joint"
-        assert joint.mode == "effort"
-    assert [sensor.name for sensor in G1_SIM.sensors] == ["imu"]
-    assert len(G1_GROOT_KP) == len(G1_GROOT_KD) == len(G1_GROOT_HOME) == 29
-
-
-def test_groot_instance_holds_the_home_pose_until_the_policy_commands(scene):
-    instance = g1_groot_instance(scene, frame_id="pelvis")
-    names = [joint.name for joint in G1_SIM.joints]
-    assert instance.initial_positions == dict(zip(names, G1_GROOT_HOME, strict=True))
-    assert [instance.hold_gains[name] for name in names] == list(
-        zip(G1_GROOT_KP, G1_GROOT_KD, strict=True)
+def test_upstream_model_actuator_order_matches_every_hardware_motor(model):
+    assert isinstance(model, RobotModel)
+    assert model.public_motor_names == tuple(make_humanoid_joints("g1"))
+    expected = model.correct_naming(
+        [name.split("/", 1)[1] + "_joint" for name in model.public_motor_names]
     )
-    assert instance.control_imu == "imu"
-    assert instance.wait_for_first_command
-    assert instance.frame_id == "pelvis"
-    assert instance.xyz == pytest.approx((0, 0, 0.793))
+    assert model.actuators == expected
+    assert [motor.attrib["joint"] for motor in model.actuator] == expected
 
 
-def test_connection_describes_the_robot_without_a_robot_specific_world_class(scene):
-    twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
-    assert twin.robot_id == "g1"
-    assert issubclass(G1WholeBodyConnection, ConnectionModule)
-    assert twin.instance.frame_id == G1WholeBodyConnectionConfig().frame_id == "g1_pelvis"
-    assert [joint.name for joint in twin.instance.config.joints] == make_humanoid_joints("g1")
-    assert G1WholeBodyConnection.default_sim_scene == "logistics.xml"
+def test_control_imu_is_a_native_sensor_at_the_authored_site(model):
+    assert model.sensors == model.correct_naming(
+        [
+            "imu-angular-velocity",
+            "imu-linear-acceleration",
+            "control_imu_gyro",
+            "control_imu_accel",
+            "control_imu_quat",
+        ]
+    )
+    gyro = model.sensor.find(f"gyro[@name='{model.correct_naming('control_imu_gyro')}']")
+    accel = model.sensor.find(f"accelerometer[@name='{model.correct_naming('control_imu_accel')}']")
+    assert gyro.attrib["site"] == model.correct_naming("control_imu")
+    assert accel.attrib["site"] == model.correct_naming("control_imu")
+    assert model.sensor.find("framequat").attrib["objname"] == model.correct_naming("control_imu")
+
+
+def test_robosuite_loading_preserves_anonymous_joint_defaults(model):
+    source = ET.parse(Path(__file__).parent / "assets" / "g1_29dof.xml").getroot()
+    defaults = source.find("./default/joint").attrib
+    originals = {
+        model.correct_naming(joint.attrib["name"]): {**defaults, **joint.attrib}
+        for joint in source.findall(".//worldbody//joint")
+    }
+    for joint in model.worldbody.iter("joint"):
+        expected = originals[joint.attrib["name"]]
+        for field in ("damping", "armature", "frictionloss"):
+            assert float(joint.attrib[field]) == float(expected[field])
+
+
+def test_groot_startup_uses_existing_home_and_motor_gains(model):
+    assert model.init_qpos.tolist() == list(G1_GROOT_HOME)
+    assert model.startup_kp == tuple(G1_GROOT_KP)
+    assert model.startup_kd == tuple(G1_GROOT_KD)
+    assert model.wait_for_first_command
+    # Each caller owns its initial joint array.
+    model.init_qpos[:] = 99
+    assert model.init_qpos.tolist() == list(G1_GROOT_HOME)
+
+
+def test_factory_places_the_robot_above_an_authored_support(model, scene):
+    scene.with_suffix(".json").write_text(
+        SceneDescription(id="platform", spawns={"default": Pose(1, 2, 0.4)}).model_dump_json()
+    )
+
+    placed = g1_model(scene)
+
+    body = placed.worldbody.find("body")
+    assert np.fromstring(body.attrib["pos"], sep=" ") == pytest.approx([1, 2, 1.193])
+
+
+def test_connection_declares_model_lazily_and_preserves_public_frame(scene, mocker):
+    factory = mocker.patch("dimos.robot.unitree.g1.simulation.g1_model")
+
+    twin = G1WholeBodyConnection.simulated_robot(
+        G1WholeBodyConnectionConfig(frame_id="pelvis"), scene
+    )
+
+    factory.assert_not_called()
+    assert twin.joint_names == tuple(make_humanoid_joints("g1"))
+    assert twin.frame_id == "pelvis"
+    assert twin.control_imu == "control_imu"
+    assert twin.startup_kp == tuple(G1_GROOT_KP)
+    assert twin.startup_kd == tuple(G1_GROOT_KD)
 
 
 def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
@@ -89,54 +149,113 @@ def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
     assert Mid360.simulated_sensor(Mid360Config(enable_imu=False)).imu is None
 
 
-def test_groot_blueprint_keeps_connection_and_wires_the_world_through_its_device(scene):
-    hardware = {atom.module for atom in unitree_g1_groot_wbc.active_blueprints}
-    assert {G1WholeBodyConnection, Mid360, PointLio} <= hardware
-
+def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
     result, module_kwargs = simulate(
         unitree_g1_groot_wbc, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
-
     modules = {atom.name: atom.module for atom in result.active_blueprints}
-    connection = next(
-        atom for atom in result.active_blueprints if atom.module is G1WholeBodyConnection
-    )
+    connection = next(a for a in result.active_blueprints if a.module is G1WholeBodyConnection)
     original = next(
-        atom
-        for atom in unitree_g1_groot_wbc.active_blueprints
-        if atom.module is G1WholeBodyConnection
+        a for a in unitree_g1_groot_wbc.active_blueprints if a.module is G1WholeBodyConnection
     )
+    world = next(a for a in result.blueprints if a.module is SimulationModule)
+
     assert connection.name == original.name
     assert module_kwargs[connection.name]["simulation_device"] is not None
     assert modules["mid360"] is LidarModule
     assert PointLio in modules.values()
-    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
-    remaps = result.remapping_map
     for port in ("motor_states", "motor_command", "imu"):
-        assert remaps[connection.name, port] == f"g1/{port}"
+        assert result.remapping_map[connection.name, port] == f"g1/{port}"
         assert world.kwargs["robot_topics"]["g1"][port] == f"_sim2/{connection.name}/{port}"
-    assert world.kwargs["robot_topics"]["g1"]["odom"] == "odom"
-    # The Mid360 driver's wiring into Point-LIO survives untouched.
-    assert remaps["mid360", "lidar"] == "lidar_raw"
-    assert remaps["mid360", "imu"] == "imu_raw"
-    instance = world.kwargs["world"].robots["g1"]
-    assert [s.name for s in instance.config.sensors] == ["imu", "mid360"]
+    assert result.remapping_map["mid360", "lidar"] == "lidar_raw"
+    assert result.remapping_map["mid360", "imu"] == "imu_raw"
+    assert [(owner, sensor.name) for owner, sensor in world.kwargs["sensors"]] == [("g1", "mid360")]
 
 
 @pytest.mark.self_hosted
-def test_asset_carries_the_mounts_and_actuators_the_twins_name(scene):
-    instance = g1_groot_instance(scene)
-    lidar = Mid360.simulated_sensor(Mid360Config(frame_id="mid360_link"))
-    # The swap names the device after its driver and the device IMU after it.
-    lidar = replace(lidar, name="mid360", imu=replace(lidar.imu, name="mid360_imu"))
-    instance = replace(instance, config=instance.config.with_sensor(lidar))
-    model = load_scene(WorldConfig(scene, {"g1": instance}))
-    assert model.nu == 29
-    for kind, name in (
-        (mujoco.mjtObj.mjOBJ_SITE, "g1/control_imu"),
-        (mujoco.mjtObj.mjOBJ_SITE, "g1/mid360_link"),
-        (mujoco.mjtObj.mjOBJ_SITE, "g1/sensor/mid360_imu"),
-        (mujoco.mjtObj.mjOBJ_CAMERA, "g1/front_camera"),
-        (mujoco.mjtObj.mjOBJ_ACTUATOR, "g1/left_hip_pitch_joint"),
+def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu():
+    path = Path(__file__).parent / "assets" / "g1_29dof.xml"
+    native_spec = mujoco.MjSpec.from_file(str(path))
+    native_spec.meshdir = str(LfsPath("g1_urdf/meshes"))
+    native = native_spec.compile()
+    upstream = G1Model()
+    compiled = upstream.get_model()
+
+    for field in (
+        "body_mass",
+        "body_inertia",
+        "dof_damping",
+        "dof_armature",
+        "dof_frictionloss",
+        "jnt_range",
+        "geom_friction",
+        "actuator_gainprm",
+        "actuator_biasprm",
+        "actuator_gear",
+        "actuator_ctrlrange",
     ):
-        assert mujoco.mj_name2id(model, kind, name) >= 0, name
+        np.testing.assert_allclose(getattr(compiled, field), getattr(native, field), err_msg=field)
+    assert compiled.nu == 29
+    assert compiled.sensor(upstream.correct_naming("control_imu_gyro")).dim == 3
+    assert compiled.sensor(upstream.correct_naming("control_imu_accel")).dim == 3
+    assert compiled.sensor(upstream.correct_naming("control_imu_quat")).dim == 4
+
+
+@pytest.mark.self_hosted
+def test_g1_commands_and_coherent_feedback_through_the_upstream_environment(scene, mocker):
+    twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
+    factory = partial(MotorScene, scene=scene, models={"g1": twin.model})
+    with SimulationRuntime(factory, robots={"g1": twin}) as world:
+        feedback = mocker.patch.object(world, "publish_feedback")
+        world.step()
+        assert world.tick == 0
+        command = MotorCommandArray(
+            q=list(G1_GROOT_HOME), kp=list(G1_GROOT_KP), kd=list(G1_GROOT_KD)
+        )
+
+        assert world.accept_command("g1", command)
+        world.step()
+
+        _, joints, imu, odom = feedback.call_args.args
+        assert world.tick == 1
+        assert joints.name == list(twin.joint_names)
+        assert joints.frame_id == imu.frame_id == "g1_pelvis"
+        assert joints.ts == imu.ts == odom.ts
+        assert np.isfinite(joints.position).all()
+        assert world.data.time == pytest.approx(0.005)
+
+
+@pytest.mark.self_hosted
+def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene):
+    twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
+    lidar = Mid360.simulated_sensor(Mid360Config(frame_id="mid360_link"))
+    sensors = (("g1", lidar),)
+    factory = partial(
+        MotorScene, scene=scene, models={"g1": twin.model}, sensors=sensors, hard_reset=True
+    )
+    with SimulationRuntime(factory, robots={"g1": twin}, sensors=sensors) as world:
+        reader = WorldReader(world.describe())
+        reader.push(world.last_snapshot)
+        assert reader.update()
+        original_model = reader.model
+        original_episode = reader.episode
+        prefix = reader.model_prefix("g1")
+        imu_site = reader.model.site(prefix + lidar.imu.model_name).id
+        lidar_site = reader.model.site(prefix + lidar.model_name).id
+        assert reader.model.site_bodyid[imu_site] == reader.model.site_bodyid[lidar_site]
+        offset = reader.data.site_xmat[lidar_site].reshape(3, 3).T @ (
+            reader.data.site_xpos[imu_site] - reader.data.site_xpos[lidar_site]
+        )
+        assert offset == pytest.approx(MID360_IMU_OFFSET)
+
+        world.reset()
+        reader.push(world.last_snapshot)
+        assert reader.update()
+
+        assert reader.model is not original_model
+        assert reader.episode == original_episode + 1
+        assert world.waiting_for_control == {"g1"}
+        assert reader.model.sensor(prefix + "sensor/imu/gyro").dim == 3
+        assert reader.model.sensor(prefix + "sensor/imu/accel").dim == 3
+        assert reader.model.sensor(prefix + "control_imu_quat").dim == 4
+        assert np.isfinite(reader.data.sensordata).all()

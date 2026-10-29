@@ -14,8 +14,8 @@
 
 """Unitree G1 GR00T whole-body control with Mid360 + Point-LIO navigation.
 
-One blueprint for hardware and simulation. ``--simulation mujoco`` replaces the
-G1 connection and the Mid360 driver with their simulated twins (see
+One blueprint for hardware and simulation. ``--simulation mujoco`` retains the
+G1 connection, supplies its robosuite motor device and simulates the Mid360 (see
 ``docs/usage/sim2.md``); the coordinator and its transport adapter, Point-LIO,
 mapping, planning and the viewer are the same modules on the same streams in
 both modes. What differs is the operating profile: tick rate, arming and the

@@ -70,6 +70,62 @@ The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
 the new model on reset, so use per-reset randomization with those workers;
 model changes during an episode are not propagated to their compiled models.
 
+## Run the existing G1 application
+
+```bash
+# Same application and connection, different motor device.
+dimos run unitree-g1-groot-wbc --network-interface=enp2s0
+dimos --simulation mujoco run unitree-g1-groot-wbc
+```
+
+```text
+ControlCoordinator / existing GR00T policy
+    -> G1WholeBodyConnection
+        -> real mode: G1MotorDevice -> Unitree DDS
+        -> simulation: SimulatedMotorDevice -> MotorScene (robosuite MujocoEnv)
+
+MotorScene
+    Task(Arena, G1Model)       # upstream composition
+    MotorController          # exact q/dq/kp/kd/tau motor behavior
+    Observable               # ordinary sensor acquisition
+    -> feedback -> retained connection -> existing GR00T policy
+    -> state snapshots -> rolling Mid360 -> Point-LIO -> mapping/planning
+```
+
+There is one robot-local simulation file,
+[G1Model](/dimos/robot/unitree/g1/simulation.py). It subclasses robosuite's
+`RobotModel`, loads the existing 29-DOF MJCF and uses upstream placement methods.
+Motor names and the GR00T home pose/gains come from the existing hardware/control
+definitions. The importer preserves the MJCF's physical parameters; robosuite's
+default joint tuning is not allowed to alter the G1 model.
+
+The connection attaches that model to DimOS using this actual binding:
+
+```python
+return SimulatedRobot(
+    robot_id="g1",
+    model=partial(g1_model, scene),
+    joint_names=G1Model.public_motor_names,
+    frame_id=config.frame_id,
+    control_imu=G1Model.control_imu,
+    startup_kp=G1Model.startup_kp,
+    startup_kd=G1Model.startup_kd,
+    wait_for_first_command=True,
+)
+```
+
+`SimulatedRobot` describes the **connection binding**: public motor names, units,
+frames and startup/watchdog behavior. Geometry, joint anatomy, actuator behavior
+and placement are owned by the upstream model. There is no parallel `Joint`,
+`RobotConfig`, `RobotInstance` or `WorldConfig` simulation model schema.
+
+`composition.py` supplies the simulated device to the shared `ConnectionModule`
+and adds the environment. It also replaces supported sensor drivers under their
+existing instance names/remaps. The G1 connection remains in the blueprint and
+owns command validation, halt and public feedback in both modes. Automatic
+composition currently supports one PD motor connection; explicit `MotorScene`
+composition supports multiple models.
+
 ## Add another robot
 
 For a robot already supplied by robosuite, use its existing model/task directly.
@@ -87,8 +143,8 @@ For an existing DimOS hardware application:
 `MotorController` derives joint/actuator indices and native servo behavior from
 the compiled model. It preserves full PD plus feedforward commands; it does not
 replace the external locomotion policy with an upstream position or IK controller.
-Startup holds the model's initial configuration. After control begins, halt and expired commands use the binding's configured
-damping until a new command or reset.
+Startup holds the model's initial configuration. After control begins, G1 halt
+and expired commands damp the motors until a new command or reset.
 
 ## Sensors and reset
 

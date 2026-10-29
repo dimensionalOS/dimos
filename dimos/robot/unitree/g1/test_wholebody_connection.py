@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from types import SimpleNamespace
 
 from pydantic import ValidationError
@@ -118,3 +120,35 @@ def test_invalid_pd_values_do_not_reach_the_device(connection, column, value):
 def test_non_finite_soft_start_is_rejected(value):
     with pytest.raises(ValidationError):
         G1WholeBodyConnectionConfig(soft_start_seconds=value)
+
+
+def test_hardware_connection_import_and_device_creation_need_no_simulation_packages():
+    script = """
+import importlib.abc
+import sys
+from contextlib import ExitStack
+
+class NoSimulationImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.', 1)[0] in {'robosuite', 'mujoco'}:
+            raise AssertionError(f'hardware attempted simulation import: {fullname}')
+
+sys.meta_path.insert(0, NoSimulationImports())
+
+from dimos.core.global_config import GlobalConfig
+from dimos.robot.unitree.g1.motor_device import G1MotorDevice
+from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+
+with ExitStack() as cleanup:
+    connection = G1WholeBodyConnection(g=GlobalConfig(simulation=''))
+    cleanup.callback(connection.stop)
+    assert len(connection.limits) == 29 * 5
+    assert isinstance(connection.create_hardware_device(), G1MotorDevice)
+    assert not connection.status().connected
+
+assert not {'robosuite', 'mujoco'} & sys.modules.keys()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr

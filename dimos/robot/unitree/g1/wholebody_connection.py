@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -33,8 +34,9 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.motor_device import G1_JOINT_NAMES, G1MotorDevice
-from dimos.robot.unitree.g1.simulation import g1_groot_instance
-from dimos.sim2.spec import SimulatedRobot
+
+if TYPE_CHECKING:
+    from dimos.sim2.spec import SimulatedRobot
 
 
 class G1WholeBodyConnectionConfig(ConnectionConfig):
@@ -67,7 +69,10 @@ class G1WholeBodyConnection(ConnectionModule):
     @staticmethod
     def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
         """The same G1 in MuJoCo, held in the GR00T home pose until the policy commands it."""
-        return SimulatedRobot("g1", g1_groot_instance(scene, frame_id=config.frame_id))
+        # Hardware imports need no simulation extra; resolve this backend only
+        # when composition selects it.
+        simulation = import_module("dimos.robot.unitree.g1.simulation")
+        return cast("SimulatedRobot", simulation.simulated_robot(config, scene))
 
     @property
     def limits(self) -> dict[str, Limits]:

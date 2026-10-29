@@ -12,63 +12,111 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The G1's MuJoCo body, actuator bindings and GR00T start pose.
-
-Joint names and gains come from the same definitions as the real controller.
-The retained G1 connection receives a generic simulated motor device; each
-hardware sensor driver in the blueprint describes its own simulated sensor.
-"""
+"""The G1's upstream robosuite model and existing GR00T startup configuration."""
 
 from __future__ import annotations
 
-from dataclasses import replace
+from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
+import xml.etree.ElementTree as ET
+
+import numpy as np
+from numpy.typing import NDArray
+from robosuite.models.robots.robot_model import RobotModel
 
 from dimos.control.components import make_humanoid_joints
 from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
-from dimos.sim2.sensors.imu.spec import Imu
-from dimos.sim2.spec import Joint, RobotConfig, RobotInstance
-from dimos.sim2.world.scene import scene_robot
+from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.world.scene import scene_spawn
 from dimos.utils.data import LfsPath
 
-G1_SIM = RobotConfig(
-    model=Path(__file__).parent / "assets" / "g1_29dof.xml",
-    meshdir=LfsPath("g1_urdf/meshes"),
-    root_body="pelvis",
-    floating=True,
-    spawn_height=0.793,
-    joints=tuple(
-        Joint(
-            name=name,
-            model_name=name.split("/", 1)[1] + "_joint",
-            actuator=name.split("/", 1)[1] + "_joint",
+if TYPE_CHECKING:
+    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
+
+
+class G1Model(RobotModel):
+    """Use the 29-DOF G1 asset in its hardware motor order."""
+
+    public_motor_names = tuple(make_humanoid_joints("g1"))
+    control_imu = "control_imu"
+    startup_kp = tuple(G1_GROOT_KP)
+    startup_kd = tuple(G1_GROOT_KD)
+    wait_for_first_command = True
+
+    def __init__(self, idn: str | int = "g1") -> None:
+        path = Path(__file__).parent / "assets" / "g1_29dof.xml"
+        source = ET.parse(path).getroot()
+        defaults = source.find("./default/joint")
+        attributes = {
+            joint.attrib["name"]: {
+                **({} if defaults is None else defaults.attrib),
+                **{key: value for key, value in joint.attrib.items() if key != "name"},
+            }
+            for joint in source.findall(".//worldbody//joint")
+        }
+        super().__init__(str(path), idn=idn)
+        # robosuite removes anonymous defaults and supplies its own joint
+        # dynamics. Restore the source values instead of changing the G1 plant.
+        named_attributes = {self.correct_naming(name): attrs for name, attrs in attributes.items()}
+        for joint in self.worldbody.iter("joint"):
+            joint.attrib.update(named_attributes[joint.attrib["name"]])
+        meshdir = LfsPath("g1_urdf/meshes")
+        for mesh in self.asset.findall("mesh"):
+            mesh.set("file", str(meshdir / Path(mesh.attrib["file"]).name))
+        expected = self.correct_naming(
+            [name.split("/", 1)[1] + "_joint" for name in self.public_motor_names]
         )
-        for name in make_humanoid_joints("g1")
-    ),
-    # The control IMU travels with motor feedback, as it does over DDS on hardware.
-    sensors=(Imu("imu", site="control_imu"),),
-)
+        if self.actuators != expected:
+            raise ValueError("G1 model actuator order must match the hardware motor order")
+        site = self.correct_naming(self.control_imu)
+        for kind, suffix in (("gyro", "gyro"), ("accelerometer", "accel")):
+            ET.SubElement(
+                self.sensor,
+                kind,
+                name=self.correct_naming(f"{self.control_imu}_{suffix}"),
+                site=site,
+            )
+        ET.SubElement(
+            self.sensor,
+            "framequat",
+            name=self.correct_naming(f"{self.control_imu}_quat"),
+            objtype="site",
+            objname=site,
+        )
+
+    @property
+    def sensors(self) -> list[str]:
+        return [sensor.attrib["name"] for sensor in self.sensor]
+
+    @property
+    def init_qpos(self) -> NDArray[np.float64]:
+        return np.asarray(G1_GROOT_HOME, dtype=np.float64).copy()
+
+    @property
+    def bottom_offset(self) -> NDArray[np.float64]:
+        # set_base_xpos takes a support position; retain the asset's root height.
+        return -np.asarray(self.base_offset, dtype=np.float64)
 
 
-def g1_groot_instance(
-    scene: Path, *, spawn: str = "default", frame_id: str = "g1_pelvis"
-) -> RobotInstance:
-    """Place the G1 in a scene, held in the GR00T home pose until the policy commands it.
+def g1_model(scene: Path, spawn: str = "default", *, idn: str | int = "g1") -> G1Model:
+    """Build a G1 above a scene's support pose on the simulation worker."""
+    model = G1Model(idn=idn)
+    support = scene_spawn(scene, spawn)
+    model.set_base_xpos(np.asarray(support.position.to_tuple()))
+    model.set_base_ori(np.asarray(support.orientation.to_euler().to_tuple()))
+    return model
 
-    Args:
-        scene: The scene MJCF; its optional sidecar may author named spawns.
-        spawn: Which authored spawn to stand on; the scene origin when none exists.
-        frame_id: Frame stamped on joint and IMU feedback and the TF child of ``world``.
-    """
-    instance = scene_robot(scene, G1_SIM, spawn, default=(0.0, 0.0, 0.0))
-    names = [joint.name for joint in G1_SIM.joints]
-    return replace(
-        instance,
-        initial_positions=dict(zip(names, G1_GROOT_HOME, strict=True)),
-        hold_gains={
-            name: (kp, kd) for name, kp, kd in zip(names, G1_GROOT_KP, G1_GROOT_KD, strict=True)
-        },
-        control_imu="imu",
+
+def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
+    """Bind the upstream G1 model to the retained connection's public motors."""
+    return SimulatedRobot(
+        robot_id="g1",
+        model=partial(g1_model, scene),
+        joint_names=G1Model.public_motor_names,
+        frame_id=config.frame_id,
+        control_imu=G1Model.control_imu,
+        startup_kp=G1Model.startup_kp,
+        startup_kd=G1Model.startup_kd,
         wait_for_first_command=True,
-        frame_id=frame_id,
     )
