@@ -118,6 +118,8 @@ def test_peek_timeout_releases_transport_subscription(module, mocker, stream_nam
     module.set_transport(stream_name, transport)
 
     assert module.peek_stream(stream_name, timeout=0.05) is None
+    # Rx wakes the blocking caller before the timeout thread finishes disposal.
+    wait_until(lambda: unsubscribe.call_count == 1, timeout=5.0, interval=0.01)
     unsubscribe.assert_called_once_with()
 
 
