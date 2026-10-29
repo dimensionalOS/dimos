@@ -12,22 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Publish independently acquired IMU measurements as DimOS streams."""
+"""Expose an upstream IMU Observable on the ordinary IMU stream."""
 
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
-from dimos.sim2.sensors.imu.device import ImuDevice
+from dimos.sim2.sensors.imu.device import imu_message
 from dimos.sim2.sensors.imu.spec import Imu
-from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
+from dimos.sim2.sensors.observations import (
+    ObservationFrame,
+    ObservationModule,
+    ObservationModuleConfig,
+)
 
 
-class ImuModuleConfig(SensorModuleConfig):
+class ImuModuleConfig(ObservationModuleConfig):
     sensor: Imu
 
 
-class SimImuModule(SensorModule):
+class SimImuModule(ObservationModule):
     config: ImuModuleConfig
     imu: Out[ImuMessage]
 
-    def open(self) -> None:
-        self.device = ImuDevice(self.reader, self.config.sensor, self.config.robot_id)
+    def publish_observation(self, frame: ObservationFrame) -> None:
+        self.imu.publish(imu_message(frame))

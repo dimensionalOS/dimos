@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ideal instantaneous RGB-D acquisition, usable without a DimOS module."""
+"""Convert an upstream camera observation to DimOS messages."""
 
-import math
+from typing import Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -26,66 +25,61 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.sensors.camera.renderers.mujoco import MujocoCamera
 from dimos.sim2.sensors.camera.spec import Camera
-from dimos.sim2.sensors.device import SensorDevice
+from dimos.sim2.sensors.observations import ObservationFrame
 
 
-class CameraDevice(SensorDevice[Camera]):
-    def open(self) -> None:
-        sensor = self.sensor
-        self._renderer = MujocoCamera(
-            self.reader.model, sensor.width, sensor.height, shadows=sensor.shadows
+def camera_messages(sensor: Camera, frame: ObservationFrame) -> dict[str, Any]:
+    frame_id = f"{frame.robot_id or 'world'}/{sensor.name}_optical"
+    values = frame.values
+    changed = values["changed"]
+    timestamps = values["timestamps"]
+    messages: dict[str, Any] = {}
+    transforms: dict[float, Transform] = {}
+    color, depth = None, None
+    if "image" in values:
+        pixels = np.asarray(values["image"])
+        if pixels.dtype != np.uint8:
+            pixels = np.clip(pixels, 0, 255).astype(np.uint8)
+        color = Image(
+            data=pixels, format=ImageFormat.RGB, frame_id=frame_id, ts=timestamps["image"]
         )
-        self._camera = self.reader.model.camera(self.model_prefix + sensor.model_name).id
-        self._frame = f"{self.frame_prefix}{sensor.name}_optical"
-        fovy = float(self.reader.model.cam_fovy[self._camera])
-        self._focal = sensor.height / (2 * math.tan(math.radians(fovy) / 2))
-        self._status["fidelity"] = "ideal_instantaneous"
-
-    def capture(self) -> None:
-        if self.sample_time(self.sensor.rate_hz) is None:
-            return
-        sensor = self.sensor
-        rgb, depth = self._renderer.capture(self.reader.data, self._camera, sensor.depth)
-        ts = self.reader.timestamp
-        position = self.reader.data.cam_xpos[self._camera]
-        # MuJoCo looks along -Z; optical frames look along +Z with Y down.
-        rotation = self.reader.data.cam_xmat[self._camera].reshape(3, 3) @ np.diag([1, -1, -1])
-        self.emit(
-            "tf",
-            TFMessage(
-                Transform(
-                    translation=Vector3(*position),
-                    rotation=Quaternion(*Rotation.from_matrix(rotation).as_quat()),
-                    frame_id="world",
-                    child_frame_id=self._frame,
-                    ts=ts,
-                )
-            ),
+    if "depth" in values:
+        depth = Image(
+            data=np.asarray(values["depth"], dtype=np.float32),
+            format=ImageFormat.DEPTH,
+            frame_id=frame_id,
+            ts=timestamps["depth"],
         )
+    for name in changed:
+        metadata = values["depth_metadata" if name == "depth" else "metadata"]
+        focal = float(metadata[8])
+        ts = timestamps[name]
         info = CameraInfo.from_intrinsics(
-            self._focal,
-            self._focal,
+            focal,
+            focal,
             (sensor.width - 1) / 2,
             (sensor.height - 1) / 2,
             sensor.width,
             sensor.height,
-            frame_id=self._frame,
+            frame_id=frame_id,
         )
         info.ts = ts
-        color = Image(data=rgb, format=ImageFormat.RGB, frame_id=self._frame, ts=ts)
-        self.emit("camera_info", info)
-        self.emit("color_image", color)
-        if sensor.depth:
-            assert depth is not None
-            image = Image(data=depth, format=ImageFormat.DEPTH, frame_id=self._frame, ts=ts)
-            self.emit("depth_image", image)
-            self.emit("depth_camera_info", info)
-            if sensor.pointcloud:
-                cloud = PointCloud2.from_rgbd(color, image, info, depth_scale=1.0)
-                self.emit("pointcloud", cloud.voxel_downsample(0.005))
-
-    def close(self) -> None:
-        self._renderer.close()
-        super().close()
+        transforms[ts] = Transform(
+            translation=Vector3(*metadata[1:4]),
+            rotation=Quaternion(*metadata[4:8]),
+            frame_id="world",
+            child_frame_id=frame_id,
+            ts=ts,
+        )
+        if name == "image":
+            messages.update(color_image=color, camera_info=info)
+        else:
+            messages.update(depth_image=depth, depth_camera_info=info)
+    # Upstream observables may have independently configured rates/delays.
+    # Never pretend held depth and a newer color image are one RGB-D capture.
+    if sensor.pointcloud and color is not None and depth is not None and color.ts == depth.ts:
+        cloud = PointCloud2.from_rgbd(color, depth, info, depth_scale=1.0)
+        messages["pointcloud"] = cloud.voxel_downsample(0.005)
+    messages["tf"] = TFMessage(*(transforms[ts] for ts in sorted(transforms)))
+    return messages

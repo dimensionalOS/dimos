@@ -15,20 +15,31 @@
 """Small MJCFs exercise the world without LFS, robot SDKs or network services."""
 
 from contextlib import ExitStack
+from functools import partial
 
+import numpy as np
 import pytest
+from robosuite.models.robots.robot_model import RobotModel
 
-from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.environment import MotorScene
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
 
 
+class TinyRobotModel(RobotModel):
+    """An ordinary upstream robot model with one motor and one position servo."""
+
+    @property
+    def init_qpos(self):
+        return np.array([0.1, 0.0])
+
+
 @pytest.fixture
-def world_config(tmp_path):
+def scene_path(tmp_path):
     scene = tmp_path / "scene.xml"
     scene.write_text("""
 <mujoco>
@@ -55,20 +66,25 @@ def world_config(tmp_path):
             regions={"table": SceneRegion(kind="support", size=(1, 1, 0.1))},
         ).model_dump_json()
     )
+    return scene
+
+
+@pytest.fixture
+def robot_path(tmp_path):
     model = tmp_path / "robot.xml"
     model.write_text("""
 <mujoco>
   <worldbody>
-    <body name="base">
+    <body name="base" pos="0 0 .3">
       <geom type="box" size=".1 .1 .1" mass="1"/>
       <site name="imu"/>
       <site name="scan" pos="0 0 .05"/>
       <camera name="view" pos="2 -2 2" xyaxes=".707 .707 0 -.408 .408 .816"/>
       <body name="link" pos="0 0 .4">
-        <joint name="hinge" type="hinge" axis="0 1 0" damping="1"/>
+        <joint name="hinge" type="hinge" axis="0 1 0" damping="1" frictionloss="0" armature="0"/>
         <geom type="capsule" size=".05 .15" mass=".5"/>
         <body name="finger_body" pos="0 0 .3">
-          <joint name="finger_joint" type="slide" axis="1 0 0" range="0 .04" damping="1"/>
+          <joint name="finger_joint" type="slide" axis="1 0 0" range="0 .04" damping="1" frictionloss="0" armature="0"/>
           <geom type="box" size=".02 .02 .04" mass=".1"/>
         </body>
       </body>
@@ -78,43 +94,45 @@ def world_config(tmp_path):
     <motor name="motor" joint="hinge" ctrlrange="-8 8"/>
     <position name="finger" joint="finger_joint" kp="50" ctrlrange="0 .04"/>
   </actuator>
+  <sensor>
+    <gyro name="imu_gyro" site="imu"/>
+    <accelerometer name="imu_accel" site="imu"/>
+    <framequat name="imu_quat" objtype="site" objname="imu"/>
+  </sensor>
 </mujoco>
 """)
-    robot = RobotConfig(
-        model=model,
-        root_body="base",
-        joints=(
-            Joint("shoulder", "hinge", "motor", kp=10, kd=1),
-            Joint(
-                "gripper",
-                "finger_joint",
-                "finger",
-                mode="position",
-                scale=-0.04 / 850,
-                offset=0.04,
-                ctrl_scale=-0.04 / 850,
-                ctrl_offset=0.04,
-                lower=0,
-                upper=850,
-                max_velocity=1000,
-            ),
-        ),
-        sensors=(
-            Imu("imu", "imu"),
-            Camera("camera", "view", width=160, height=120),
-            Lidar("lidar", "scan", Fibonacci, model_kwargs={"ray_count": 512}),
-        ),
+    return model
+
+
+@pytest.fixture
+def robot_factory(robot_path):
+    return partial(TinyRobotModel, str(robot_path), idn="left")
+
+
+@pytest.fixture
+def world_config(scene_path, robot_factory):
+    sensors = (
+        ("left", Imu("imu", "imu")),
+        ("left", Lidar("lidar", "scan", Fibonacci, model_kwargs={"ray_count": 512})),
     )
-    return WorldConfig(
-        scene,
-        {
-            "left": RobotInstance(
-                robot,
-                xyz=(0, 0, 0.3),
-                initial_positions={"shoulder": 0.1, "gripper": 850},
-                control_imu="imu",
-            )
-        },
+    robot = SimulatedRobot(
+        robot_id="left",
+        model=robot_factory,
+        joint_names=("shoulder", "gripper"),
+        frame_id="left/base",
+        control_imu="imu",
+        startup_kp=(10.0, 0.0),
+        startup_kd=(1.0, 0.0),
+        position_scale=(1.0, -0.04 / 850),
+        position_offset=(0.0, 0.04),
+        position_only_joints=("gripper",),
+    )
+    return dict(
+        environment=partial(
+            MotorScene, scene=scene_path, models={"left": robot_factory}, sensors=sensors
+        ),
+        robots={"left": robot},
+        sensors=sensors,
     )
 
 
@@ -124,7 +142,7 @@ def worlds(world_config):
 
         def create(*, config=None):
             config = world_config if config is None else config
-            return stack.enter_context(SimulationRuntime(config))
+            return stack.enter_context(SimulationRuntime(**config))
 
         yield create
 
@@ -135,8 +153,12 @@ def feedback(mocker):
 
     def attach(world):
         samples = []
-        world.publish_feedback = lambda robot_id, joints, imu, odom: samples.append(
-            (robot_id, joints, imu, odom)
+        mocker.patch.object(
+            world,
+            "publish_feedback",
+            side_effect=lambda robot_id, joints, imu, odom: samples.append(
+                (robot_id, joints, imu, odom)
+            ),
         )
         return samples
 

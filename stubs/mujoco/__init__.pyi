@@ -39,6 +39,7 @@ class MjData:
 
 class MjSpec:
     meshdir: str
+    texturedir: str
     worldbody: Any
     # The MjSpec editing API is large (add_mesh, add_body, attach, …); rare
     # accesses are Any, same approach as MjModel.
@@ -55,6 +56,8 @@ class MjvOption:
     def __init__(self) -> None: ...
 
 class MjvCamera:
+    fixedcamid: int
+    type: int
     lookat: NDArray[np.float64]
     distance: float
     azimuth: float
@@ -65,6 +68,18 @@ class MjvScene:
     flags: NDArray[np.uint8]
     geoms: Any
     ngeom: int
+    def __init__(self, model: MjModel, maxgeom: int = ...) -> None: ...
+
+class MjvPerturb:
+    active: int
+    select: int
+    skinselect: int
+    def __init__(self) -> None: ...
+
+class GLContext:
+    def __init__(self, max_width: int, max_height: int) -> None: ...
+    def make_current(self) -> None: ...
+    def free(self) -> None: ...
 
 class Renderer:
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
@@ -154,6 +169,7 @@ class mjtObj:
     mjOBJ_TENDON: int
 
 class mjtCamera:
+    mjCAMERA_FIXED: int
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
 
@@ -190,6 +206,20 @@ class mjtJoint:
 class mjtTrn:
     mjTRN_JOINT: int
     mjTRN_TENDON: int
+
+class mjtBias:
+    mjBIAS_NONE: int
+    mjBIAS_AFFINE: int
+    mjBIAS_MUSCLE: int
+    mjBIAS_DCMOTOR: int
+    mjBIAS_USER: int
+
+class mjtGain:
+    mjGAIN_FIXED: int
+    mjGAIN_AFFINE: int
+    mjGAIN_MUSCLE: int
+    mjGAIN_DCMOTOR: int
+    mjGAIN_USER: int
 
 class mjtWrap:
     mjWRAP_JOINT: int

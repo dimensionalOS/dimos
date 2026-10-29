@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Measurement acquisition and delayed delivery without a DimOS worker or transport."""
+"""History-based lidar acquisition and delivery, separate from ordinary Observables."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -47,9 +47,10 @@ class SensorDevice(ABC, Generic[SensorT]):
         root_body: str | None = None,
     ) -> None:
         self.reader, self.sensor = reader, sensor
-        self.model_prefix = f"{robot_id}/" if robot_id is not None else ""
+        self.model_prefix = reader.model_prefix(robot_id)
         self.frame_prefix = f"{robot_id or 'world'}/"
         self.root_body = root_body
+        self._reader_model = reader.model
         self._episode = -1
         self._indices: dict[str, int] = {}
         self._pending: list[Measurement] = []
@@ -72,6 +73,11 @@ class SensorDevice(ABC, Generic[SensorT]):
             self.reader.update()
             if self.reader.sequence < 0:
                 return []
+            if self.reader.model is not self._reader_model:
+                self.close()
+                self._reader_model = self.reader.model
+                self.open()
+                self._episode = -1
             now = float(self.reader.data.time)
             if self._episode != self.reader.episode:
                 self._episode = self.reader.episode

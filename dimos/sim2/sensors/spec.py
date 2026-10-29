@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mounts and acquisition timing shared by all sensor families."""
+"""Physical mounts and snapshot-history requirements for lidar acquisition."""
 
 from __future__ import annotations
 

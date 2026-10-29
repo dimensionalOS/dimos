@@ -46,5 +46,8 @@ class LidarModule(SensorModule):
 
     def open(self) -> None:
         self.device = LidarDevice(
-            self.reader, self.config.sensor, self.config.robot_id, self.config.root_body
+            self.reader,
+            self.config.sensor,
+            self.config.robot_id,
+            self.config.root_body or self.reader.root_body(self.config.robot_id),
         )

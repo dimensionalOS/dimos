@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""IMU mount and acquisition settings."""
+"""IMU binding and acquisition settings."""
 
 from __future__ import annotations
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-from dimos.sim2.sensors.spec import AcquisitionRequirements, Mount, validate_timing
+from dimos.sim2.sensors.spec import Mount, validate_timing
 
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -27,6 +27,8 @@ class Imu:
     name: str
     site: str | Mount
     rate_hz: float = 200.0
+    # Standalone IMUs use the upstream Observable delayer. A lidar's integrated
+    # IMU instead follows the lidar worker's timestamped acquisition history.
     latency: float = 0.0
 
     def __post_init__(self) -> None:
@@ -35,7 +37,3 @@ class Imu:
     @property
     def model_name(self) -> str:
         return self.site if isinstance(self.site, str) else f"sensor/{self.name}"
-
-    @property
-    def acquisition(self) -> AcquisitionRequirements:
-        return AcquisitionRequirements(self.rate_hz, 2 / self.rate_hz)

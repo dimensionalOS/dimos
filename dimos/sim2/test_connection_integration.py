@@ -36,12 +36,12 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.spec import RobotInstance, SimulatedRobot
+from dimos.sim2.spec import SimulatedRobot
 
 
 class _ArmConfig(ConnectionConfig):
     source: str = "left"
-    instance: RobotInstance
+    robot: SimulatedRobot
     pd: bool = True
     deadman_timeout_s: float = 2.0
 
@@ -57,13 +57,13 @@ class _ArmConnection(ConnectionModule):
 
     @staticmethod
     def simulated_robot(config: _ArmConfig, scene: Path) -> SimulatedRobot:
-        return SimulatedRobot(config.source, config.instance)
+        return config.robot
 
     @property
     def limits(self):
         return {
-            f"{joint.name}/{interface}": Limits()
-            for joint in self.config.instance.config.joints
+            f"{name}/{interface}": Limits()
+            for name in self.config.robot.joint_names
             for interface in PD_INTERFACES
         }
 
@@ -76,8 +76,12 @@ class _ArmConnection(ConnectionModule):
         self.register_disposable(Disposable(self.motor_command.subscribe(self._command)))
 
     def _command(self, message):
-        names = [joint.name for joint in self.config.instance.config.joints]
+        names = self.config.robot.joint_names
         self.command(motor_command_to_values(message, names))
+
+    @rpc
+    def halt_now(self):
+        self.halt()
 
 
 class _Controller(Module):
@@ -123,9 +127,23 @@ class _Controller(Module):
             return {
                 "names": list(self._joints.name),
                 "positions": list(self._joints.position),
+                "timestamp": self._joints.ts,
                 "joint_frame": self._joints.frame_id,
                 "imu_frame": self._imu.frame_id,
             }
+
+    @rpc
+    def wait_for_stopped(self, after):
+        with self._feedback:
+            ready = self._feedback.wait_for(
+                lambda: self._joints is not None
+                and self._joints.ts > after
+                and abs(self._joints.velocity[0]) < 0.01,
+                timeout=10.0,
+            )
+            if not ready:
+                raise TimeoutError("shoulder did not stop after halt")
+            return list(self._joints.position)
 
     @rpc
     def move(self):
@@ -133,37 +151,33 @@ class _Controller(Module):
             MotorCommandArray(
                 q=[0.5, 850.0],
                 dq=[0.0, 0.0],
-                kp=[10.0, 0.0],
+                kp=[2.0, 0.0],
                 kd=[1.0, 0.0],
                 tau=[0.0, 0.0],
             )
         )
 
 
-def test_retained_connection_delivers_commands_and_feedback_through_the_world(world_config):
-    original = world_config.robots["left"]
+def test_retained_connection_delivers_commands_and_feedback_through_the_world(
+    world_config, scene_path, robot_path
+):
+    # Parallel axes isolate servo hold from inertial deflection during arm motion.
+    robot_path.write_text(robot_path.read_text().replace('axis="1 0 0"', 'axis="0 1 0"'))
     robot = replace(
-        original.config,
-        joints=tuple(replace(joint, name=f"left/{joint.name}") for joint in original.config.joints),
-        sensors=original.config.sensors[:1],
-    )
-    instance = replace(
-        original,
-        config=robot,
-        initial_positions={
-            f"left/{name}": value for name, value in original.initial_positions.items()
-        },
+        world_config["robots"]["left"],
+        joint_names=("left/shoulder", "left/gripper"),
+        position_only_joints=("left/gripper",),
         command_timeout=2.0,
     )
     blueprint = autoconnect(
-        _ArmConnection.blueprint(instance=instance, instance_name="arm"),
+        _ArmConnection.blueprint(robot=robot, instance_name="arm"),
         _Controller.blueprint(),
     )
     with ExitStack() as cleanup:
         app = ModuleCoordinator.build(
             blueprint.global_config(
                 simulation="mujoco",
-                scene_package=str(world_config.scene),
+                scene_package=str(scene_path),
                 n_workers=1,
                 viewer="none",
                 transport="zenoh",
@@ -187,4 +201,10 @@ def test_retained_connection_delivers_commands_and_feedback_through_the_world(wo
         assert status.last_command_time is not None
         assert status.last_error is None
         assert status.last_rejection is None
+        assert world.status()["rejected_commands"] == {}
+
+        connection.halt_now()
+        stopped = controller.wait_for_stopped(moved["timestamp"])
+        assert 0.3 <= stopped[0] < 0.45
+        assert stopped[1] == pytest.approx(850.0, abs=1e-3)
         assert world.status()["rejected_commands"] == {}

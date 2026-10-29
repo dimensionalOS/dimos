@@ -18,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
+import numpy as np
 import pytest
 
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
@@ -39,13 +40,13 @@ from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.spec import RobotConfig, RobotInstance, SimulatedRobot
+from dimos.sim2.spec import SimulatedRobot
 
 
 class _ArmConfig(ConnectionConfig):
     source: str = "left"
     pd: bool = True
-    robot: RobotConfig
+    robot: SimulatedRobot
     frame_id: str = "arm/base"
 
 
@@ -61,14 +62,7 @@ class _Arm(ConnectionModule):
     @staticmethod
     def simulated_robot(config: _ArmConfig, scene: Path) -> SimulatedRobot:
         assert scene.is_file()
-        instance = RobotInstance(
-            config.robot,
-            xyz=(0, 0, 0.3),
-            initial_positions={"shoulder": 0.1, "gripper": 850},
-            control_imu="imu",
-            frame_id=config.frame_id,
-        )
-        return SimulatedRobot("left", instance)
+        return replace(config.robot, frame_id=config.frame_id)
 
 
 class _ScannerConfig(ModuleConfig):
@@ -112,15 +106,15 @@ class _SensorSkill(Module):
 @pytest.fixture
 def hardware(world_config):
     return autoconnect(
-        _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
+        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="arm"),
         _Scanner.blueprint(instance_name="scanner"),
         _Mapper.blueprint(),
     ).remappings([("arm", "motor_states", "arm/motor_states"), ("scanner", "lidar", "lidar_raw")])
 
 
 @pytest.fixture
-def mujoco(world_config):
-    return GlobalConfig(simulation="mujoco", scene_package=str(world_config.scene))
+def mujoco(scene_path):
+    return GlobalConfig(simulation="mujoco", scene_package=str(scene_path))
 
 
 def test_declaring_modules_are_recognized():
@@ -128,7 +122,7 @@ def test_declaring_modules_are_recognized():
     assert not declares_twin(_Mapper)
 
 
-def test_blueprint_without_twins_is_returned_unchanged(world_config, mujoco):
+def test_blueprint_without_twins_is_returned_unchanged(mujoco):
     blueprint = _Mapper.blueprint()
     kwargs = {"_mapper": {}}
     assert simulate(blueprint, kwargs, mujoco) == (blueprint, kwargs)
@@ -161,36 +155,33 @@ def test_connection_is_retained_with_private_world_io_and_public_sensor_streams(
     assert remaps["scanner", "lidar"] == "lidar_raw"
     assert remaps["scanner", "imu"] == "imu"
     assert remaps["scanner", "pointcloud"] == "left/scanner/pointcloud"
-    # The world holds the robot with the sensor attached at the driver's frame.
-    config = world.kwargs["world"]
-    instance = config.robots["left"]
-    assert instance.frame_id == "arm/base"
-    attached = next(s for s in instance.config.sensors if s.name == "scanner")
+    # The upstream model remains lazy; its attached sensor uses the driver's frame.
+    robot = world.kwargs["robots"]["left"]
+    assert robot.frame_id == "arm/base"
+    attached = next(s for owner, s in world.kwargs["sensors"] if s.name == "scanner")
     assert isinstance(attached, Lidar) and attached.site == "scan"
-    assert config.scene == Path(mujoco.scene_package)
+    assert world.kwargs["environment"].keywords["scene"] == Path(mujoco.scene_package)
 
 
 def test_cli_overrides_reach_the_twin(hardware, mujoco):
     result, _ = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
     world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
-    assert world.kwargs["world"].robots["left"].frame_id == "robot/pelvis"
+    assert world.kwargs["robots"]["left"].frame_id == "robot/pelvis"
 
 
 def test_a_sensor_with_its_own_imu_gets_both_named_after_the_driver(world_config, mujoco, mocker):
     coefs = [[[1, 0, 0]] * 1] * 4
     mocker.patch(
         "dimos.sim2.sensors.lidar.models.mid360.model._pattern",
-        return_value=Mid360Pattern(0, 0, 0, 0, __import__("numpy").asarray(coefs, dtype=float)),
+        return_value=Mid360Pattern(0, 0, 0, 0, np.asarray(coefs, dtype=float)),
     )
     blueprint = autoconnect(
-        _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
+        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="arm"),
         _Scanner.blueprint(instance_name="mid360", rolling=True),
     )
     result, _ = simulate(blueprint, {}, mujoco)
     world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
-    attached = next(
-        s for s in world.kwargs["world"].robots["left"].config.sensors if s.name == "mid360"
-    )
+    attached = next(s for owner, s in world.kwargs["sensors"] if s.name == "mid360")
     assert attached.imu.name == "mid360_imu"
     assert attached.imu.site == Mount("scan", xyz=(0.01, 0.02, -0.04))
     assert remaps_for(result, "mid360") == {"lidar": "lidar", "imu": "imu"}
@@ -205,7 +196,7 @@ def remaps_for(blueprint, name):
 
 
 def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
-    robot = world_config.robots["left"].config
+    robot = world_config["robots"]["left"]
     blueprint = autoconnect(
         _Arm.blueprint(robot=robot, instance_name="a"),
         _Arm.blueprint(robot=robot, instance_name="b"),
@@ -216,7 +207,7 @@ def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
 
 def test_direct_dependency_on_the_retained_connection_is_preserved(world_config, mujoco):
     blueprint = autoconnect(
-        _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
+        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="arm"),
         _Skill.blueprint(),
     )
     result, _ = simulate(blueprint, {}, mujoco)
@@ -232,4 +223,4 @@ def test_direct_dependency_on_a_replaced_sensor_is_an_error(hardware, mujoco):
 
 def test_robot_id_must_be_usable_as_a_port_prefix(world_config):
     with pytest.raises(ValueError, match="identifier"):
-        SimulatedRobot("left/arm", replace(world_config.robots["left"]))
+        replace(world_config["robots"]["left"], robot_id="left/arm")

@@ -143,20 +143,24 @@ class Actor:
         return self._send_request_to_worker(GetAttrRequest(module_id=self._module_id, name=name))
 
 
-# Global forkserver context. Using `forkserver` instead of `fork` because it
-# avoids CUDA context corruption issues.
+# Keep a cached context. Linux uses forkserver to avoid inherited CUDA state;
+# macOS uses spawn because native Metal/OpenGL rendering can abort after fork,
+# including with MuJoCo's own Renderer in an otherwise clean forkserver child.
 _forkserver_ctx: Any = None
 
 
 def get_forkserver_context() -> Any:
+    """Return the platform-safe worker context; retain the existing helper name."""
     global _forkserver_ctx
     if _forkserver_ctx is None:
-        _forkserver_ctx = multiprocessing.get_context("forkserver")
+        _forkserver_ctx = multiprocessing.get_context(
+            "spawn" if sys.platform == "darwin" else "forkserver"
+        )
     return _forkserver_ctx
 
 
 def reset_forkserver_context() -> None:
-    """Reset the forkserver context. Used in tests to ensure clean state."""
+    """Reset the cached worker context. Used in tests to ensure clean state."""
     global _forkserver_ctx
     _forkserver_ctx = None
 

@@ -340,7 +340,10 @@ cuda = [
 
 sim = [
     # Simulation
-    "mujoco>=3.3.4",
+    # Ray normals need 3.5; published robosuite uses the pre-3.10 mj_fullM API.
+    "mujoco>=3.5,<3.10",
+    # 1.5.2 pins Mink to NumPy <2, conflicting with Rerun's NumPy >=2.
+    "robosuite==1.5.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -480,7 +483,8 @@ tests = [
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
-    "mujoco>=3.3.4",
+    "mujoco>=3.5,<3.10",
+    "robosuite==1.5.1",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -782,6 +786,8 @@ module = [
     "mcap.*",
     "mujoco",
     "mujoco_playground.*",
+    "robosuite",
+    "robosuite.*",
     "nav_msgs.*",
     "openevals.*",
     "pinocchio",
@@ -836,6 +842,11 @@ module = [
     "optuna.*",
 ]
 ignore_missing_imports = true
+
+# robosuite publishes runtime extension bases without Python type metadata.
+[[tool.mypy.overrides]]
+module = ["dimos.sim2.control", "dimos.sim2.environment", "dimos.sim2.arena", "dimos.sim2.rendering", "dimos.robot.unitree.g1.simulation"]
+disallow_subclassing_any = false
 
 [[tool.mypy.overrides]]
 module = ["pydrake", "pydrake.*"]

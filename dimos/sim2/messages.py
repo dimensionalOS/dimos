@@ -22,6 +22,7 @@ the model, has no DimOS message type and travels as this pickled dataclass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -57,3 +58,15 @@ class StateFrame:
 
     metadata: FrameMetadata
     values: dict[str, NDArray[np.float64]]
+    model_path: str | None = None
+
+
+@dataclass(frozen=True)
+class EnvironmentStep:
+    """An upstream result, preserving the environment's observation contract."""
+
+    metadata: FrameMetadata
+    observations: dict[str, Any]
+    reward: float
+    done: bool
+    info: dict[str, Any]
