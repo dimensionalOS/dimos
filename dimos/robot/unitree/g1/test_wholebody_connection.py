@@ -14,119 +14,107 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from types import SimpleNamespace
 
 from pydantic import ValidationError
 import pytest
 
+from dimos.control.connection.device import ConnectionDevice
+from dimos.core.global_config import GlobalConfig
+from dimos.core.stream import Transport
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.unitree.g1.motor_device import G1_JOINT_NAMES
 from dimos.robot.unitree.g1.wholebody_connection import (
-    _NUM_MOTOR_SLOTS,
-    _NUM_MOTORS,
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
 
 
 @pytest.fixture
-def connection() -> Iterator[G1WholeBodyConnection]:
-    connection = G1WholeBodyConnection()
+def connection(mocker):
+    backend = mocker.Mock(spec=ConnectionDevice)
+    module = G1WholeBodyConnection(g=GlobalConfig(simulation=""), deadman_timeout_s=60.0)
+    mocker.patch.object(module, "create_hardware_device", return_value=backend)
+    transport = mocker.Mock(spec=Transport)
+    transport.subscribe.return_value = mocker.Mock()
+    module.motor_command.transport = transport
     try:
-        yield connection
+        module.start()
+        yield SimpleNamespace(module=module, backend=backend)
     finally:
-        connection._publisher = None  # keep stop() away from the fake DDS state
-        connection._low_cmd = None
-        connection.stop()
-
-
-class _FakePublisher:
-    def __init__(self):
-        self.frames = []
-
-    def Write(self, low_cmd):
-        self.frames.append(
-            [(m.q, m.dq, m.kp, m.kd, m.tau) for m in low_cmd.motor_cmd[:_NUM_MOTORS]]
-        )
-
-
-def _wire(connection, soft_start_seconds):
-    """Give the connection just enough fake DDS state to accept commands."""
-    connection.config.soft_start_seconds = soft_start_seconds
-    connection._publisher = _FakePublisher()
-    connection._low_cmd = SimpleNamespace(
-        mode_machine=0,
-        crc=0,
-        motor_cmd=[
-            SimpleNamespace(mode=1, q=0.0, dq=0.0, kp=0.0, kd=0.0, tau=0.0)
-            for _ in range(_NUM_MOTOR_SLOTS)
-        ],
-    )
-    connection._crc = SimpleNamespace(Crc=lambda _cmd: 0)
-    connection._mode_machine = 5
-    return connection._publisher
+        module.stop()
 
 
 def _command():
-    return MotorCommandArray(
-        q=[1.0] * _NUM_MOTORS,
-        dq=[0.0] * _NUM_MOTORS,
-        kp=[100.0] * _NUM_MOTORS,
-        kd=[5.0] * _NUM_MOTORS,
-        tau=[8.0] * _NUM_MOTORS,
-    )
+    n = len(G1_JOINT_NAMES)
+    return MotorCommandArray(q=[1.0] * n, dq=[0.5] * n, kp=[100.0] * n, kd=[5.0] * n, tau=[8.0] * n)
 
 
-def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
-    publisher = _wire(connection, soft_start_seconds=1000.0)
+def test_motor_command_preserves_all_pd_values_and_canonical_order(connection):
+    connection.module._on_motor_command(_command())
 
-    connection._on_motor_command(_command())
-
-    q, dq, kp, kd, tau = publisher.frames[0][0]
-    # First frame: target and damping pass through, stiffness and tau do not —
-    # this is what keeps taking control from slamming the robot.
-    assert q == 1.0
-    assert kd == 5.0
-    assert kp < 1.0
-    assert abs(tau) < 0.1
-
-
-def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
-    publisher = _wire(connection, soft_start_seconds=0.05)
-
-    connection._on_motor_command(_command())
-    # Rewind the clock instead of sleeping through the window.
-    connection._soft_start_t0 -= 1.0
-    connection._on_motor_command(_command())
-
-    _q, _dq, kp, kd, tau = publisher.frames[-1][0]
-    assert kp == 100.0
-    assert kd == 5.0
-    assert tau == 8.0
+    values = connection.backend.write.call_args.args[0]
+    assert len(values) == 29 * 5
+    assert {
+        key: values[f"g1/left_hip_pitch/{key}"]
+        for key in ("position", "velocity", "effort", "kp", "kd")
+    } == {
+        "position": 1.0,
+        "velocity": 0.5,
+        "effort": 8.0,
+        "kp": 100.0,
+        "kd": 5.0,
+    }
+    assert list(values)[-1] == f"{G1_JOINT_NAMES[-1]}/kd"
 
 
-def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
-    publisher = _wire(connection, soft_start_seconds=0.0)
+def test_virtual_pd_targets_are_not_clamped_to_joint_position_limits(connection):
+    message = _command()
+    message.q[0] = 100.0
 
-    connection._on_motor_command(_command())
+    connection.module._on_motor_command(message)
 
-    _q, _dq, kp, _kd, tau = publisher.frames[0][0]
-    assert kp == 100.0
-    assert tau == 8.0
+    assert connection.backend.write.call_args.args[0]["g1/left_hip_pitch/position"] == 100.0
 
 
-def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
-    publisher = _wire(connection, soft_start_seconds=0.0)
+@pytest.mark.parametrize("column", ["q", "dq", "kp", "kd", "tau"])
+def test_malformed_motor_vectors_are_dropped_before_device_write(connection, column):
+    message = _command()
+    getattr(message, column).pop()
 
-    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    connection.module._on_motor_command(message)
 
-    assert publisher.frames == []
+    connection.backend.write.assert_not_called()
+    assert connection.module.status().last_rejection is not None
+
+
+def test_wrong_joint_count_is_dropped(connection):
+    connection.module._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+
+    connection.backend.write.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("q", float("nan")),
+        ("dq", float("inf")),
+        ("tau", float("-inf")),
+        ("kp", -1.0),
+        ("kd", -1.0),
+    ],
+)
+def test_invalid_pd_values_do_not_reach_the_device(connection, column, value):
+    message = _command()
+    getattr(message, column)[0] = value
+
+    connection.module._on_motor_command(message)
+
+    connection.backend.write.assert_not_called()
+    assert connection.module.status().last_rejection is not None
 
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
 def test_non_finite_soft_start_is_rejected(value):
-    # inf satisfies a bare ge=0.0, and every finite elapsed time over inf is
-    # zero, so the scale would pin at 0 forever: full damping, no stiffness,
-    # and no way back to the commanded gains.
     with pytest.raises(ValidationError):
         G1WholeBodyConnectionConfig(soft_start_seconds=value)

@@ -256,7 +256,6 @@ all_modules = {
     "g1-sim-connection": "dimos.robot.unitree.g1.mujoco_sim.G1SimConnection",
     "g1-tf-publisher": "dimos.robot.unitree.g1.g1_tf_publisher.G1TfPublisher",
     "g1-whole-body-connection": "dimos.robot.unitree.g1.wholebody_connection.G1WholeBodyConnection",
-    "g1-world": "dimos.robot.unitree.g1.simulation.G1World",
     "go2-audio-bridge-module": "dimos.teleop.hosted.go2_audio_bridge.Go2AudioBridgeModule",
     "go2-base": "dimos.robot.unitree.go2.base.Go2Base",
     "go2-command-module": "dimos.teleop.hosted.go2_command.Go2CommandModule",

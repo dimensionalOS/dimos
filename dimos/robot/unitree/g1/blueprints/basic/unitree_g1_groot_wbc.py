@@ -107,7 +107,7 @@ _G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
 # The robot's wire. The coordinator's transport adapter subscribes
 # /g1/motor_states and /g1/imu and publishes /g1/motor_command for hardware id
 # "g1"; naming the connection's streams the same way puts both ends on the
-# default transport. In simulation G1World publishes and subscribes these.
+# default transport. The retained connection uses these in both modes.
 _robot = G1WholeBodyConnection.blueprint(release_sport_mode=True).remappings(
     [
         (G1WholeBodyConnection, "motor_command", "g1/motor_command"),

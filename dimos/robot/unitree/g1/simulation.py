@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulated G1 for sim2: MJCF body, actuator bindings, control IMU and ports.
+"""The G1's MuJoCo body, actuator bindings and GR00T start pose.
 
-The joint names are the coordinator's (``make_humanoid_joints("g1")``), so the
-world, the GR00T task and the transport adapter agree on order. ``G1World``
-publishes the same messages ``G1WholeBodyConnection`` does on hardware, so the
-coordinator drives the simulated G1 through the same adapter. Sensors are not
-declared here: each hardware driver in a blueprint (Mid360, cameras) declares
-its own simulated device, attached at its ``frame_id``, which the MJCF carries
-as a named site or camera (``mid360_link``, ``front_camera``).
+Joint names and gains come from the same definitions as the real controller.
+The retained G1 connection receives a generic simulated motor device; each
+hardware sensor driver in the blueprint describes its own simulated sensor.
 """
 
 from __future__ import annotations
@@ -29,14 +25,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from dimos.control.components import make_humanoid_joints
-from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
-from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.spec import Joint, RobotConfig, RobotInstance
 from dimos.sim2.world.scene import scene_robot
@@ -83,18 +72,3 @@ def g1_groot_instance(
         wait_for_first_command=True,
         frame_id=frame_id,
     )
-
-
-class G1World(SimulationModule):
-    """A world holding the robot ``g1``, wired like ``G1WholeBodyConnection``.
-
-    ``g1_motor_command`` takes the coordinator's PD targets; ``g1_motor_states``
-    and ``g1_imu`` are what the GR00T task observes; ``g1_odom`` and ``g1_tf``
-    are ground truth the hardware connection cannot publish.
-    """
-
-    g1_motor_command: In[MotorCommandArray]
-    g1_motor_states: Out[JointState]
-    g1_imu: Out[ImuMessage]
-    g1_odom: Out[PoseStamped]
-    g1_tf: Out[TFMessage]

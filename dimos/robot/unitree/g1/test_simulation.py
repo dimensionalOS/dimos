@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The G1 connection and Mid360 driver declare simulated twins; the GR00T blueprint swaps cleanly."""
+"""The G1 connection stays in simulation while its device and lidar use the world."""
 
 from dataclasses import replace
 
@@ -20,20 +20,22 @@ import mujoco
 import pytest
 
 from dimos.control.components import make_humanoid_joints
+from dimos.control.connection.connection_module import ConnectionModule
 from dimos.core.global_config import GlobalConfig
 from dimos.hardware.sensors.lidar.livox.module import MID360_IMU_OFFSET, Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import unitree_g1_groot_wbc
 from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
-from dimos.robot.unitree.g1.simulation import G1_SIM, G1World, g1_groot_instance
+from dimos.robot.unitree.g1.simulation import G1_SIM, g1_groot_instance
 from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
-from dimos.sim2.module import robot_ports
+from dimos.sim2.composition import simulate
+from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import WorldConfig
-from dimos.sim2.swap import simulate
 from dimos.sim2.world.scene import load_scene
 
 
@@ -68,18 +70,12 @@ def test_groot_instance_holds_the_home_pose_until_the_policy_commands(scene):
     assert instance.xyz == pytest.approx((0, 0, 0.793))
 
 
-def test_connection_declares_its_twin_with_the_hardware_connection_ports(scene):
+def test_connection_describes_the_robot_without_a_robot_specific_world_class(scene):
     twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
     assert twin.robot_id == "g1"
-    assert twin.world is G1World
+    assert issubclass(G1WholeBodyConnection, ConnectionModule)
     assert twin.instance.frame_id == G1WholeBodyConnectionConfig().frame_id == "g1_pelvis"
-    assert robot_ports(G1World, ["g1"])["g1"] == {
-        "motor_command": "g1_motor_command",
-        "motor_states": "g1_motor_states",
-        "imu": "g1_imu",
-        "odom": "g1_odom",
-        "tf": "g1_tf",
-    }
+    assert [joint.name for joint in twin.instance.config.joints] == make_humanoid_joints("g1")
     assert G1WholeBodyConnection.default_sim_scene == "logistics.xml"
 
 
@@ -93,26 +89,33 @@ def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
     assert Mid360.simulated_sensor(Mid360Config(enable_imu=False)).imu is None
 
 
-def test_groot_blueprint_swaps_robot_and_lidar_and_keeps_pointlio(scene):
-    from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import unitree_g1_groot_wbc
-
+def test_groot_blueprint_keeps_connection_and_wires_the_world_through_its_device(scene):
     hardware = {atom.module for atom in unitree_g1_groot_wbc.active_blueprints}
     assert {G1WholeBodyConnection, Mid360, PointLio} <= hardware
 
-    result, _ = simulate(
+    result, module_kwargs = simulate(
         unitree_g1_groot_wbc, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
 
     modules = {atom.name: atom.module for atom in result.active_blueprints}
-    assert G1WholeBodyConnection not in modules.values()
+    connection = next(
+        atom for atom in result.active_blueprints if atom.module is G1WholeBodyConnection
+    )
+    original = next(
+        atom
+        for atom in unitree_g1_groot_wbc.active_blueprints
+        if atom.module is G1WholeBodyConnection
+    )
+    assert connection.name == original.name
+    assert module_kwargs[connection.name]["simulation_device"] is not None
     assert modules["mid360"] is LidarModule
     assert PointLio in modules.values()
-    world = next(atom for atom in result.blueprints if atom.module is G1World)
+    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
     remaps = result.remapping_map
-    assert remaps[world.name, "g1_motor_states"] == "g1/motor_states"
-    assert remaps[world.name, "g1_motor_command"] == "g1/motor_command"
-    assert remaps[world.name, "g1_imu"] == "g1/imu"
-    assert remaps[world.name, "g1_odom"] == "odom"
+    for port in ("motor_states", "motor_command", "imu"):
+        assert remaps[connection.name, port] == f"g1/{port}"
+        assert world.kwargs["robot_topics"]["g1"][port] == f"_sim2/{connection.name}/{port}"
+    assert world.kwargs["robot_topics"]["g1"]["odom"] == "odom"
     # The Mid360 driver's wiring into Point-LIO survives untouched.
     assert remaps["mid360", "lidar"] == "lidar_raw"
     assert remaps["mid360", "imu"] == "imu_raw"
