@@ -27,7 +27,7 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.testing.mock_model import MockModel
 from dimos.utils.testing.waiting import wait_until
@@ -419,6 +419,7 @@ def test_a_failed_turn_does_not_stop_the_agent_thread(
         "The call may or may not have run."
     )
     assert note.content == "This turn failed with TimeoutError: LLM API timed out"
+    assert note.additional_kwargs == {TURN_FAILED_KEY: True}
     # Append-only: the next turn sees everything.
     assert second_turn == mcp_client._history[:5]
     assert (second.content, done.content) == ("second", "done")

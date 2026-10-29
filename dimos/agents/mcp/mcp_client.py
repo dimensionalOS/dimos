@@ -37,7 +37,7 @@ import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -433,7 +433,12 @@ class McpClient(Module):
                         status="error",
                     )
                 )
-            self._record(AIMessage(content=f"This turn failed with {failure}"))
+            self._record(
+                AIMessage(
+                    content=f"This turn failed with {failure}",
+                    additional_kwargs={TURN_FAILED_KEY: True},
+                )
+            )
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)

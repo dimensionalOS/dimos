@@ -24,6 +24,10 @@ DEFAULT_MCP_URL = f"http://localhost:{DEFAULT_MCP_PORT}/mcp"
 # this key to render that turn as tool output rather than as typed input.
 TOOL_ORIGIN_KEY = "tool_origin"
 
+# `AIMessage.additional_kwargs` key marking McpClient's note that a turn failed:
+# the note has no LLM trace, so the eval adapter must not treat it as a model call.
+TURN_FAILED_KEY = "turn_failed"
+
 
 def mcp_url(host: str, port: int) -> str:
     """Convert a local server bind address into a dialable MCP URL."""
