@@ -124,6 +124,7 @@ config! {
     closure_skip_known: bool,
     closure_pcm: bool,
     closure_gnc_overtrust_check: bool,
+    closure_icp_covariance: bool,
     closure_hessian_observability: bool,
     closure_likelihood_visibility: bool,
     closure_likelihood_beam: bool,

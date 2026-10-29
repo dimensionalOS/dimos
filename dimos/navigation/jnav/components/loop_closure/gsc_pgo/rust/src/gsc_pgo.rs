@@ -83,6 +83,9 @@ pub struct CommittedClosure {
     pub score: f64,
     /// 1 kept, 0 rejected by the newest applied solve; NaN until a solve has judged it.
     pub gnc_weight: f64,
+    /// The closure's own variances from its ICP fit (`closure_icp_covariance`): rotation x y z (rad²), then translation
+    /// x y z (m²), in the target keyframe's frame; None where the closure's variance is its ICP fitness.
+    pub variances: Option<[f64; 6]>,
 }
 
 /// Per-search loop-closure diagnostics
@@ -465,6 +468,11 @@ pub struct Config {
     /// overtrusted odometry cannot vote out closures that agree once heard, and with `odometry_noise_from_closures` the
     /// residuals of the closures it keeps raise the learned noise, so later solves and gates no longer need it.
     pub closure_gnc_overtrust_check: bool,
+    /// When true, a closure's variances are its ICP fit's own pose covariance (`connection_fit::alignment_covariance`,
+    /// diagonal in the target keyframe's frame) instead of its ICP fitness on every axis: fitness is the points'
+    /// spread, not the aligned pose's, and as one number for rotation (rad²) and translation (m²) it leaves the odometry's
+    /// translation untestable by any closure, so its noise could never be learned.
+    pub closure_icp_covariance: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -564,6 +572,7 @@ impl Default for Config {
             closure_skip_known: false,
             closure_pcm: false,
             closure_gnc_overtrust_check: false,
+            closure_icp_covariance: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -711,7 +720,7 @@ pub struct ClosureSearch {
 /// fitness), the yank it scored, and the time each stage took.
 pub struct ClosureSearchResult {
     diag: ClosureCandidateDiag,
-    accepted: Option<(Mat3, Vec3, f64)>,
+    accepted: Option<(Mat3, Vec3, f64, Option<[f64; 6]>)>,
     scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
     /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
@@ -831,6 +840,33 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_score_thresh {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
+        // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
+        let closure_variances = |rotation: &Mat3, translation: &Vec3| -> Option<[f64; 6]> {
+            if !self.config.closure_icp_covariance {
+                return None;
+            }
+            let origin = mat3::add(
+                &mat3::mat_vec(rotation, &self.key_poses[cur_idx].translation_global),
+                translation,
+            );
+            let world = connection_fit::alignment_covariance(
+                &transform_cloud(&source_cloud, rotation, translation),
+                &target_cloud,
+                &target_tree,
+                self.config.closure_score_thresh,
+                &origin,
+            )?;
+            // each 3x3 block's diagonal turned into the target's frame: R^T C R
+            let frame = &self.key_poses[target_idx].rotation_global;
+            Some(std::array::from_fn(|k| {
+                let (block, axis) = (3 * (k / 3), k % 3);
+                (0..3)
+                    .flat_map(|i| (0..3).map(move |j| (i, j)))
+                    .map(|(i, j)| frame[i][axis] * world[block + i][block + j] * frame[j][axis])
+                    .sum()
+            }))
+        };
+        let mut variances = closure_variances(&icp.rotation, &icp.translation);
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
         // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
         // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
@@ -868,7 +904,10 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        if self.config.closure_uninformative_gate && icp.fitness * diag.closure_noise_scale >= known
+        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its fitness
+        let closure_variance = variances.map_or(icp.fitness, |v| v[3].max(v[4]).max(v[5]));
+        if self.config.closure_uninformative_gate
+            && closure_variance * diag.closure_noise_scale >= known
         {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
@@ -1015,12 +1054,13 @@ impl ClosureSearch {
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
             score = extended.fitness;
+            variances = closure_variances(&extended.rotation, &extended.translation);
         }
 
         diag.outcome = "accepted";
         ClosureSearchResult {
             diag,
-            accepted: Some((rotation_offset, translation_offset, score)),
+            accepted: Some((rotation_offset, translation_offset, score, variances)),
             scored_yank,
             timing,
             retry: None,
@@ -1660,7 +1700,7 @@ impl GscPgo {
         if accepted.is_some() && diag.icp_fitness.is_finite() {
             self.scored_fitness.push(diag.icp_fitness);
         }
-        let Some((rotation_offset, translation_offset, score)) = accepted else {
+        let Some((rotation_offset, translation_offset, score, variances)) = accepted else {
             if let Some((ranked, alternatives, tries)) = retry {
                 self.retry_alternative(&diag, ranked, alternatives, tries);
             }
@@ -1669,7 +1709,14 @@ impl GscPgo {
         };
         let (source, target) = (diag.source_id, diag.target_id as usize);
         self.record_search(diag);
-        self.commit_closure(source, target, rotation_offset, translation_offset, score);
+        self.commit_closure_with_variances(
+            source,
+            target,
+            rotation_offset,
+            translation_offset,
+            score,
+            variances,
+        );
     }
     /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 + ceil(1 /
     /// (1 - pressure)), at most scan_context_top_k (`closure_alternative_places`).
@@ -1780,6 +1827,26 @@ impl GscPgo {
         translation_offset: Vec3,
         score: f64,
     ) {
+        self.commit_closure_with_variances(
+            source_id,
+            target_id,
+            rotation_offset,
+            translation_offset,
+            score,
+            None,
+        );
+    }
+
+    /// `commit_closure` with the closure's own variances (`CommittedClosure::variances`).
+    pub fn commit_closure_with_variances(
+        &mut self,
+        source_id: usize,
+        target_id: usize,
+        rotation_offset: Mat3,
+        translation_offset: Vec3,
+        score: f64,
+        variances: Option<[f64; 6]>,
+    ) {
         self.committed_closures.push(CommittedClosure {
             source_id,
             target_id,
@@ -1787,6 +1854,7 @@ impl GscPgo {
             translation_offset,
             score,
             gnc_weight: f64::NAN,
+            variances,
         });
         self.closure_innovations
             .push(crate::odometry_noise::innovation(
@@ -1795,7 +1863,8 @@ impl GscPgo {
                 target_id,
                 source_id,
                 &translation_offset,
-                score.max(1e-6),
+                // the closure's translation variance: its fit's own (mean over axes), else its fitness
+                variances.map_or(score.max(1e-6), |v| (v[3] + v[4] + v[5]) / 3.0),
             ));
         self.new_closure = true;
     }

@@ -105,6 +105,8 @@ class PGOConfig(NativeModuleConfig):
     closure_pcm: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False
+    # True: a closure's variances are its ICP fit's own pose covariance (point-to-plane Hessian) instead of its ICP fitness on every axis
+    closure_icp_covariance: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

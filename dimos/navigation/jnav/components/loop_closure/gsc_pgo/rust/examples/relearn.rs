@@ -21,6 +21,9 @@
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3};
 
+/// A committed closure as a.json has it: source, target, rotation, translation, ICP fitness, own variances.
+type Closure = (usize, usize, Mat3, [f64; 3], f64, Option<[f64; 6]>);
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let run = std::path::Path::new(&args[1]);
@@ -42,7 +45,7 @@ fn main() {
         .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
         .collect();
     let records: Vec<&[f64]> = values.chunks_exact(15).collect();
-    let mut closures: Vec<(usize, usize, Mat3, [f64; 3], f64)> = json["committed_closure_edges"]
+    let mut closures: Vec<Closure> = json["committed_closure_edges"]
         .as_array()
         .unwrap()
         .iter()
@@ -53,6 +56,7 @@ fn main() {
                 serde_json::from_value(e["rotation"].clone()).unwrap(),
                 serde_json::from_value(e["translation"].clone()).unwrap(),
                 e["score"].as_f64().unwrap(),
+                serde_json::from_value::<Option<[f64; 6]>>(e["variances"].clone()).unwrap_or(None),
             )
         })
         .collect();
@@ -70,8 +74,8 @@ fn main() {
             "keyframe {k} was not taken"
         );
         while next < closures.len() && closures[next].0 <= k {
-            let (s, t, rotation, translation, score) = closures[next];
-            pgo.commit_closure(s, t, rotation, translation, score);
+            let (s, t, rotation, translation, score, variances) = closures[next];
+            pgo.commit_closure_with_variances(s, t, rotation, translation, score, variances);
             next += 1;
         }
         if (k + 1) % every == 0 {
