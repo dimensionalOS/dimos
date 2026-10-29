@@ -1207,23 +1207,20 @@ impl GscPgo {
     }
 
     /// How far the closures' fit variances understate their real error (`closure_icp_covariance`; group 0 rotation, 1
-    /// translation): the median whitened disagreement of closure pairs one submap apart over chi-square(3)'s median.
-    /// Two closures of one revisit that close the same place through a few keyframes of odometry should agree to
-    /// within their fits' noise, and that comparison never touches the long-loop odometry whose noise is in question,
-    /// so it measures the closures' own error (the fit's spread is per-point noise only; it misses submap distortion
-    /// and partial overlap) even while that odometry is overtrusted. The median ignores a wrong closure among them.
-    /// 1 before any pair.
+    /// translation), from the whitened disagreements of closure pairs one submap apart. Two closures of one revisit
+    /// that close the same place through a few keyframes of odometry should agree to within their fits' noise, and that
+    /// comparison never touches the long-loop odometry whose noise is in question, so it measures the closures' own
+    /// error (the fit's spread is per-point noise only; it misses submap distortion and partial overlap) even while that
+    /// odometry is over- or undertrusted. A pair with a wrong closure in it disagrees by anything, and wrong closures can
+    /// be most of them (athens undertrust: 85% wrong, 80% of pairs both wrong), so the disagreements are a mixture,
+    /// fitted by EM: a right pair's disagreement is s x chi-square(3), a wrong pair's uniform up to the largest seen;
+    /// the scale is the right component's s (at least 1). 1 before any pair.
     pub(crate) fn closure_disagreement_scale(&self, group: usize) -> f64 {
         let pairs = &self.closure_pair_disagreement[group];
         if !self.config.closure_icp_covariance || pairs.is_empty() {
             return 1.0;
         }
-        let mut sorted = pairs.clone();
-        sorted.sort_by(f64::total_cmp);
-        let median = sorted[sorted.len() / 2];
-        // chi-square(3)'s median
-        let chi2_3_median = crate::landmarks::chi2_inverse(0.5, 3);
-        (median / chi2_3_median).max(1.0)
+        right_component_scale(pairs).max(1.0)
     }
 
     /// Record how the newest committed closure disagrees with each earlier one whose two ends lie within a submap
@@ -2021,5 +2018,73 @@ impl GscPgo {
                 variances.map_or(score.max(1e-6), |v| (v[3] + v[4] + v[5]) / 3.0),
             ));
         self.new_closure = true;
+    }
+}
+
+/// The scale s of the chi-square(3) component in a two-part mixture of `q` (s x chi-square(3) for right pairs, uniform
+/// on [0, max q] for wrong ones), by EM from the median's scale and an even split.
+pub(crate) fn right_component_scale(q: &[f64]) -> f64 {
+    let mut sorted = q.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let (median, top) = (sorted[sorted.len() / 2], sorted[sorted.len() - 1]);
+    let chi2_3_median = crate::landmarks::chi2_inverse(0.5, 3);
+    let mut scale = (median / chi2_3_median).max(f64::MIN_POSITIVE);
+    let mut share = 0.5;
+    let uniform = 1.0 / top.max(f64::MIN_POSITIVE);
+    // chi-square(3) density at x
+    let chi2_3 =
+        |x: f64| (x.max(0.0).sqrt() * (-x / 2.0).exp()) / (2.0 * std::f64::consts::PI).sqrt();
+    for _ in 0..200 {
+        let (mut weight, mut weighted) = (0.0, 0.0);
+        for &x in q {
+            let right = share * chi2_3(x / scale) / scale;
+            let r = right / (right + (1.0 - share) * uniform).max(f64::MIN_POSITIVE);
+            weight += r;
+            weighted += r * x;
+        }
+        if weight <= 0.0 {
+            break;
+        }
+        let next = (weighted / (3.0 * weight)).max(f64::MIN_POSITIVE);
+        share = (weight / q.len() as f64).clamp(1e-6, 1.0 - 1e-6);
+        let settled = (next / scale - 1.0).abs() < 1e-9;
+        scale = next;
+        if settled {
+            break;
+        }
+    }
+    scale
+}
+
+#[cfg(test)]
+mod right_component_tests {
+    /// Pairs whose disagreement is 40 x chi-square(3), drowned in three times as many wrong ones spread far wider: the
+    /// right component's scale comes back near 40 where the median of all of them is far off.
+    #[test]
+    fn the_right_component_scale_ignores_a_majority_of_wrong_pairs() {
+        let mut state = 7u64;
+        let mut uniform = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut q = Vec::new();
+        for _ in 0..300 {
+            // chi-square(3) as a sum of three squared normals
+            let x: f64 = (0..3)
+                .map(|_| {
+                    let (a, b) = (uniform().max(1e-12), uniform());
+                    let n = (-2.0 * a.ln()).sqrt() * (2.0 * std::f64::consts::PI * b).cos();
+                    n * n
+                })
+                .sum();
+            q.push(40.0 * x);
+        }
+        for _ in 0..900 {
+            q.push(1e6 * uniform());
+        }
+        let scale = super::right_component_scale(&q);
+        assert!((25.0..60.0).contains(&scale), "scale {scale}");
     }
 }
