@@ -1,21 +1,21 @@
-import type { Agent } from "../harness/main.ts";
-import type { ChildCommand } from "./child-driver.ts";
+import type { Agent } from "#dimos/agents/harness/main.ts";
+import type { ChildCommand } from "#dimos/agents/test/child-driver.ts";
 import type { ConversationId, SubmissionId, TaskId } from "@earendil-works/pi-durable";
 import type { FauxResponseStep, Message } from "@earendil-works/pi-ai";
-import type { LinkStatus } from "../shared/protocol/gateway/link.ts";
-import type { LoadStatus } from "../shared/protocol/runtime/load.ts";
-import type { UserRequestId } from "../shared/protocol/conversation/input.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { LoadStatus } from "#dimos/agents/shared/protocol/runtime/load.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { AssistantEntry, ToolResultEntry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { DimosInputEntry, requestIdFor } from "../harness/inputs/source.ts";
+import { DimosInputEntry, requestIdFor } from "#dimos/agents/harness/inputs/source.ts";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { join } from "node:path";
-import { listJobs } from "../harness/jobs/registry.ts";
-import { openAgent } from "../harness/main.ts";
-import { parseDimosInstall } from "../gateway/config/environment.ts";
+import { listJobs } from "#dimos/agents/harness/jobs/registry.ts";
+import { openAgent } from "#dimos/agents/harness/main.ts";
+import { parseDimosInstall } from "#dimos/agents/gateway/config/environment.ts";
 import { randomUUID } from "node:crypto";
-import { scriptedModel } from "./scripted-model.ts";
+import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 
 /**
  * A process that runs `openAgent` over the store named by the environment, for tests that kill it mid-turn.

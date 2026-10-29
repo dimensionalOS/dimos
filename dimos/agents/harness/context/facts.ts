@@ -1,4 +1,4 @@
-import type { Fact, FactKey, Facts, RuntimeChange } from "../../shared/protocol/runtime/context.ts";
+import type { Fact, FactKey, Facts, RuntimeChange } from "#dimos/agents/shared/protocol/runtime/context.ts";
 
 /** The one fact while DimOS cannot be reached; the system's facts stay as they were last stated. */
 export const STATUS_KEY: FactKey = "dimos:status";

@@ -9,8 +9,8 @@ import {
   rgbColor,
   truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { cellPixels, pngOf, rowSlices } from "../../../shared/render/raster.ts";
-import { muted } from "../style.ts";
+import { cellPixels, pngOf, rowSlices } from "#dimos/agents/shared/render/raster.ts";
+import { muted } from "#dimos/agents/frontends/tui/style.ts";
 
 type ImageSize = { readonly maxWidthCells: number; readonly maxHeightCells: number };
 

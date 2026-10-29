@@ -1,10 +1,10 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import type { RenderProgress } from "../../../shared/render/types.ts";
+import type { RenderProgress } from "#dimos/agents/shared/render/types.ts";
 import { Loader, truncateToWidth } from "@earendil-works/pi-tui";
-import { TerminalImage } from "../lib/terminal-image.ts";
-import { accent, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { readVerified } from "../../../shared/render/files.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { readVerified } from "#dimos/agents/shared/render/files.ts";
 
 /** A loader, a progress bar and the latest finished frame while `/inspect` renders a clip. Moved from dimcode render-progress.ts. */
 export class ProgressPanel implements Component {

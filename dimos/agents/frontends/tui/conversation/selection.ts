@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { Selectable } from "../../../shared/view-models/conversation/history.ts";
-import { accent, muted } from "../style.ts";
+import type { Selectable } from "#dimos/agents/shared/view-models/conversation/history.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 export type SelectionChoice =

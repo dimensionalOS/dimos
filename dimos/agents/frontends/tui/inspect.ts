@@ -1,6 +1,6 @@
-import type { FileRenderer } from "../../shared/render/render.ts";
-import type { ProgressPanel } from "./conversation/progress.ts";
-import type { RenderDetails } from "../../shared/protocol/media.ts";
+import type { FileRenderer } from "#dimos/agents/shared/render/render.ts";
+import type { ProgressPanel } from "#dimos/agents/frontends/tui/conversation/progress.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
 import { basename, resolve } from "node:path";
 
 /**

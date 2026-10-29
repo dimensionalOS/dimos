@@ -1,10 +1,10 @@
-import type { DimosRun } from "../../shared/protocol/runtime/runs.ts";
+import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
 import type { FSWatcher } from "node:fs";
-import type { Live } from "../../shared/protocol/status.ts";
-import { Status } from "../../shared/protocol/status.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { epochMs } from "../../shared/protocol/time.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, readdirSync, watch } from "node:fs";
 

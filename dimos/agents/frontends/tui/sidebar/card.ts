@@ -1,11 +1,11 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { StreamCard } from "../../../shared/view-models/streams/cards.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { StreamCard } from "#dimos/agents/shared/view-models/streams/cards.ts";
 import { Container, Text, TruncatedText } from "@earendil-works/pi-tui";
-import { TerminalImage } from "../lib/terminal-image.ts";
-import { accent, levelColor, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { duration } from "../../../shared/view-models/time.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
+import { accent, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { duration } from "#dimos/agents/shared/view-models/time.ts";
 
 const ARROWS = { in: "↓", out: "↑", inout: "↕" } as const;
 

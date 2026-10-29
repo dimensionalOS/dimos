@@ -1,4 +1,4 @@
-import type { Live } from "../shared/protocol/status.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
 
 /** Resolves with the first non-undefined `pick` of the readable's values, now or later; print mode waits for its outcome so. */
 export function until<T, R>(readable: Live<T>, pick: (value: T) => R | undefined, signal?: AbortSignal): Promise<R> {

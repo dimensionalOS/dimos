@@ -1,5 +1,5 @@
-import type { Channel, RateSample } from "../../shared/protocol/streams.ts";
-import type { EpochMs } from "../../shared/protocol/time.ts";
+import type { Channel, RateSample } from "#dimos/agents/shared/protocol/streams.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /**
  * A decoded SDK preview for the terminal painter. `at` is when the client received the message.

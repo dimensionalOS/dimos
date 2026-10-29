@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord/context";
-import type { Outcome } from "../../shared/protocol/outcome.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
 
 type Reply = { readonly outcome: Promise<Outcome<unknown>>; readonly at: number };
 

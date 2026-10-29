@@ -1,6 +1,6 @@
-import type { AgentModuleName } from "./runtime/event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
-import type { EpochMs } from "./time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /**
  * Why an action did not happen, as data. Executors on the gateway and the client's transport layer both produce these;

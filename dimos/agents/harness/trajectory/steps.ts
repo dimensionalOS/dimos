@@ -1,9 +1,9 @@
 import type { ConversationId, EntryId, EntryRecord } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../../shared/protocol/time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Message } from "@earendil-works/pi-ai";
 import { AssistantEntry, CompactionEntry, ToolResultEntry } from "@earendil-works/pi-durable";
-import { DimosInputEntry } from "../inputs/source.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
+import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 type StepKind = "user" | "event" | "job" | "runtime" | "assistant" | "tool_result" | "compaction";
 

@@ -5,7 +5,7 @@ builds this package when it changed and runs `node dist/cli.js`, which [build.mj
 [main.ts](/dimos/agents/cli/main.ts). `main.ts` parses the arguments and runs one command from [commands/](/dimos/agents/cli/commands/). You come here to
 add a command.
 
-Source: [dimos/agents/cli/](/dimos/agents/cli/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/cli/](/dimos/agents/cli/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs cli/demo_example.ts`.
 Remove the temporary file with `rm cli/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -38,8 +38,8 @@ A command takes a `CommandContext` and returns its exit code. This one prints th
 way [status.ts](/dimos/agents/cli/commands/status.ts) first checks for a gateway. Add it to `commands` and `USAGE` in `main.ts`.
 
 ```ts
-import type { Command } from "./commands/base.ts";
-import { gatewayState } from "./process.ts";
+import type { Command } from "#dimos/agents/cli/commands/base.ts";
+import { gatewayState } from "#dimos/agents/cli/process.ts";
 
 export const runPid: Command = async ({ paths }) => {
     const state = await gatewayState(paths, 500);
@@ -53,10 +53,10 @@ A command that reads the gateway's state connects through the SDK, as
 [conversations.ts](/dimos/agents/cli/commands/conversations.ts) does.
 
 ```ts
-import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
-import { connect } from "../sdk/main.ts";
-import { describeLink } from "../shared/protocol/gateway/link.ts";
-import { unixSocket } from "../sdk/node.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { connect } from "#dimos/agents/sdk/main.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { unixSocket } from "#dimos/agents/sdk/node.ts";
 
 export const runLink: Command = async ({ paths, startGateway }) => {
     await startGateway();

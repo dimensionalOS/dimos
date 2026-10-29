@@ -8,7 +8,7 @@ model takes its values and the time as arguments and returns plain rows, so the 
 CLI command computes once. Each function is imported from the file that defines it. The folder is browser code and
 imports values from `shared/protocol/` and itself.
 
-Source: [dimos/agents/shared/view-models/](/dimos/agents/shared/view-models/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/shared/view-models/](/dimos/agents/shared/view-models/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/view-models/demo_example.ts`.
 Remove the temporary file with `rm shared/view-models/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -35,12 +35,12 @@ Build the chat rows and the footer from a conversation reference, as the termina
 passes none, and reads `Date.now()` once per draw. The snippets under Usage continue from these references.
 
 ```ts
-import type { ConversationContract } from "../protocol/conversation/contract.ts";
-import type { EpochMs } from "../protocol/time.ts";
-import type { GatewayContract } from "../protocol/gateway/contract.ts";
+import type { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import type { Ref } from "@earendil-works/chord";
-import { footerOf } from "./conversation/footer.ts";
-import { timelineOf } from "./conversation/timeline.ts";
+import { footerOf } from "#dimos/agents/shared/view-models/conversation/footer.ts";
+import { timelineOf } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
 
 export function draw(gateway: Ref<typeof GatewayContract>, state: Ref<typeof ConversationContract>, now: EpochMs) {
     const rows = timelineOf(
@@ -75,7 +75,7 @@ its unread and waiting counts and a `Level`. `dimos agent conversations` prints 
 terminal's Ctrl+O switcher draws the same rows.
 
 ```ts
-import { switcherLine, switcherRows } from "./gateway/switcher.ts";
+import { switcherLine, switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 
 export function listConversations(gateway: Ref<typeof GatewayContract>, now: EpochMs): void {
     for (const row of switcherRows(gateway.conversations.value, null, now))
@@ -87,8 +87,8 @@ export function listConversations(gateway: Ref<typeof GatewayContract>, now: Epo
 `duration`. This prints `No job patrol.` and `41s 3m12s 6h12m 2d4h`.
 
 ```ts
-import { duration } from "./time.ts";
-import { refusalText } from "./outcome.ts";
+import { duration } from "#dimos/agents/shared/view-models/time.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
 
 console.log(refusalText({ code: "not_found", what: "job", name: "patrol" }));
 console.log([41_000, 192_000, 22_320_000, 187_200_000].map(duration).join(" "));
@@ -99,9 +99,9 @@ and nullable `ageS`, as reported by the SDK. `rateLevel` grades freshness as `ok
 after 30 seconds. A channel with no received value has no freshness level.
 
 ```ts
-import type { Channel } from "../protocol/streams.ts";
-import { epochMs } from "../protocol/time.ts";
-import { ratesOf, rateLevel } from "./streams/rates.ts";
+import type { Channel } from "#dimos/agents/shared/protocol/streams.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { ratesOf, rateLevel } from "#dimos/agents/shared/view-models/streams/rates.ts";
 
 const camera = "dimos/color_image/sensor_msgs.Image" as Channel;
 const rates = ratesOf({ at: epochMs(2_000), counts: [{ channel: camera, hz: 30, ageS: 0.1 }] });

@@ -7,7 +7,7 @@ model receives and what the terminal shows. A `Rendering` is caption text for th
 them into cells, rotates clouds and paints live stream frames. The entry is `FileRenderer` in [render.ts](/dimos/agents/shared/render/render.ts).
 sharp is a native addon, so this folder runs in Node, in the gateway and in the terminal.
 
-Source: [dimos/agents/shared/render/](/dimos/agents/shared/render/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/shared/render/](/dimos/agents/shared/render/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/render/demo_example.ts`.
 Remove the temporary file with `rm shared/render/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -35,10 +35,10 @@ through `readVerified` as the terminal's views do. For a 64x48 PNG the text is
 `plot.png · /home/you/plot.png · sha256 HASH · png 64x48`. The snippets under Usage continue from this `rendering`.
 
 ```ts
-import { FileRenderer } from "./render.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { join, resolve } from "node:path";
 import { mkdtemp } from "node:fs/promises";
-import { readVerified } from "./files.ts";
+import { readVerified } from "#dimos/agents/shared/render/files.ts";
 import { tmpdir } from "node:os";
 
 const renderer = new FileRenderer({
@@ -63,7 +63,7 @@ gallery does, and `cellPixels` samples it into RGB bytes with two samples per ro
 cells. `pngOf` and `rowSlices` prepare a picture for terminals that draw PNGs.
 
 ```ts
-import { cellPixels, overviewOf } from "./raster.ts";
+import { cellPixels, overviewOf } from "#dimos/agents/shared/render/raster.ts";
 
 const previews = await Promise.all(
     rendering.details.views.map((view) => readVerified(view.kind === "clip" ? view.sheet : view.preview)),
@@ -77,7 +77,7 @@ console.log(`${rgb.length} RGB bytes for 80 columns by 24 rows`);
 and paints again with the same camera, so the scale and the height colors hold.
 
 ```ts
-import { fitCamera, paintCloud, parseCloud } from "./points.ts";
+import { fitCamera, paintCloud, parseCloud } from "#dimos/agents/shared/render/points.ts";
 import { readFile, writeFile } from "node:fs/promises";
 
 const cloud = parseCloud(JSON.parse(await readFile("cloud.json", "utf8")));
@@ -90,7 +90,7 @@ await writeFile("cloud.png", await paintCloud(cloud, turned, { width: 900, heigh
 cloud with `cloudFrame` through a top-down camera, and an occupancy grid with `gridFrame`. Each returns a PNG.
 
 ```ts
-import { cloudFrame, topDownCamera } from "./frames.ts";
+import { cloudFrame, topDownCamera } from "#dimos/agents/shared/render/frames.ts";
 
 const xyz = new Float32Array([0, 0, 0, 1, 0, 0.5, 0, 1, 1]);
 const frame = await cloudFrame(xyz, topDownCamera(xyz), { width: 320, height: 200 });

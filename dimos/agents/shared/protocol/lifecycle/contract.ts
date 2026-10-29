@@ -1,9 +1,9 @@
-import type { EpochMs } from "../time.ts";
-import { LIFECYCLE_ACTIONS } from "../actions/lifecycle.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { LIFECYCLE_ACTIONS } from "#dimos/agents/shared/protocol/actions/lifecycle.ts";
 import { Type } from "typebox";
-import { carried } from "../schema.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
-import { methodsOf } from "../actions/methods.ts";
+import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
 
 /** The running bundle; gateway/config/build.ts computes it. */
 export type BuildInfo = {

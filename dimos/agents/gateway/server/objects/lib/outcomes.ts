@@ -1,12 +1,12 @@
-import type { Branch } from "../../../../harness/history/forks.ts";
+import type { Branch } from "#dimos/agents/harness/history/forks.ts";
 import type { ConversationId, EntryId, SubmissionId } from "@earendil-works/pi-durable";
-import type { JobChange } from "../../../../harness/jobs/ops.ts";
-import type { JobName, JobRow } from "../../../../shared/protocol/jobs/state.ts";
-import { jobRow } from "./jobs.ts";
-import type { ModuleOutcome } from "../../../../shared/protocol/runtime/module.ts";
-import type { Outcome } from "../../../../shared/protocol/outcome.ts";
-import type { SubmitResult } from "../../../../harness/inputs/gate.ts";
-import { done, refused } from "../../../../shared/protocol/outcome.ts";
+import type { JobChange } from "#dimos/agents/harness/jobs/ops.ts";
+import type { JobName, JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import { jobRow } from "#dimos/agents/gateway/server/objects/lib/jobs.ts";
+import type { ModuleOutcome } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { SubmitResult } from "#dimos/agents/harness/inputs/gate.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
 
 /** `ok` is done with the outcome; otherwise `module_failed` with its one-line error and traceback. */
 export function fromModuleOutcome(outcome: ModuleOutcome): Outcome<ModuleOutcome> {

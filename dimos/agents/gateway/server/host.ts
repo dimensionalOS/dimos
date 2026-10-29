@@ -1,6 +1,6 @@
-import type { ObjectDeps, ServeObject } from "./objects/base.ts";
+import type { ObjectDeps, ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
 import type { Host, Link } from "@earendil-works/chord";
-import type { Principal } from "../auth/principal.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
 import type { Server } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
@@ -8,14 +8,14 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:http";
 import { dirname } from "node:path";
-import { principalKey, principalOf } from "../auth/principal.ts";
-import { reachable } from "../../shared/socket.ts";
-import { serveConversation } from "./objects/conversation.ts";
-import { serveGateway } from "./objects/gateway.ts";
-import { serveInventory } from "./objects/inventory.ts";
-import { serveLifecycle } from "./objects/lifecycle.ts";
-import { serveRoom } from "./objects/room.ts";
-import { serveStore } from "./objects/store.ts";
+import { principalKey, principalOf } from "#dimos/agents/gateway/auth/principal.ts";
+import { reachable } from "#dimos/agents/shared/socket.ts";
+import { serveConversation } from "#dimos/agents/gateway/server/objects/conversation.ts";
+import { serveGateway } from "#dimos/agents/gateway/server/objects/gateway.ts";
+import { serveInventory } from "#dimos/agents/gateway/server/objects/inventory.ts";
+import { serveLifecycle } from "#dimos/agents/gateway/server/objects/lifecycle.ts";
+import { serveRoom } from "#dimos/agents/gateway/server/objects/room.ts";
+import { serveStore } from "#dimos/agents/gateway/server/objects/store.ts";
 
 /** The family's one list: every served Chord type, the shared local ones first. */
 const OBJECTS: readonly ServeObject[] = [

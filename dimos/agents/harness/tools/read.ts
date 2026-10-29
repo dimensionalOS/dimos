@@ -1,7 +1,7 @@
-import type { AgentTool } from "./base.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ToolExecutionResult, ToolHookCall } from "@earendil-works/pi-durable";
-import { agentTool } from "./lib/tool.ts";
+import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
 import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { isAbsolute, resolve, sep } from "node:path";
 

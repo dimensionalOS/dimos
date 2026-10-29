@@ -1,14 +1,14 @@
-import { owner } from "../../../sdk/failures.ts";
-import { retryByRequestId } from "../../../sdk/retry.ts";
-import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { JobMark } from "../../../shared/view-models/jobs/timeline.ts";
-import type { MenuRow, MenuTab } from "./base.ts";
-import type { Ui } from "../session.ts";
-import { axisText, laneText } from "./lib/lane.ts";
-import { clock } from "../../../shared/view-models/time.ts";
-import { jobLanes } from "../../../shared/view-models/jobs/timeline.ts";
-import { newActionRequest } from "../../../shared/protocol/actions/request.ts";
-import { plain } from "./lib/rows.ts";
+import { owner } from "#dimos/agents/sdk/failures.ts";
+import { retryByRequestId } from "#dimos/agents/sdk/retry.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobMark } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
+import { axisText, laneText } from "#dimos/agents/frontends/tui/menu/lib/lane.ts";
+import { clock } from "#dimos/agents/shared/view-models/time.ts";
+import { jobLanes } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import { newActionRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
+import { plain } from "#dimos/agents/frontends/tui/menu/lib/rows.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
 

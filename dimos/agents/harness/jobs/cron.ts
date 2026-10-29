@@ -1,6 +1,6 @@
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import type { TimeZone } from "../../shared/protocol/jobs/state.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { TimeZone } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { readFileSync, realpathSync } from "node:fs";
 
 const DAY_MS = 86_400_000;

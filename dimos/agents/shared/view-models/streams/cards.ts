@@ -1,12 +1,12 @@
-import type { Channel, StreamRef } from "../../protocol/streams.ts";
-import type { EpochMs } from "../../protocol/time.ts";
-import type { Level } from "../levels.ts";
-import type { ModuleInstance, ModuleRow } from "../../protocol/runtime/module.ts";
-import type { OwnedStream } from "../../protocol/conversation/state.ts";
-import type { Picture } from "./kind.ts";
-import type { Rate, RateTable } from "./rates.ts";
-import { pictureOf } from "./kind.ts";
-import { rateLevel } from "./rates.ts";
+import type { Channel, StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
+import type { ModuleInstance, ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { OwnedStream } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { Picture } from "#dimos/agents/shared/view-models/streams/kind.ts";
+import type { Rate, RateTable } from "#dimos/agents/shared/view-models/streams/rates.ts";
+import { pictureOf } from "#dimos/agents/shared/view-models/streams/kind.ts";
+import { rateLevel } from "#dimos/agents/shared/view-models/streams/rates.ts";
 
 /** One stream card: its picture kind decides whether the client paints its frames or shows its newest value. */
 export type StreamCard = {

@@ -1,12 +1,12 @@
 import type { ChildProcess } from "node:child_process";
-import type { DimosInstall } from "../harness/dimos/install.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 import { after, before } from "node:test";
 import { createServer } from "node:net";
 import { createSocket } from "node:dgram";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { parseDimosInstall } from "../gateway/config/environment.ts";
+import { parseDimosInstall } from "#dimos/agents/gateway/config/environment.ts";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 

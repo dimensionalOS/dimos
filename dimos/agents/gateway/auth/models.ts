@@ -1,11 +1,11 @@
-import type { Accounts, ModelChoice, ProviderChoice } from "../../shared/protocol/auth.ts";
+import type { Accounts, ModelChoice, ProviderChoice } from "#dimos/agents/shared/protocol/auth.ts";
 import type { Models, Provider } from "@earendil-works/pi-ai";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { Outcome } from "../../shared/protocol/outcome.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
 import { InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Status } from "../../shared/protocol/status.ts";
-import { done, refused } from "../../shared/protocol/outcome.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
 
 /**
  * Every built-in pi-ai provider, then `extra` (the faux provider in tests), with credentials in `authFile` through

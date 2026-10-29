@@ -1,15 +1,15 @@
 import type { Harness, TaskId, TaskRecord } from "@earendil-works/pi-durable";
 import type { Cell, Ctx, Self } from "@earendil-works/chord";
-import type { Principal } from "../../../auth/principal.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import { GatewayState } from "../../../../shared/protocol/gateway/contract.ts";
-import { commitEvents } from "./commits.ts";
-import type { EpochMs } from "../../../../shared/protocol/time.ts";
-import type { JobDefinition, JobRow } from "../../../../shared/protocol/jobs/state.ts";
+import { GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { commitEvents } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobDefinition, JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
 import type { JsonValue } from "@earendil-works/chord";
-import { CronExpr } from "../../../../harness/jobs/cron.ts";
-import { JOBS_DOC_KIND, listJobs } from "../../../../harness/jobs/registry.ts";
-import { epochMs } from "../../../../shared/protocol/time.ts";
+import { CronExpr } from "#dimos/agents/harness/jobs/cron.ts";
+import { JOBS_DOC_KIND, listJobs } from "#dimos/agents/harness/jobs/registry.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 const UPCOMING = 3;
 

@@ -1,10 +1,10 @@
-import type { CallId } from "./calls.ts";
+import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { EntryId, TaskId } from "@earendil-works/pi-durable";
-import type { HarnessEvent } from "../runtime/event.ts";
-import type { JobName, JobRun } from "../jobs/state.ts";
-import type { LimitRecord } from "../tools/limit.ts";
-import type { RenderDetails } from "../media.ts";
-import type { RuntimeChange } from "../runtime/context.ts";
+import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { JobName, JobRun } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { LimitRecord } from "#dimos/agents/shared/protocol/tools/limit.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import type { RuntimeChange } from "#dimos/agents/shared/protocol/runtime/context.ts";
 
 /** Chosen by the terminal for one typed input and reused when it retries, so a retry submits nothing new. */
 export type UserRequestId = string & { readonly __brand: "UserRequestId" };

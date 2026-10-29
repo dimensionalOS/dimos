@@ -1,10 +1,10 @@
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { ConversationId, EntryId, SubmissionId } from "@earendil-works/pi-durable";
-import type { DimosInput, UserRequestId } from "./input.ts";
-import type { ImageRef } from "./images.ts";
-import type { ModuleRow } from "../runtime/module.ts";
-import type { StreamRef } from "../streams.ts";
-import type { ToolDetails } from "../tools/details.ts";
+import type { DimosInput, UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import type { ImageRef } from "#dimos/agents/shared/protocol/conversation/images.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import type { ToolDetails } from "#dimos/agents/shared/protocol/tools/details.ts";
 
 /** A finished tool call with its stored `details` parsed once, on the gateway. */
 export type ToolResult = Omit<ToolResultMessage, "details"> & { readonly details: ToolDetails };

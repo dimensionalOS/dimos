@@ -1,12 +1,12 @@
-import type { Agent } from "../../../harness/main.ts";
-import type { ConfigStore } from "../../config/store.ts";
-import type { GatewayProcess } from "../../../shared/protocol/lifecycle/contract.ts";
+import type { Agent } from "#dimos/agents/harness/main.ts";
+import type { ConfigStore } from "#dimos/agents/gateway/config/store.ts";
+import type { GatewayProcess } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
 import type { Host } from "@earendil-works/chord";
-import type { LoginFlows } from "../../auth/dialog.ts";
-import type { ModelCatalog } from "../../auth/models.ts";
+import type { LoginFlows } from "#dimos/agents/gateway/auth/dialog.ts";
+import type { ModelCatalog } from "#dimos/agents/gateway/auth/models.ts";
 import type { Models } from "@earendil-works/pi-ai";
-import type { Principal } from "../../auth/principal.ts";
-import type { Replies } from "../replies.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
+import type { Replies } from "#dimos/agents/gateway/server/replies.ts";
 
 /** Everything an object's factory and its methods may use: the harness and the gateway's own stores. */
 export type ObjectDeps = {

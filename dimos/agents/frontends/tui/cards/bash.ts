@@ -1,12 +1,12 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ToolCard } from "./base.ts";
-import type { ToolResult } from "../../../shared/protocol/conversation/state.ts";
+import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { Loader, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { PiToolCard } from "./pi-tool.ts";
-import { accent, amber, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { movedToBackground } from "../../../shared/view-models/conversation/tools.ts";
+import { PiToolCard } from "#dimos/agents/frontends/tui/cards/pi-tool.ts";
+import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { movedToBackground } from "#dimos/agents/shared/view-models/conversation/tools.ts";
 import { stripVTControlCharacters } from "node:util";
 
 const STAGE = /^(Resolved|Prepared|Installed|Uninstalled|Downloading|Building|Audited)\b/;

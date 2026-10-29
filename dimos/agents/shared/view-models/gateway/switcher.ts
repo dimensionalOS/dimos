@@ -1,8 +1,8 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { ConversationRow, Running } from "../../protocol/conversation/summary.ts";
-import type { EpochMs } from "../../protocol/time.ts";
-import type { Level } from "../levels.ts";
-import { clean } from "../text.ts";
+import type { ConversationRow, Running } from "#dimos/agents/shared/protocol/conversation/summary.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
 
 /** One switcher row as a line: `› #7  running bash 41s  walk to the kitchen door…  ⚡1`, forks indented. */
 export function switcherLine(row: SwitcherRow): string {

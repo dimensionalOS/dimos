@@ -1,7 +1,7 @@
-import type { Fact, FactKey, Facts } from "../../shared/protocol/runtime/context.ts";
+import type { Fact, FactKey, Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { isAlive } from "../dimos/runs.ts";
+import { isAlive } from "#dimos/agents/harness/dimos/runs.ts";
 import { join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
 

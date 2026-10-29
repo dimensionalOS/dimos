@@ -1,9 +1,9 @@
 import sharp from "sharp";
-import type { Renderer } from "./base.ts";
+import type { Renderer } from "#dimos/agents/shared/render/base.ts";
 import { Compile } from "typebox/compile";
 import { Type } from "typebox";
-import { firstProblem } from "./lib/schema.ts";
-import { modelImage } from "./lib/model-image.ts";
+import { firstProblem } from "#dimos/agents/shared/render/lib/schema.ts";
+import { modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
 
 type Vec3 = readonly [number, number, number];
 

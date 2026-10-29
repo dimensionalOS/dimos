@@ -1,6 +1,6 @@
-import { parseDimosInstall } from "../../gateway/config/environment.ts";
-import { runGateway } from "../../gateway/main.ts";
-import type { Command } from "./base.ts";
+import { parseDimosInstall } from "#dimos/agents/gateway/config/environment.ts";
+import { runGateway } from "#dimos/agents/gateway/main.ts";
+import type { Command } from "#dimos/agents/cli/commands/base.ts";
 
 export const runGatewayCommand: Command = async ({ paths, env, bundledSkillsDir, daemon, startGateway }) => {
   if (daemon) {

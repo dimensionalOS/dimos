@@ -1,17 +1,17 @@
-import type { StreamRef } from "../../../../shared/protocol/streams.ts";
-import type { DimosConnection } from "../../../../harness/dimos/connection.ts";
-import type { Inventory } from "../../../../shared/protocol/runtime/inventory.ts";
-import type { InventoryView } from "../../../../shared/protocol/inventory/contract.ts";
-import type { ModuleInstance, ModuleRow } from "../../../../shared/protocol/runtime/module.ts";
-import type { RuntimeClient } from "../../../../harness/dimos/client.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import type { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import type { Inventory } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
+import type { InventoryView } from "#dimos/agents/shared/protocol/inventory/contract.ts";
+import type { ModuleInstance, ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
 import type { Cell, Ctx, Readable, Self } from "@earendil-works/chord";
-import type { LinkStatus } from "../../../../shared/protocol/gateway/link.ts";
-import type { Principal } from "../../../auth/principal.ts";
-import { carried } from "../../../../shared/protocol/schema.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { setInterval } from "node:timers/promises";
-import { DimosUnavailable } from "../../../../harness/dimos/connection.ts";
-import { epochMs } from "../../../../shared/protocol/time.ts";
-import { readModuleRecords } from "../../../../harness/dimos/disk.ts";
+import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { readModuleRecords } from "#dimos/agents/harness/dimos/disk.ts";
 
 /** What HarnessRuntime's inventory says, parsed once into the rows the UI shows. */
 type RuntimeView = {

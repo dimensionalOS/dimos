@@ -1,4 +1,4 @@
-import type { FileRef } from "../protocol/media.ts";
+import type { FileRef } from "#dimos/agents/shared/protocol/media.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 

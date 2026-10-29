@@ -1,21 +1,21 @@
-import type { AgentModuleName } from "../../shared/protocol/runtime/event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ConversationId, JsonObject } from "@earendil-works/pi-durable";
-import type { DimosConnection } from "./connection.ts";
-import type { Facts } from "../../shared/protocol/runtime/context.ts";
+import type { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { Inventory } from "../../shared/protocol/runtime/inventory.ts";
-import type { ModuleOutcome } from "../../shared/protocol/runtime/module.ts";
+import type { Inventory } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
+import type { ModuleOutcome } from "#dimos/agents/shared/protocol/runtime/module.ts";
 import type { Session } from "@dimos/sdk";
-import type { Step } from "../trajectory/steps.ts";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { StreamRef } from "../../shared/protocol/streams.ts";
-import { Status } from "../../shared/protocol/status.ts";
-import { AgentModuleRecordSchema } from "../../shared/protocol/runtime/module.ts";
+import type { Step } from "#dimos/agents/harness/trajectory/steps.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { AgentModuleRecordSchema } from "#dimos/agents/shared/protocol/runtime/module.ts";
 import { Type } from "typebox";
-import { openRelay, relayStreams } from "../../sdk/relay.ts";
-import { inventoryDecoder, inventoryFactsDecoder } from "./wire/inventory.ts";
-import { moduleOutcomeDecoder } from "./wire/module.ts";
-import { wireDecoder } from "./wire/decoder.ts";
+import { openRelay, relayStreams } from "#dimos/agents/sdk/relay.ts";
+import { inventoryDecoder, inventoryFactsDecoder } from "#dimos/agents/harness/dimos/wire/inventory.ts";
+import { moduleOutcomeDecoder } from "#dimos/agents/harness/dimos/wire/module.ts";
+import { wireDecoder } from "#dimos/agents/harness/dimos/wire/decoder.ts";
 
 const moduleListDecoder = wireDecoder(
   "agent_module list",

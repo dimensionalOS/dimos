@@ -1,6 +1,6 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { CombinedAutocompleteProvider, Editor, Input, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { accent } from "../style.ts";
+import { accent } from "#dimos/agents/frontends/tui/style.ts";
 import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
 
 /** A one-line input for dialogs; masked, it drops its undo and kill-ring history on every mode change. */

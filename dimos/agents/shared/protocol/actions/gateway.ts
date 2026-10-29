@@ -1,9 +1,9 @@
-import type { ActionGroup } from "./base.ts";
+import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
 import type { ConversationId, JsonObject } from "@earendil-works/pi-durable";
-import type { DialogId } from "../auth.ts";
-import type { JobOutcome, JobRow } from "../jobs/state.ts";
-import type { ModuleOutcome } from "../runtime/module.ts";
-import type { Settings } from "../settings.ts";
+import type { DialogId } from "#dimos/agents/shared/protocol/auth.ts";
+import type { JobOutcome, JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { ModuleOutcome } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { Settings } from "#dimos/agents/shared/protocol/settings.ts";
 import {
   ActionRequestIdSchema,
   AgentModuleNameSchema,
@@ -11,11 +11,11 @@ import {
   JobNameSchema,
   ModelRefSchema,
   ThinkingLevelSchema,
-} from "../args.ts";
+} from "#dimos/agents/shared/protocol/args.ts";
 import { Type } from "typebox";
-import { action } from "./lib/action.ts";
-import { carried, nullable } from "../schema.ts";
-import { rules } from "./standing.ts";
+import { action } from "#dimos/agents/shared/protocol/actions/lib/action.ts";
+import { carried, nullable } from "#dimos/agents/shared/protocol/schema.ts";
+import { rules } from "#dimos/agents/shared/protocol/actions/standing.ts";
 
 const JobActionSchema = Type.Union([
   Type.Object({ kind: Type.Literal("notify"), text: Type.String({ minLength: 1 }) }),

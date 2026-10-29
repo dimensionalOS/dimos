@@ -1,6 +1,6 @@
-import type { WireDecoder } from "./base.ts";
-import { LoadResultSchema } from "../../../shared/protocol/runtime/load.ts";
-import { wireDecoder } from "./decoder.ts";
+import type { WireDecoder } from "#dimos/agents/harness/dimos/wire/base.ts";
+import { LoadResultSchema } from "#dimos/agents/shared/protocol/runtime/load.ts";
+import { wireDecoder } from "#dimos/agents/harness/dimos/wire/decoder.ts";
 
 export const loadResultDecoder = wireDecoder(
   "dimos agent load output",

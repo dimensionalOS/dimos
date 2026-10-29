@@ -1,10 +1,10 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { ConversationId, EntryId, Harness, ModelRef } from "@earendil-works/pi-durable";
-import type { Facts } from "../shared/protocol/runtime/context.ts";
+import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { RuntimeClient } from "./dimos/client.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
 import { defineDoc } from "@earendil-works/pi-durable";
-import { writeBaseline } from "./context/baseline.ts";
+import { writeBaseline } from "#dimos/agents/harness/context/baseline.ts";
 
 /** Read at each creation, so a changed default model applies to the next conversation. */
 export type ConversationDefaults = {

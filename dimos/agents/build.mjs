@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { webAliases } from "./web-aliases.mjs";
+import { webAliases } from "#dimos/agents/web-aliases.mjs";
 
 const { metafile, outputFiles } = await build({
   entryPoints: { cli: "cli/main.ts" },

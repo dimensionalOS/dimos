@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { agentPaths } from "./paths.ts";
+import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { join } from "node:path";
-import { migrateDimcode } from "./migrate.ts";
+import { migrateDimcode } from "#dimos/agents/gateway/config/migrate.ts";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { tmpdir } from "node:os";

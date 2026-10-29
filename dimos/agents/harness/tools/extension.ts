@@ -1,13 +1,13 @@
-import type { AgentTool } from "./base.ts";
-import type { AgentToolName } from "../../shared/protocol/tools/details.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { AgentToolName } from "#dimos/agents/shared/protocol/tools/details.ts";
 import type { Context } from "@earendil-works/chord/context";
-import type { Detacher } from "../background/detacher.ts";
+import type { Detacher } from "#dimos/agents/harness/background/detacher.ts";
 import type { Extension, JsonObject, ToolExecutionResult, ToolHookCall } from "@earendil-works/pi-durable";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { OutputLimiter } from "../limit/limit.ts";
-import { MAX_CHARS } from "./lib/tool.ts";
+import type { OutputLimiter } from "#dimos/agents/harness/limit/limit.ts";
+import { MAX_CHARS } from "#dimos/agents/harness/tools/lib/tool.ts";
 import { ToolTask, defineExtension, hook } from "@earendil-works/pi-durable";
-import { backgroundOf, isAgentToolName } from "./details.ts";
+import { backgroundOf, isAgentToolName } from "#dimos/agents/harness/tools/details.ts";
 
 /** One slot per tool of the plan's table, so a missing or extra tool fails to compile. Null: not offered now. */
 export type AgentToolTable = { readonly [N in AgentToolName]: AgentTool<N> | null };

@@ -1,12 +1,12 @@
 import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
-import type { Detachable } from "../../protocol/conversation/calls.ts";
-import type { EpochMs } from "../../protocol/time.ts";
+import type { Detachable } from "#dimos/agents/shared/protocol/conversation/calls.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { InboxState, LiveState, ToolSlot } from "@earendil-works/pi-durable";
-import type { InputOutcome, Transcript, TranscriptItem } from "../../protocol/conversation/state.ts";
-import type { QueuedRow } from "./queue.ts";
-import type { UserRequestId } from "../../protocol/conversation/input.ts";
-import { inputOf } from "../../protocol/conversation/queue.ts";
-import { queuedRows } from "./queue.ts";
+import type { InputOutcome, Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { QueuedRow } from "#dimos/agents/shared/view-models/conversation/queue.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import { inputOf } from "#dimos/agents/shared/protocol/conversation/queue.ts";
+import { queuedRows } from "#dimos/agents/shared/view-models/conversation/queue.ts";
 
 /** One row of the chat, keyed so a renderer reconciles its components instead of rebuilding them. */
 export type TimelineRow =

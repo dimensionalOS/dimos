@@ -15,19 +15,19 @@ import type {
   UsageState,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
-import type { ConversationRow, Running } from "../../../../shared/protocol/conversation/summary.ts";
-import type { Conversations } from "../../../../harness/conversations.ts";
-import type { EpochMs } from "../../../../shared/protocol/time.ts";
+import type { ConversationRow, Running } from "#dimos/agents/shared/protocol/conversation/summary.ts";
+import type { Conversations } from "#dimos/agents/harness/conversations.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Cell, Ctx, Self } from "@earendil-works/chord";
-import type { Principal } from "../../../auth/principal.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import { GatewayState } from "../../../../shared/protocol/gateway/contract.ts";
-import { commitEvents } from "./commits.ts";
+import { GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { commitEvents } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
 import { AgentDoc, InboxDoc, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
-import { DimosInputEntry } from "../../../../harness/inputs/source.ts";
-import { SEEN_DOC_KIND } from "../../../../harness/conversations.ts";
-import { epochMs } from "../../../../shared/protocol/time.ts";
-import { inputOf } from "../../../../shared/protocol/conversation/queue.ts";
+import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
+import { SEEN_DOC_KIND } from "#dimos/agents/harness/conversations.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { inputOf } from "#dimos/agents/shared/protocol/conversation/queue.ts";
 
 const EMPTY_TITLE = "(empty)";
 

@@ -10,13 +10,13 @@ import type {
   Page,
 } from "@earendil-works/pi-durable";
 import type { ImageContent, Models } from "@earendil-works/pi-ai";
-import type { InputGate, WriteResult } from "../inputs/gate.ts";
-import type { Selected } from "./entries.ts";
-import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
-import { BranchSummaryEntry, OriginEntry, SummaryEntry } from "./entries.ts";
-import { DimosInputEntry } from "../inputs/source.ts";
+import type { InputGate, WriteResult } from "#dimos/agents/harness/inputs/gate.ts";
+import type { Selected } from "#dimos/agents/harness/history/entries.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import { BranchSummaryEntry, OriginEntry, SummaryEntry } from "#dimos/agents/harness/history/entries.ts";
+import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
 import { UserEntry, defineDocFamily } from "@earendil-works/pi-durable";
-import { summarizeBranch, summarizeMessages } from "./summaries.ts";
+import { summarizeBranch, summarizeMessages } from "#dimos/agents/harness/history/summaries.ts";
 
 /**
  * What an edit or a summary made. `new` is a fork of a conversation's first message, which has no history before it:

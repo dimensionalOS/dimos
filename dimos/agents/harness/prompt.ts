@@ -1,4 +1,4 @@
-import type { DimosInstall } from "./dimos/install.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 import type { Extension } from "@earendil-works/pi-durable";
 import { defineExtension, section } from "@earendil-works/pi-durable";
 

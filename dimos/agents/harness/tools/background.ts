@@ -1,9 +1,9 @@
-import type { AgentTool } from "./base.ts";
-import type { Detacher } from "../background/detacher.ts";
-import type { MovedCall } from "../../shared/protocol/conversation/calls.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { Detacher } from "#dimos/agents/harness/background/detacher.ts";
+import type { MovedCall } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { ToolExecutionResult } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
-import { agentTool } from "./lib/tool.ts";
+import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
 import { defineTool } from "@earendil-works/pi-durable";
 
 const BackgroundParameters = Type.Object({

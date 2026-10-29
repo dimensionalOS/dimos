@@ -1,4 +1,4 @@
-import type { EpochMs } from "../time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Static } from "typebox";
 import { Type } from "typebox";
 

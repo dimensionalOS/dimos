@@ -1,9 +1,9 @@
-import type { DimosRun } from "../../protocol/runtime/runs.ts";
-import type { EpochMs } from "../../protocol/time.ts";
-import type { Level, Segment } from "../levels.ts";
-import type { LinkStatus } from "../../protocol/gateway/link.ts";
-import type { LoadStatus } from "../../protocol/runtime/load.ts";
-import { clock } from "../time.ts";
+import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Level, Segment } from "#dimos/agents/shared/view-models/levels.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { LoadStatus } from "#dimos/agents/shared/protocol/runtime/load.ts";
+import { clock } from "#dimos/agents/shared/view-models/time.ts";
 
 /** Reconnect attempts back off 1, 2, 4, 8, 16 s: the fifth is past 30 s, the ninth past 5 min. */
 const CONNECTING_WARN_ATTEMPT = 5;

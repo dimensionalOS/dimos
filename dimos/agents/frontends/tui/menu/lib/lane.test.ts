@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import type { EpochMs } from "../../../../shared/protocol/time.ts";
-import type { JobMark } from "../../../../shared/view-models/jobs/timeline.ts";
-import { axisText, laneText } from "./lane.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobMark } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import { axisText, laneText } from "#dimos/agents/frontends/tui/menu/lib/lane.ts";
 import { test } from "node:test";
 
 const HOUR = 60 * 60 * 1000;

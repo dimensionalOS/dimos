@@ -9,6 +9,7 @@
     "skipLibCheck": true,
     "paths": {
       "@dimos/sdk": ["../../web/sdk/src/index.ts"],
+      "@dimos/sdk/testing/fakeRelay": ["../../web/sdk/src/testing/fakeRelay.ts"],
       "@dimos/shared": ["../../web/shared/protocol.ts"],
       "@dimos/shared/manifest": ["../../web/shared/manifest.ts"]
     },

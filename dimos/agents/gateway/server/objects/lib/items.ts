@@ -1,13 +1,13 @@
 import type { ConversationView, EntryId, EntryRecord } from "@earendil-works/pi-durable";
-import type { ImageAddress, ImageRef } from "../../../../shared/protocol/conversation/images.ts";
+import type { ImageAddress, ImageRef } from "#dimos/agents/shared/protocol/conversation/images.ts";
 import type { ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import type { Outcome } from "../../../../shared/protocol/outcome.ts";
-import type { ToolResult, Transcript, TranscriptItem } from "../../../../shared/protocol/conversation/state.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { ToolResult, Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { AssistantEntry, CompactionEntry, ResetEntry, ToolResultEntry, UserEntry } from "@earendil-works/pi-durable";
-import { BranchSummaryEntry, OriginEntry, SummaryEntry } from "../../../../harness/history/entries.ts";
-import { DimosInputEntry } from "../../../../harness/inputs/source.ts";
-import { done, refused } from "../../../../shared/protocol/outcome.ts";
-import { parseToolDetails } from "../../../../harness/tools/details.ts";
+import { BranchSummaryEntry, OriginEntry, SummaryEntry } from "#dimos/agents/harness/history/entries.ts";
+import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { parseToolDetails } from "#dimos/agents/harness/tools/details.ts";
 
 /** At most this much of the active range crosses in one snapshot; `omitted` counts the older rest. */
 export type TranscriptBudget = { readonly items: number; readonly bytes: number };

@@ -1,7 +1,7 @@
-import type { EpochMs } from "../time.ts";
-import type { Inventory } from "../runtime/inventory.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Inventory } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
 import { Type } from "typebox";
-import { carried } from "../schema.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
 
 /** The whole running system as HarnessRuntime last described it; null before the first inventory since start. */

@@ -1,10 +1,10 @@
-import type { CallId, Detachable, MovedCall } from "../conversation/calls.ts";
+import type { CallId, Detachable, MovedCall } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { ConversationId, EntryId, InboxState, LiveState } from "@earendil-works/pi-durable";
-import type { LinkStatus } from "../gateway/link.ts";
-import type { Refusal } from "../outcome.ts";
-import type { Transcript } from "../conversation/state.ts";
-import { describeLink } from "../gateway/link.ts";
-import { inputOf } from "../conversation/queue.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Transcript } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { inputOf } from "#dimos/agents/shared/protocol/conversation/queue.ts";
 
 /** Server state used to decide whether an action can run. */
 export type Standing = {

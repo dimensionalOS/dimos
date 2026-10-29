@@ -1,5 +1,5 @@
 import type { AuthCheck, AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import type { EpochMs } from "./time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /** A terminal or page identity, stable for the life of one client process. */
 export type TerminalId = string & { readonly __brand: "TerminalId" };

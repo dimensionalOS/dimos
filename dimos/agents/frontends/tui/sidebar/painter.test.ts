@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { Channel } from "../../../shared/protocol/streams.ts";
-import { FramePainter } from "./painter.ts";
-import { epochMs } from "../../../shared/protocol/time.ts";
+import type { Channel } from "#dimos/agents/shared/protocol/streams.ts";
+import { FramePainter } from "#dimos/agents/frontends/tui/sidebar/painter.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { test } from "node:test";
 
 const channel = "dimos/cloud/PointCloud2" as Channel;

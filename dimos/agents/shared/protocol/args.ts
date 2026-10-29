@@ -1,11 +1,11 @@
-import type { ActionRequestId } from "./actions/request.ts";
-import type { AgentModuleName } from "./runtime/event.ts";
-import type { CallId } from "./conversation/calls.ts";
+import type { ActionRequestId } from "#dimos/agents/shared/protocol/actions/request.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { ConversationId, EntryId, ModelRef } from "@earendil-works/pi-durable";
-import type { JobName } from "./jobs/state.ts";
+import type { JobName } from "#dimos/agents/shared/protocol/jobs/state.ts";
 import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
 import { Type } from "typebox";
-import { nullable } from "./schema.ts";
+import { nullable } from "#dimos/agents/shared/protocol/schema.ts";
 
 export const ActionRequestIdSchema = Type.Unsafe<ActionRequestId>(Type.String({ format: "uuid" }));
 

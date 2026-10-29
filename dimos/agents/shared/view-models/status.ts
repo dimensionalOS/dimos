@@ -1,12 +1,12 @@
 import type { Ref } from "@earendil-works/chord";
-import type { GatewayContract } from "../protocol/gateway/contract.ts";
-import type { LifecycleContract } from "../protocol/lifecycle/contract.ts";
-import type { ModuleRow } from "../protocol/runtime/module.ts";
-import type { EpochMs } from "../protocol/time.ts";
-import { linkSegments, runSegment } from "./gateway/link.ts";
-import { switcherRows } from "./gateway/switcher.ts";
-import type { Segment } from "./levels.ts";
-import { clock, duration } from "./time.ts";
+import type { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import type { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { linkSegments, runSegment } from "#dimos/agents/shared/view-models/gateway/link.ts";
+import { switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
+import type { Segment } from "#dimos/agents/shared/view-models/levels.ts";
+import { clock, duration } from "#dimos/agents/shared/view-models/time.ts";
 
 const LABEL_WIDTH = 11;
 

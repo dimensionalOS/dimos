@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import type { ConversationId, ConversationView, EntryId, EntryRecord } from "@earendil-works/pi-durable";
-import type { DimosInput, UserRequestId } from "../../../../shared/protocol/conversation/input.ts";
-import type { TranscriptMemo } from "./items.ts";
-import { TRANSCRIPT_BUDGET, imageAt, projectTranscript } from "./items.ts";
+import type { DimosInput, UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import type { TranscriptMemo } from "#dimos/agents/gateway/server/objects/lib/items.ts";
+import { TRANSCRIPT_BUDGET, imageAt, projectTranscript } from "#dimos/agents/gateway/server/objects/lib/items.ts";
 import { test } from "node:test";
 
 const CONVERSATION = 1 as ConversationId;

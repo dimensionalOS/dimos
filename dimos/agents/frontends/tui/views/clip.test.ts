@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { FileRef, RenderedView, Sha256 } from "../../../shared/protocol/media.ts";
-import { ClipPanel } from "./clip.ts";
+import type { FileRef, RenderedView, Sha256 } from "#dimos/agents/shared/protocol/media.ts";
+import { ClipPanel } from "#dimos/agents/frontends/tui/views/clip.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

@@ -1,19 +1,19 @@
 import type { ChannelSpec, Session, Slot } from "@dimos/sdk";
-import type { AgentTool } from "../base.ts";
-import type { RuntimeClient } from "../../dimos/client.ts";
-import type { FileRenderer } from "../../../shared/render/render.ts";
-import type { FrameRecord } from "../../../sdk/streams/base.ts";
-import { ChannelSchema } from "../../../shared/protocol/streams.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import type { FileRenderer } from "#dimos/agents/shared/render/render.ts";
+import type { FrameRecord } from "#dimos/agents/sdk/streams/base.ts";
+import { ChannelSchema } from "#dimos/agents/shared/protocol/streams.ts";
 import { Type } from "typebox";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { agentTool } from "./tool.ts";
-import { wireDecoder } from "../../dimos/wire/decoder.ts";
-import { channelFor } from "../../../sdk/relay.ts";
-import { toFrame } from "../../../sdk/streams/remote.ts";
-import { epochMs } from "../../../shared/protocol/time.ts";
-import { gridFrame } from "../../../shared/render/frames.ts";
+import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
+import { wireDecoder } from "#dimos/agents/harness/dimos/wire/decoder.ts";
+import { channelFor } from "#dimos/agents/sdk/relay.ts";
+import { toFrame } from "#dimos/agents/sdk/streams/remote.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { gridFrame } from "#dimos/agents/shared/render/frames.ts";
 
 const Parameters = Type.Object({
   op: Type.Union([Type.Literal("list"), Type.Literal("read")]),

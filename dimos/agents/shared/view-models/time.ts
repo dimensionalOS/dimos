@@ -1,4 +1,4 @@
-import type { EpochMs } from "../protocol/time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /** "14:02", in the viewer's zone, as refusals word times. */
 export function clock(at: EpochMs): string {

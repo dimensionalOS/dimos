@@ -1,5 +1,5 @@
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /** One switcher row, folded on the gateway from commit publications; never built from a conversation's whole view. */
 export type ConversationRow = {

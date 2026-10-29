@@ -1,6 +1,6 @@
 import sharp from "sharp";
-import type { Renderer } from "./base.ts";
-import { modelImage } from "./lib/model-image.ts";
+import type { Renderer } from "#dimos/agents/shared/render/base.ts";
+import { modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
 
 /**
  * PNG, JPEG, SVG and the other formats sharp reads. The model gets the file itself when it can take it; the terminal

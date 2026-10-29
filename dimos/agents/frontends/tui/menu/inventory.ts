@@ -1,6 +1,6 @@
-import type { Inventory } from "../../../shared/protocol/runtime/inventory.ts";
-import type { MenuDetail, MenuRow, MenuTab, TabContext } from "./base.ts";
-import { plain } from "./lib/rows.ts";
+import type { Inventory } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
+import type { MenuDetail, MenuRow, MenuTab, TabContext } from "#dimos/agents/frontends/tui/menu/base.ts";
+import { plain } from "#dimos/agents/frontends/tui/menu/lib/rows.ts";
 
 /** A nullable inventory field as shown: "-" when DimOS did not report it. */
 function or(value: string | null): string {

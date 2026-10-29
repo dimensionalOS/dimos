@@ -7,7 +7,7 @@ client, one mapping from every failure to a `Refusal`, a safe retry for deduplic
 stream frames. The `dimos agent` commands and the terminal are built on it. The entry is `connect` in
 [main.ts](/dimos/agents/sdk/main.ts). Everything except [node.ts](/dimos/agents/sdk/node.ts), [relay.ts](/dimos/agents/sdk/relay.ts), and [streams/](/dimos/agents/sdk/streams/) runs in a browser too.
 
-Source: [dimos/agents/sdk/](/dimos/agents/sdk/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/sdk/](/dimos/agents/sdk/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs sdk/demo_example.ts`.
 Remove the temporary file with `rm sdk/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -30,11 +30,11 @@ Connect to a running gateway, hold the gateway object and print its link to dimO
 from this `client` and `gateway`.
 
 ```ts
-import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
-import { agentPaths } from "../gateway/config/paths.ts";
-import { connect } from "./main.ts";
-import { describeLink } from "../shared/protocol/gateway/link.ts";
-import { unixSocket } from "./node.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
+import { connect } from "#dimos/agents/sdk/main.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { unixSocket } from "#dimos/agents/sdk/node.ts";
 
 const client = await connect(unixSocket({ path: agentPaths(process.env).socket, label: "example" }));
 const gateway = await client.host.get(GatewayContract, {});
@@ -50,11 +50,11 @@ arguments again after a dropped link and gets the first outcome. `dimos agent ru
 
 ```ts
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { ConversationContract } from "../shared/protocol/conversation/contract.ts";
-import { newUserRequest } from "../shared/protocol/actions/request.ts";
-import { owner } from "./failures.ts";
-import { retryByRequestId } from "./retry.ts";
-import { until } from "./until.ts";
+import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
+import { owner } from "#dimos/agents/sdk/failures.ts";
+import { retryByRequestId } from "#dimos/agents/sdk/retry.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
 
 const id = Number(process.argv[2]) as ConversationId;
 const conversation = await client.host.get(ConversationContract, { conversation: id, role: "owner" });
@@ -76,7 +76,7 @@ a render in it. `until` with a signal waits for a condition with a timeout. The 
 [frontends/tui/setup.ts](/dimos/agents/frontends/tui/setup.ts) waits for `accounts` this way.
 
 ```ts
-import { listen } from "./state.ts";
+import { listen } from "#dimos/agents/sdk/state.ts";
 
 const stop = listen([client.connection, gateway.link], () => {
     console.log(`${client.connection.value.state}: ${describeLink(gateway.link.value)}`);
@@ -91,8 +91,8 @@ readable channel by its advertised ID. `toFrame` converts decoded SDK slots into
 and values for the existing terminal renderers. Rates use the SDK's received frequency and age.
 
 ```ts
-import { InventoryContract } from "../shared/protocol/inventory/contract.ts";
-import { RemoteFrames } from "./streams/remote.ts";
+import { InventoryContract } from "#dimos/agents/shared/protocol/inventory/contract.ts";
+import { RemoteFrames } from "#dimos/agents/sdk/streams/remote.ts";
 
 const inventory = await client.host.get(InventoryContract, {});
 const frames = new RemoteFrames((error) => console.error(error));

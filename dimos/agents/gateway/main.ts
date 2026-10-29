@@ -1,18 +1,18 @@
-import type { AgentPaths } from "./config/paths.ts";
-import type { DimosInstall } from "../harness/dimos/install.ts";
+import type { AgentPaths } from "#dimos/agents/gateway/config/paths.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 import type { Provider } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
-import { ConfigStore } from "./config/store.ts";
-import { GatewayServer } from "./server/host.ts";
-import { LoginFlows } from "./auth/dialog.ts";
-import { ModelCatalog, openModels } from "./auth/models.ts";
-import { Replies } from "./server/replies.ts";
+import { ConfigStore } from "#dimos/agents/gateway/config/store.ts";
+import { GatewayServer } from "#dimos/agents/gateway/server/host.ts";
+import { LoginFlows } from "#dimos/agents/gateway/auth/dialog.ts";
+import { ModelCatalog, openModels } from "#dimos/agents/gateway/auth/models.ts";
+import { Replies } from "#dimos/agents/gateway/server/replies.ts";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { buildInfo } from "./config/build.ts";
+import { buildInfo } from "#dimos/agents/gateway/config/build.ts";
 import { dirname } from "node:path";
-import { epochMs } from "../shared/protocol/time.ts";
-import { migrateDimcode } from "./config/migrate.ts";
-import { openAgent } from "../harness/main.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { migrateDimcode } from "#dimos/agents/gateway/config/migrate.ts";
+import { openAgent } from "#dimos/agents/harness/main.ts";
 
 /** How long a `by_request_id` call's first outcome answers its retries. */
 const REPLIES_KEPT_MS = 300_000;

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import type { AgentModuleName } from "../../protocol/runtime/event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { CallId } from "../../protocol/conversation/calls.ts";
-import type { DimosInput, UserRequestId } from "../../protocol/conversation/input.ts";
+import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
+import type { DimosInput, UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import type { EntryId, InboxItem, SubmissionId, TaskId } from "@earendil-works/pi-durable";
-import type { TranscriptItem } from "../../protocol/conversation/state.ts";
-import { noticesOf } from "./notices.ts";
-import { epochMs } from "../../protocol/time.ts";
+import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import { noticesOf } from "#dimos/agents/shared/view-models/conversation/notices.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { test } from "node:test";
-import { timelineOf } from "./timeline.ts";
+import { timelineOf } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
 
 const R1 = "11111111-1111-4111-8111-111111111111" as UserRequestId;
 

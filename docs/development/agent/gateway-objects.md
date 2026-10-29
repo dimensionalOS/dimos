@@ -8,7 +8,7 @@ local types of their own. The factories read the harness and the gateway's
 stores through `ObjectDeps` and turn catalog actions into methods with `bind`. [base.ts](/dimos/agents/gateway/server/objects/base.ts) defines `ServeObject`,
 the type every file here implements.
 
-Source: [dimos/agents/gateway/server/objects/](/dimos/agents/gateway/server/objects/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/gateway/server/objects/](/dimos/agents/gateway/server/objects/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/server/objects/demo_example.ts`.
 Remove the temporary file with `rm gateway/server/objects/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -264,16 +264,16 @@ These files are private to this folder. The boundaries test refuses an import of
 cell, and an owner can call `stop`. This is [lifecycle.ts](/dimos/agents/gateway/server/objects/lifecycle.ts) as it stands.
 
 ```ts
-import type { GatewayProcess } from "../../../shared/protocol/lifecycle/contract.ts";
-import type { Handlers } from "./lib/bind.ts";
-import type { ServeObject } from "./base.ts";
-import type { Standing } from "../../../shared/protocol/actions/standing.ts";
-import { LIFECYCLE_ACTIONS } from "../../../shared/protocol/actions/lifecycle.ts";
-import { LifecycleContract } from "../../../shared/protocol/lifecycle/contract.ts";
-import { bind } from "./lib/bind.ts";
-import { carried } from "../../../shared/protocol/schema.ts";
-import { done } from "../../../shared/protocol/outcome.ts";
-import { grantOf } from "../../auth/principal.ts";
+import type { GatewayProcess } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { LIFECYCLE_ACTIONS } from "#dimos/agents/shared/protocol/actions/lifecycle.ts";
+import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
+import { done } from "#dimos/agents/shared/protocol/outcome.ts";
+import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const STOP_AFTER_MS = 100;
 
@@ -325,14 +325,14 @@ complete. [room.ts](/dimos/agents/gateway/server/objects/room.ts) combines the s
 
 ```ts
 import type { Seq } from "@earendil-works/pi-durable";
-import type { ServeObject } from "./base.ts";
-import { ConversationIdSchema } from "../../../shared/protocol/args.ts";
-import { ConversationState } from "../../../shared/protocol/conversation/contract.ts";
-import { GatewayState } from "../../../shared/protocol/gateway/contract.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import { ConversationIdSchema } from "#dimos/agents/shared/protocol/args.ts";
+import { ConversationState } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import { Type } from "typebox";
-import { carried } from "../../../shared/protocol/schema.ts";
-import { commitEvents } from "./lib/commits.ts";
-import { feed } from "./lib/feed.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
+import { commitEvents } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
+import { feed } from "#dimos/agents/gateway/server/objects/lib/feed.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
 
 const ActivityState = {
@@ -392,20 +392,20 @@ and the store, forwards the room's members, and binds the conversation actions f
 every method. A viewer gets the same state and only `image`.
 
 ```ts
-import type { Handlers } from "./lib/bind.ts";
-import type { ServeObject } from "./base.ts";
-import type { Standing } from "../../../shared/protocol/actions/standing.ts";
-import { CONVERSATION_ACTIONS } from "../../../shared/protocol/actions/conversation.ts";
-import { ConversationContract, ConversationState } from "../../../shared/protocol/conversation/contract.ts";
-import { ConversationRoom } from "./room.ts";
-import { GatewayStore } from "./store.ts";
-import { bind } from "./lib/bind.ts";
-import { conversationStanding } from "../../../shared/protocol/actions/standing.ts";
-import { done, refused } from "../../../shared/protocol/outcome.ts";
-import { forward } from "./lib/forward.ts";
-import { fromBranch, fromSubmit } from "./lib/outcomes.ts";
-import { grantOf } from "../../auth/principal.ts";
-import { imageAt } from "./lib/items.ts";
+import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
+import { ConversationContract, ConversationState } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { ConversationRoom } from "#dimos/agents/gateway/server/objects/room.ts";
+import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
+import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import { conversationStanding } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { forward } from "#dimos/agents/gateway/server/objects/lib/forward.ts";
+import { fromBranch, fromSubmit } from "#dimos/agents/gateway/server/objects/lib/outcomes.ts";
+import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
+import { imageAt } from "#dimos/agents/gateway/server/objects/lib/items.ts";
 
 const SHARED = Object.keys(ConversationState) as (keyof typeof ConversationState)[];
 

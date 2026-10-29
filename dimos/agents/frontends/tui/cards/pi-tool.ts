@@ -1,7 +1,7 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ToolCard } from "./base.ts";
-import type { ToolResult } from "../../../shared/protocol/conversation/state.ts";
+import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   ToolExecutionComponent,
@@ -10,10 +10,10 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { accent, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { movedToBackground } from "../../../shared/view-models/conversation/tools.ts";
-import { needsImageSlices } from "../lib/terminal-image.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { movedToBackground } from "#dimos/agents/shared/view-models/conversation/tools.ts";
+import { needsImageSlices } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
 
 /** Tools whose card is Pi's own renderer; the rest show a one-line summary until expanded. */
 const PI_RENDERERS = {

@@ -1,4 +1,4 @@
-import { readRuns } from "./runs.ts";
+import { readRuns } from "#dimos/agents/harness/dimos/runs.ts";
 
 /** Where DimOS lives and how to run and reach it. `dimos agent gateway` sets these; nothing reads config.json for them. */
 export type DimosInstall = {

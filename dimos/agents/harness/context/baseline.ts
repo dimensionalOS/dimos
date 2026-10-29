@@ -1,9 +1,9 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { ConversationId, DocumentReader, PromptSection, Tx } from "@earendil-works/pi-durable";
-import type { Facts } from "../../shared/protocol/runtime/context.ts";
+import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
 import { defineDoc, section } from "@earendil-works/pi-durable";
-import { sectionsOf } from "./messages.ts";
-import { systemFacts } from "./facts.ts";
+import { sectionsOf } from "#dimos/agents/harness/context/messages.ts";
+import { systemFacts } from "#dimos/agents/harness/context/facts.ts";
 
 /** The runtime as it stood when the conversation started. The prompt section shows it and it never changes, so provider caches stay warm. */
 type RuntimeBaseline = {

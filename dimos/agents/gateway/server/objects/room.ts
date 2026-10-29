@@ -10,23 +10,23 @@ import type {
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
-import type { InputOutcome, OwnedStream } from "../../../shared/protocol/conversation/state.ts";
-import type { JobRow } from "../../../shared/protocol/jobs/state.ts";
-import type { ModuleRow } from "../../../shared/protocol/runtime/module.ts";
-import type { ServeObject } from "./base.ts";
-import type { StreamRef } from "../../../shared/protocol/streams.ts";
+import type { InputOutcome, OwnedStream } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
 import type { Subscribable } from "@earendil-works/chord";
-import type { TranscriptMemo } from "./lib/items.ts";
-import type { UserRequestId } from "../../../shared/protocol/conversation/input.ts";
+import type { TranscriptMemo } from "#dimos/agents/gateway/server/objects/lib/items.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { AgentDoc, InboxDoc, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import { ConversationIdSchema } from "../../../shared/protocol/args.ts";
-import { ConversationState } from "../../../shared/protocol/conversation/contract.ts";
-import { GatewayStore } from "./store.ts";
-import { TRANSCRIPT_BUDGET, projectTranscript } from "./lib/items.ts";
+import { ConversationIdSchema } from "#dimos/agents/shared/protocol/args.ts";
+import { ConversationState } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
+import { TRANSCRIPT_BUDGET, projectTranscript } from "#dimos/agents/gateway/server/objects/lib/items.ts";
 import { Type } from "typebox";
-import { commitEvents } from "./lib/commits.ts";
-import { feed } from "./lib/feed.ts";
+import { commitEvents } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
+import { feed } from "#dimos/agents/gateway/server/objects/lib/feed.ts";
 import { invalid, local } from "@earendil-works/chord";
 
 const KEPT_OUTCOMES = 50;

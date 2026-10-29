@@ -1,6 +1,6 @@
 import type { Cell, Self } from "@earendil-works/chord";
-import type { Live } from "../../../../shared/protocol/status.ts";
-import type { Principal } from "../../../auth/principal.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
 import type { Static, TSchema } from "typebox";
 
 /**

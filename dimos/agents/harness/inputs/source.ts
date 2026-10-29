@@ -1,4 +1,4 @@
-import type { DimosInput, InputSource } from "../../shared/protocol/conversation/input.ts";
+import type { DimosInput, InputSource } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import type { Entry } from "@earendil-works/pi-durable";
 import { defineEntry } from "@earendil-works/pi-durable";
 

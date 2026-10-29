@@ -7,13 +7,13 @@ import type {
   EntryRecord,
   Harness,
 } from "@earendil-works/pi-durable";
-import type { DimosConnection } from "../dimos/connection.ts";
-import type { RuntimeClient } from "../dimos/client.ts";
-import type { Step } from "./steps.ts";
-import { DimosUnavailable } from "../dimos/connection.ts";
+import type { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import type { Step } from "#dimos/agents/harness/trajectory/steps.ts";
+import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
 import { defineDoc } from "@earendil-works/pi-durable";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { stepOf } from "./steps.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { stepOf } from "#dimos/agents/harness/trajectory/steps.ts";
 
 /** The newest entry sent, per conversation id. Written only by TrajectorySender. */
 const TrajectoryCursorDoc = defineDoc<{ sent: { [conversation: string]: number } }>({

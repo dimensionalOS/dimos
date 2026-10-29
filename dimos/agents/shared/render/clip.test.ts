@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { RenderProgress } from "./types.ts";
-import { FileRenderer } from "./render.ts";
+import type { RenderProgress } from "#dimos/agents/shared/render/types.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

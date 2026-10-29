@@ -1,13 +1,13 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { Conversation, Harness } from "@earendil-works/pi-durable";
-import type { Fact, Facts, RuntimeChange } from "../../shared/protocol/runtime/context.ts";
-import type { LinkStatus } from "../../shared/protocol/gateway/link.ts";
-import type { Observation } from "./facts.ts";
-import type { RuntimeClient } from "../dimos/client.ts";
-import { DimosUnavailable } from "../dimos/connection.ts";
-import { diffFacts, observedFacts } from "./facts.ts";
-import { runFacts } from "./runs.ts";
-import { toldFacts } from "./told.ts";
+import type { Fact, Facts, RuntimeChange } from "#dimos/agents/shared/protocol/runtime/context.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { Observation } from "#dimos/agents/harness/context/facts.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
+import { diffFacts, observedFacts } from "#dimos/agents/harness/context/facts.ts";
+import { runFacts } from "#dimos/agents/harness/context/runs.ts";
+import { toldFacts } from "#dimos/agents/harness/context/told.ts";
 
 type ObserverOptions = {
   readonly harness: Harness;

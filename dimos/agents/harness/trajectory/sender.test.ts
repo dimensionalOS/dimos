@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import type { Agent } from "../main.ts";
+import type { Agent } from "#dimos/agents/harness/main.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { DimosConnection } from "../dimos/connection.ts";
+import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
 import { after, before, test } from "node:test";
-import { dimosFixture } from "../../test/environment.ts";
+import { dimosFixture } from "#dimos/agents/test/environment.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
-import { openAgent } from "../main.ts";
-import { scriptedModel } from "../../test/scripted-model.ts";
+import { openAgent } from "#dimos/agents/harness/main.ts";
+import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 import { tmpdir } from "node:os";
 
 const dimos = dimosFixture();

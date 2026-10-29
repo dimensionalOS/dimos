@@ -1,6 +1,6 @@
-import type { ServeObject } from "./base.ts";
-import { GatewayStore } from "./store.ts";
-import { InventoryContract } from "../../../shared/protocol/inventory/contract.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
+import { InventoryContract } from "#dimos/agents/shared/protocol/inventory/contract.ts";
 
 /** Runtime inventory shared by terminal stream discovery and the /runtime view. */
 export const serveInventory: ServeObject = (host) =>

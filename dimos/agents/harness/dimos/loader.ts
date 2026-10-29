@@ -1,12 +1,12 @@
 import type { ChildProcess } from "node:child_process";
-import type { DimosInstall } from "./install.ts";
-import type { DimosRun } from "../../shared/protocol/runtime/runs.ts";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { LoadResult, LoadStatus } from "../../shared/protocol/runtime/load.ts";
-import type { RunWatcher } from "./runs.ts";
-import { Status } from "../../shared/protocol/status.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { loadResultDecoder } from "./wire/load.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
+import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { LoadResult, LoadStatus } from "#dimos/agents/shared/protocol/runtime/load.ts";
+import type { RunWatcher } from "#dimos/agents/harness/dimos/runs.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { loadResultDecoder } from "#dimos/agents/harness/dimos/wire/load.ts";
 import { spawn } from "node:child_process";
 
 type LoadTrigger = Extract<LoadStatus, { state: "running" }>["trigger"];

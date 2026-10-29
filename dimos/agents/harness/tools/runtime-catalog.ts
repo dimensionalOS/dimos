@@ -1,11 +1,11 @@
 import type { Context } from "@earendil-works/chord/context";
-import type { DimosConnection, RemoteTool } from "../dimos/connection.ts";
+import type { DimosConnection, RemoteTool } from "#dimos/agents/harness/dimos/connection.ts";
 import type { Harness } from "@earendil-works/pi-durable";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { RuntimeToolName } from "../../shared/protocol/tools/details.ts";
-import { Status } from "../../shared/protocol/status.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { RuntimeToolName } from "#dimos/agents/shared/protocol/tools/details.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import { defineDoc } from "@earendil-works/pi-durable";
-import { isRuntimeToolName } from "./details.ts";
+import { isRuntimeToolName } from "#dimos/agents/harness/tools/details.ts";
 
 export type RuntimeToolSchemas = { readonly [N in Exclude<RuntimeToolName, "stream_get">]?: RemoteTool };
 

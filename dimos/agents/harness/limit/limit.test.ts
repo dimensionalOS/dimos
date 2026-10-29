@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { ContextBudget } from "./budget.ts";
-import { OutputLimiter } from "./limit.ts";
+import { ContextBudget } from "#dimos/agents/harness/limit/budget.ts";
+import { OutputLimiter } from "#dimos/agents/harness/limit/limit.ts";
 import { createModels } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

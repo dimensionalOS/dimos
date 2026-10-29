@@ -1,7 +1,7 @@
 import type { Static } from "typebox";
-import { AgentModuleRecordSchema } from "./module.ts";
+import { AgentModuleRecordSchema } from "#dimos/agents/shared/protocol/runtime/module.ts";
 import { Type } from "typebox";
-import { nullable } from "../schema.ts";
+import { nullable } from "#dimos/agents/shared/protocol/schema.ts";
 
 const RpcSchema = Type.Object({
   name: Type.String(),

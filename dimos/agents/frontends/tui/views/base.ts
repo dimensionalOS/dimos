@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { RenderedView } from "../../../shared/protocol/media.ts";
+import type { RenderedView } from "#dimos/agents/shared/protocol/media.ts";
 
 /**
  * The terminal's view of one rendered view kind. image.ts, points.ts and clip.ts implement it, matching shared/render/'s

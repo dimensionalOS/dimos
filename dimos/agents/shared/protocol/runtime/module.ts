@@ -1,8 +1,8 @@
-import type { AgentModuleName } from "./event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { Static } from "typebox";
 import { Type } from "typebox";
-import { nullable } from "../schema.ts";
+import { nullable } from "#dimos/agents/shared/protocol/schema.ts";
 
 /** `AgentModuleStatus` (`agent_module_manager.py`); inventory's agent_modules rows and `list` share it. */
 export const AgentModuleRecordSchema = Type.Object({

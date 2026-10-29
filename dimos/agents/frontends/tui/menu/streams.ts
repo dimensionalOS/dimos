@@ -1,7 +1,7 @@
-import type { ModuleInstance } from "../../../shared/protocol/runtime/module.ts";
-import type { MenuRow, MenuTab } from "./base.ts";
-import type { StreamRef } from "../../../shared/protocol/streams.ts";
-import { plain } from "./lib/rows.ts";
+import type { ModuleInstance } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import { plain } from "#dimos/agents/frontends/tui/menu/lib/rows.ts";
 
 /** Tab 5: the relay's readable channels, annotated with module inventory when available. */
 export const streamsTab: MenuTab = {

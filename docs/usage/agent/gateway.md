@@ -6,7 +6,7 @@ terminal closes and while dimOS restarts. A client connects to its Unix socket a
 state, one conversation, the process itself, and the inventory. This guide is what you need to write a client. The
 entry for running the gateway is `runGateway` in [main.ts](/dimos/agents/gateway/main.ts).
 
-Source: [dimos/agents/gateway/](/dimos/agents/gateway/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/gateway/](/dimos/agents/gateway/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/demo_example.ts`.
 Remove the temporary file with `rm gateway/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -33,17 +33,17 @@ dimOS, and starts a conversation on `gpt-5.6-luna`, which needs `OPENAI_API_KEY`
 asks what is running, prints the answer, and disconnects.
 
 ```ts
-import { ConversationContract } from "../shared/protocol/conversation/contract.ts";
-import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
-import { LifecycleContract } from "../shared/protocol/lifecycle/contract.ts";
+import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
 import { WebSocket } from "ws";
-import { agentPaths } from "./config/paths.ts";
+import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { createConnection } from "node:net";
 import { createHost, webSocketLink } from "@earendil-works/chord";
-import { describeLink } from "../shared/protocol/gateway/link.ts";
-import { newActionRequest, newUserRequest } from "../shared/protocol/actions/request.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
 import { randomUUID } from "node:crypto";
-import { until } from "../sdk/until.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
 
 const socket = new WebSocket(`ws://localhost/?terminal=${randomUUID()}&label=example`, {
     createConnection: () => createConnection(agentPaths(process.env).socket),
@@ -145,12 +145,12 @@ This runs the gateway in the foreground from a checkout. Like the harness Quicks
 `.venv` and on McpServer's default port, and it loads the checkout's `.env`.
 
 ```ts
-import { agentPaths } from "./config/paths.ts";
+import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runGateway } from "./main.ts";
+import { runGateway } from "#dimos/agents/gateway/main.ts";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 if (existsSync(join(root, ".env"))) process.loadEnvFile(join(root, ".env"));

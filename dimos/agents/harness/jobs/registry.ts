@@ -1,7 +1,13 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { DocumentReader, TaskId, Tx } from "@earendil-works/pi-durable";
-import type { Facts } from "../../shared/protocol/runtime/context.ts";
-import type { JobAction, JobDefinition, JobName, JobRun, JobRunRecord } from "../../shared/protocol/jobs/state.ts";
+import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
+import type {
+  JobAction,
+  JobDefinition,
+  JobName,
+  JobRun,
+  JobRunRecord,
+} from "#dimos/agents/shared/protocol/jobs/state.ts";
 import { defineDoc } from "@earendil-works/pi-durable";
 
 const KEPT_RUNS = 20;

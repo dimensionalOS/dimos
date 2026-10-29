@@ -1,5 +1,5 @@
-import type { AgentTool, ToolPolicy } from "../base.ts";
-import type { AgentToolName } from "../../../shared/protocol/tools/details.ts";
+import type { AgentTool, ToolPolicy } from "#dimos/agents/harness/tools/base.ts";
+import type { AgentToolName } from "#dimos/agents/shared/protocol/tools/details.ts";
 import type { JsonObject, ToolRegistration } from "@earendil-works/pi-durable";
 import type { TSchema } from "typebox";
 import { Type } from "typebox";

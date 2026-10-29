@@ -1,6 +1,6 @@
 import type { ConversationId, JsonObject } from "@earendil-works/pi-durable";
 import type { Static } from "typebox";
-import { ExportSchema } from "./export.ts";
+import { ExportSchema } from "#dimos/agents/shared/protocol/runtime/export.ts";
 import { Type } from "typebox";
 
 /** The class name an agent module runs under. */

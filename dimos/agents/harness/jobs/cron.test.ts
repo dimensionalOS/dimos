@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { CronExpr, parseTimeZone } from "./cron.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
+import { CronExpr, parseTimeZone } from "#dimos/agents/harness/jobs/cron.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { test } from "node:test";
 
 const LA = parseTimeZone("America/Los_Angeles");

@@ -1,11 +1,11 @@
 import type { ModelRef } from "@earendil-works/pi-durable";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { Settings } from "../../shared/protocol/settings.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { Settings } from "#dimos/agents/shared/protocol/settings.ts";
 import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
-import { Status } from "../../shared/protocol/status.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { readJsonFile, writeJsonFile } from "./lib/json-file.ts";
+import { readJsonFile, writeJsonFile } from "#dimos/agents/gateway/config/lib/json-file.ts";
 
 const ModelRefSchema = Type.Unsafe<ModelRef>(Type.Object({ provider: Type.String(), modelId: Type.String() }));
 

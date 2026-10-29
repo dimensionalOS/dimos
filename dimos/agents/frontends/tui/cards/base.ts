@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ToolResult } from "../../../shared/protocol/conversation/state.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 
 /** One tool call in the transcript, from its start to its result. bash.ts and pi-tool.ts implement it; choose.ts picks one. */
 export interface ToolCard extends Component {

@@ -1,15 +1,15 @@
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
-import type { FileRef, RenderDetails, RenderedView } from "../../../shared/protocol/media.ts";
-import type { ViewPanel } from "./base.ts";
-import { ClipPanel } from "./clip.ts";
-import { ImagePanel } from "./image.ts";
-import { SpatialPanel } from "./points.ts";
-import { TerminalImage } from "../lib/terminal-image.ts";
+import type { FileRef, RenderDetails, RenderedView } from "#dimos/agents/shared/protocol/media.ts";
+import type { ViewPanel } from "#dimos/agents/frontends/tui/views/base.ts";
+import { ClipPanel } from "#dimos/agents/frontends/tui/views/clip.ts";
+import { ImagePanel } from "#dimos/agents/frontends/tui/views/image.ts";
+import { SpatialPanel } from "#dimos/agents/frontends/tui/views/points.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
 import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { accent, amber, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { overviewOf } from "../../../shared/render/raster.ts";
-import { readVerified } from "../../../shared/render/files.ts";
+import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { overviewOf } from "#dimos/agents/shared/render/raster.ts";
+import { readVerified } from "#dimos/agents/shared/render/files.ts";
 
 function previewOf(view: RenderedView): FileRef {
   switch (view.kind) {

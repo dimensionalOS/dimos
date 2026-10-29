@@ -1,12 +1,12 @@
 import type { AuthEvent } from "@earendil-works/pi-ai";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
-import type { DialogId, DialogPrompt, LoginState } from "../../shared/protocol/auth.ts";
-import type { Ui } from "./session.ts";
-import { ChatInput } from "./conversation/input.ts";
+import type { DialogId, DialogPrompt, LoginState } from "#dimos/agents/shared/protocol/auth.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
+import { ChatInput } from "#dimos/agents/frontends/tui/conversation/input.ts";
 import { ExtensionSelectorComponent } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { accent, muted } from "./style.ts";
-import { clean } from "../../shared/view-models/text.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
 
 type OpenPrompt = {
   readonly dialog: DialogId;

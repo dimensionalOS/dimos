@@ -1,20 +1,20 @@
 import type { ConversationId, EntryId, LiveState, SubmissionId } from "@earendil-works/pi-durable";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Ref } from "@earendil-works/chord";
-import type { Client } from "../../sdk/main.ts";
-import { connect } from "../../sdk/main.ts";
-import { unixSocket } from "../../sdk/node.ts";
-import { owner, refusalOfFailure } from "../../sdk/failures.ts";
-import { retryByRequestId } from "../../sdk/retry.ts";
-import { ConversationContract } from "../../shared/protocol/conversation/contract.ts";
-import { GatewayContract } from "../../shared/protocol/gateway/contract.ts";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import { until } from "../../sdk/until.ts";
-import { newActionRequest, newUserRequest } from "../../shared/protocol/actions/request.ts";
-import type { InputOutcome, Transcript, TranscriptItem } from "../../shared/protocol/conversation/state.ts";
-import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
-import { refusalText } from "../../shared/view-models/outcome.ts";
-import type { Command, CommandContext } from "./base.ts";
+import type { Client } from "#dimos/agents/sdk/main.ts";
+import { connect } from "#dimos/agents/sdk/main.ts";
+import { unixSocket } from "#dimos/agents/sdk/node.ts";
+import { owner, refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
+import { retryByRequestId } from "#dimos/agents/sdk/retry.ts";
+import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
+import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
+import type { InputOutcome, Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
+import type { Command, CommandContext } from "#dimos/agents/cli/commands/base.ts";
 
 function textOf(content: readonly { readonly type: string; readonly text?: string }[]): string {
   return content.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : [])).join("");

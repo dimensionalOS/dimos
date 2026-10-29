@@ -1,7 +1,7 @@
 import type { InboxState } from "@earendil-works/pi-durable";
-import type { Transcript, TranscriptItem } from "../../protocol/conversation/state.ts";
-import type { QueuedRow } from "./queue.ts";
-import { queuedRows } from "./queue.ts";
+import type { Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { QueuedRow } from "#dimos/agents/shared/view-models/conversation/queue.ts";
+import { queuedRows } from "#dimos/agents/shared/view-models/conversation/queue.ts";
 
 /** Requirement 6: the notices that woke this conversation, and the ones still on their way. */
 export type Notices = {

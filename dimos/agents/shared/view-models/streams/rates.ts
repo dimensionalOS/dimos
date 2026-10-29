@@ -1,7 +1,7 @@
-import type { Channel, RateSample } from "../../protocol/streams.ts";
-import type { EpochMs } from "../../protocol/time.ts";
-import type { Level } from "../levels.ts";
-import { epochMs } from "../../protocol/time.ts";
+import type { Channel, RateSample } from "#dimos/agents/shared/protocol/streams.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 export type Rate = { readonly hz: number; readonly lastAt: EpochMs | null };
 

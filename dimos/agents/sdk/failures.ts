@@ -1,6 +1,6 @@
 import type { ChordError } from "@earendil-works/chord";
-import type { EpochMs } from "../shared/protocol/time.ts";
-import type { Refusal } from "../shared/protocol/outcome.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
 import { isChordError } from "@earendil-works/chord";
 
 export class RefusalError extends Error {

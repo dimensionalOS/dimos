@@ -1,8 +1,8 @@
-import { owner } from "../../sdk/failures.ts";
+import { owner } from "#dimos/agents/sdk/failures.ts";
 import type { Component } from "@earendil-works/pi-tui";
-import type { LoginState, ModelChoice } from "../../shared/protocol/auth.ts";
-import type { Outcome } from "../../shared/protocol/outcome.ts";
-import type { Ui } from "./session.ts";
+import type { LoginState, ModelChoice } from "#dimos/agents/shared/protocol/auth.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
 import {
   Container,
   ProcessTerminal,
@@ -19,10 +19,10 @@ import {
   ThemeSelectorComponent,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { LoginPanel } from "./dialogs.ts";
-import { accent, muted } from "./style.ts";
-import { refusalText } from "../../shared/view-models/outcome.ts";
-import { until } from "../../sdk/until.ts";
+import { LoginPanel } from "#dimos/agents/frontends/tui/dialogs.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
 
 type SetupResult = { readonly kind: "done" } | { readonly kind: "cancelled" };
 
