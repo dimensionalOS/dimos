@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.tf import StreamTF
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
 
     from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -76,11 +76,81 @@ def _tf_root(store: Any, camera: str) -> str:
     return chain[-1] if len(chain) > 1 else WORLD_FRAME
 
 
+def _republish_static_across(
+    tf: MultiTBuffer, transform: Transform, lo: float, hi: float
+) -> None:
+    """Re-stamp a static edge across ``[lo, hi]`` so timed lookups within ``TF_TOLERANCE`` hit."""
+    if hi < lo:
+        return
+    step = TF_TOLERANCE
+    ts = lo
+    while ts < hi:
+        tf.receive_transform(
+            Transform(
+                translation=transform.translation,
+                rotation=transform.rotation,
+                frame_id=transform.frame_id,
+                child_frame_id=transform.child_frame_id,
+                ts=ts,
+            )
+        )
+        ts += step
+    tf.receive_transform(
+        Transform(
+            translation=transform.translation,
+            rotation=transform.rotation,
+            frame_id=transform.frame_id,
+            child_frame_id=transform.child_frame_id,
+            ts=hi,
+        )
+    )
+
+
 def window_tf(store: Any, t0: float, t1: float) -> MultiTBuffer:
-    """A recording's tf over ``[t0, t1]``, read once; lookups in the window match StreamTF's."""
+    """A recording's tf over ``[t0, t1]``, with static edges latched across the window.
+
+    Robot bags often publish world/map/extrinsic edges once at the start (or end) while
+    only the odom chain streams continuously. A pure time crop drops those edges, and
+    even when kept at ``t≈0`` they miss timed lookups later under ``TF_TOLERANCE``.
+    Edges whose samples span at most ``2 * TF_TOLERANCE`` are treated as static and
+    re-stamped across the window.
+    """
+    stream = store.stream("tf")
+    rec_t0, rec_t1 = stream.get_time_range()
+    lo = t0 - 2 * TF_TOLERANCE
+    hi = t1 + 2 * TF_TOLERANCE
     tf = MultiTBuffer(buffer_size=math.inf)
-    for obs in store.stream("tf").after(t0 - 2 * TF_TOLERANCE).before(t1 + 2 * TF_TOLERANCE):
-        tf.receive_transform(*obs.data.transforms)
+
+    edge_times: dict[tuple[str, str], list[float]] = {}
+    edge_last: dict[tuple[str, str], Transform] = {}
+
+    def note(transform: Transform) -> None:
+        key = (transform.frame_id, transform.child_frame_id)
+        edge_last[key] = transform
+        edge_times.setdefault(key, []).append(transform.ts)
+
+    # Head/tail seeds catch static edges published outside the localize window.
+    # after/before are exclusive (ts > lo / ts < hi), so pad like the in-window read.
+    for seed_lo, seed_hi in (
+        (rec_t0 - 2 * TF_TOLERANCE, rec_t0 + TF_ROOT_WINDOW + 2 * TF_TOLERANCE),
+        (rec_t1 - TF_ROOT_WINDOW - 2 * TF_TOLERANCE, rec_t1 + 2 * TF_TOLERANCE),
+    ):
+        if seed_hi <= seed_lo:
+            continue
+        for obs in stream.after(seed_lo).before(seed_hi):
+            for transform in obs.data.transforms:
+                note(transform)
+
+    for obs in stream.after(lo).before(hi):
+        for transform in obs.data.transforms:
+            note(transform)
+            tf.receive_transform(transform)
+
+    static_span = 2 * TF_TOLERANCE
+    for key, times in edge_times.items():
+        if max(times) - min(times) <= static_span:
+            _republish_static_across(tf, edge_last[key], lo, hi)
+
     return tf
 
 
