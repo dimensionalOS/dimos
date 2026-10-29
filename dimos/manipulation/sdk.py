@@ -217,6 +217,13 @@ class Arm:
             raise MotionError("move_linear", result)
         return result
 
+    def reset(self) -> CommandResult:
+        """Stop any motion and clear a failed state so new moves are accepted."""
+        result = self.rpc.reset()
+        if not result.succeeded:
+            raise MotionError("reset", result)
+        return result
+
     def set_gripper_position(self, position: float) -> CommandResult:
         """Set normalized gripper travel: 0 closed, 1 open."""
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:

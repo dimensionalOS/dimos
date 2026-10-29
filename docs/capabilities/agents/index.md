@@ -75,7 +75,7 @@ class MySkillContainer(Module):
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
 | `observe()` | `ObserveSkill` | Capture and return current camera frame |
-| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
+| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description. Returns at once; a tool update reports when the robot stops |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
 | `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |

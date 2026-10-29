@@ -1,0 +1,430 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+import base64
+from collections import Counter
+from dataclasses import replace
+import html
+import json
+import os
+from pathlib import Path
+import shlex
+
+import pytest
+
+from dimos.navigation.bench.ground_truth import Difficulty
+from dimos.navigation.bench.report import (
+    CURVE_PX,
+    CURVE_ROW_PX,
+    by_level,
+    by_signature,
+    by_stressor,
+    compare,
+    encountered,
+    load,
+    load_side,
+    render,
+    thumbnail,
+    to_json,
+    write,
+)
+from dimos.navigation.bench.snapshot import snapshot_path
+from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
+from dimos.simulation.scenes.procedural import Family, generate
+
+
+def _case(
+    case_id: str, tag: str, clearance: float, level: Level | None = None, seed: int = 1
+) -> Case:
+    return Case(
+        family="office",
+        seed=seed,
+        params={},
+        start=(1.0, 1.0, 0.0),
+        goal=(4.0, 1.0, 0.0),
+        tag=tag,
+        id=case_id,
+        split="dev",
+        difficulty=Difficulty(clearance, 1, 1.0, 0),
+        route_length=3.0,
+        scene_digest="",
+        level=level,
+    )
+
+
+def _result(case: Case, outcome: str | None, **metrics: object) -> str:
+    base = {"signature": None, "spl": None, "arrived_s": None, "final_xy": (4.0, 1.0)}
+    return json.dumps(
+        {
+            "case_id": case.id,
+            "tag": case.tag,
+            "outcome": outcome,
+            "error": None if outcome else "no recording",
+            "terminal": "arrived",
+            "metrics": {**base, **metrics} if outcome else {},
+        }
+    )
+
+
+def _run(
+    run: Path, cases: list[Case], results: list[str], suite: str = "test", **meta: object
+) -> None:
+    run.mkdir()
+    Manifest(suite, Rules(), 0, cases).save(run / "suite.json")
+    base = {
+        "split": "dev",
+        "blueprint": "fake",
+        "policy": None,
+        "overrides": ["--set-x=1"],
+        "episodes": len(cases),
+        "finished": True,
+        "started": 0.0,
+        "time": 90.0,
+    }
+    (run / "run.json").write_text(json.dumps({**base, **meta}))
+    (run / "results.jsonl").write_text("\n".join(results))
+
+
+def test_replay_commands_name_the_episode_of_the_reports_own_run(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    older, newer = tmp_path / "older run", tmp_path / "newer run"
+    for run in (older, newer):
+        _run(run, [case], [_result(case, "success")])
+    for run in (older, newer):
+        command = f"dimos nav-bench replay {shlex.quote(str(run.resolve() / case.id))}"
+        assert command in html.unescape(render([load(run)]))
+
+
+def test_an_interrupted_run_keeps_the_stop_time_it_recorded(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    stopped, killed = tmp_path / "stopped", tmp_path / "killed"
+    _run(stopped, [case], [_result(case, "success")], finished=False, time=90.0)
+    _run(killed, [case], [_result(case, "success")], finished=False, time=None)
+    for run in (stopped, killed):
+        os.utime(run / "results.jsonl", (600.0, 600.0))
+    assert load(stopped).run.time == 90.0
+    assert load(killed).run.time == 600.0
+
+
+def test_a_run_carries_its_commit_and_one_recorded_before_that_has_none(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    old, new = tmp_path / "old", tmp_path / "new"
+    _run(old, [case], [_result(case, "success")])
+    _run(new, [case], [_result(case, "success")], commit="abc123", dirty=True)
+    assert (load(old).run.commit, load(old).run.dirty) == (None, None)
+    assert (load(new).run.commit, load(new).run.dirty) == ("abc123", True)
+    assert render([load(old)]) and render([load(new)])
+
+
+def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> None:
+    cases = [
+        _case("mined-s1-a", "mined", 0.8),
+        _case("narrow_door-s1-b", "narrow_door", 0.3),
+        _case("narrow_door-s2-c", "narrow_door", 0.5),
+    ]
+    run = tmp_path / "run"
+    _run(
+        run,
+        cases,
+        [
+            _result(cases[0], "success", spl=0.9, arrived_s=12.0),
+            _result(cases[1], "stalled", signature="local_refused", final_xy=(2.0, 1.5)),
+            _result(cases[2], None),
+        ],
+    )
+    report = load(run)
+    assert report.outcomes == ["success", "stalled"]
+    assert by_stressor(report)["narrow_door"] == {"stalled": 1}
+    assert by_signature(report) == {"local_refused": {"narrow_door": 1}}
+    assert report.rows[1].final_xy == (2.0, 1.5)
+    assert [(row.case.id, row.error) for row in report.invalid] == [
+        ("narrow_door-s2-c", "no recording")
+    ]
+    page = render([report])
+    assert "1 of 2 episodes succeeded, median SPL of successes 0.90" in page
+    assert "3 of 3, finished, 1 invalid and not counted" in page
+    assert "<summary>Invalid episodes (1)</summary>" in page and "<td>no recording</td>" in page
+    assert "<dd>1.5 min</dd>" in page and "<dd>test</dd>" in page
+    assert "<td>stalled</td>" in page
+    assert f"dimos nav-bench replay {run.resolve() / 'narrow_door-s1-b'}" in page
+    assert page.count("<circle") == 2 and '<tfoot><tr><td>all</td><td class="n">2</td>' in page
+    assert by_level(report) == [] and "Success against" not in page
+    assert (
+        encountered(report) is None
+        and "not encountered" not in page
+        and "nearest to feature" not in page
+    )
+    assert "<summary>Episodes (2)</summary>" in page and "Outcomes by stressor" in page
+    assert "<summary>What the outcomes mean</summary>" in page
+    assert "<dt>stalled</dt><dd>No arrival, and no motion was commanded for the last 10 s." in page
+    write(load_side("run", [run]), run / "report.html")
+    assert (run / "report.html").read_text() == page
+
+
+def test_report_gives_the_success_rate_per_level(tmp_path: Path) -> None:
+    wins = {0.2: 0, 0.3: 1, 0.4: 2}
+    cases, results = [], []
+    for value, won in wins.items():
+        for k in range(2):
+            case = _case(f"gap-s{k}-{value}", "gap", 0.5, Level("goal_clearance", value))
+            cases.append(case)
+            results.append(
+                _result(case, "success")
+                if k < won
+                else _result(case, "stalled", signature="local_refused")
+            )
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    levels = by_level(report)
+    assert [(row.value, row.n, row.rate) for row in levels] == [
+        (0.2, 2, 0.0),
+        (0.3, 2, 0.5),
+        (0.4, 2, 1.0),
+    ]
+    assert levels[0].signatures == {"local_refused": 2} and levels[2].signatures == {}
+    page = render([report])
+    assert "3 of 6 episodes succeeded<" in page
+    assert "<h3>Success against goal clearance</h3>" in page and page.count("<rect") == 3
+    assert "local_refused 2</td>" in page
+    assert ">1/2</text>" in page
+    assert "Outcomes by stressor" not in page and "Outcomes against difficulty" not in page
+
+
+def test_report_counts_near_falls_and_lists_verdict_mismatches(tmp_path: Path) -> None:
+    level = Level("door_width", 0.6)
+    cases = [_case(f"door-s{k}-a", "door", 0.5, level, seed=k) for k in range(4)]
+    results = [
+        _result(cases[0], "success"),
+        _result(cases[1], "success", trunk_floor_s=0.06),
+        _result(
+            cases[2],
+            "fall",
+            trunk_floor_s=2.0,
+            contacts={"leg clutter": 3, "foot collided with wall": 1},
+        ),
+        _result(cases[3], "stuck", mismatch=True),
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    assert [row.case.id for row in report.unexplained] == ["door-s2-a", "door-s3-a"]
+    assert by_level(report)[0].unexplained == 2
+    assert by_level(report)[0].near_falls == 1
+    assert by_level(report)[0].contacts == {
+        "leg collided with object": 1,
+        "foot collided with wall": 1,
+    }
+    assert [row.case.id for row in report.mismatches] == ["door-s3-a"]
+    assert render([report])
+
+
+def test_every_signature_of_an_episode_is_counted(tmp_path: Path) -> None:
+    level = Level("door_width", 0.6)
+    cases = [_case(f"door-s{k}-a", "door", 0.5, level, seed=k) for k in range(3)]
+    both = ["commanded_no_progress", "pushing"]
+    results = [
+        _result(cases[0], "stuck", signature=both[0], signatures=both),
+        _result(cases[1], "stuck", signature=both[0], signatures=both[:1]),
+        _result(cases[2], "stalled", signature="local_refused"),
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    counted = {"commanded_no_progress": 2, "pushing": 1, "local_refused": 1}
+    assert by_level(report)[0].signatures == counted
+    assert {name: sum(tags.values()) for name, tags in by_signature(report).items()} == counted
+    assert report.unexplained == [] and render([report])
+
+
+def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) -> None:
+    cases = [
+        _case(f"leg-s1-{value}", "leg", 0.5, Level("leg_width", value))
+        for value in (0.01, 0.02, 0.03, 0.6)
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, [_result(case, "success") for case in cases])
+    page = render([load(run)])
+    first, second = CURVE_PX[1] + 10, CURVE_PX[1] + 10 + CURVE_ROW_PX
+    for label, y in (("0.01", first), ("0.02", second), ("0.03", first), ("0.60", first)):
+        assert f'y="{y}" text-anchor="middle">{label}</text>' in page
+    assert f'<svg width="{CURVE_PX[0]}" height="{CURVE_PX[1] + 48 + CURVE_ROW_PX}"' in page
+
+
+def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: Path) -> None:
+    nearest = {1: 0.05, 2: 0.40, 3: 0.10}
+    cases, results = [], []
+    for seed, feature_m in nearest.items():
+        control = _case(f"leg-s{seed}-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True), seed)
+        cases.append(control)
+        results.append(_result(control, "success", feature_m=feature_m))
+        for value in (0.02, 0.08):
+            case = _case(f"leg-s{seed}-{value}", "leg", 0.5, Level("leg_width", value), seed)
+            cases.append(case)
+            hit = value == 0.02
+            results.append(
+                _result(
+                    case,
+                    "reached_with_collision" if hit else "success",
+                    feature_m=0.6,
+                    collisions=2 * hit,
+                )
+            )
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    assert encountered(report) == {1, 3}
+    levels = by_level(report)
+    assert [(row.value, row.n, row.successes, row.not_encountered) for row in levels] == [
+        (0.02, 2, 0, 1),
+        (0.08, 2, 2, 1),
+    ]
+    assert [(row.left_out, row.left_out_collisions) for row in levels] == [
+        ({"reached_with_collision": 1}, 1),
+        ({"success": 1}, 0),
+    ]
+    page = render([report])
+    assert "Feature encountered in 2 of 3 control runs" in page
+    assert '<th class="n">not encountered</th>' in page and ">0/2</text>" in page
+    assert '<td class="n">0.40</td>' in page
+
+
+def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -> None:
+    plain = _case("door-s1-a", "door", 0.5, Level("door_width", 0.6))
+    _run(tmp_path / "door_width", [plain], [_result(plain, "success")], "door_width")
+    control = _case("leg-s1-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True))
+    leg = _case("leg-s1-b", "leg", 0.5, Level("leg_width", 0.02))
+    _run(
+        tmp_path / "leg_width",
+        [control, leg],
+        [_result(control, "success", feature_m=0.05), _result(leg, "stuck", feature_m=0.3)],
+        "leg_width",
+    )
+    (tmp_path / "leg_width.json").write_text("{}")
+    page = write(load_side("runs", [tmp_path]), tmp_path / "report.html").read_text()
+    assert "Navigation Sim Results" in page
+    assert '<a href="#door_width">door_width</a>' in page
+    assert (
+        '<td class="n">2 of 2</td><td class="n">1</td><td class="n"></td><td class="n">1 of 1</td>'
+        in page
+    )
+    assert page.index('<h2 id="door_width">') < page.index('<h2 id="leg_width">')
+    assert "<h3>Success against door width</h3>" in page
+    assert "<h3>Success against leg width</h3>" in page
+    assert page.count("<summary>Episodes") == 2 and page.count("<script>") == 1
+
+
+def test_a_case_run_again_keeps_the_attempt_that_started_last(tmp_path: Path) -> None:
+    a, b = _case("door-s1-a", "door", 0.5), _case("door-s2-b", "door", 0.5)
+    first, again = tmp_path / "z-first", tmp_path / "a-again"
+    _run(first, [a, b], [_result(a, "stuck"), _result(b, None)], "door_width", started=100.0)
+    _run(again, [a, b], [_result(b, "success"), _result(a, "fall")], "door_width", started=200.0)
+    _run(tmp_path / "older", [a], [_result(a, "success")], "door_width", started=50.0, time=900.0)
+    side = load_side("runs", [tmp_path])
+    (report,) = side.reports
+    assert [(r.case.id, r.outcome) for r in report.rows] == [(a.id, "fall"), (b.id, "success")]
+    assert report.invalid == [] and report.run_dir == tmp_path / "older"
+    assert (side.cases, side.replaced) == (2, 3)
+
+
+def test_a_baseline_comparison_is_written_with_its_numbers(tmp_path: Path) -> None:
+    cases = [
+        _case("door-s1-a", "door", 0.5, Level("door_width", 0.0, control=True)),
+        _case("door-s1-b", "door", 0.5, Level("door_width", 0.6)),
+        _case("door-s2-b", "door", 0.5, Level("door_width", 0.6), seed=2),
+    ]
+    base_outcomes, new_outcomes = ("success", "stuck", "fall"), ("success", "success", None)
+    _run(
+        tmp_path / "base", cases, [_result(c, o) for c, o in zip(cases, base_outcomes, strict=True)]
+    )
+    _run(tmp_path / "new", cases, [_result(c, o) for c, o in zip(cases, new_outcomes, strict=True)])
+    base, new = load_side("main", [tmp_path / "base"]), load_side("pr", [tmp_path / "new"])
+    out = write(new, tmp_path / "page" / "report.html", base)
+    numbers = json.loads((tmp_path / "page" / "report.html.json").read_text())
+    assert out.exists() and numbers == json.loads(json.dumps(to_json(compare(base, new))))
+    assert numbers["summary"]["cases"] == 2 and numbers["left_out"]["new"] == {"invalid": 1}
+    assert [c["case"] for c in numbers["changed"]] == ["door-s1-b"]
+
+
+def _probe_case(family: Family, seed: int, param: str, value: float) -> Case:
+    return replace(
+        _case(f"{family}-s{seed}-{value}", family, 0.5, Level(param, value), seed),
+        family=family,
+        params={param: value},
+        start=(2.0, 3.0, 0.5),
+        goal=(6.0, 4.0, 0.0),
+        scene_digest=generate(family, seed, **{param: value}).digest(),
+    )
+
+
+def test_thumbnail_is_the_lowest_seed_room_at_the_middle_level(tmp_path: Path) -> None:
+    cases = [
+        replace(_probe_case("table", seed, "leg_width", value), feature=(4.0, 3.5))
+        for seed in (2, 1)
+        for value in (0.02, 0.06, 0.2)
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, [_result(case, "success") for case in cases])
+    picture = thumbnail(load(run))
+    assert picture is not None
+    scene = generate("table", 1, leg_width=0.06)
+    assert Counter((s.kind, s.raised) for s in picture.shapes) == {
+        ("wall", False): 4,
+        ("clutter", False): 4,
+        ("clutter", True): 1,
+    }
+    assert picture.shapes[-1].raised
+    assert (picture.start, picture.goal, picture.feature) == (
+        (2.0, 3.0, 0.5),
+        (6.0, 4.0),
+        (4.0, 3.5),
+    )
+    low, high = scene.bounds()
+    assert picture.bounds == (low[0], low[1], high[0], high[1])
+    legs = [s.rect for s in picture.shapes if s.kind == "clutter" and not s.raised]
+    x, y = scene.params["table_x"], scene.params["table_y"]
+    assert min(legs)[:2] == pytest.approx((x, y)) and all(
+        abs(r[2] - r[0] - 0.06) < 1e-9 for r in legs
+    )
+    assert picture.image is None and render([load(run)])
+    saved = snapshot_path(run, cases[4])
+    saved.write_bytes(b"png")
+    snapshot_path(run, cases[0]).write_bytes(b"another room")
+    shown = thumbnail(load(run))
+    assert shown is not None and shown.image == base64.b64encode(b"png").decode()
+    assert shown.bounds == picture.bounds and render([load(run)])
+
+
+def test_a_door_lintel_is_raised_and_the_wall_beside_it_is_not(tmp_path: Path) -> None:
+    case = _probe_case("doorway", 1, "door_width", 0.6)
+    run = tmp_path / "run"
+    _run(run, [case], [_result(case, "success")])
+    picture = thumbnail(load(run))
+    assert picture is not None and picture.feature is None
+    (lintel,) = [s.rect for s in picture.shapes if s.raised]
+    (door,) = generate("doorway", 1, door_width=0.6).doors
+    assert abs(lintel[1] - door.start) < 1e-9 and abs(lintel[3] - lintel[1] - 0.6) < 1e-9
+    assert Counter(s.kind for s in picture.shapes) == {"wall": 7}
+
+
+def test_no_thumbnail_for_a_scene_that_is_not_the_one_that_ran(tmp_path: Path) -> None:
+    probe = _probe_case("block", 1, "block_height", 0.2)
+    drifted = replace(probe, scene_digest="older")
+    unknown = replace(probe, params={"removed": 1.0})
+    plain = _case("mined-s1-a", "mined", 0.8)
+    for name, case in (("drifted", drifted), ("unknown", unknown), ("plain", plain)):
+        _run(tmp_path / name, [case], [_result(case, "success")])
+        report = load(tmp_path / name)
+        assert thumbnail(report) is None and render([report])

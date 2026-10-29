@@ -452,8 +452,8 @@ environment only launches `dimos --simulation mujoco --record run <blueprint>
 <modules>` headless; `MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on
 Linux. Manipulation graders need ground-truth object poses:
 `tracked_bodies` names free bodies in the MJCF, and the simulator publishes
-`world -> <body>` on `tf` next to its camera frames. `first_body_transform` and
-`last_body_transform` read them back from the recording:
+`world -> <body>` on its own `body_poses` stream, kept off `tf`. `first_body_transform`
+and `last_body_transform` read them back from the recording:
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform

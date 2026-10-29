@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import importlib
 import pickle
+import sys
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol
@@ -834,6 +836,37 @@ def test_check_requirements_failure(mocker) -> None:
 
     with pytest.raises(SystemExit):
         _check_requirements(bp)
+
+
+@pytest.mark.parametrize("dedicated", [False, True], ids=["pool-worker", "dedicated-worker"])
+def test_module_saved_in_modules_dir_after_start_loads(
+    dedicated: bool, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dimos.core.coordination.module_coordinator.RUNTIME_MODULES_DIR", tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator.start()
+    try:
+        package = f"saved_after_start_{'dedicated' if dedicated else 'pool'}"
+        (tmp_path / package).mkdir()
+        (tmp_path / package / "__init__.py").write_text("")
+        (tmp_path / package / "greeter.py").write_text(
+            "from dimos.core.core import rpc\n"
+            "from dimos.core.module import Module\n\n\n"
+            "class Greeter(Module):\n"
+            f"    dedicated_worker = {dedicated}\n\n"
+            "    @rpc\n"
+            "    def greet(self) -> str:\n"
+            "        return 'hello from RUNTIME_MODULES_DIR'\n"
+        )
+        importlib.invalidate_caches()
+        greeter = importlib.import_module(f"{package}.greeter").Greeter
+
+        coordinator.load_module(greeter)
+
+        assert coordinator.get_instance(greeter).greet() == "hello from RUNTIME_MODULES_DIR"
+    finally:
+        coordinator.stop()
 
 
 def test_restart_module_basic(dynamic_coordinator) -> None:
