@@ -43,7 +43,7 @@ class Navigation(Module):
     def start(self) -> None:
         def _odom(msg) -> None:
             self.odom_msg_count += 1
-            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+            print("RCV:", msg)
             self.mov.publish(msg.position)
 
         unsub = self.odometry.subscribe(_odom)
@@ -51,10 +51,7 @@ class Navigation(Module):
 
         def _lidar(msg) -> None:
             self.lidar_msg_count += 1
-            if hasattr(msg, "pubtime"):
-                print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-            else:
-                print("RCV: unknown time", msg)
+            print("RCV:", msg)
 
         unsub = self.lidar.subscribe(_lidar)
         self.register_disposable(Disposable(unsub))
