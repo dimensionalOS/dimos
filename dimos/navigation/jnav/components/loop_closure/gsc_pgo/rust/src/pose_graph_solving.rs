@@ -304,18 +304,6 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
-            // the stated noise's mean step translation variance: what a closure must agree with to vouch for the noise
-            evidence_core_step_variance: if config.odometry_noise_from_consistent_core {
-                mean_step_variances(&self.key_poses, config)[0]
-            } else {
-                0.0
-            },
-            noise_fixed_point: (config.odometry_noise_fixed_point
-                && config.odometry_noise_from_closures)
-                .then(|| crate::big_picture_fit::NoiseFixedPoint {
-                    dispatched_ln: solve_noise.map(f64::ln),
-                    prior_sd: self.odometry_noise_prior(),
-                }),
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
@@ -350,8 +338,6 @@ impl GscPgo {
                 let solution = if solve_config.committed.iter().any(|&c| c) {
                     let cold = run(&SolveConfig {
                         committed: Vec::new(),
-                        noise_fixed_point: None,
-                        evidence_core_step_variance: 0.0,
                         ..solve_config.clone()
                     });
                     let count =
@@ -484,10 +470,7 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
-        self.update_odometry_noise_scale(
-            solution.odometry_noise_evidence,
-            solution.odometry_noise_evidence_ln,
-        );
+        self.update_odometry_noise_scale(solution.odometry_noise_evidence);
         // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise,
         // closure scales, the gravity bound's sd (-1 for none) and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {

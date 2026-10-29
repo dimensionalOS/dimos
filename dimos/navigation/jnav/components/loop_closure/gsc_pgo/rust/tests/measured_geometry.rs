@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The measured closure geometry on synthetic data: the half-normal width fit, the inlier distance measured from the
-//! odometry (`closure_inlier_distance_from_odometry`) and the submap sized by sensor reach (`closure_submap_by_reach`).
+//! The measured closure geometry on synthetic data: the half-normal width fit and the inlier distance measured from the
+//! odometry (`closure_inlier_distance_from_odometry`).
 
 use std::sync::Arc;
 
@@ -129,31 +129,6 @@ fn measured_inlier_distance_follows_the_sensor_noise() {
     // off, the configured value holds
     let configured = walk(Config::default(), 30, 0.6, 0.05, 12.0).closure_inlier_squared_distance();
     assert_eq!(configured, Config::default().closure_score_thresh);
-}
-
-#[test]
-fn submap_spans_the_sensor_reach_at_the_keyframe_spacing() {
-    let config = Config {
-        closure_submap_by_reach: true,
-        ..Config::default()
-    };
-    for (reach, step) in [(6.0, 0.6), (12.0, 0.6), (12.0, 1.2)] {
-        let pgo = walk(config.clone(), 20, step, 0.01, reach);
-        // the scans' 95th-percentile planar range, a little under the cut-off reach
-        let half = pgo.submap_half_range();
-        let expected = (reach / step).ceil() as i32;
-        assert!(
-            half >= Config::default().closure_submap_half_range
-                && half <= expected
-                && half >= expected * 3 / 4,
-            "reach {reach} step {step}: half range {half}, expected about {expected}"
-        );
-    }
-    let off = walk(Config::default(), 20, 0.6, 0.01, 12.0);
-    assert_eq!(
-        off.submap_half_range(),
-        Config::default().closure_submap_half_range
-    );
 }
 
 #[test]

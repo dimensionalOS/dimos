@@ -129,8 +129,6 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        noise_fixed_point: None,
-        evidence_core_step_variance: 0.0,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -239,8 +237,6 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        noise_fixed_point: None,
-        evidence_core_step_variance: 0.0,
     };
     let solution = solve_with_priors(
         &rotations,

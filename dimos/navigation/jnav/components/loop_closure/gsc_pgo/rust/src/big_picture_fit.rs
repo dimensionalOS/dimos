@@ -72,21 +72,6 @@ pub struct SolveConfig {
     /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
     /// (`closure_commitments`, decided by the caller).
     pub committed: Vec<bool>,
-    /// When set, the noise evidence is taken at its own fixed point (`odometry_noise_fixed_point`): the evidence copy
-    /// is re-solved at the odometry noise its evidence estimates, and re-estimated, until the estimate stops moving.
-    pub noise_fixed_point: Option<NoiseFixedPoint>,
-    /// When positive, the noise evidence reads only the kept closures' mutually consistent core (PCM) at this odometry
-    /// step translation variance, the stated one (`odometry_noise_from_consistent_core`): a closure kept only because
-    /// the learned noise is loose cannot vouch for that noise. 0 = every kept closure (or GM's core, as before).
-    pub evidence_core_step_variance: f64,
-}
-
-/// The learner's estimator, for the evidence's fixed point: the ln noise factors the odometry edges carry (relative to
-/// the reported variances) and the prior spread of each source's ln.
-#[derive(Clone, Copy, Debug)]
-pub struct NoiseFixedPoint {
-    pub dispatched_ln: [f64; 4],
-    pub prior_sd: [f64; 4],
 }
 
 /// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
@@ -132,9 +117,6 @@ pub struct Solution {
     /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
     /// redundancy; None if the graph could not be factored.
     pub odometry_noise_evidence: Option<[(f64, f64); 6]>,
-    /// The ln odometry noise factors the evidence was taken at: the dispatched ones, or with `noise_fixed_point` its
-    /// fixed point's.
-    pub odometry_noise_evidence_ln: Option<[f64; 4]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -661,7 +643,7 @@ pub(crate) fn solve_core(
     // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
     // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the odometry edges carry)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
-    let evidence_weights: Vec<f64> = if gm_taken || config.evidence_core_step_variance > 0.0 {
+    let evidence_weights: Vec<f64> = if gm_taken {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
             .zip(&huber)
@@ -669,11 +651,8 @@ pub(crate) fn solve_core(
             .filter(|(_, (_, &w))| w > 0.0)
             .map(|(i, (e, _))| (i, *e))
             .collect();
-        let step_variance = if config.evidence_core_step_variance > 0.0 {
-            config.evidence_core_step_variance
-        } else {
-            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64
-        };
+        let step_variance =
+            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64;
         let pcm = SolveConfig {
             pcm_odometry_translation_variance: step_variance,
             ..config.clone()
@@ -706,7 +685,7 @@ pub(crate) fn solve_core(
             1e-5,
         );
     }
-    let mut odometry_noise_evidence = odometry_noise_evidence(
+    let odometry_noise_evidence = odometry_noise_evidence(
         &without_gravity,
         evidence_pattern,
         odometry,
@@ -717,95 +696,8 @@ pub(crate) fn solve_core(
         sightings,
         &sighting_kept,
     );
-    // the evidence at its own fixed point: re-solved at the noise it estimates (each source's variances scaled by the
-    // estimate's step), re-estimated, until no source moves by more than a hundredth of its ln (Helmert's iterated
-    // variance component estimation); the evidence of one solve at the dispatched noise judges a graph whose
-    // redundancy that noise itself set (a too-tight yaw leaves the yaw unchecked, a too-loose one all checked)
-    let mut odometry_noise_evidence_ln = config.noise_fixed_point.map(|f| f.dispatched_ln);
-    if let (Some(fixed), Some(ln)) = (
-        config.noise_fixed_point,
-        odometry_noise_evidence_ln.as_mut(),
-    ) {
-        let mut scaled_odometry = odometry.to_vec();
-        // a fixed point exists only where re-estimating contracts: a source whose step does not shrink is being driven
-        // by misfit that more noise does not absorb (wrong closures, not loose odometry), which the Gaussian model
-        // cannot explain, so it learns nothing from this solve (its evidence dropped, its noise left as dispatched)
-        let at_dispatch = odometry_noise_evidence;
-        let mut previous_step: Option<[f64; 4]> = None;
-        let mut diverged = [false; 4];
-        for _ in 0..8 {
-            let Some(evidence) = odometry_noise_evidence else {
-                break;
-            };
-            let step: [f64; 4] = std::array::from_fn(|c| {
-                let (sum, r) = evidence[c];
-                if r > 0.5 && sum.is_finite() {
-                    crate::odometry_noise::residual_ln_ratio(sum, r, ln[c], c, fixed.prior_sd[c])
-                        - ln[c]
-                } else {
-                    0.0
-                }
-            });
-            if let Some(previous) = previous_step {
-                for c in 0..4 {
-                    diverged[c] |= step[c].abs() >= 0.01 && step[c].abs() >= previous[c].abs();
-                }
-            }
-            if diverged.iter().any(|&d| d) {
-                break;
-            }
-            previous_step = Some(step);
-            if step.iter().all(|s| s.abs() < 0.01) {
-                break;
-            }
-            for edge in &mut scaled_odometry {
-                for (k, v) in edge.variances.iter_mut().enumerate() {
-                    *v *= step[RESIDUAL_SOURCE[k]].exp();
-                }
-            }
-            for c in 0..4 {
-                ln[c] += step[c];
-            }
-            levenberg_marquardt(
-                &mut without_gravity,
-                evidence_pattern,
-                &scaled_odometry,
-                closures,
-                &evidence_weights,
-                unary,
-                &unary_kept,
-                sightings,
-                &sighting_kept,
-                1e-5,
-            );
-            odometry_noise_evidence = crate::big_picture_fit::odometry_noise_evidence(
-                &without_gravity,
-                evidence_pattern,
-                &scaled_odometry,
-                closures,
-                &evidence_weights,
-                unary,
-                &unary_kept,
-                sightings,
-                &sighting_kept,
-            );
-        }
-        if diverged.iter().any(|&d| d) {
-            // back to the dispatched solve's evidence, with each diverged source's dropped
-            *ln = fixed.dispatched_ln;
-            odometry_noise_evidence = at_dispatch.map(|mut evidence| {
-                for c in 0..4 {
-                    if diverged[c] {
-                        evidence[c] = (0.0, 0.0);
-                    }
-                }
-                evidence
-            });
-        }
-    }
     Solution {
         odometry_noise_evidence,
-        odometry_noise_evidence_ln,
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
