@@ -20,6 +20,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 import math
 import threading
 import time
@@ -1193,6 +1194,11 @@ class ManipulationModule(Module):
         except Exception as exc:
             logger.exception("Failed to wait for execution")
             result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+        if result.status is ExecutionStatus.TIMED_OUT:
+            result = replace(
+                result,
+                message=f"{result.message}. Motion may still be in progress; timeout does not stop execution.",
+            )
         if epoch is not None:
             self._apply_execution_result(result, epoch)
         return result

@@ -1369,7 +1369,9 @@ def test_wait_timeout_keeps_execution_and_invalid_wait_does_not_finish_it(state_
         module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.TIMED_OUT)
     )
 
-    assert module.execute(timeout=0).status is ExecutionStatus.TIMED_OUT
+    result = module.execute(timeout=0)
+    assert result.status is ExecutionStatus.TIMED_OUT
+    assert "Motion may still be in progress" in result.message
     assert module._state is OperationStatus.EXECUTING
     assert module.wait_for_execution(timeout=-1).status is ExecutionStatus.REJECTED
     assert module._state is OperationStatus.EXECUTING
