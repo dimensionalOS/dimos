@@ -21,7 +21,7 @@ runs:
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
     - name: Install Deno
-      uses: denoland/setup-deno@v2
+      uses: denoland/setup-deno@v2.0.5
       with:
         deno-version: ${{ steps.deno-version.outputs.version }}
         cache: true

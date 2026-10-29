@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: misc/DimSim
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # Don't do a full-repo LFS fetch: it would pull main's large
           # data/.lfs/* objects (several GB, some missing on the LFS server → 404)
@@ -31,11 +31,11 @@ jobs:
           # glb contents, so pointer stubs for misc/DimSim assets are fine here.
           lfs: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@v2.0.5
         with:
           deno-version: v2.x
 

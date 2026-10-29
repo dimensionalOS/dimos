@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -50,4 +50,4 @@ jobs:
         run: python3 bin/relock-shared-flakes
 
       - name: autofix.ci
-        uses: autofix-ci/action@v1
+        uses: autofix-ci/action@v1.3.4
