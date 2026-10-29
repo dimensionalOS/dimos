@@ -417,33 +417,35 @@ impl BrickMap {
         self.voxel_bound += n;
     }
 
-    /// A buffer of `bytes` holding `old`'s contents, the rest zero.
+    /// Replaces one buffer with a larger one holding its contents, the rest
+    /// zero, and frees the old one before returning, so growing the pools
+    /// never holds two copies of all of them (the Orin swapped when it did).
     fn regrow(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        old: &wgpu::Buffer,
+        &mut self,
+        buffer: fn(&mut MapBuffers) -> &mut wgpu::Buffer,
         label: &str,
         bytes: u64,
-    ) -> wgpu::Buffer {
+    ) {
         let new = self.gpu.storage(label, bytes);
+        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        let old = buffer(&mut self.buffers);
         encoder.copy_buffer_to_buffer(old, 0, &new, 0, old.size());
-        new
+        self.gpu.queue.submit([encoder.finish()]);
+        *old = new;
+        // The bind groups hold the old buffer; it is freed once they are
+        // rebuilt and the copy finishes.
+        self.rebind();
+        self.gpu.wait();
     }
 
     fn grow_bricks(&mut self, pool: u32) {
         let bricks = pool as u64;
-        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-        let b = &self.buffers;
-        let coords = self.regrow(&mut encoder, &b.brick_coords, "brick coords", 16 * bricks);
-        let index = self.regrow(
-            &mut encoder,
-            &b.brick_voxels,
+        self.regrow(|b| &mut b.brick_coords, "brick coords", 16 * bricks);
+        self.regrow(
+            |b| &mut b.brick_voxels,
             "brick voxels",
             4 * BRICK_VOXELS * bricks,
         );
-        self.gpu.queue.submit([encoder.finish()]);
-        self.buffers.brick_coords = coords;
-        self.buffers.brick_voxels = index;
         self.brick_pool = pool;
         let entries = Self::table_entries(bricks, self.config.max_points);
         if entries > self.table_mask as u64 + 1 {
@@ -478,34 +480,16 @@ impl BrickMap {
 
     fn grow_voxels(&mut self, pool: u32) {
         let voxels = pool as u64;
-        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-        let b = &self.buffers;
-        let state = self.regrow(&mut encoder, &b.voxel_state, "voxel state", 4 * voxels);
-        let stamps = self.regrow(
-            &mut encoder,
-            &b.stamps,
-            "stamps",
-            4 * STAMPS_PER_VOXEL * voxels,
-        );
-        let fine = self.regrow(&mut encoder, &b.fine, "fine", 4 * FINE_WORDS * voxels);
-        let moments = self.regrow(
-            &mut encoder,
-            &b.moments,
-            "moments",
-            4 * MOMENT_WORDS * voxels,
-        );
-        let data = self.regrow(
-            &mut encoder,
-            &b.voxel_data,
+        self.regrow(|b| &mut b.voxel_state, "voxel state", 4 * voxels);
+        self.regrow(|b| &mut b.stamps, "stamps", 4 * STAMPS_PER_VOXEL * voxels);
+        self.regrow(|b| &mut b.fine, "fine", 4 * FINE_WORDS * voxels);
+        self.regrow(|b| &mut b.moments, "moments", 4 * MOMENT_WORDS * voxels);
+        self.regrow(
+            |b| &mut b.voxel_data,
             "voxel data",
             4 * VOXEL_DATA_WORDS * voxels,
         );
-        self.gpu.queue.submit([encoder.finish()]);
-        let b = &mut self.buffers;
-        (b.voxel_state, b.stamps, b.fine, b.moments, b.voxel_data) =
-            (state, stamps, fine, moments, data);
         self.voxel_pool = pool;
-        self.rebind();
     }
 
     pub fn gpu(&self) -> &Arc<Gpu> {

@@ -40,6 +40,8 @@ type Point = (f32, f32, f32);
 const POOL_FULL: u32 = 512;
 /// Frames between progress lines.
 const REPORT_EVERY: usize = 1000;
+/// A frame slower than this is logged, to tie stalls to pool growth.
+const SLOW_FRAME_MS: f64 = 100.0;
 /// Surface boxes (x, y, z meters) compared along the trajectory, and how many.
 const BOX_M: Point = (20.0, 20.0, 9.0);
 const BOXES: usize = 8;
@@ -206,6 +208,15 @@ fn run_gpu(path: &str, voxel_size: f32) {
         map.finish();
         times.push(t.elapsed().as_secs_f64() * 1e3);
         let stats = map.stats();
+        let ms = times[times.len() - 1];
+        if ms > SLOW_FRAME_MS {
+            println!(
+                "slow frame {i}: {ms:.0} ms, {} bricks, {} voxels, map {} MB",
+                stats.bricks,
+                stats.voxels,
+                map.gpu_bytes() >> 20
+            );
+        }
         overflow |= stats.overflow;
         if stats.overflow & POOL_FULL != 0 && first_full.is_none() {
             first_full = Some(i);
