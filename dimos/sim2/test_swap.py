@@ -132,12 +132,15 @@ def test_declaring_modules_are_recognized():
 
 def test_blueprint_without_twins_is_returned_unchanged(world_config, mujoco):
     blueprint = _Mapper.blueprint()
-    assert simulate(blueprint, {}, mujoco) is blueprint
+    kwargs = {"_mapper": {}}
+    assert simulate(blueprint, kwargs, mujoco) == (blueprint, kwargs)
 
 
 def test_twins_replace_hardware_modules_on_the_same_streams(hardware, mujoco):
-    result = simulate(hardware, {}, mujoco)
+    result, kwargs = simulate(hardware, {"scanner": {"frame_id": "scan"}, "_mapper": {}}, mujoco)
 
+    # A swapped module's overrides were consumed by its twin; none reach the replacement.
+    assert kwargs == {"_mapper": {}}
     names = {atom.name: atom.module for atom in result.blueprints}
     world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
     assert "arm" not in names
@@ -165,7 +168,7 @@ def test_twins_replace_hardware_modules_on_the_same_streams(hardware, mujoco):
 
 
 def test_cli_overrides_reach_the_twin(hardware, mujoco):
-    result = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
+    result, _ = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
     world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
     assert world.kwargs["world"].robots["left"].frame_id == "robot/pelvis"
 
@@ -180,7 +183,7 @@ def test_a_sensor_with_its_own_imu_gets_both_named_after_the_driver(world_config
         _Arm.blueprint(robot=world_config.robots["left"].config, instance_name="arm"),
         _Scanner.blueprint(instance_name="mid360", rolling=True),
     )
-    result = simulate(blueprint, {}, mujoco)
+    result, _ = simulate(blueprint, {}, mujoco)
     world = next(atom for atom in result.blueprints if atom.module is _LeftWorld)
     attached = next(
         s for s in world.kwargs["world"].robots["left"].config.sensors if s.name == "mid360"

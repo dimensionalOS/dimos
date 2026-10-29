@@ -442,7 +442,7 @@ class ModuleCoordinator(Resource):
             # sim2 imports MuJoCo, so this optional dependency is deferred until build.
             from dimos.sim2.swap import simulate
 
-            blueprint = simulate(blueprint, module_kwargs, global_config)
+            blueprint, module_kwargs = simulate(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)

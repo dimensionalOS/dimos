@@ -59,18 +59,20 @@ def declares_twin(module: type[ModuleBase]) -> bool:
 
 def simulate(
     blueprint: Blueprint, module_kwargs: dict[str, dict[str, Any]], config: GlobalConfig
-) -> Blueprint:
-    """Return the blueprint with every twin-declaring module replaced by its simulation.
+) -> tuple[Blueprint, dict[str, dict[str, Any]]]:
+    """Replace every twin-declaring module by its simulation.
 
     Module configs are resolved the way the coordinator resolves them, including
-    CLI overrides in ``module_kwargs``, and no module is instantiated. A blueprint
-    without twin declarations is returned unchanged.
+    CLI overrides in ``module_kwargs``, and no module is instantiated. The
+    overrides of a swapped module are consumed by its twin and dropped from the
+    returned kwargs, since the replacement under the same name has another
+    config. A blueprint without twin declarations is returned unchanged.
     """
     atoms = blueprint.active_blueprints
     robot_atoms = [a for a in atoms if hasattr(a.module, ROBOT_TWIN)]
     sensor_atoms = [a for a in atoms if hasattr(a.module, SENSOR_TWIN)]
     if not robot_atoms and not sensor_atoms:
-        return blueprint
+        return blueprint, module_kwargs
     if len(robot_atoms) != 1:
         found = sorted(a.name for a in robot_atoms)
         raise ValueError(
@@ -124,11 +126,12 @@ def simulate(
                 remaps[atom.name, stream.name] = _effective(blueprint, atom, stream.name)
             else:
                 remaps[atom.name, stream.name] = f"{robot_id}/{atom.name}/{stream.name}"
-    return replace(
+    swapped_blueprint = replace(
         blueprint,
         blueprints=(*kept, *generated.blueprints),
         remapping_map=MappingProxyType(remaps),
     )
+    return swapped_blueprint, {k: v for k, v in module_kwargs.items() if k not in swapped}
 
 
 def _resolved(

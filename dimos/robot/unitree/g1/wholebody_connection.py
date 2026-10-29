@@ -22,10 +22,11 @@ make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -46,6 +47,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.unitree.g1.simulation import G1World, g1_groot_instance
+from dimos.sim2.spec import SimulatedRobot
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -118,13 +121,23 @@ class G1LowStateSnapshot:
 
 
 class G1WholeBodyConnection(Module):
-    """G1 humanoid Module - owns the DDS connection in its own worker."""
+    """G1 humanoid Module - owns the DDS connection in its own worker.
+
+    Under ``--simulation mujoco`` the module coordinator replaces this module with
+    ``G1World``, whose ``g1_*`` ports carry the same messages on the same streams.
+    """
 
     config: G1WholeBodyConnectionConfig
+    default_sim_scene: ClassVar[str] = "logistics.xml"
 
     motor_command: In[MotorCommandArray]
     motor_states: Out[JointState]
     imu: Out[Imu]
+
+    @staticmethod
+    def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
+        """The same G1 in MuJoCo, held in the GR00T home pose until the policy commands it."""
+        return SimulatedRobot("g1", G1World, g1_groot_instance(scene, frame_id=config.frame_id))
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
