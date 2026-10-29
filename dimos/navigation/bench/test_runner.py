@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -64,9 +64,7 @@ T0 = 1000.0
 
 FAKE_BLUEPRINT = """
 import json, signal, subprocess, sys, time
-from dataclasses import asdict
 from pathlib import Path
-from dimos.simulation.go2_sim.world import SHAPE
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -104,11 +102,11 @@ store.stop()
 (recording.parent / "rerun.rrd").write_bytes(b"rrd")
 print(f"Recording to {recording}", flush=True)
 reason = case["tag"] if case["tag"] == "driver_error" else "arrived" if arrive else "timeout"
-terminal = {"reason": reason, "t0": t0, "body": asdict(SHAPE), "route_length": case["route_length"]}
+terminal = {"reason": reason, "t0": t0, "body": BODY, "route_length": case["route_length"]}
 (out / "terminal.json").write_text(json.dumps(terminal))
 print("args", *[a for a in sys.argv[1:] if not a.startswith("--episodedriver.")], flush=True)
 signal.pause()
-"""
+""".replace("BODY", json.dumps(asdict(SHAPE)))
 
 
 def _go2_model(directory: Path) -> Path:
@@ -426,7 +424,9 @@ def test_no_snapshot_is_saved_and_nothing_raised_when_no_backend_renders(
     run_dir, case = _block_run(tmp_path)
     monkeypatch.setattr("dimos.navigation.bench.runner.GL_BACKENDS", ("missing",))
     _snapshot(run_dir, case, run_dir / "absent.xml")
-    _snapshot(run_dir, case, _go2_model(run_dir))
+    robot = run_dir / "robot.xml"
+    robot.write_text("<mujoco/>\n")
+    _snapshot(run_dir, case, robot)
     assert sorted(p.name for p in run_dir.iterdir()) == ["robot.xml", SUITE_FILE]
 
 
