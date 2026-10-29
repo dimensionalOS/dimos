@@ -27,6 +27,7 @@ import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.constants import RUNTIME_MODULES_DIR
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -100,6 +101,10 @@ class ModuleCoordinator(Resource):
 
     def start(self) -> None:
         register_picklers()
+        # A worker gets the coordinator's sys.path when it starts, so add this first.
+        RUNTIME_MODULES_DIR.mkdir(parents=True, exist_ok=True)
+        if str(RUNTIME_MODULES_DIR) not in sys.path:
+            sys.path.append(str(RUNTIME_MODULES_DIR))
         for m in self._managers.values():
             m.start()
         self._started = True

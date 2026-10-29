@@ -26,7 +26,7 @@ channels; the reader environment must contain their Python message classes.
 
 ## Explicit features
 
-`observation` and `action` each map a distinct output feature name to a
+`observation` and `action` each map a distinct configured feature name to a
 `FeatureSpec` in [schema.py](/dimos/imitation/dataprep/schema.py). Each feature declares:
 
 | Field | Meaning |
@@ -64,30 +64,42 @@ recorded streams to exist.
 
 ```python no-result
 from dimos.imitation.dataprep.schema import (
-    DataPrepConfig, FeatureSpec, OutputConfig, SyncConfig,
+    RecordingSchema,
+    DataPrepConfig,
+    FeatureSpec,
+    OutputConfig,
+    SyncConfig,
 )
 
 joints = ["arm/joint1", "arm/gripper"]
 config = DataPrepConfig(
+    recording_schema=RecordingSchema(
+        observation={
+            "observation.state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+            ),
+        },
+        action={
+            "action": FeatureSpec(
+                stream="applied_joint_position_command",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+                source_kind="joint_position_updates",
+            ),
+        },
+        sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
+    ),
     source="data/recordings/session.db",
-    observation={
-        "observation.state": FeatureSpec(
-            stream="coordinator_joint_state", field="position",
-            dtype="float32", shape=(2,), names=joints,
-        ),
-    },
-    action={
-        "action": FeatureSpec(
-            stream="applied_joint_position_command", field="position",
-            dtype="float32", shape=(2,), names=joints,
-            source_kind="joint_position_updates",
-        ),
-    },
-    sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
     output=OutputConfig(format="hdf5", path="data/datasets/session.hdf5"),
 )
-assert config.action["action"].names == joints
-assert config.action["action"].source_kind == "joint_position_updates"
+assert config.recording_schema.action["action"].names == joints
+assert config.recording_schema.action["action"].source_kind == "joint_position_updates"
 ```
 
 ## Timestamps and accepted targets
@@ -174,3 +186,38 @@ memory. It decodes video values as selected frames are emitted instead of
 retaining every decoded image in the episode. Format writers have their own
 buffering behavior; the HDF5 writer currently buffers an episode before writing
 its datasets.
+
+
+## LeRobot export
+
+The isolated project delegates frame validation, video encoding, data files,
+statistics, and dataset metadata to `LeRobotDataset`. DimOS maps aligned samples
+to frames, preserves task labels and episode boundaries, and publishes the
+completed dataset only after a successful export. Failed exports preserve an
+existing dataset. Invalid frame dtype or shape is reported by LeRobot.
+
+LeRobot conversion uses fixed policy-facing feature names; no rename config is
+required. One numerical observation becomes `observation.state`, one action becomes
+`action`, and image observations become `observation.images.<name>`. Multiple
+numerical observations and actions use `observation.<name>` and `action.<name>`.
+Names already following these conventions stay unchanged. Collisions are errors.
+The same mapping applies to feature metadata and every frame. Source stream names
+and HDF5 feature names remain unchanged.
+
+`dimos_meta.json` retains the original declarations and records the computed
+`feature_names` mapping for inspection. LeRobot training reads the actual dataset
+features from `meta/info.json`, not this sidecar. Conversion does not concatenate
+multiple vectors or make every policy support multiple state or action features.
+
+Import dataset configuration and sample types from `dataprep.schema`, and
+alignment functions from `dataprep.core`. The host adapter is in
+`dataprep/formats/lerobot/adapter.py`. Native MCAP codec discovery belongs to
+`McapStore`, with `decode_metadata=True` for trusted recordings.
+
+The isolated project uses standard `test_*.py` names. CI discovers the whole
+project directory, including new tests without a workflow change:
+
+```bash
+cd native/python/lerobot
+uv run --frozen --group tests --with-editable ../../.. pytest dimos_lerobot
+```

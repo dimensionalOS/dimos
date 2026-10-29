@@ -122,6 +122,7 @@ this rejects a colliding segment rather than finding a detour.
 | `move_linear(...)` | Existing `MoveResult`, including trajectory generation and execution outcomes |
 | `set_gripper_position(position)`, `open_gripper()`, `close_gripper()` | `CommandResult` |
 | `home()`, `move_to_preset(name)` | `ExecutionResult` after moving to an existing preset |
+| `reset()` | `CommandResult` after stopping motion and clearing a failed state |
 
 Gripper positions are normalized travel: `0.0` closed, `1.0` open. Movement calls
 accept `speed_scale` and execution `timeout` options. Ordinary calls block and
