@@ -18,8 +18,8 @@
 use std::thread::JoinHandle;
 
 use crate::big_picture_fit::{
-    closure_edges, mean_step_variances, odometry_edges, solve, solve_with_priors, LandmarkSighting,
-    PositionPrior, Solution, SolveConfig,
+    closure_edges, mean_step_variances, odometry_edges, solve, solve_with_priors, GravityPrior,
+    LandmarkSighting, PositionPrior, Solution, SolveConfig,
 };
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
@@ -275,6 +275,27 @@ impl GscPgo {
             } else {
                 [1.0; 4]
             },
+            gravity: match self
+                .odometry_gravity_variance()
+                .filter(|_| config.odometry_gravity_bound)
+            {
+                // the odometry frame's up, carried into the solve frame by keyframe 0's correction
+                Some(variance) => {
+                    let up = mat3::mat_vec(&offset_rotation, &[0.0, 0.0, 1.0]);
+                    (1..n)
+                        .map(|k| GravityPrior {
+                            keyframe: k,
+                            up,
+                            body_up: mat3::mat_vec(
+                                &mat3::transpose(&self.key_poses[k].rotation_local),
+                                &[0.0, 0.0, 1.0],
+                            ),
+                            variance,
+                        })
+                        .collect()
+                }
+                None => Vec::new(),
+            },
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
@@ -415,8 +436,8 @@ impl GscPgo {
         }
         self.graph_error = solution.error;
         self.update_odometry_noise_scale(solution.odometry_noise_evidence);
-        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise and
-        // closure scales), for tracing the noise learner against ground truth offline
+        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise,
+        // closure scales and the gravity bound's sd, -1 for none), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
             use std::io::Write;
             let kept: Vec<usize> = self
@@ -427,13 +448,14 @@ impl GscPgo {
                 .map(|(i, _)| i)
                 .collect();
             let line = format!(
-                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}]}}\n",
+                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}],\"gravity_sd\":{}}}\n",
                 n,
                 self.committed_closures.len(),
                 kept,
                 self.odometry_noise(),
                 self.closure_noise_rotation_scale(),
-                self.closure_noise_scale()
+                self.closure_noise_scale(),
+                self.odometry_gravity_variance().map_or(-1.0, f64::sqrt)
             );
             if let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)

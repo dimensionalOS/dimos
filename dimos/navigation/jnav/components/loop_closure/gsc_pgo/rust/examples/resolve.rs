@@ -103,6 +103,7 @@ fn main() {
         },
         gnc_overtrust_check: config.closure_gnc_overtrust_check,
         overtrust_noise_headroom: [1.0; 4],
+        gravity: Vec::new(),
     };
     let rotations: Vec<Mat3> = poses.iter().map(|p| p.0).collect();
     let positions: Vec<[f64; 3]> = poses.iter().map(|p| p.1).collect();

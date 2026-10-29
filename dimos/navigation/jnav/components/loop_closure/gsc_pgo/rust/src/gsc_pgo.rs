@@ -473,6 +473,11 @@ pub struct Config {
     /// spread, not the aligned pose's, and as one number for rotation (rad²) and translation (m²) it leaves the odometry's
     /// translation untestable by any closure, so its noise could never be learned.
     pub closure_icp_covariance: bool,
+    /// When true, every solve holds each keyframe's tilt to the raw odometry's (`big_picture_fit::GravityPrior`): a
+    /// gravity-aligned IMU odometry's roll/pitch error is bounded by its accelerometer rather than growing per step, so
+    /// a look-alike floor cannot be fitted by tilting a chain of keyframes. The bound is the committed closures' own
+    /// (`odometry_gravity_variance`); the odometry frame's z must be up.
+    pub odometry_gravity_bound: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -573,6 +578,7 @@ impl Default for Config {
             closure_pcm: false,
             closure_gnc_overtrust_check: false,
             closure_icp_covariance: false,
+            odometry_gravity_bound: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -1220,7 +1226,35 @@ impl GscPgo {
         if !self.config.closure_icp_covariance || pairs.is_empty() {
             return 1.0;
         }
-        right_component_scale(pairs).max(1.0)
+        right_component_scale(pairs, 3).max(1.0)
+    }
+
+    /// The bound on the odometry's tilt error (rad², each axis; `odometry_gravity_bound`), from the committed closures:
+    /// a closure's tilt innovation (the difference between the up direction it implies at its source, through the raw
+    /// odometry at its target, and the raw odometry's own there: `GravityPrior`'s residual) is the two keyframes' tilt errors' difference plus the
+    /// fit's, so for errors bounded and independent at its two ends its variance per axis is at least twice theirs. Half
+    /// the right component's scale (`right_component_scale`, 2 DOF: wrong closures can tilt anywhere) bounds it from
+    /// above. None before any closure (nothing to fit against).
+    pub(crate) fn odometry_gravity_variance(&self) -> Option<f64> {
+        let up = [0.0, 0.0, 1.0];
+        let squared: Vec<f64> = self
+            .committed_closures
+            .iter()
+            .filter_map(|c| {
+                let (source, target) = (
+                    self.key_poses.get(c.source_id)?,
+                    self.key_poses.get(c.target_id)?,
+                );
+                let implied = mat3::mat_vec(
+                    &mat3::transpose(&mat3::mat_mul(&target.rotation_local, &c.rotation_offset)),
+                    &up,
+                );
+                let own = mat3::mat_vec(&mat3::transpose(&source.rotation_local), &up);
+                Some(mat3::norm(&mat3::sub(&implied, &own)).powi(2))
+            })
+            .collect();
+        (!squared.is_empty())
+            .then(|| (right_component_scale(&squared, 2) / 2.0).max(f64::MIN_POSITIVE))
     }
 
     /// Record how the newest committed closure disagrees with each earlier one whose two ends lie within a submap
@@ -2021,23 +2055,29 @@ impl GscPgo {
     }
 }
 
-/// The scale s of the chi-square(3) component in a two-part mixture of `q` (s x chi-square(3) for right pairs, uniform
-/// on [0, max q] for wrong ones), by EM from the median's scale and an even split.
-pub(crate) fn right_component_scale(q: &[f64]) -> f64 {
+/// The scale s of the chi-square(`dof`, 2 or 3) component in a two-part mixture of `q` (s x chi-square(dof) for right
+/// ones, uniform on [0, max q] for wrong ones), by EM from the median's scale and an even split.
+pub(crate) fn right_component_scale(q: &[f64], dof: usize) -> f64 {
     let mut sorted = q.to_vec();
     sorted.sort_by(f64::total_cmp);
     let (median, top) = (sorted[sorted.len() / 2], sorted[sorted.len() - 1]);
-    let chi2_3_median = crate::landmarks::chi2_inverse(0.5, 3);
-    let mut scale = (median / chi2_3_median).max(f64::MIN_POSITIVE);
+    let chi2_median = crate::landmarks::chi2_inverse(0.5, dof);
+    let mut scale = (median / chi2_median).max(f64::MIN_POSITIVE);
     let mut share = 0.5;
     let uniform = 1.0 / top.max(f64::MIN_POSITIVE);
-    // chi-square(3) density at x
-    let chi2_3 =
-        |x: f64| (x.max(0.0).sqrt() * (-x / 2.0).exp()) / (2.0 * std::f64::consts::PI).sqrt();
+    // chi-square(dof) density at x
+    let chi2 = |x: f64| {
+        let x = x.max(0.0);
+        if dof == 2 {
+            0.5 * (-x / 2.0).exp()
+        } else {
+            (x.sqrt() * (-x / 2.0).exp()) / (2.0 * std::f64::consts::PI).sqrt()
+        }
+    };
     for _ in 0..200 {
         let (mut weight, mut weighted) = (0.0, 0.0);
         for &x in q {
-            let right = share * chi2_3(x / scale) / scale;
+            let right = share * chi2(x / scale) / scale;
             let r = right / (right + (1.0 - share) * uniform).max(f64::MIN_POSITIVE);
             weight += r;
             weighted += r * x;
@@ -2045,7 +2085,7 @@ pub(crate) fn right_component_scale(q: &[f64]) -> f64 {
         if weight <= 0.0 {
             break;
         }
-        let next = (weighted / (3.0 * weight)).max(f64::MIN_POSITIVE);
+        let next = (weighted / (dof as f64 * weight)).max(f64::MIN_POSITIVE);
         share = (weight / q.len() as f64).clamp(1e-6, 1.0 - 1e-6);
         let settled = (next / scale - 1.0).abs() < 1e-9;
         scale = next;
@@ -2084,7 +2124,7 @@ mod right_component_tests {
         for _ in 0..900 {
             q.push(1e6 * uniform());
         }
-        let scale = super::right_component_scale(&q);
+        let scale = super::right_component_scale(&q, 3);
         assert!((25.0..60.0).contains(&scale), "scale {scale}");
     }
 }

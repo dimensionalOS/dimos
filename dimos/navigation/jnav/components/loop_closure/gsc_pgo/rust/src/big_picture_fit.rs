@@ -66,6 +66,28 @@ pub struct SolveConfig {
     /// is than the noise the odometry edges carry (1 when the solve uses the stated noise). The overtrust test asks
     /// whether the residuals reject even that, since a learner's solve noise (its lower bound) is low by design.
     pub overtrust_noise_headroom: [f64; 4],
+    /// The odometry's attitude against gravity as absolute factors, always in (`GravityPrior`); empty for none.
+    pub gravity: Vec<GravityPrior>,
+}
+
+/// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
+/// R_k^T `up` (`up` the solve frame's), should be `body_up`, each axis at `variance` (rad²). Rotation about up is left
+/// free, so only roll/pitch are held: an IMU-aided odometry's tilt error is bounded by its accelerometer, not a random
+/// walk, so a chain of tilt steps cannot add up to a floor's height.
+#[derive(Clone, Copy, Debug)]
+pub struct GravityPrior {
+    pub keyframe: usize,
+    pub up: Vec3,
+    pub body_up: Vec3,
+    pub variance: f64,
+}
+
+/// R_k^T up - body_up.
+fn gravity_residual(g: &GravityPrior, state: &State) -> Vec3 {
+    mat3::sub(
+        &mat3::mat_vec(&mat3::transpose(&state.rotation[g.keyframe]), &g.up),
+        &g.body_up,
+    )
 }
 
 pub struct Solution {
@@ -198,6 +220,7 @@ pub(crate) fn solve_core(
         unary,
         sightings,
         &landmark_dims,
+        &config.gravity,
     );
 
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
@@ -320,6 +343,7 @@ pub(crate) fn solve_core(
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
             let weighted_cost = cost(
                 &state,
+                &pattern.gravity,
                 odometry,
                 &scaled,
                 &weights,
@@ -413,6 +437,7 @@ pub(crate) fn solve_core(
             let none = |n: usize| vec![0.0; n];
             cost(
                 state,
+                &pattern.gravity,
                 odometry,
                 &scaled,
                 &none(closures.len()),
@@ -509,6 +534,7 @@ pub(crate) fn solve_core(
     let error = 0.5
         * cost(
             &state,
+            &pattern.gravity,
             odometry,
             closures,
             &huber,
@@ -610,9 +636,9 @@ fn odometry_noise_evidence(
     sighting_weights: &[f64],
 ) -> Option<[(f64, f64); 6]> {
     let size = pattern.size;
-    let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
+    let factor = |cw: &[f64], uw: &[f64], sw: &[f64], gw: f64| {
         let (mut values, _, diagonal) = normal_equations(
-            state, pattern, odometry, closures, cw, unary, uw, sightings, sw,
+            state, pattern, odometry, closures, cw, unary, uw, sightings, sw, gw,
         );
         values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
         let hessian =
@@ -620,12 +646,13 @@ fn odometry_noise_evidence(
                 .ok()?;
         Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower).ok()
     };
-    let full = factor(closure_weights, unary_weights, sighting_weights)?;
-    // the odometry alone: everything else at weight 0 (keeping the pattern's fill order)
+    let full = factor(closure_weights, unary_weights, sighting_weights, 1.0)?;
+    // the odometry alone: everything else, gravity too, at weight 0 (keeping the pattern's fill order)
     let odometry_only = factor(
         &vec![0.0; closures.len()],
         &vec![0.0; unary.len()],
         &vec![0.0; sightings.len()],
+        0.0,
     )?;
     let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
         odometry.iter().map(|e| linearize(e, state)).collect();
@@ -905,6 +932,7 @@ fn relative_position_covariances(
         unary_weights,
         sightings,
         sighting_weights,
+        1.0,
     );
     // the pattern's damping diagonal, at Levenberg-Marquardt's smallest damping
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
@@ -1126,6 +1154,7 @@ pub(crate) fn linearize_between(
 
 fn cost(
     state: &State,
+    gravity: &[GravityPrior],
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
@@ -1134,11 +1163,15 @@ fn cost(
     sightings: &[Sighting],
     sighting_weights: &[f64],
 ) -> f64 {
-    sightings
+    gravity
         .iter()
-        .zip(sighting_weights)
-        .map(|(s, w)| w * s.whitened(state))
+        .map(|g| mat3::norm(&gravity_residual(g, state)).powi(2) / g.variance)
         .sum::<f64>()
+        + sightings
+            .iter()
+            .zip(sighting_weights)
+            .map(|(s, w)| w * s.whitened(state))
+            .sum::<f64>()
         + unary
             .iter()
             .zip(unary_weights)
@@ -1164,6 +1197,8 @@ struct Pattern {
     landmark_at: Vec<usize>,
     landmark_dims: Vec<usize>,
     size: usize,
+    /// The gravity factors (`SolveConfig::gravity`): never reweighted, so part of the problem's structure.
+    gravity: Vec<GravityPrior>,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
     llt: SymbolicLlt<usize>,
@@ -1176,6 +1211,7 @@ impl Pattern {
         unary: &[Unary],
         sightings: &[Sighting],
         landmark_dims: &[usize],
+        gravity: &[GravityPrior],
     ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
@@ -1203,6 +1239,12 @@ impl Pattern {
                     .map(|(_, _, r, c)| Pair::new(r, c)),
             );
         }
+        // gravity factors after those (their keyframe's own block)
+        for g in gravity {
+            if let Some(a) = slot[g.keyframe] {
+                indices.extend(block_entries(a, a).map(|(_, _, r, c)| Pair::new(r, c)));
+            }
+        }
         // the damping diagonal last, so the matrix is never structurally singular
         indices.extend((0..size).map(|i| Pair::new(i, i)));
         let (symbolic, order) = SymbolicSparseColMat::try_new_from_indices(size, size, &indices)
@@ -1214,6 +1256,7 @@ impl Pattern {
             landmark_at,
             landmark_dims: landmark_dims.to_vec(),
             size,
+            gravity: gravity.to_vec(),
             symbolic,
             order,
             llt,
@@ -1261,6 +1304,7 @@ fn levenberg_marquardt(
     let mut damping = 1e-6;
     let mut current = cost(
         state,
+        &pattern.gravity,
         odometry,
         closures,
         closure_weights,
@@ -1280,6 +1324,7 @@ fn levenberg_marquardt(
             unary_weights,
             sightings,
             sighting_weights,
+            1.0,
         );
         let filled = values.len();
         values.resize(filled + size, 0.0);
@@ -1326,6 +1371,7 @@ fn levenberg_marquardt(
             }
             let trial_cost = cost(
                 &trial,
+                &pattern.gravity,
                 odometry,
                 closures,
                 closure_weights,
@@ -1361,6 +1407,7 @@ fn normal_equations(
     unary_weights: &[f64],
     sightings: &[Sighting],
     sighting_weights: &[f64],
+    gravity_weight: f64,
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let mut values: Vec<f64> = Vec::new();
     let mut gradient = vec![0.0; pattern.size];
@@ -1466,6 +1513,33 @@ fn normal_equations(
         }
         for i in 0..dims {
             gradient[at + i] -= pull(6 + i);
+        }
+    }
+    // gravity factors: residual R_k^T up - body_up; perturbing R_k by exp(d) about its own axes moves it by
+    // [R_k^T up]x d, so rotation about up itself (yaw) is untouched
+    for g in &pattern.gravity {
+        let Some(slot) = pattern.slot[g.keyframe] else {
+            continue;
+        };
+        let r = gravity_residual(g, state);
+        let jacobian = mat3::skew(&mat3::mat_vec(
+            &mat3::transpose(&state.rotation[g.keyframe]),
+            &g.up,
+        ));
+        let w = gravity_weight / g.variance;
+        for (i, j, row, col) in block_entries(slot, slot) {
+            let v = if i < 3 && j < 3 {
+                w * (0..3).map(|m| jacobian[m][i] * jacobian[m][j]).sum::<f64>()
+            } else {
+                0.0
+            };
+            if row == col {
+                diagonal[row] += v;
+            }
+            values.push(v);
+        }
+        for i in 0..3 {
+            gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * r[m]).sum::<f64>();
         }
     }
     (values, gradient, diagonal)
