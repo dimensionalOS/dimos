@@ -44,7 +44,11 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-head-stereo      # head cameras + metric RGB-D only, no motor modules
 ```
+
+See [Head stereo depth](HEAD_STEREO.md) for SDK requirements, read-only shell
+diagnostics, output units and the remaining camera-to-robot calibration limits.
 
 ## Point-LIO
 
