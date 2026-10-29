@@ -50,7 +50,7 @@ def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
 
 
 def test_model_package_is_versioned_and_self_contained() -> None:
-    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v5"
+    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v6"
     assert Path(DUAL_OPENYAM_PACKAGE).name == DUAL_OPENYAM_ARTIFACT
     assert Path(DUAL_OPENYAM_MODEL_PATH).is_file()
     assert DUAL_OPENYAM_PACKAGE_PATHS == {
@@ -142,8 +142,8 @@ def test_model_environment_is_only_the_workcell_link() -> None:
     assert len(root.findall("joint")) == 21
     workcell = root.find("./link[@name='workcell']")
     assert workcell is not None
+    # No table: the planner reads it from the overhead camera, like every model on main.
     assert [c.attrib["name"] for c in workcell.findall("collision")] == [
-        "table",
         "camera_post",
         "overhead_camera",
     ]

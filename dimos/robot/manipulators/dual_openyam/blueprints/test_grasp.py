@@ -35,7 +35,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_GRIPPER_TASKS,
     DUAL_OPENYAM_RECORD_TOPICS,
     DUAL_OPENYAM_VIEW_TOPICS,
-    dual_openyam_contact_model_config,
     dual_openyam_grasp,
     dual_openyam_grasp_graspgenx,
     dual_openyam_grasp_model_config,
@@ -174,11 +173,10 @@ def test_registration_keeps_the_default_mask_erosion() -> None:
 def test_contact_check_is_off_until_the_checker_filters_the_arm_out_of_the_scene() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         assert "robot" not in _atom(stack, PickAndPlaceModule).kwargs
-        assert _atom(stack, ManipulationModule).kwargs["model"].gripper is not None
 
 
-def test_contact_model_is_the_grasp_model_without_the_workcell() -> None:
-    robot = dual_openyam_contact_model_config()
+def test_planner_model_carries_the_gripper_config_for_the_check() -> None:
+    robot = dual_openyam_grasp_model_config()
     assert robot.gripper is not None
     assert set(robot.gripper.pad_links) == {
         f"{side}_tip_{jaw}" for side in ("left", "right") for jaw in ("left", "right")
@@ -192,5 +190,22 @@ def test_contact_model_is_the_grasp_model_without_the_workcell() -> None:
     )
     assert len(robot.gripper.joint_positions()) == 5
     assert {g.tip_link for g in robot.planning_groups} == {"left_tcp", "right_tcp"}
-    assert 'name="workcell"' not in robot.model.load().xml
-    assert 'name="workcell"' in dual_openyam_grasp_model_config().model.load().xml
+
+
+def test_planner_maps_the_overhead_cloud_like_the_xarm_stack() -> None:
+    from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
+    from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+    from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+
+    for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
+        voxel = _atom(stack, RayTracingVoxelMap).kwargs["voxel_size"]
+        assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.025
+        assert PointCloudBoxFilter in _modules(stack)
+        xml = _atom(stack, UrdfManagerPointClearing).kwargs["model"].load().xml
+        assert 'name="left_link5"' in xml and 'name="workcell"' in xml
+        assert 'name="left_gripper"' not in xml and 'name="right_tip_left"' not in xml
+        assert _atom(stack, RealSenseCamera).kwargs["enable_pointcloud"] is True
+
+
+def test_no_model_carries_a_table() -> None:
+    assert 'name="table"' not in dual_openyam_grasp_model_config().model.load().xml

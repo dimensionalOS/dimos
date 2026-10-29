@@ -43,7 +43,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.common.blueprints import manipulation_mapping, planner
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DUAL_OPENYAM_GRIPPER_TASKS,
     DualOpenYamCoordinator,
@@ -60,6 +61,8 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
+# Planner map cell, the xArm grasp stack's value.
+DUAL_OPENYAM_VOXEL_SIZE = 0.025
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
@@ -140,18 +143,17 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
     return config
 
 
-def dual_openyam_contact_model_config() -> RobotModelConfig:
-    """The grasp model without the modelled workcell, for the grasp contact check.
+def dual_openyam_self_filter_model() -> RobotModel:
+    """The arms without their grippers: what the voxel map drops from the overhead cloud.
 
-    The check stands the arm in the camera's scene cloud, which already holds the real
-    table. The modelled slab top is 1 cm under the fitted table top and the camera puts
-    the table 3 to 15 mm low with 1 cm of noise, so table points land inside the slab and
-    the checker reads a static link on a scene point as a collision wherever the gripper
-    is: every grasp dropped (scene 56 runs, 2026-10-28/29). The planner keeps the slab.
+    As the xArm stack filters only the arm, gripper returns stay in the map and the
+    ray tracing clears them once the arm moves. The fixed post and camera housing stay
+    in, so the map does not hold what the model already protects.
     """
-    config = dual_openyam_grasp_model_config()
-    config.model = config.model.without_joint_subtrees("workcell_fixed_joint")
-    return config
+    # The rig model, not the grasp one: the tcp frames hang off the removed grippers.
+    return dual_openyam_model_config().model.without_joint_subtrees(
+        *(f"{arm}_joint6" for arm in DUAL_OPENYAM_SIDES)
+    )
 
 
 def dual_openyam_grasp_view() -> Any:
@@ -249,6 +251,7 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
             kinematics=DUAL_OPENYAM_PINK,
             default_speed_scale=0.25,
+            voxel_map_resolution=DUAL_OPENYAM_VOXEL_SIZE,
             static_transforms=[DUAL_OPENYAM_CAMERA_TRANSFORM],
             visualization={"backend": "viser"},
             world_frame="world",
@@ -257,10 +260,10 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(
             planning_frame="world",
-            # robot=dual_openyam_contact_model_config() would turn on the grasp contact
-            # check. Off: the checker takes the overhead frame as the scene and only
-            # clears a 15 cm sphere at each tool tip, so the arm's own shoulder in the
-            # image collides with the arm at every grasp (scene 56 replay, 2026-10-29).
+            # robot=model would turn on the grasp contact check. Off: the checker takes
+            # the raw overhead frame as the scene and clears only a 15 cm sphere at each
+            # tool tip, so the arm's own base in the image collides with the arm at every
+            # grasp (scene 56 replay, 2026-10-29).
             pregrasp_offset=0.05,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
@@ -272,6 +275,12 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             width=640,
             fps=30,
             enable_pointcloud=True,
+        ),
+        # The planner's obstacles are the overhead cloud, as on the xArm stack: table,
+        # bin and neighbours come from the camera, not the model.
+        manipulation_mapping(
+            self_filter_model=dual_openyam_self_filter_model(),
+            voxel_size=DUAL_OPENYAM_VOXEL_SIZE,
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),

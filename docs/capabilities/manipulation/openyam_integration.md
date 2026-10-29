@@ -114,8 +114,10 @@ What the stack does not have on the workcell, and therefore what the benchmark
 measures as is: grasps are one top-down heuristic candidate per object; a pick
 executes as soon as it is planned, so the operator keeps a hand on the e-stop;
 grasp success is judged from the jaw readback alone. The planner knows the
-arms, the wrist cameras, the table, the post and the overhead camera from the
-workcell model; the bin is added per scene with the `add_obstacle` RPC. The
+arms, the wrist cameras, the post and the overhead camera from the workcell
+model; the table, the bin and everything else on the bench reach it from the
+overhead D405 through the same self filter, voxel map and box filter chain the
+xArm stack runs (`manipulation_mapping`, 2.5 cm cells). The
 place target is a taped tray square on the table on the arm's side (0.26,
 -0.20 for the right arm, 0.26, 0.20 for the left, tcp released at z 0.05):
 the pick-and-place module places top-down with the grasp orientation and a
@@ -139,31 +141,31 @@ From `dimos shell`, `SceneOverlayModule.set_scene("Scene_25")` switches scenes,
 
 ## Model assets
 
-`dual_openyam_workcell_v5`, exported as `DUAL_OPENYAM_MODEL`, is the physical
+`dual_openyam_workcell_v6`, exported as `DUAL_OPENYAM_MODEL`, is the physical
 workcell: the i2rt YAM arm geometry and meshes, the two arm bases and the
 joint 3 zero offsets from the rig calibration of 2026-10-15, the link masses
 and centres of mass from the gravity identification of 2026-10-16 (the Damiao
 adapter's gravity feed-forward is built from this model), joint 1 limits
 inside the measured stops, a convex hull collision mesh on every link, boxes
-for each wrist D405 and bracket, and a fixed `workcell` link with the table
-slab, the camera post and the overhead camera. Its zero configuration is the
-folded rest pose on the supports. The hardware gains in `config.py` are the
-ones chosen by the step sweeps of the same calibration. The package's `SOURCE.md` records where every
-number comes from. v5 restores the i2rt model's prismatic fingertip joints (zero closed,
-47 mm open each) so the pick's grasp contact check can open and close the fingers; the
-planner lists the arm joints only and keeps them closed. The model's `GripperConfig`
-(fingertip links as the pads) and `dual_openyam_contact_model_config()` are what
-`robot=` on `PickAndPlaceModule` needs to turn the check on, and the GraspGenX stack
-hands it all 500 samples. The check is off in the grasp stacks for now. Replaying the
-scene 56 runs of 2026-10-28/29 through it found two things the overhead camera does
-to it: the camera's table points land inside the modelled slab (its top is 1 cm under
-the fitted table top, the camera is 3 to 15 mm low with 1 cm of noise) and the checker
-counts a static link on a scene point as a collision wherever the gripper is, which
-the contact model avoids by leaving the `workcell` link out; and the arm's own shoulder
-in the overhead frame stays in the scene, since the checker only clears a 15 cm sphere
-at each tool tip, so the arm collides with its own image at every grasp. The second
-needs the checker to filter the robot's body out of the scene. A revised model ships
-under a new package name, because LFS extraction caches by directory name.
+for each wrist D405 and bracket, and a fixed `workcell` link with the camera
+post and the overhead camera. No table: like every model on main, the planner
+takes the table from the camera. Its zero configuration is the folded rest pose
+on the supports. The hardware gains in `config.py` are the ones chosen by the
+step sweeps of the same calibration. The package's `SOURCE.md` records where
+every number comes from. v5 restored the i2rt model's prismatic fingertip joints
+(zero closed, 47 mm open each) so the pick's grasp contact check can open and
+close the fingers; the planner lists the arm joints only and keeps them closed.
+The model's `GripperConfig` (fingertip links as the pads) is what `robot=` on
+`PickAndPlaceModule` needs to turn the check on, and the GraspGenX stack hands
+it all 500 samples. The check is off in the grasp stacks for now: replaying the
+scene 56 runs of 2026-10-28/29 through it showed the arm's own base in the
+overhead frame staying in the scene, since the checker only clears a 15 cm
+sphere at each tool tip, so the arm collides with its own image at every grasp.
+That needs the checker, or the pick module, to take a scene with the robot's
+body filtered out, as the planner's map already is. v6 dropped the table slab
+from the model, which the same replay found swallowing the camera's table points.
+A revised model ships under a new package name, because LFS extraction caches
+by directory name.
 
 ## Safety
 

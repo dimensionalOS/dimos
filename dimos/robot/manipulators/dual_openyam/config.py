@@ -113,7 +113,7 @@ DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
 
 
 # Finger joint position (metres) at fully open; zero is closed with the pads touching.
-# The i2rt YAM model's joint7 and joint8 travel, kept in dual_openyam_workcell_v5.
+# The i2rt YAM model's joint7 and joint8 travel, kept since dual_openyam_workcell_v5.
 DUAL_OPENYAM_FINGER_OPEN = -0.04695
 
 

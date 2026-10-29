@@ -21,7 +21,7 @@ from dimos.utils.data import LfsPath
 
 # LFS extraction caches by directory name. Version revised artifacts so they cannot
 # silently reuse an obsolete extracted model.
-DUAL_OPENYAM_ARTIFACT = "dual_openyam_workcell_v5"
+DUAL_OPENYAM_ARTIFACT = "dual_openyam_workcell_v6"
 DUAL_OPENYAM_PACKAGE = LfsPath(DUAL_OPENYAM_ARTIFACT)
 DUAL_OPENYAM_MODEL_PATH = DUAL_OPENYAM_PACKAGE / "dual_openyam.urdf"
 DUAL_OPENYAM_PACKAGE_PATHS: dict[str, Path] = {
