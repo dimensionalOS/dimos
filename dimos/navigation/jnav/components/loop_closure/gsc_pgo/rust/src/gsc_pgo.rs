@@ -1384,6 +1384,14 @@ impl GscPgo {
         } else {
             0.0
         };
+        // with the closures' own covariance their scale is measured from closure pairs (`closure_disagreement_scale`),
+        // which never involve the long-loop odometry; the solved graph's residuals cannot tell a loose closure from a
+        // loose odometry (an undertrusted odometry read as loose closures: athens x7000), so they learn the odometry only
+        let (ln_closure, ln_closure_rotation) = if self.config.closure_icp_covariance {
+            (0.0, 0.0)
+        } else {
+            (ln_closure, ln_closure_rotation)
+        };
         // the odometry's noise from the solved graph's own residuals: how far the solve bent each source's part of the
         // odometry edges against how many independent checks the graph gave it (`odometry_noise_evidence`), which tells
         // turning from sliding where a closure's single innovation cannot
