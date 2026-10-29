@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera geometry, output selection and acquisition settings."""
+"""Camera binding and output settings for an upstream Observable."""
 
 from __future__ import annotations
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
-from dimos.sim2.sensors.spec import AcquisitionRequirements, Mount, validate_timing
+from dimos.sim2.sensors.spec import Mount, validate_timing
 
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -34,6 +34,7 @@ class Camera:
     depth: bool = True
     pointcloud: bool = False
     shadows: bool = True
+    # Passed to robosuite's delayer; latest observations are not a delivery queue.
     latency: float = 0.0
 
     def __post_init__(self) -> None:
@@ -41,12 +42,8 @@ class Camera:
         if self.pointcloud and not self.depth:
             raise ValueError("camera point clouds require depth")
         if isinstance(self.camera, str) and self.fovy is not None:
-            raise ValueError("set named camera calibration in the MJCF asset, not RobotConfig")
+            raise ValueError("set named camera calibration in the upstream model MJCF")
 
     @property
     def model_name(self) -> str:
         return self.camera if isinstance(self.camera, str) else f"sensor/{self.name}"
-
-    @property
-    def acquisition(self) -> AcquisitionRequirements:
-        return AcquisitionRequirements(self.rate_hz, 2 / self.rate_hz)

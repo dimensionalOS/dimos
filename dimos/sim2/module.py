@@ -12,26 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimOS lifecycle owner of one MuJoCo world.
+"""Run a robosuite environment in a DimOS worker and expose its streams/RPCs.
 
-Retained connections use the private standard-message transports in
-``robot_topics``. Explicit compositions may instead declare per-robot ports on
-a subclass, e.g. ``g1_motor_command: In[MotorCommandArray]``. A robot without
-either IO configuration holds its start pose. Sensor workers read snapshots.
+Construction, stepping, reset and destruction all happen on the same thread,
+including any upstream renderer's OpenGL context. Existing tasks keep their
+native action frequency, horizon, reset distribution and observation dictionary.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from concurrent.futures import Future
 import functools
-from pathlib import Path
-import tempfile
+import queue
 import threading
 import time
 from typing import Any
 
-import mujoco
 from reactivex.disposable import Disposable
+from robosuite.environments.base import MujocoEnv
+from robosuite.wrappers.wrapper import Wrapper
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -44,8 +44,10 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.messages import StateFrame
-from dimos.sim2.spec import WorldConfig
+from dimos.sim2.messages import EnvironmentStep, StateFrame
+from dimos.sim2.sensors.composition import Sensor
+from dimos.sim2.sensors.observations import ObservationFrame
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.logging_config import setup_logger
@@ -89,7 +91,10 @@ def robot_ports(module: type[Module], robots: Iterable[str]) -> dict[str, dict[s
 
 
 class SimulationModuleConfig(ModuleConfig):
-    world: WorldConfig
+    environment: Callable[[], MujocoEnv | Wrapper]
+    robots: dict[str, SimulatedRobot] = {}
+    sensors: tuple[tuple[str | None, Sensor], ...] = ()
+    snapshot_hz: float = 60.0
     robot_topics: dict[str, dict[str, str]] = {}
 
 
@@ -97,14 +102,21 @@ class SimulationModule(Module):
     config: SimulationModuleConfig
     dedicated_worker = True
     snapshots: Out[StateFrame]
+    observations: Out[ObservationFrame]
+    environment_result: Out[EnvironmentStep]
+    actions: In[list[float]]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._runtime: SimulationRuntime | None = None
-        self._directory: tempfile.TemporaryDirectory[str] | None = None
         self._stop = threading.Event()
+        self._running = threading.Event()
+        self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._lifecycle_lock = threading.RLock()
+        self._requests: queue.Queue[tuple[Callable[[SimulationRuntime], Any], Future[Any]]] = (
+            queue.Queue()
+        )
         self._failure: str | None = None
         self._outputs: dict[str, dict[str, Out[Any] | PubSubTransport[Any]]] = {}
         self._rejected: dict[str, int] = {}
@@ -112,79 +124,89 @@ class SimulationModule(Module):
     @rpc
     def build(self) -> None:
         with self._lifecycle_lock:
-            if self._runtime is not None:
-                return
-            runtime = SimulationRuntime(self.config.world)
-            directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
-            try:
-                mujoco.mj_saveModel(runtime.model, str(Path(directory.name) / "world.mjb"), None)
-            except BaseException:
-                runtime.close()
-                directory.cleanup()
-                raise
-            self._runtime, self._directory = runtime, directory
-            logger.info(
-                "sim2 world prepared", robots=list(self.config.world.robots), nq=runtime.model.nq
-            )
+            if self._thread is None:
+                self._stop.clear()
+                self._ready.clear()
+                self._failure = None
+                self._thread = threading.Thread(
+                    target=self._run, name="robosuite-owner", daemon=True
+                )
+                self._thread.start()
+        if not self._ready.wait(timeout=60):
+            self._stop.set()
+            raise TimeoutError("robosuite environment did not initialize within 60 seconds")
+        self._require_runtime()
+
+    def _on_owner(self, fn: Callable[[SimulationRuntime], Any]) -> Any:
+        future: Future[Any] = Future()
+        # Admission and owner shutdown share this lock: a request cannot arrive
+        # after the owner's final queue drain.
+        with self._lifecycle_lock:
+            self._require_runtime()
+            self._requests.put((fn, future))
+        return future.result(timeout=60)
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        """The compiled model file and snapshot timing a sensor worker needs."""
-        with self._lifecycle_lock:
-            if self._runtime is None or self._directory is None:
-                raise RuntimeError("SimulationModule.build() has not completed")
-            model = Path(self._directory.name) / "world.mjb"
-            return {"model": str(model), **self._runtime.describe()}
+        runtime = self._require_runtime()
+        with runtime.lock:
+            if runtime is not self._runtime:
+                raise RuntimeError("simulation stopped")
+            return runtime.describe()
 
     @rpc
     def describe_scene(self) -> SceneDescription:
-        """The scene sidecar: named entities, fixture joints, regions and spawns."""
-        with self._lifecycle_lock:
-            return self._require_runtime().description
+        return self._require_runtime().description
 
     @rpc
     def status(self) -> dict[str, Any]:
-        with self._lifecycle_lock:
-            runtime = self._runtime
-            if runtime is None:
+        runtime = self._runtime
+        if runtime is None:
+            return {"running": False, "error": self._failure}
+        with runtime.lock:
+            if runtime is not self._runtime:
                 return {"running": False, "error": self._failure}
-            with runtime.lock:
-                return {
-                    "running": self._failure is None
-                    and not self._stop.is_set()
-                    and self._thread is not None
-                    and self._thread.is_alive(),
-                    "sim_time": float(runtime.data.time),
-                    "steps": runtime.tick,
-                    "episode": runtime.episode,
-                    "paused": runtime.paused,
-                    "waiting_for_control": sorted(runtime.waiting_for_control),
-                    "rejected_commands": dict(self._rejected),
-                    "error": self._failure,
-                    "robots": {
-                        name: runtime.data.xpos[b.root].tolist()
-                        for name, b in runtime.robots.items()
-                    },
-                }
+            return {
+                "running": self._running.is_set()
+                and not self._stop.is_set()
+                and self._failure is None,
+                "sim_time": float(runtime.data.time),
+                "steps": runtime.tick,
+                "episode": runtime.episode,
+                "paused": runtime.paused,
+                "waiting_for_control": sorted(runtime.waiting_for_control),
+                "rejected_commands": dict(self._rejected),
+                "error": self._failure,
+                "robots": {
+                    name: runtime.data.xpos[b.root].tolist() for name, b in runtime.robots.items()
+                },
+                "done": bool(runtime.environment.done),
+            }
 
     @rpc
     def reset(self) -> None:
-        """Restore the authored physical state; controller reset is the application's job."""
-        with self._lifecycle_lock:
-            self._require_runtime().reset()
+        """Reset the upstream environment and invalidate commands and sensor history."""
+        self._on_owner(lambda runtime: runtime.reset())
 
     @rpc
     def set_paused(self, paused: bool) -> None:
-        """Pause only physics; RPCs and state inspection stay available."""
-        with self._lifecycle_lock:
-            self._require_runtime().set_paused(paused)
+        self._on_owner(lambda runtime: runtime.set_paused(paused))
+
+    @rpc
+    def set_action(self, action: list[float]) -> None:
+        """Supply a native upstream action, e.g. the Panda Lift environment's action."""
+        runtime = self._require_runtime()
+        with runtime.lock:
+            if runtime is not self._runtime or self._stop.is_set():
+                raise RuntimeError("simulation stopped")
+            runtime.accept_action(action)
 
     @rpc
     def start(self) -> None:
         super().start()
         self.build()
         runtime = self._require_runtime()
-        for robot_id, names in robot_ports(type(self), self.config.world.robots).items():
+        for robot_id, names in robot_ports(type(self), self.config.robots).items():
             outputs: dict[str, Out[Any] | PubSubTransport[Any]] = {}
             for kind, attribute in names.items():
                 port = getattr(self, attribute)
@@ -198,9 +220,9 @@ class SimulationModule(Module):
                     outputs[kind] = port
             self._outputs[robot_id] = outputs
         for robot_id, topics in self.config.robot_topics.items():
-            if robot_id not in self.config.world.robots:
+            if robot_id not in self.config.robots:
                 raise ValueError(f"stream configuration names unknown robot {robot_id!r}")
-            declared = robot_ports(type(self), self.config.world.robots)[robot_id]
+            declared = robot_ports(type(self), self.config.robots)[robot_id]
             if declared.keys() & topics.keys():
                 raise ValueError(f"{robot_id}: ports and robot_topics configure the same IO")
             for kind, topic in topics.items():
@@ -217,14 +239,20 @@ class SimulationModule(Module):
                     self._outputs[robot_id][kind] = transport
         runtime.publish_feedback = self._publish_feedback
         runtime.publish_snapshot = self.snapshots.publish
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
-        self._thread.start()
+        runtime.publish_observation = self.observations.publish
+        runtime.publish_environment = self.environment_result.publish
+        self.register_disposable(Disposable(self.actions.subscribe(self.set_action)))
+        self._running.set()
 
     def _command(self, robot_id: str, message: MotorCommandArray) -> None:
         runtime = self._runtime
-        if runtime is None or runtime.accept_command(robot_id, message):
+        if runtime is None:
             return
+        with runtime.lock:
+            if runtime is not self._runtime or self._stop.is_set():
+                return
+            if runtime.accept_command(robot_id, message):
+                return
         count = self._rejected.get(robot_id, 0) + 1
         self._rejected[robot_id] = count
         if count == 1 or count % 100 == 0:
@@ -256,40 +284,92 @@ class SimulationModule(Module):
             )
 
     def _run(self) -> None:
-        runtime = self._require_runtime()
-        deadline = time.monotonic()
+        runtime: SimulationRuntime | None = None
         try:
-            while not self._stop.is_set():
-                runtime.step()
-                deadline += self.config.world.timestep
-                now = time.monotonic()
-                if now - deadline > 0.1:
-                    deadline = now
-                self._stop.wait(max(0.0, deadline - now))
-        except Exception as error:
-            logger.exception("sim2 physics stopped")
+            runtime = SimulationRuntime(
+                self.config.environment,
+                self.config.robots,
+                self.config.sensors,
+                self.config.snapshot_hz,
+            )
             with self._lifecycle_lock:
-                self._failure = str(error)
+                self._runtime = runtime
+                self._ready.set()
+            deadline = time.monotonic()
+            while not self._stop.is_set():
+                while True:
+                    try:
+                        fn, future = self._requests.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        future.set_result(fn(runtime))
+                    except Exception as error:
+                        future.set_exception(error)
+                if self._running.is_set():
+                    runtime.step()
+                    deadline += runtime.step_seconds
+                    now = time.monotonic()
+                    if now - deadline > 0.1:
+                        deadline = now
+                    self._stop.wait(max(0.0, deadline - now))
+                else:
+                    self._stop.wait(0.01)
+                    deadline = time.monotonic()
+        except Exception as error:
+            self._failure = str(error)
+            logger.exception("robosuite environment stopped")
+        finally:
+            with self._lifecycle_lock:
+                self._runtime = None
+                self._running.clear()
+                self._fail_requests()
+            try:
+                if runtime is not None:
+                    with runtime.lock:
+                        runtime.close()
+            except Exception as error:
+                cleanup_error = f"environment close failed: {type(error).__name__}: {error}"
+                self._failure = (
+                    f"{self._failure}; {cleanup_error}" if self._failure else cleanup_error
+                )
+                logger.exception("robosuite environment cleanup failed")
+            finally:
+                self._ready.set()
+
+    def _fail_requests(self) -> None:
+        """Fail requests still queued, with the lifecycle lock held."""
+        while True:
+            try:
+                _, future = self._requests.get_nowait()
+            except queue.Empty:
+                break
+            if not future.done():
+                future.set_exception(RuntimeError(self._failure or "simulation stopped"))
 
     def _require_runtime(self) -> SimulationRuntime:
+        if self._failure is not None:
+            raise RuntimeError(f"robosuite environment failed: {self._failure}")
+        if self._stop.is_set():
+            raise RuntimeError("simulation stopped")
         if self._runtime is None:
             raise RuntimeError("simulation is not running")
-        if self._failure is not None:
-            raise RuntimeError(f"simulation physics failed: {self._failure}")
         return self._runtime
 
     @rpc
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            if self._thread.is_alive():
-                raise RuntimeError("sim2 physics did not stop")
         with self._lifecycle_lock:
-            if self._runtime is not None:
-                self._runtime.close()
-                self._runtime = None
-            if self._directory is not None:
-                self._directory.cleanup()
-                self._directory = None
-        super().stop()
+            self._stop.set()
+            self._running.clear()
+            self._fail_requests()
+            thread = self._thread
+        try:
+            if thread is not None:
+                thread.join(timeout=10)
+                if thread.is_alive():
+                    raise RuntimeError("robosuite owner thread did not stop")
+                with self._lifecycle_lock:
+                    if self._thread is thread:
+                        self._thread = None
+        finally:
+            super().stop()

@@ -35,7 +35,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.spec import RobotInstance
+from dimos.sim2.spec import SimulatedRobot
 
 FEEDBACK_TYPES: dict[str, type] = {
     "motor_states": JointState,
@@ -53,7 +53,7 @@ class SimulatedDeviceFactory:
     ``topics`` are the exact same private topics configured on the shared world.
     """
 
-    instance: RobotInstance
+    robot: SimulatedRobot
     topics: dict[str, str]
     g: GlobalConfig
     feedback_ports: tuple[str, ...]
@@ -67,7 +67,7 @@ class SimulatedMotorDevice:
     def __init__(self, config: SimulatedDeviceFactory, publish: Feedback) -> None:
         self._config = config
         self._publish = publish
-        self._joints = tuple(joint.name for joint in config.instance.config.joints)
+        self._joints = config.robot.joint_names
         self._resources: ExitStack | None = None
         self._command: PubSubTransport[Any] | None = None
         self._position: list[float] | None = None
@@ -135,9 +135,10 @@ class SimulatedMotorDevice:
                 position = self._position
             if self._command is None or position is None:
                 return
+            position_only = set(self._config.robot.position_only_joints)
             gains = [
-                (0.0, 0.0) if joint.mode == "position" else (0.0, self._config.halt_damping)
-                for joint in self._config.instance.config.joints
+                (0.0, 0.0 if name in position_only else self._config.halt_damping)
+                for name in self._joints
             ]
             zeros = [0.0] * len(self._joints)
             self._command.publish(

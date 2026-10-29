@@ -21,6 +21,7 @@ workers. The connection keeps its public ports, RPCs and command validation.
 """
 
 from dataclasses import replace
+from functools import partial
 from types import MappingProxyType
 from typing import Any
 
@@ -31,10 +32,11 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.device import SimulatedDeviceFactory
+from dimos.sim2.environment import MotorScene
 from dimos.sim2.module import FEEDBACK_PORTS, PORT_KINDS
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import SimulatedRobot, WorldConfig
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world.scene import scene_path
 
 ROBOT_TWIN = "simulated_robot"
@@ -52,7 +54,7 @@ def simulate(
     """Resolve simulation after CLI overrides, before modules are instantiated.
 
     The current automatic composition supports one robot and its sensors.
-    Explicit WorldConfig/SimulationModule composition can contain many robots.
+    Explicit MotorScene/SimulationModule composition can contain many robots.
     """
     atoms = blueprint.active_blueprints
     robot_atoms = [a for a in atoms if hasattr(a.module, ROBOT_TWIN)]
@@ -80,17 +82,18 @@ def simulate(
     twin = getattr(robot_atom.module, ROBOT_TWIN)(resolved, scene)
     if not isinstance(twin, SimulatedRobot):
         raise TypeError(f"{robot_atom.name}.simulated_robot must return a SimulatedRobot")
-    robot_id, instance = twin.robot_id, twin.instance
-    instance = replace(
-        instance, halt_damping=resolved.halt_damping, command_timeout=resolved.deadman_timeout_s
+    robot_id = twin.robot_id
+    twin = replace(
+        twin, halt_damping=resolved.halt_damping, command_timeout=resolved.deadman_timeout_s
     )
+    sensors: list[tuple[str | None, Sensor]] = []
     names: dict[tuple[str | None, str], str] = {}
     for atom in sensor_atoms:
         sensor: Sensor = getattr(atom.module, SENSOR_TWIN)(_resolved(atom, module_kwargs, config))
         sensor = replace(sensor, name=atom.name)
         if isinstance(sensor, Lidar) and sensor.imu is not None:
             sensor = replace(sensor, imu=replace(sensor.imu, name=f"{atom.name}_imu"))
-        instance = replace(instance, config=instance.config.with_sensor(sensor))
+        sensors.append((robot_id, sensor))
         names[robot_id, atom.name] = atom.name
 
     # The world and its device use private streams; the original connection
@@ -99,8 +102,16 @@ def simulate(
     topics = {kind: f"_sim2/{robot_atom.name}/{kind}" for kind in ("motor_command", *feedback)}
     # Preserve ground-truth streams that hardware does not provide.
     world_topics = {**{kind: kind for kind in FEEDBACK_PORTS}, **topics}
-    world = WorldConfig(scene=scene, robots={robot_id: instance})
-    generated = simulation(world=world, names=names, robot_topics={robot_id: world_topics})
+    environment = partial(
+        MotorScene, scene=scene, models={robot_id: twin.model}, sensors=tuple(sensors)
+    )
+    generated = simulation(
+        environment=environment,
+        robots={robot_id: twin},
+        sensors=tuple(sensors),
+        names=names,
+        robot_topics={robot_id: world_topics},
+    )
 
     swapped = {a.name: a for a in sensor_atoms}
     _check_module_refs(blueprint, swapped)
@@ -126,7 +137,7 @@ def simulate(
     )
     kwargs = {k: dict(v) for k, v in module_kwargs.items() if k not in swapped}
     kwargs.setdefault(robot_atom.name, {})["simulation_device"] = SimulatedDeviceFactory(
-        instance=instance,
+        robot=twin,
         topics=topics,
         g=config.model_copy(deep=True),
         feedback_ports=feedback,

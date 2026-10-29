@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sensor scheduling runs independently from physics and reports capture failures."""
+"""History-based lidar worker scheduling, independent of physics."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.sim2.messages import StateFrame
-from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.device import SensorDevice
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.world.spec import SimulationSpec
 from dimos.utils.logging_config import setup_logger
@@ -39,17 +39,9 @@ logger = setup_logger()
 
 class SensorModuleConfig(ModuleConfig):
     robot_id: str | None = None
-    sensor: Sensor
+    sensor: Lidar
     # Worker polling is a deployment setting, not the sensor acquisition clock.
     rate_hz: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-
-    @property
-    def model_prefix(self) -> str:
-        return f"{self.robot_id}/" if self.robot_id is not None else ""
-
-    @property
-    def frame_prefix(self) -> str:
-        return f"{self.robot_id or 'world'}/"
 
 
 class SensorModule(Module):

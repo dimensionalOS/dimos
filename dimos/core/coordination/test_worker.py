@@ -14,11 +14,13 @@
 
 import threading
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination import python_worker
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
@@ -128,6 +130,19 @@ def create_worker_manager():
 
     if manager is not None:
         manager.stop()
+
+
+@pytest.mark.parametrize("platform, expected", [("darwin", "spawn"), ("linux", "forkserver")])
+def test_worker_context_uses_spawn_for_macos_native_graphics_and_forkserver_for_linux(
+    mocker, platform, expected
+):
+    mocker.patch.object(python_worker, "_forkserver_ctx", None)
+    mocker.patch.object(python_worker, "sys", SimpleNamespace(platform=platform))
+
+    context = python_worker.get_forkserver_context()
+
+    assert context.get_start_method() == expected
+    assert python_worker.get_forkserver_context() is context
 
 
 def test_worker_manager_basic(create_worker_manager):

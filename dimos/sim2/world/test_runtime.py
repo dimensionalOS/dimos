@@ -15,17 +15,25 @@
 """Physics applies standard motor commands, holds without them, and publishes coherent feedback."""
 
 from dataclasses import replace
+from functools import partial
 import time
 
+import mujoco
 import numpy as np
 import pytest
+import robosuite
+from robosuite.wrappers.domain_randomization_wrapper import DomainRandomizationWrapper
 
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.sim2.environment import MotorScene
+from dimos.sim2.world.runtime import SimulationRuntime
 
 
-def _calibrate_motor(model, prefix):
-    joint = model.joint(prefix + "hinge").id
-    model.dof_damping[model.jnt_dofadr[joint]] = 2.75
+def _fitted_model(factory, damping, position):
+    model = factory()
+    model.set_joint_attribute("damping", np.array([damping, 1.0]))
+    model.worldbody.find("body").set("pos", position)
+    return model
 
 
 def command(**overrides):
@@ -34,21 +42,63 @@ def command(**overrides):
     return MotorCommandArray(**values)
 
 
-def test_compiled_calibration_is_scoped_to_its_robot(worlds, world_config):
-    instance = world_config.robots["left"]
-    fitted = replace(instance.config, configure_physics=_calibrate_motor)
-    world = worlds(
-        config=replace(
-            world_config,
-            robots={
-                "left": replace(instance, config=fitted),
-                "right": replace(instance, xyz=(2, 0, 0.3)),
-            },
-        )
+def test_upstream_model_calibration_and_placement_are_scoped_to_each_robot(
+    worlds, world_config, scene_path, robot_factory
+):
+    left = partial(_fitted_model, robot_factory, 2.75, "0 0 .3")
+    right = partial(
+        _fitted_model,
+        partial(robot_factory.func, *robot_factory.args, idn="right"),
+        1.0,
+        "2 0 .3",
     )
-    left = world.robots["left"].dofs[0]
-    right = world.robots["right"].dofs[0]
-    assert world.model.dof_damping[[left, right]] == pytest.approx([2.75, 1])
+    config = world_config | {
+        "environment": partial(MotorScene, scene_path, {"left": left, "right": right}),
+        "robots": {
+            "left": replace(world_config["robots"]["left"], model=left),
+            "right": replace(
+                world_config["robots"]["left"], robot_id="right", model=right, frame_id="right/base"
+            ),
+        },
+        "sensors": (),
+    }
+    world = worlds(config=config)
+    left_dof = world.robots["left"].controller.dofs[0]
+    right_dof = world.robots["right"].controller.dofs[0]
+    assert world.model.dof_damping[[left_dof, right_dof]] == pytest.approx([2.75, 1])
+    assert world.data.body("robotright_base").xpos == pytest.approx([2, 0, 0.3])
+
+
+def test_motor_commands_follow_robot_ids_when_model_and_binding_order_differ(
+    worlds, world_config, scene_path, robot_factory
+):
+    right_factory = partial(
+        _fitted_model,
+        partial(robot_factory.func, *robot_factory.args, idn="right"),
+        1.0,
+        "2 0 .3",
+    )
+    left = world_config["robots"]["left"]
+    right = replace(left, robot_id="right", model=right_factory, frame_id="right/base")
+    world = worlds(
+        config=world_config
+        | {
+            "environment": partial(
+                MotorScene, scene_path, {"left": robot_factory, "right": right_factory}
+            ),
+            "robots": {"right": right, "left": left},
+            "sensors": (),
+        }
+    )
+    for name, torque in (("left", 1.0), ("right", 2.0)):
+        assert world.accept_command(
+            name, command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[torque, 0])
+        )
+
+    world.step()
+
+    assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == pytest.approx(1.0)
+    assert world.data.ctrl[world.robots["right"].controller.actuators[0]] == pytest.approx(2.0)
 
 
 def test_command_drives_motors_and_feedback_is_one_tick(worlds, feedback):
@@ -59,7 +109,8 @@ def test_command_drives_motors_and_feedback_is_one_tick(worlds, feedback):
     world.step()
 
     binding = world.robots["left"]
-    assert world.data.ctrl[binding.actuators] == pytest.approx([1.4, 0.02])
+    controller = binding.controller
+    assert world.data.ctrl[controller.actuators] == pytest.approx([1.4, 0.02])
     robot_id, joints, imu, odom = samples[-1]
     assert robot_id == "left"
     assert joints.name == ["shoulder", "gripper"]
@@ -107,7 +158,7 @@ def test_malformed_or_stale_commands_are_rejected_and_do_not_replace_the_held_ta
     assert world.accept_command("left", command())
     assert not world.accept_command("left", command(**overrides))
     world.step()
-    assert world.data.ctrl[world.robots["left"].actuators] == pytest.approx([1.4, 0.02])
+    assert world.data.ctrl[world.robots["left"].controller.actuators] == pytest.approx([1.4, 0.02])
 
 
 def test_expired_command_falls_back_to_holding_the_last_pose(worlds, mocker):
@@ -117,9 +168,10 @@ def test_expired_command_falls_back_to_holding_the_last_pose(worlds, mocker):
     )
     world.step()
     binding = world.robots["left"]
-    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(3)
-    position = world.data.qpos[binding.qpos[0]]
-    velocity = world.data.qvel[binding.dofs[0]]
+    controller = binding.controller
+    assert world.data.ctrl[controller.actuators[0]] == pytest.approx(3)
+    position = world.data.qpos[controller.qpos[0]]
+    velocity = world.data.qvel[controller.dofs[0]]
     mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=time.monotonic() + 1)
 
     world.step()
@@ -127,15 +179,16 @@ def test_expired_command_falls_back_to_holding_the_last_pose(worlds, mocker):
     assert binding.action is None
     assert not binding.command_active
     assert binding.idle_position[0] == pytest.approx(position)
-    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(10 * 0 - velocity, abs=1e-6)
+    assert world.data.ctrl[controller.actuators[0]] == pytest.approx(10 * 0 - velocity, abs=1e-6)
 
 
 def test_connection_timeout_keeps_damping_until_reset_or_a_new_command(
     worlds, world_config, mocker
 ):
-    instance = replace(world_config.robots["left"], halt_damping=4.0)
-    world = worlds(config=replace(world_config, robots={"left": instance}))
+    instance = replace(world_config["robots"]["left"], halt_damping=4.0)
+    world = worlds(config=world_config | {"robots": {"left": instance}})
     binding = world.robots["left"]
+    controller = binding.controller
     assert world.accept_command(
         "left", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[3, 0])
     )
@@ -144,42 +197,47 @@ def test_connection_timeout_keeps_damping_until_reset_or_a_new_command(
     world.step()  # The command expires.
 
     # Moving away from the last pose must not restore startup stiffness.
-    world.data.qpos[binding.qpos[0]] += 0.2
-    world.data.qvel[binding.dofs[0]] = 0.2
+    world.data.qpos[controller.qpos[0]] += 0.2
+    world.data.qvel[controller.dofs[0]] = 0.2
     world.step()
-    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(-0.8)
+    assert world.data.ctrl[controller.actuators[0]] == pytest.approx(-0.8)
 
     assert world.accept_command(
         "left", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[2, 0])
     )
     world.step()
-    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(2.0)
+    assert world.data.ctrl[controller.actuators[0]] == pytest.approx(2.0)
 
     world.reset()
-    world.data.qpos[binding.qpos[0]] += 0.2
-    world.data.qvel[binding.dofs[0]] = 0.0
+    world.data.qpos[controller.qpos[0]] += 0.2
+    world.data.qvel[controller.dofs[0]] = 0.0
     world.step()
-    assert world.data.ctrl[binding.actuators[0]] == pytest.approx(-2.0)
+    assert world.data.ctrl[controller.actuators[0]] == pytest.approx(-2.0)
 
 
-def test_calibrated_actuator_lag_filters_the_control(worlds, world_config):
-    instance = world_config.robots["left"]
-    joint, gripper = instance.config.joints
-    robot = replace(instance.config, joints=(replace(joint, actuator_time_constant=0.02), gripper))
-    world = worlds(config=replace(world_config, robots={"left": replace(instance, config=robot)}))
+def test_authored_native_actuator_dynamics_are_used(worlds, robot_path):
+    robot_path.write_text(
+        robot_path.read_text().replace(
+            '<motor name="motor"',
+            '<general dyntype="filterexact" dynprm=".02" name="motor"',
+        )
+    )
+    world = worlds()
     assert world.accept_command(
         "left", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[3, 0])
     )
     world.step()
-    aid = world.robots["left"].actuators[0]
-    assert world.data.ctrl[aid] == pytest.approx(0.6)
+    actuator = world.robots["left"].controller.actuators[0]
+    activation = world.model.actuator_actadr[actuator]
+    assert world.data.ctrl[actuator] == pytest.approx(3)
+    assert world.data.act[activation] == pytest.approx(3 * (1 - np.exp(-0.005 / 0.02)))
     world.step()
-    assert world.data.ctrl[aid] == pytest.approx(1.08)
+    assert world.data.act[activation] == pytest.approx(3 * (1 - np.exp(-0.01 / 0.02)))
 
 
 def test_startup_wait_holds_until_the_first_command(worlds, world_config, feedback):
-    instance = replace(world_config.robots["left"], wait_for_first_command=True)
-    world = worlds(config=replace(world_config, robots={"left": instance}))
+    instance = replace(world_config["robots"]["left"], wait_for_first_command=True)
+    world = worlds(config=world_config | {"robots": {"left": instance}})
     samples = feedback(world)
     for _ in range(20):
         world.step()
@@ -196,10 +254,10 @@ def test_startup_wait_holds_until_the_first_command(worlds, world_config, feedba
     assert not world.waiting_for_control
 
 
-def test_reset_restores_authored_state_and_starts_a_new_episode(worlds):
+def test_reset_restores_authored_state_and_starts_a_new_episode(worlds, mocker):
     world = worlds()
     snapshots = []
-    world.publish_snapshot = snapshots.append
+    mocker.patch.object(world, "publish_snapshot", side_effect=snapshots.append)
     world.accept_command("left", command())
     for _ in range(10):
         world.step()
@@ -216,7 +274,7 @@ def test_reset_restores_authored_state_and_starts_a_new_episode(worlds):
     assert current.metadata.sequence > previous.metadata.sequence
     assert current.metadata.sim_time == 0
     assert world.robots["left"].action is None
-    assert world.data.qpos[world.robots["left"].qpos[0]] == pytest.approx(0.1)
+    assert world.data.qpos[world.robots["left"].controller.qpos[0]] == pytest.approx(0.1)
     # A command stamped before the reset is stale.
     assert not world.accept_command("left", command(timestamp=time.time() - 10))
     assert world.accept_command("left", command(timestamp=time.time()))
@@ -237,15 +295,16 @@ def test_pause_does_not_advance_physics_and_resume_starts_a_new_episode(worlds):
     assert world.tick == 1
 
 
-def test_post_step_snapshot_and_odometry_are_the_same_tick(worlds, world_config, feedback):
-    instance = world_config.robots["left"]
-    robot = replace(instance.config, floating=True)
-    robot.model.write_text(
-        robot.model.read_text().replace('<body name="base">', '<body name="base"><freejoint/>')
+def test_post_step_snapshot_and_odometry_are_the_same_tick(worlds, robot_path, feedback):
+    robot_path.write_text(
+        robot_path.read_text().replace(
+            '<body name="base" pos="0 0 .3">',
+            '<body name="base" pos="0 0 .3"><freejoint/>',
+        )
     )
-    world = worlds(config=replace(world_config, robots={"left": replace(instance, config=robot)}))
+    world = worlds()
     samples = feedback(world)
-    root_joint = world.model.body("left/base").jntadr[0]
+    root_joint = world.model.body("robotleft_base").jntadr[0]
     qpos = world.model.jnt_qposadr[root_joint]
     dof = world.model.jnt_dofadr[root_joint]
     world.data.qvel[dof] = 1.0
@@ -259,7 +318,152 @@ def test_post_step_snapshot_and_odometry_are_the_same_tick(worlds, world_config,
     assert samples[-1][3].ts == pytest.approx(world.last_snapshot.values["wall_time"][0])
 
 
-def test_robot_cannot_be_named_world(worlds):
-    config = worlds().config
+def test_robot_cannot_be_named_world(world_config):
     with pytest.raises(ValueError, match="'world' is reserved"):
-        replace(config, robots={"world": config.robots["left"]})
+        replace(world_config["robots"]["left"], robot_id="world")
+
+
+def test_stock_panda_task_preserves_upstream_actions_observations_and_episode_lifecycle(mocker):
+    environment = partial(
+        robosuite.make,
+        "Lift",
+        robots="Panda",
+        has_renderer=False,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+        control_freq=20,
+        horizon=2,
+        hard_reset=False,
+    )
+    results = []
+    with SimulationRuntime(environment) as world:
+        mocker.patch.object(world, "publish_environment", side_effect=results.append)
+        assert world.robots == {}
+        assert "cube_pos" in world.result.observations
+        assert "robot0_joint_pos" in world.result.observations
+        world.accept_action([0.0] * world.environment.action_dim)
+
+        world.step()
+
+        assert world.data.time == pytest.approx(0.05)
+        assert world.tick == 25
+        assert results[-1].reward == 0.0
+        assert not results[-1].done
+        assert np.isfinite(world.data.qpos).all()
+        world.step()
+        assert results[-1].done
+        assert world.data.time == pytest.approx(0.1)
+        world.step()
+        assert world.data.time == pytest.approx(0.1)
+        episode = world.episode
+        world.reset()
+        assert world.episode == episode + 1
+        assert world.data.time == 0
+        assert not world.result.done
+        world.step()
+        assert world.data.time == pytest.approx(0.05)
+
+
+@pytest.mark.parametrize("action", [[], [float("nan")] * 7, [2.0] * 7])
+def test_native_task_rejects_invalid_actions(action):
+    environment = partial(
+        robosuite.make,
+        "Lift",
+        robots="Panda",
+        has_renderer=False,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+        hard_reset=False,
+    )
+    with SimulationRuntime(environment) as world:
+        with pytest.raises(ValueError, match="action"):
+            world.accept_action(action)
+
+
+def test_native_task_snapshot_rate_uses_elapsed_time_across_physics_substeps(mocker):
+    environment = partial(
+        robosuite.make,
+        "Lift",
+        robots="Panda",
+        has_renderer=False,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+        hard_reset=False,
+        control_freq=50,
+    )
+    snapshots = []
+    with SimulationRuntime(environment, snapshot_hz=10) as world:
+        mocker.patch.object(world, "publish_snapshot", side_effect=snapshots.append)
+        for _ in range(10):
+            world.step()
+        assert [frame.metadata.sim_time for frame in snapshots] == pytest.approx([0.1, 0.2])
+
+
+def test_task_reward_and_done_are_published_when_observation_dictionary_is_empty(
+    scene_path, mocker
+):
+    environment = partial(MotorScene, scene_path, {})
+    results = []
+    with SimulationRuntime(environment) as world:
+        world.environment.ignore_done = False
+        world.environment.horizon = 1
+        mocker.patch.object(world.environment, "reward", return_value=3.5)
+        mocker.patch.object(world, "publish_environment", side_effect=results.append)
+
+        world.step()
+
+        assert results[-1].observations == {}
+        assert results[-1].reward == 3.5
+        assert results[-1].done
+        final_result = world.result
+        world.step()
+        assert world.result is final_result
+        assert len(results) == 1
+
+
+@pytest.mark.parametrize("motor_bound", [False, True])
+def test_upstream_domain_randomization_reaches_physics_and_snapshot_model(
+    world_config, motor_bound
+):
+    factory = (
+        world_config["environment"]
+        if motor_bound
+        else partial(
+            robosuite.make,
+            "Lift",
+            robots="Panda",
+            has_renderer=False,
+            has_offscreen_renderer=False,
+            use_camera_obs=False,
+            hard_reset=False,
+        )
+    )
+
+    def randomized():
+        return DomainRandomizationWrapper(
+            factory(),
+            seed=13,
+            randomize_color=False,
+            randomize_camera=True,
+            randomize_lighting=True,
+            randomize_dynamics=True,
+            randomize_every_n_steps=0,
+        )
+
+    kwargs = {k: world_config[k] for k in ("robots", "sensors")} if motor_bound else {}
+    with SimulationRuntime(randomized, **kwargs) as world:
+        masses = world.model.body_mass.copy()
+        if not motor_bound:
+            world.accept_action([0.0] * len(world.environment.action_spec[0]))
+        world.step()
+        assert world.result.metadata.sim_time > 0
+        assert world.result.observations
+        previous_model = world.last_snapshot.model_path
+        world.reset()
+        assert not np.array_equal(world.model.body_mass, masses)
+        assert world.last_snapshot.model_path != previous_model
+        reader_model = mujoco.MjModel.from_binary_path(world.last_snapshot.model_path)
+        np.testing.assert_array_equal(reader_model.body_mass, world.model.body_mass)
+        assert world.result.metadata.sim_time == 0
+        if motor_bound:
+            assert set(world.robots) == {"left"}

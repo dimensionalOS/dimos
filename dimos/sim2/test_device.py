@@ -14,7 +14,6 @@
 
 """The simulation device uses normal typed transports and named robot joints."""
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,26 +24,21 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.device import SimulatedDeviceFactory
-from dimos.sim2.spec import Joint, RobotConfig, RobotInstance
+from dimos.sim2.spec import SimulatedRobot
 
 
 @pytest.fixture
 def rig(mocker):
-    instance = RobotInstance(
-        RobotConfig(
-            model=Path("not-loaded.xml"),
-            root_body="base",
-            joints=(
-                Joint("arm/elbow", "elbow_joint", "elbow_motor", kp=7, kd=0.7),
-                Joint("arm/wrist", "wrist_joint", "wrist_motor", kp=9, kd=0.9),
-                Joint("arm/grip", "grip_joint", "grip_servo", mode="position", kp=50, kd=2),
-            ),
-        ),
-        hold_gains={"arm/elbow": (21, 2.1), "arm/grip": (80, 8)},
+    robot = SimulatedRobot(
+        robot_id="arm",
+        model=mocker.Mock(),
+        joint_names=("arm/elbow", "arm/wrist", "arm/grip"),
+        frame_id="arm/base",
+        position_only_joints=("arm/grip",),
     )
     topics = {kind: f"private/arm/{kind}" for kind in ("motor_command", "motor_states", "imu")}
     config = SimulatedDeviceFactory(
-        instance, topics, GlobalConfig(), ("motor_states", "imu"), halt_damping=4.5
+        robot, topics, GlobalConfig(), ("motor_states", "imu"), halt_damping=4.5
     )
     transports = {
         kind: mocker.create_autospec(PubSubTransport, instance=True, spec_set=True)

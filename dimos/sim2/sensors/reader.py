@@ -37,7 +37,10 @@ class WorldReader:
     """
 
     def __init__(self, description: dict[str, Any]) -> None:
-        self.model = mujoco.MjModel.from_binary_path(description["model"])
+        self._model_path = str(description["model"])
+        self._model_prefixes = description.get("model_prefixes", {})
+        self._root_bodies = description.get("root_bodies", {})
+        self.model = mujoco.MjModel.from_binary_path(self._model_path)
         self.data = mujoco.MjData(self.model)
         self.period = float(description["physics_dt"]) * int(description["snapshot_stride"])
         self._frames: deque[StateFrame] = deque(maxlen=int(description["snapshot_slots"]))
@@ -48,6 +51,17 @@ class WorldReader:
         self._history: tuple[StateFrame, ...] = ()
         self._next: mujoco.MjData | None = None
 
+    def model_prefix(self, robot_id: str | None) -> str:
+        """Resolve upstream model names independently of public stream/frame names."""
+        if robot_id is None:
+            return ""
+        return str(self._model_prefixes.get(robot_id, f"{robot_id}/"))
+
+    def root_body(self, robot_id: str | None) -> str | None:
+        """The upstream robot's root, without its namespace prefix."""
+        value = self._root_bodies.get(robot_id)
+        return str(value) if value is not None else None
+
     def push(self, frame: StateFrame) -> None:
         """Accept a published snapshot; older sequences and repeated paused ticks are dropped."""
         with self._lock:
@@ -55,7 +69,10 @@ class WorldReader:
                 last = self._frames[-1]
                 if frame.metadata.sequence <= last.metadata.sequence:
                     return
-                if frame.metadata.episode_id != last.metadata.episode_id:
+                if (
+                    frame.metadata.episode_id != last.metadata.episode_id
+                    or frame.model_path != last.model_path
+                ):
                     self._frames.clear()
                 elif frame.metadata.physics_tick == last.metadata.physics_tick:
                     self._frames.pop()
@@ -77,6 +94,13 @@ class WorldReader:
         if frame is None:
             return False
         changed = frame.metadata.sequence != self.sequence
+        if frame.model_path is not None and str(frame.model_path) != self._model_path:
+            # Reload on the acquisition thread, never in the transport callback.
+            self._model_path = str(frame.model_path)
+            self.model = mujoco.MjModel.from_binary_path(self._model_path)
+            self.data = mujoco.MjData(self.model)
+            self._next = None
+            self._history = ()
         self.restore(frame)
         self.sequence = frame.metadata.sequence
         self.episode = frame.metadata.episode_id
