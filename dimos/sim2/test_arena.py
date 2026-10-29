@@ -19,6 +19,7 @@ import numpy as np
 from robosuite.models.tasks.task import Task
 
 from dimos.sim2.arena import AuthoredArena
+from dimos.sim2.unreal.assets import export_scene
 
 
 def test_arena_preserves_anonymous_nested_defaults_units_and_includes(tmp_path):
@@ -55,6 +56,12 @@ def test_arena_preserves_anonymous_nested_defaults_units_and_includes(tmp_path):
     native = mujoco.MjModel.from_xml_path(str(path))
     imported = Task(AuthoredArena(path), []).get_model()
 
+    assert (imported.nbody, imported.ngeom, imported.nmocap) == (
+        native.nbody,
+        native.ngeom,
+        native.nmocap,
+    )
+
     for kind, fields in (
         (mujoco.mjtObj.mjOBJ_GEOM, ("geom_friction",)),
         (mujoco.mjtObj.mjOBJ_BODY, ("body_mass", "body_inertia")),
@@ -73,3 +80,68 @@ def test_arena_preserves_anonymous_nested_defaults_units_and_includes(tmp_path):
         np.testing.assert_allclose(getattr(imported, name), getattr(native, name), atol=1e-6)
     assert imported.geom("grip").friction.tolist() == [0.4, 0.006, 0.001]
     np.testing.assert_allclose(imported.joint("hinge").range, [-np.pi / 4, np.pi / 4], atol=1e-6)
+
+
+def test_arena_removes_only_injected_ui_targets_and_preserves_authored_mocap_geometry(tmp_path):
+    path = tmp_path / "authored.xml"
+    path.write_text("""
+        <mujoco><worldbody>
+          <body name="left_eef_target" mocap="true" pos="1 2 3">
+            <geom name="authored_box" type="box" size=".1 .2 .3" group="2" rgba=".2 .4 .6 1"/>
+          </body>
+          <body name="tracking_fixture" mocap="true" pos="-2 1 4">
+            <geom name="authored_sphere" type="sphere" size=".2" group="2" rgba=".7 .3 .1 1"/>
+          </body>
+        </worldbody></mujoco>
+    """)
+    native = mujoco.MjModel.from_xml_path(str(path))
+    imported = Task(AuthoredArena(path), []).get_model()
+
+    assert [imported.body(i).name for i in range(imported.nbody)] == [
+        native.body(i).name for i in range(native.nbody)
+    ]
+    assert [imported.geom(i).name for i in range(imported.ngeom)] == [
+        "authored_box",
+        "authored_sphere",
+    ]
+    assert imported.nmocap == native.nmocap == 2
+    for field in (
+        "body_pos",
+        "body_quat",
+        "body_mocapid",
+        "geom_pos",
+        "geom_size",
+        "geom_group",
+        "geom_rgba",
+    ):
+        np.testing.assert_allclose(getattr(imported, field), getattr(native, field), atol=1e-6)
+
+
+def test_arena_keeps_authored_collision_colors_and_inherited_materials(tmp_path):
+    path = tmp_path / "painted.xml"
+    path.write_text("""
+        <mujoco>
+          <asset>
+            <material name="paint" rgba=".8 .3 .1 1" roughness=".25"/>
+            <material name="metal" rgba=".2 .4 .6 1" roughness=".1"/>
+          </asset>
+          <default><geom material="paint" friction=".3 .01 .001"/></default>
+          <worldbody>
+            <geom name="inherited" type="box" size=".2 .3 .4"/>
+            <geom name="explicit" type="sphere" size=".1" material="metal" rgba=".6 .7 .8 1"/>
+            <geom name="visual" type="sphere" size=".1" group="1"/>
+          </worldbody>
+        </mujoco>
+    """)
+    native = mujoco.MjModel.from_xml_path(str(path))
+    imported = Task(AuthoredArena(path), []).get_model()
+
+    for name in ("inherited", "explicit", "visual"):
+        original, copied = native.geom(name), imported.geom(name)
+        np.testing.assert_allclose(copied.rgba, original.rgba)
+        np.testing.assert_allclose(copied.friction, original.friction)
+        assert imported.mat(int(copied.matid[0])).name == native.mat(int(original.matid[0])).name
+    data = mujoco.MjData(imported)
+    mujoco.mj_forward(imported, data)
+    colors = [geom["rgba"] for geom in export_scene(imported, data)["geoms"]]
+    np.testing.assert_allclose(colors, [[0.8, 0.3, 0.1, 1], [0.6, 0.7, 0.8, 1], [0.8, 0.3, 0.1, 1]])
