@@ -320,7 +320,79 @@ fn check_box(
             .collect();
     let gpu_walls: AHashSet<VoxelKey> = result.walls.iter().copied().collect();
     let walls = divergence("wall cells", &cpu_walls, &gpu_walls);
+    explain_walls(
+        &result,
+        &cpu_walls,
+        &gpu_walls,
+        step,
+        config.step_threshold_m,
+    );
+    explain_standable(&occupied, &cpu_standable, &gpu_standable, clearance);
     standable <= STANDABLE_DIVERGENCE && walls <= WALL_DIVERGENCE
+}
+
+/// Splits the walls only the GPU has: a neighbor the CPU links (within its
+/// whole-voxel step) that the GPU's plane heights put more than the step
+/// threshold in meters away, versus the rest.
+fn explain_walls(
+    result: &dimos_gpu_mls::surfaces::SurfaceResult,
+    cpu_walls: &AHashSet<VoxelKey>,
+    gpu_walls: &AHashSet<VoxelKey>,
+    step_cells: i32,
+    step_m: f32,
+) {
+    let height: ahash::AHashMap<VoxelKey, f32> = result
+        .surface
+        .iter()
+        .copied()
+        .zip(result.heights.iter().copied())
+        .collect();
+    let only_gpu: Vec<VoxelKey> = gpu_walls.difference(cpu_walls).copied().collect();
+    let in_band = only_gpu
+        .iter()
+        .filter(|k| {
+            let h = height[k];
+            [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
+                (-step_cells..=step_cells).any(|dz| {
+                    height
+                        .get(&(k.0 + dx, k.1 + dy, k.2 + dz))
+                        .is_some_and(|n| (n - h).abs() > step_m)
+                })
+            })
+        })
+        .count();
+    println!(
+        "    of the {} walls only on the gpu, {in_band} ({:.0}%) face a neighbor the cpu links by whole voxels but that rises more than {step_m} m",
+        only_gpu.len(),
+        100.0 * in_band as f64 / only_gpu.len().max(1) as f64
+    );
+}
+
+/// Splits the standable cells only the CPU has by the nearest occupied voxel
+/// above: just past the CPU's whole-voxel clearance, where the GPU's
+/// headroom in meters can fall short, versus the rest.
+fn explain_standable(
+    occupied: &AHashSet<VoxelKey>,
+    cpu: &AHashSet<VoxelKey>,
+    gpu: &AHashSet<VoxelKey>,
+    clearance: i32,
+) {
+    let only_cpu: Vec<VoxelKey> = cpu.difference(gpu).copied().collect();
+    let near_ceiling = only_cpu
+        .iter()
+        .filter(|k| {
+            (clearance + 1..=clearance + 2).any(|dz| occupied.contains(&(k.0, k.1, k.2 + dz)))
+        })
+        .count();
+    let covered = only_cpu
+        .iter()
+        .filter(|k| occupied.contains(&(k.0, k.1, k.2 + 1)))
+        .count();
+    println!(
+        "    of the {} standable cells only on the cpu, {near_ceiling} ({:.0}%) have a voxel 1 to 2 cells above the cpu's clearance, {covered} have one right above",
+        only_cpu.len(),
+        100.0 * near_ceiling as f64 / only_cpu.len().max(1) as f64
+    );
 }
 
 fn run_parity(path: &str, voxel_size: f32, max_frames: usize) {
