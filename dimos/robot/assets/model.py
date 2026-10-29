@@ -83,10 +83,10 @@ class JointDescription:
 
 @dataclass(frozen=True)
 class LoadedRobotModel:
-    """Materialized model description and its resolved filesystem context."""
+    """Materialized model and resolved assets; in-memory roots have no source path."""
 
     xml: str
-    source_path: Path
+    source_path: Path | None
     package_paths: Mapping[str, Path]
 
     @cached_property
@@ -169,10 +169,17 @@ class _AttachedModel:
 
 
 @dataclass(frozen=True)
+class _RootModel:
+    name: str
+    root_link: str
+
+
+@dataclass(frozen=True)
 class RobotModel:
     """Lazy, immutable robot model shared by planning backends."""
 
-    _source_path: Path | str | os.PathLike[str]
+    _source_path: Path | str | os.PathLike[str] | None
+    _root_model: _RootModel | None = None
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame | _AttachedModel, ...] = ()
@@ -199,9 +206,20 @@ class RobotModel:
             _xacro_args=tuple((xacro_args or {}).items()),
         )
 
+    @classmethod
+    def from_root_link(cls, root_link: str, *, name: str = "robot") -> RobotModel:
+        """Create a lazy, single-link model in memory for attaching other trees.
+
+        No source file is required. Both this model and its loaded description
+        have ``source_path=None``; attached children resolve their own assets.
+        """
+        if not root_link.strip() or not name.strip():
+            raise ValueError("Robot name and root link must be nonempty")
+        return cls(_source_path=None, _root_model=_RootModel(name, root_link))
+
     @property
-    def source_path(self) -> Path | str | os.PathLike[str]:
-        """Return the source handle without forcing lazy asset checkout."""
+    def source_path(self) -> Path | str | os.PathLike[str] | None:
+        """Return the source handle, or None for a model created from a root link."""
         return self._source_path
 
     @property
@@ -352,19 +370,26 @@ class RobotModel:
 
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
-        source_path = Path(os.fspath(self._source_path)).resolve()
-        if source_path.suffix.lower() not in {".urdf", ".xacro"}:
-            raise ValueError(
-                f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
-            )
         package_paths = _normalize_package_paths(dict(self._package_paths))
-        if not source_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {source_path}")
-
-        if source_path.suffix.lower() == ".xacro":
-            xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+        source_path = None
+        if self._source_path is not None:
+            source_path = Path(os.fspath(self._source_path)).resolve()
+            if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+                raise ValueError(
+                    f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
+                )
+            if not source_path.exists():
+                raise FileNotFoundError(f"Robot model not found: {source_path}")
+            if source_path.suffix.lower() == ".xacro":
+                xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+            else:
+                xml = source_path.read_text()
+        elif self._root_model is not None:
+            root = ET.Element("robot", name=self._root_model.name)
+            ET.SubElement(root, "link", name=self._root_model.root_link)
+            xml = ET.tostring(root, encoding="unicode")
         else:
-            xml = source_path.read_text()
+            raise ValueError("RobotModel requires a source file or root link")
         xml = _resolve_package_uris(xml, package_paths)
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
@@ -374,7 +399,10 @@ class RobotModel:
             )
         xml = _resolve_relative_asset_paths(
             xml,
-            search_directories=(source_path.parent, *package_paths.values()),
+            search_directories=(
+                *((source_path.parent,) if source_path is not None else ()),
+                *package_paths.values(),
+            ),
         )
         if self._planar_base is not None:
             xml = _add_planar_base(xml, self._planar_base)

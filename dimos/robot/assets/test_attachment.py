@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 from pydantic import TypeAdapter
 import pytest
 
+from dimos.manipulation.planning.groups.discovery import discover_planning_group_definitions
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
@@ -59,6 +60,60 @@ def base(tmp_path: Path) -> RobotModel:
         '<origin xyz="1 0 0"/></joint></robot>'
     )
     return RobotModel.from_file(source)
+
+
+def test_root_model_attachment_resolves_assets_without_a_host_file(tmp_path):
+    child = arm(tmp_path, mesh=True)
+    files = set(tmp_path.rglob("*"))
+    host = RobotModel.from_root_link("stand", name='fixture & "arms"')
+    attached = host.with_fixed_frame("mount", "stand", xyz=(1.0, 0.0, 0.0)).with_attached_model(
+        child, parent_link="mount", joint_name="weld", prefix="arm_"
+    )
+    loaded = attached.load()
+    assert loaded.source_path is None
+    assert attached.source_path is None
+    assert loaded.root_link == "stand"
+    assert ET.fromstring(loaded.xml).get("name") == 'fixture & "arms"'
+    assert loaded.get_joint("weld").parent_link == "mount"
+    assert str(tmp_path / "arm" / "shape.stl") in loaded.xml
+    assert str(tmp_path / "arm" / "surface.png") in loaded.xml
+    assert attached.load() is loaded
+    assert host.load().joints == ()
+    assert set(tmp_path.rglob("*")) == files
+    restored = pickle.loads(pickle.dumps(attached))
+    assert restored.load() == loaded
+    assert (
+        TypeAdapter(RobotModel)
+        .validate_python(TypeAdapter(RobotModel).dump_python(attached))
+        .load()
+        == loaded
+    )
+
+
+@pytest.mark.parametrize("root_link,name", [("", "r"), (" ", "r"), ("base", "")])
+def test_root_model_rejects_empty_names(root_link, name):
+    with pytest.raises(ValueError, match="nonempty"):
+        RobotModel.from_root_link(root_link, name=name)
+
+
+@pytest.mark.parametrize("explicit_srdf", [False, True])
+def test_in_memory_root_planning_group_discovery(tmp_path, explicit_srdf):
+    model = RobotModel.from_root_link("stand").with_attached_model(
+        arm(tmp_path), parent_link="stand", joint_name="weld"
+    )
+    srdf = tmp_path / "groups.srdf"
+    srdf.write_text(
+        '<robot name="r"><group name="custom_arm"><joint name="joint1"/>'
+        '<joint name="joint2"/></group></robot>'
+    )
+    groups = discover_planning_group_definitions(
+        model=model.load(),
+        controllable_joint_names=["joint1", "joint2"],
+        srdf_path=srdf if explicit_srdf else None,
+    )
+    assert len(groups) == 1
+    assert groups[0].joint_names == ("joint1", "joint2")
+    assert groups[0].name == ("custom_arm" if explicit_srdf else "manipulator")
 
 
 def test_attachment_construction_is_lazy_and_preserves_source_handle(tmp_path, mocker):

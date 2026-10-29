@@ -520,6 +520,16 @@ model = base_model.with_attached_model(
 )
 ```
 
+For a shared mounting frame with no geometry, create the root directly:
+
+```python skip
+base_model = RobotModel.from_root_link("mount_link", name="dual_arm")
+```
+
+This requires no URDF file. Its `source_path` is `None`, including after loading;
+each attached model still resolves assets relative to its own source. Automatic
+SRDF discovery is skipped for an in-memory root, but explicit SRDF paths work.
+
 The named fixed joint connects the parent's specified link to the child's root.
 The optional prefix namespaces the child's links, joints, materials, and mimic
 references. Translations are in meters; `rpy` uses extrinsic xyz rotations in
@@ -533,7 +543,7 @@ target links introduced by earlier attachments or fixed frames. No host-model
 wrapper or replay of nested host snapshots is involved.
 
 `load()` uses the existing in-memory model pipeline. It does not write a generated
-URDF or introduce a separate cache. The model retains its host's `source_path`;
+URDF or introduce a separate cache. The model retains its host's `source_path` (if any);
 backends consume the transformed XML from `load()`, as with other model views.
 Each child resolves its assets separately, so package names can be reused by
 different inputs. Missing parent links, duplicate names, and invalid child trees

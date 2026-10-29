@@ -571,7 +571,9 @@ class ViserManipulationScene:
         description = self.loaded_robot_description(prepared)
         return URDF.load(
             BytesIO(description.xml.encode()),
-            mesh_dir=str(description.source_path.parent),
+            mesh_dir=(
+                str(description.source_path.parent) if description.source_path is not None else None
+            ),
             build_scene_graph=True,
             build_collision_scene_graph=True,
             load_meshes=True,
