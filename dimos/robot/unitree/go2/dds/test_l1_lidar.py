@@ -19,8 +19,6 @@ The clip (``go2_l1_knock.db``) holds what the module would receive live: GO2DDS'
 ``odometry``, each observation at its receive time.
 """
 
-import math
-
 import numpy as np
 import pytest
 from scipy.spatial import cKDTree
@@ -43,21 +41,8 @@ T0 = 1791993294.5419347
 def _mount(**overrides):
     """mid360_link <- utlidar_lidar and base_link <- utlidar_lidar, as GO2DDS's mount tree has them."""
     c = Go2BaseConfig(mid360_mount="ATHENS", **overrides)
-
-    def rad(deg):
-        return tuple(math.radians(a) for a in deg)
-
     buffer = MultiTBuffer()
-    buffer.receive_transform(
-        *frames_to_edge_transforms(
-            [
-                ("base_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-                ("front_camera", "base_link", c.camera_xyz, (0.0, 0.0, 0.0)),
-                ("mid360_link", "front_camera", c.mid360_xyz, rad(c.mid360_mount)),
-                ("utlidar_lidar", "base_link", c.l1_xyz, rad(c.l1_mount)),
-            ]
-        )
-    )
+    buffer.receive_transform(*frames_to_edge_transforms(c.mount_frames()))
     return buffer.get("mid360_link", "utlidar_lidar"), buffer.get("base_link", "utlidar_lidar")
 
 
