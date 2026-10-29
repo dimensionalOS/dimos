@@ -398,6 +398,49 @@ jobs:
             !target/debug/incremental
           key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
+  isolated-python-tests:
+    # Keep each published check name stable as more isolated projects are added.
+    name: ${{ matrix.check_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_name: isolated-lerobot-tests
+            project: native/python/lerobot
+            tests: [dimos_lerobot]
+            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Unlike root jobs, uv run must provision the locked isolated project.
+      UV_NO_SYNC: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Install project system dependencies
+        env:
+          SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
+        run: |
+          mapfile -t packages < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["SYSTEM_PACKAGES"])))')
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
+      - name: Test isolated Python project
+        working-directory: ${{ matrix.project }}
+        env:
+          TEST_PATHS: ${{ toJSON(matrix.tests) }}
+        run: |
+          mapfile -t tests < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["TEST_PATHS"])))')
+          env -u VIRTUAL_ENV -u UV_PYTHON -u UV_PROJECT_ENVIRONMENT \
+            uv run --frozen --group tests --with-editable "$GITHUB_WORKSPACE" pytest "${tests[@]}"
+
+
   # The PyO3 extensions, the one rust artefact nix does not build: pytest imports them, so they must
   # match uv's interpreter. They are abi3, so one Python per OS covers every version.
   pyo3:
@@ -609,6 +652,41 @@ jobs:
 
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
+
+  agent:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    defaults:
+      run:
+        working-directory: dimos/agents
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dimos/agents/package-lock.json
+
+      - name: Check dependency release ages
+        run: node check-dependency-age.mjs
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
   tests:
     if: |
@@ -1372,8 +1450,10 @@ jobs:
     - lint
     - rust
     - pyo3
+    - isolated-python-tests
     - md-babel
     - web
+    - agent
     - tests
     - self-hosted-tests
     - benchmark-track

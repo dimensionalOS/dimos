@@ -50,6 +50,19 @@ def isolated_python_run_command(project: Path, *command: str) -> list[str]:
     return args
 
 
+def isolated_python_environment(project: Path) -> dict[str, str]:
+    """Use a cached project environment without inheriting host interpreter pins."""
+    env = dict(os.environ)
+    # The isolated project picks its own interpreter and venv; host pins
+    # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
+    env.pop("VIRTUAL_ENV", None)
+    env.pop("UV_PYTHON", None)
+    env.pop("UV_PROJECT_ENVIRONMENT", None)
+    project_key = sha256(str(project).encode()).hexdigest()[:16]
+    env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
+    return env
+
+
 class IsolatedPythonModuleConfig(NativeModuleConfig):
     """Process settings for an isolated Python module."""
 
@@ -147,14 +160,7 @@ class IsolatedPythonModule(NativeModule):
         return self._runtime_name
 
     def _runtime_env(self) -> dict[str, str]:
-        env = dict(os.environ)
-        # The isolated project picks its own interpreter and venv; host pins
-        # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
-        env.pop("VIRTUAL_ENV", None)
-        env.pop("UV_PYTHON", None)
-        env.pop("UV_PROJECT_ENVIRONMENT", None)
-        project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
-        env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
+        env = isolated_python_environment(self.runtime_project)
         env.update(self.config.extra_env)
         return env
 

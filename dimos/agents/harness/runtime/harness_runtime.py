@@ -162,7 +162,7 @@ class HarnessRuntime(Module):
 
         An RPC is its module's Python API. A Dimos.connect() client calls it as
         app.get_module(MODULE).RPC(...); a module calls it through an attribute typed with
-        the module's Spec.
+        the module's Spec. The harness's stream_get tool reads a relay-exposed stream once.
         A module reads native messages continuously through an In port of the same name
         and type.
 
