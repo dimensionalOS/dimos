@@ -14,10 +14,9 @@
 
 """The base class of agent modules: modules an agent writes and deploys while DimOS runs."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 import json
+import sys
 import threading
 import time
 from typing import Any, ClassVar, TypeVar
@@ -30,6 +29,9 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.agent_msgs.AgentNotice import AgentNotice
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info >= (3, 14):
+    from annotationlib import Format, get_annotations
 
 T = TypeVar("T")
 
@@ -58,14 +60,23 @@ class AgentModule(Module):
     _logger: Any
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        reserved = {
-            name
-            for base in AgentModule.__mro__
-            for name in (*vars(base), *vars(base).get("__annotations__", {}))
-        }
+        if sys.version_info >= (3, 14):
+            reserved = {
+                name
+                for base in AgentModule.__mro__
+                for name in (*vars(base), *get_annotations(base, format=Format.STRING))
+            }
+            declared = (*vars(cls), *get_annotations(cls, format=Format.STRING))
+        else:
+            reserved = {
+                name
+                for base in AgentModule.__mro__
+                for name in (*vars(base), *vars(base).get("__annotations__", {}))
+            }
+            declared = (*vars(cls), *vars(cls).get("__annotations__", {}))
         taken = sorted(
             name
-            for name in (*vars(cls), *vars(cls).get("__annotations__", {}))
+            for name in declared
             if name.startswith("_")
             and not name.startswith("__")
             and name in reserved

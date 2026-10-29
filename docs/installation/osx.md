@@ -1,14 +1,14 @@
 # macOS installation
 
-Use the official installer on macOS 14 or newer:
+Use the official installer on macOS 15 or newer:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-macOS 14 is the supported minimum for the current installer. The default developer environment includes ONNX Runtime 1.24.1 and Drake 1.45.0, whose Apple Silicon wheels require macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
+Python 3.14 needs Drake 1.47 or newer, which only ships Apple Silicon wheels for macOS 15; that sets the minimum. Older macOS releases are not supported or validated.
 
-The installer sets up Homebrew dependencies, uv, Python 3.12, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
+The installer sets up Homebrew dependencies, uv, Python, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
 
 Apple Silicon is the target macOS configuration. macOS CI is paused because runner capacity is exhausted; the current installer needs local validation. Package and hardware support can differ from Linux.
 
@@ -37,7 +37,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
-uv venv --python 3.12
+uv venv --python 3.14
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
 uv run dimos --help
@@ -48,7 +48,7 @@ uv run dimos --help
 ```sh skip
 GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
-uv sync --locked --python 3.12 --extra manipulation --extra unitree --extra cpu --group tests --group lint
+uv sync --locked --python 3.14 --extra manipulation --extra unitree --extra cpu --group tests --group lint
 source .venv/bin/activate
 uv run --no-sync dimos --help
 ```

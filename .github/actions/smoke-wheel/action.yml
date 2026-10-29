@@ -1,0 +1,41 @@
+name: smoke-wheel
+description: >-
+  Install one built dimos wheel into a fresh venv on this runner and run
+  .github/scripts/wheel_smoke.py against it. Linux wheels are tested here
+  rather than inside cibuildwheel's manylinux_2_34 container: pip there
+  cannot install open3d>=0.20 (tagged manylinux_2_35, the only release with
+  cp313/cp314 wheels) nor any open3d for cp312 on aarch64, so the in-container
+  test fails before the script runs. A stock runner installs the wheel the
+  way users do.
+
+inputs:
+  python-version:
+    description: Python version whose wheel to test, e.g. "3.14"
+    required: true
+  wheelhouse:
+    description: Directory holding the built wheels
+    default: wheelhouse
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install the wheel
+      shell: bash
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        WHEELHOUSE: ${{ inputs.wheelhouse }}
+      run: |
+        tag="cp${PYTHON_VERSION//./}"
+        uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/wheel-smoke"
+        uv pip install --python "$RUNNER_TEMP/wheel-smoke/bin/python" \
+          "$WHEELHOUSE"/dimos-*-"$tag"-"$tag"-*.whl
+    - name: Smoke-test the installed wheel
+      shell: bash
+      # Outside the checkout, so `import dimos` cannot resolve to the source tree.
+      working-directory: ${{ runner.temp }}
+      run: |
+        "$RUNNER_TEMP/wheel-smoke/bin/python" "$GITHUB_WORKSPACE/.github/scripts/wheel_smoke.py"

@@ -29,8 +29,10 @@ try:
     )
 
     ROS_AVAILABLE = True
-except ImportError:
+    _ROS_IMPORT_ERROR: ImportError | None = None
+except ImportError as exc:
     ROS_AVAILABLE = False
+    _ROS_IMPORT_ERROR = exc
     rclpy = None  # type: ignore[assignment]
     SingleThreadedExecutor = None  # type: ignore[assignment, misc]
     Node = None  # type: ignore[assignment, misc]
@@ -87,7 +89,11 @@ class RawROS(PubSub[RawROSTopic, Any]):
             qos: Optional QoS profile (defaults to BEST_EFFORT for throughput)
         """
         if not ROS_AVAILABLE:
-            raise ImportError("rclpy is not installed. ROS pubsub requires ROS 2.")
+            # Chain the real reason: a dependency missing deep inside rclpy's
+            # import chain otherwise reads as "not installed".
+            raise ImportError(
+                "rclpy is not installed. ROS pubsub requires ROS 2."
+            ) from _ROS_IMPORT_ERROR
 
         # Use unique node name to avoid conflicts in tests
         self._node_name = node_name or f"dimos_ros_{uuid.uuid4().hex[:8]}"

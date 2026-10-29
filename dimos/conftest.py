@@ -291,7 +291,10 @@ def pytest_collection_modifyitems(config, items):
             not os.getenv("TYPESAFENAVIGATIONAGENT__API_KEY"),
             "TYPESAFENAVIGATIONAGENT__API_KEY not set",
         ),
-        "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
+        "skipif_no_ros": (
+            not _has_ros() and not (os.getenv("CI") and os.getenv("ROS_DISTRO")),
+            "ROS dependencies are not present",
+        ),
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",

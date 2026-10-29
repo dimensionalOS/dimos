@@ -158,7 +158,7 @@ skip what you have.
    from (a few packages build from source, hence the compilers):
 
    ```bash
-   sudo apt-get install -y build-essential pkg-config portaudio19-dev libturbojpeg0-dev libgl1
+   sudo apt-get install -y build-essential pkg-config portaudio19-dev libturbojpeg0-dev libgl1 libegl1
    curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.bashrc
    git clone -b <branch> https://github.com/dimensionalOS/dimos.git ~/dimos && cd ~/dimos && git lfs pull --include="misc/DimSim/**" && uv sync
    ```

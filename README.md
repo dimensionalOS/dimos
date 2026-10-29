@@ -139,7 +139,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 ## Guided installation (recommended)
 
-Use the official installer to set up system dependencies, Python 3.12, and dimOS:
+Use the official installer to set up system dependencies, Python, and dimOS:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash

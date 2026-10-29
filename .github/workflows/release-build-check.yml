@@ -9,6 +9,7 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/release-build-check.yml
       - .github/actions/build-cockpit/action.yml
+      - .github/actions/smoke-wheel/action.yml
       - .github/scripts/check_sdist.py
       - .github/scripts/wheel_smoke.py
       - pyproject.toml
@@ -31,7 +32,6 @@ jobs:
     env:
       # Keep in sync with the build-wheels env in release.yml
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
-      CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,7 +40,30 @@ jobs:
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.2.1
         with:
-          only: cp312-manylinux_x86_64
+          only: cp314-manylinux_x86_64
+      - name: Upload wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          path: wheelhouse/*.whl
+
+  smoke-one-wheel:
+    needs: build-one-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: wheel
+          path: wheelhouse
+      - name: Smoke-test the wheel
+        uses: ./.github/actions/smoke-wheel
+        with:
+          python-version: "3.14"
 
   build-sdist:
     runs-on: ubuntu-latest

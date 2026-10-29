@@ -39,7 +39,9 @@ SKIP_TESTS="${DIMOS_SKIP_TESTS:-0}"
 HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
-INSTALL_PYTHON="3.12"
+INSTALL_PYTHON="3.14"
+# TODO: Increase to 3.14 after release.
+LIBRARY_PYTHON="3.12"
 GUM=""
 INSTALL_DEPS=1
 DEV_TOOLS=0
@@ -357,12 +359,12 @@ detect_gpu() {
 }
 
 detect_python() {
-    for cmd in python3.12 python3.11 python3.10 python3; do
+    for cmd in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
         if has_cmd "$cmd"; then
             local ver; ver="$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
             if [[ -n "$ver" ]]; then
                 local major minor; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
-                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 13 ]]; then
+                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 15 ]]; then
                     DETECTED_PYTHON="$(command -v "$cmd")"; DETECTED_PYTHON_VER="$ver"; return
                 fi
             fi
@@ -400,7 +402,7 @@ print_sysinfo() {
         apple-silicon) gpu_display="Apple Silicon (Metal/MPS)" ;;
         none)          gpu_display="CPU only" ;;
     esac
-    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install 3.12)${RESET}"
+    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install it)${RESET}"
     [[ "$HAS_NIX" == "1" ]] && nix_display="${GREEN}$(nix --version 2>/dev/null | head -1)${RESET}" || nix_display="not installed"
 
     printf "  %sOS:%s       %s\n" "$DIM" "$RESET" "$os_display"
@@ -750,11 +752,12 @@ do_install_library() {
     local dir="${PROJECT_DIR:-}"
     if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimensional-applications" library) || die "cancelled"; fi
     INSTALL_DIR="$dir"
+    [[ "$USE_NIX" == 1 ]] || INSTALL_PYTHON="$LIBRARY_PYTHON"
     info "library install → $dir"
     run_cmd mkdir -p "$dir"
     if ! prompt_confirm "Install dependencies now?" yes; then
         INSTALL_DEPS=0
-        dim "to install later: uv venv --python 3.12 && uv pip install 'dimos[$EXTRAS]'"
+        dim "to install later: uv venv --python $INSTALL_PYTHON && uv pip install 'dimos[$EXTRAS]'"
         return
     fi
     if [[ "$USE_NIX" == 1 ]]; then
@@ -986,8 +989,8 @@ main() {
     fi
     if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 14 ]]; then
-            die "macOS ${DETECTED_OS_VERSION} too old — 14+ required by current dependencies"
+        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 15 ]]; then
+            die "macOS ${DETECTED_OS_VERSION} too old — 15+ required by current dependencies"
         fi
     fi
 
@@ -1003,7 +1006,7 @@ main() {
 
     if [[ -z "$DETECTED_PYTHON" ]]; then
         detect_python
-        [[ -z "$DETECTED_PYTHON" ]] && info "python 3.12 will be installed by uv automatically"
+        [[ -z "$DETECTED_PYTHON" ]] && info "python will be installed by uv automatically"
     fi
 
     prompt_install_mode
