@@ -130,6 +130,9 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
         )
     config.model = model
     config.base_pose = PoseStamped(frame_id="world")
+    # The self filter lifts the overhead cloud into the model's root frame; the planner
+    # publishes tips and extra links only, and this root is a frame of its own.
+    config.tf_extra_links = [model.load().root_link]
     config.planning_groups = [
         replace(group, tip_link=f"{group.name.split('_')[0]}_tcp")
         for group in config.planning_groups

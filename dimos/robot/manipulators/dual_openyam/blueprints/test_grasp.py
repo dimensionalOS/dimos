@@ -207,5 +207,10 @@ def test_planner_maps_the_overhead_cloud_like_the_xarm_stack() -> None:
         assert _atom(stack, RealSenseCamera).kwargs["enable_pointcloud"] is True
 
 
+def test_planner_publishes_the_root_frame_the_self_filter_lifts_into() -> None:
+    model = _atom(dual_openyam_grasp, ManipulationModule).kwargs["model"]
+    assert model.tf_extra_links == ["dual_openyam_base"]
+
+
 def test_no_model_carries_a_table() -> None:
     assert 'name="table"' not in dual_openyam_grasp_model_config().model.load().xml
