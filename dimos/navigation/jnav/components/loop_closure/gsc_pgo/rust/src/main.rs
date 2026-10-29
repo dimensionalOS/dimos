@@ -130,6 +130,7 @@ config! {
     closure_inlier_distance_from_odometry: bool,
     closure_submap_by_reach: bool,
     odometry_noise_fixed_point: bool,
+    odometry_noise_from_consistent_core: bool,
     closure_hessian_observability: bool,
     closure_likelihood_visibility: bool,
     closure_likelihood_beam: bool,

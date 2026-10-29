@@ -304,6 +304,12 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
+            // the stated noise's mean step translation variance: what a closure must agree with to vouch for the noise
+            evidence_core_step_variance: if config.odometry_noise_from_consistent_core {
+                mean_step_variances(&self.key_poses, config)[0]
+            } else {
+                0.0
+            },
             noise_fixed_point: (config.odometry_noise_fixed_point
                 && config.odometry_noise_from_closures)
                 .then(|| crate::big_picture_fit::NoiseFixedPoint {
@@ -345,6 +351,7 @@ impl GscPgo {
                     let cold = run(&SolveConfig {
                         committed: Vec::new(),
                         noise_fixed_point: None,
+                        evidence_core_step_variance: 0.0,
                         ..solve_config.clone()
                     });
                     let count =

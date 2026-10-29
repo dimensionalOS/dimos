@@ -75,6 +75,10 @@ pub struct SolveConfig {
     /// When set, the noise evidence is taken at its own fixed point (`odometry_noise_fixed_point`): the evidence copy
     /// is re-solved at the odometry noise its evidence estimates, and re-estimated, until the estimate stops moving.
     pub noise_fixed_point: Option<NoiseFixedPoint>,
+    /// When positive, the noise evidence reads only the kept closures' mutually consistent core (PCM) at this odometry
+    /// step translation variance, the stated one (`odometry_noise_from_consistent_core`): a closure kept only because
+    /// the learned noise is loose cannot vouch for that noise. 0 = every kept closure (or GM's core, as before).
+    pub evidence_core_step_variance: f64,
 }
 
 /// The learner's estimator, for the evidence's fixed point: the ln noise factors the odometry edges carry (relative to
@@ -657,7 +661,7 @@ pub(crate) fn solve_core(
     // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
     // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the odometry edges carry)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
-    let evidence_weights: Vec<f64> = if gm_taken {
+    let evidence_weights: Vec<f64> = if gm_taken || config.evidence_core_step_variance > 0.0 {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
             .zip(&huber)
@@ -665,8 +669,11 @@ pub(crate) fn solve_core(
             .filter(|(_, (_, &w))| w > 0.0)
             .map(|(i, (e, _))| (i, *e))
             .collect();
-        let step_variance =
-            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64;
+        let step_variance = if config.evidence_core_step_variance > 0.0 {
+            config.evidence_core_step_variance
+        } else {
+            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64
+        };
         let pcm = SolveConfig {
             pcm_odometry_translation_variance: step_variance,
             ..config.clone()

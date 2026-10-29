@@ -88,6 +88,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gravity: Vec::new(),
             committed: Vec::new(),
             noise_fixed_point: None,
+            evidence_core_step_variance: 0.0,
         },
     );
     assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
@@ -150,6 +151,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         gravity: Vec::new(),
         committed: Vec::new(),
         noise_fixed_point: None,
+        evidence_core_step_variance: 0.0,
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);
@@ -265,6 +267,7 @@ fn overtrusted_square(gnc_overtrust_check: bool) -> (Vec<f64>, f64, f64) {
             gravity: Vec::new(),
             committed: Vec::new(),
             noise_fixed_point: None,
+            evidence_core_step_variance: 0.0,
         },
     );
     let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
@@ -332,6 +335,7 @@ fn the_overtrust_check_keeps_tls_verdict_on_an_honest_odometry() {
                 gravity: Vec::new(),
                 committed: Vec::new(),
                 noise_fixed_point: None,
+                evidence_core_step_variance: 0.0,
             },
         )
     };
@@ -379,6 +383,7 @@ fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
                 Vec::new()
             },
             noise_fixed_point: None,
+            evidence_core_step_variance: 0.0,
         },
     );
     let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));

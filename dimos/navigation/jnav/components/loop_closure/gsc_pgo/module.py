@@ -117,6 +117,8 @@ class PGOConfig(NativeModuleConfig):
     closure_submap_by_reach: bool = False
     # True (with odometry_noise_from_closures): each solve's noise evidence is iterated to its fixed point (re-solved at the noise it estimates)
     odometry_noise_fixed_point: bool = False
+    # True (with odometry_noise_from_closures): the noise evidence reads only the kept closures consistent with each other at the stated noise (PCM)
+    odometry_noise_from_consistent_core: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

@@ -498,6 +498,11 @@ pub struct Config {
     /// (Helmert's iterated variance component estimation): the evidence copy re-solved at the noise it estimates until
     /// the estimate stops moving, so the learner reads a noise consistent with the graph it judged.
     pub odometry_noise_fixed_point: bool,
+    /// When true (with `odometry_noise_from_closures`), the noise evidence reads only the kept closures' mutually
+    /// consistent core at the stated odometry noise (PCM): looser learned noise admits wrong loops whose misfit then
+    /// reads as looser noise still (small_l1 xy x6 -> x2531 in 40 keyframes, kept 121 -> 588), unless a closure must
+    /// agree with the others at the noise the odometry reports to count.
+    pub odometry_noise_from_consistent_core: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -603,6 +608,7 @@ impl Default for Config {
             closure_inlier_distance_from_odometry: false,
             closure_submap_by_reach: false,
             odometry_noise_fixed_point: false,
+            odometry_noise_from_consistent_core: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,

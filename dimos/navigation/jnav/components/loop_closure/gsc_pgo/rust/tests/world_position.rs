@@ -122,6 +122,7 @@ fn config() -> SolveConfig {
         gravity: Vec::new(),
         committed: Vec::new(),
         noise_fixed_point: None,
+        evidence_core_step_variance: 0.0,
     }
 }
 
