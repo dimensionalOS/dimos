@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -37,6 +36,7 @@ from dimos.robot.manipulators.dual_openyam.scene_registration import (
     SelfClearedSceneRegistrationModule,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+from dimos.types.timestamped import TimestampedBufferCollection
 
 TS = 1000.0
 ARM_JOINTS = [f"{side}_joint{i}" for side in ("left", "right") for i in range(1, 7)]
@@ -59,8 +59,8 @@ def module(monkeypatch: pytest.MonkeyPatch) -> SelfClearedSceneRegistrationModul
     m.config = SelfClearedSceneRegistrationConfig(
         model=dual_openyam_self_filter_model(), padding_m=0.02
     )
-    m._state_lock = threading.Lock()
-    m._joint_state = JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS)
+    m._states = TimestampedBufferCollection[JointState](600.0)
+    m._states.add(JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS))
     m._root_link = "dual_openyam_base"
     m._body_filter = RoboPlanBodyFilter(m.config.model.load(), 0.02)
     identity = Transform(
@@ -91,12 +91,20 @@ def test_scene_keeps_the_table_and_drops_the_arm_base(
     assert np.allclose(points[:, 2], DUAL_OPENYAM_TABLE_TOP_Z, atol=1e-6)
 
 
-def test_scene_is_withheld_without_a_fresh_joint_state(
+def test_scan_time_state_serves_a_cloud_read_at_pick_time(
     module: SelfClearedSceneRegistrationModule,
 ) -> None:
-    module._joint_state = JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS - 5.0)
-    assert module.get_full_scene_pointcloud() is None
-    module._joint_state = None
+    # The arm moved after the scan; the cloud still clears with the state from the scan.
+    module._states.add(JointState(name=ARM_JOINTS, position=[0.8] * 12, ts=TS + 25.0))
+    cleared = module.get_full_scene_pointcloud()
+    assert cleared is not None and len(cleared.as_numpy()[0]) == len(_scene().as_numpy()[0]) - 3
+
+
+def test_scene_is_withheld_without_a_state_near_the_capture(
+    module: SelfClearedSceneRegistrationModule,
+) -> None:
+    module._states = TimestampedBufferCollection[JointState](600.0)
+    module._states.add(JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS - 5.0))
     assert module.get_full_scene_pointcloud() is None
 
 

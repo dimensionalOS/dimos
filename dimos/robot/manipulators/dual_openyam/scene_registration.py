@@ -23,7 +23,6 @@ applies the same body filter to the scene the check reads.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import numpy as np
@@ -39,6 +38,7 @@ from dimos.perception.experimental.object_scene_registration import (
 )
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -49,9 +49,10 @@ class SelfClearedSceneRegistrationConfig(ObjectSceneRegistrationConfig):
     model: RobotModel
     # How far past the model's collision geometry a return still counts as the robot.
     padding_m: float = Field(default=0.01, ge=0.0)
-    # Oldest joint state that may stand for the cloud's capture time; the arm holds
-    # still while scanning.
+    # How far from the cloud's capture time a joint state may be to stand for it.
     state_tolerance_s: float = Field(default=0.5, gt=0.0)
+    # How long joint states are kept: a scan's cloud is read at pick time, later.
+    state_history_s: float = Field(default=600.0, gt=0.0)
 
 
 class SelfClearedSceneRegistrationModule(ObjectSceneRegistrationModule):
@@ -63,8 +64,7 @@ class SelfClearedSceneRegistrationModule(ObjectSceneRegistrationModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._state_lock = threading.Lock()
-        self._joint_state: JointState | None = None
+        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._body_filter: RoboPlanBodyFilter | None = None
         self._root_link = self.config.model.load().root_link
 
@@ -74,13 +74,11 @@ class SelfClearedSceneRegistrationModule(ObjectSceneRegistrationModule):
         self._body_filter = RoboPlanBodyFilter(self.config.model.load(), self.config.padding_m)
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
-        with self._state_lock:
-            self._joint_state = state
+        self._states.add(state)
 
-    def _state_for(self, stamp: float) -> dict[str, float] | None:
-        with self._state_lock:
-            state = self._joint_state
-        if state is None or abs(float(state.ts) - stamp) > self.config.state_tolerance_s:
+    def _state_at(self, stamp: float) -> dict[str, float] | None:
+        state = self._states.find_closest(stamp, self.config.state_tolerance_s)
+        if state is None:
             return None
         return dict(zip(state.name, state.position, strict=True))
 
@@ -93,17 +91,17 @@ class SelfClearedSceneRegistrationModule(ObjectSceneRegistrationModule):
     ) -> PointCloud2 | None:
         """The registration module's scene cloud without the points on the robot.
 
-        None when the robot's pose at the capture is unknown: the check then reports
-        itself skipped rather than running against the robot's own image.
+        The cloud is the scan's snapshot, read at pick time, so the joint state is the
+        one from the capture, not the latest. None when that pose is unknown: the check
+        then reports itself skipped rather than running against the robot's own image.
         """
         scene = super().get_full_scene_pointcloud(exclude_object_id, depth_trunc, voxel_size)
         if scene is None or self._body_filter is None:
             return scene
         stamp = float(scene.ts)
-        joints = self._state_for(stamp)
-        root_from_scene = self.tfbuffer.get(
-            self._root_link, scene.frame_id, stamp, self.config.state_tolerance_s
-        )
+        joints = self._state_at(stamp)
+        # The model root is fixed in the world, so the latest edge is the capture-time one.
+        root_from_scene = self.tfbuffer.get(self._root_link, scene.frame_id)
         if joints is None or root_from_scene is None:
             logger.warning("Scene cloud dropped: robot pose at the capture time is unknown")
             return None
