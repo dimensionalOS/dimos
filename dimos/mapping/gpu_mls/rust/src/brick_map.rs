@@ -378,11 +378,16 @@ impl BrickMap {
     }
 
     /// Grows the pools, before a frame of `points` uploads, so it cannot fill
-    /// them. Reads the counters back only when the running bounds say it might.
+    /// them. Reads the counters back only when the running bounds say a pool
+    /// that can still grow might fill.
     fn reserve(&mut self, points: u32) {
         let n = points as u64;
         let fits = |bound: u64, pool: u32| bound + n <= pool as u64;
-        if !(fits(self.brick_bound, self.brick_pool) && fits(self.voxel_bound, self.voxel_pool)) {
+        let bricks_short = !fits(self.brick_bound, self.brick_pool)
+            && self.brick_pool < self.config.brick_capacity;
+        let voxels_short = !fits(self.voxel_bound, self.voxel_pool)
+            && self.voxel_pool < self.config.voxel_capacity;
+        if bricks_short || voxels_short {
             let stats = self.stats();
             self.brick_bound = stats.bricks.min(self.brick_pool) as u64;
             self.voxel_bound = stats.voxels.min(self.voxel_pool) as u64;

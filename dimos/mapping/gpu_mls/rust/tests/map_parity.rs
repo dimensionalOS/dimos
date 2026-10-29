@@ -197,7 +197,7 @@ fn map_grows_past_the_old_fixed_pool_and_matches_cpu() {
         .collect();
     let piece = cloud.len().div_ceil(SEED_PIECES);
     let mut cpu = VoxelMap::default();
-    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 20, piece as u32))
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 19, piece as u32))
         .expect("brick map fits the device");
     for chunk in cloud.chunks(piece) {
         seed_points(&mut cpu, chunk, &cfg);
