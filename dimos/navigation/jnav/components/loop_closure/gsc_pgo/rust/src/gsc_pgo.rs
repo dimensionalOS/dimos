@@ -921,21 +921,21 @@ impl ClosureSearch {
         let gate_noise = diag.odometry_noise_gate;
         let odometry_step = self.mean_step_xy_variance * gate_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let known = if (self.config.odom_noise_per_motion
+        let by_graph = (self.config.odom_noise_per_motion
             || self.config.closure_informative_by_graph_covariance)
             && diag
                 .innovation_covariance
                 .iter()
                 .flatten()
-                .all(|v| v.is_finite())
-        {
+                .all(|v| v.is_finite());
+        // at the upper bound: scaled by the most any component's bound exceeds its estimate
+        let widen = (0..4)
+            .map(|c| gate_noise[c] / diag.odometry_noise[c])
+            .fold(1.0, f64::max);
+        let known = if by_graph {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            // (at the upper bound: scaled by the most any component's bound exceeds its estimate)
-            let widen = (0..4)
-                .map(|c| gate_noise[c] / diag.odometry_noise[c])
-                .fold(1.0, f64::max);
             widen
                 * mat3::jacobi_eigen(diag.innovation_covariance)
                     .0
@@ -953,8 +953,42 @@ impl ClosureSearch {
         };
         // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its fitness
         let closure_variance = variances.map_or(icp.fitness, |v| v[3].max(v[4]).max(v[5]));
+        // a closure is uninformative only if it also agrees with the graph: one that disagrees beyond the graph's own
+        // spread of its two ends plus its fit's (chi-square, 3 DOF, at `closure_gnc_inlier_probability`) says the
+        // odometry's noise is understated, the overtrust evidence the solve's check and the learner need, however
+        // tight the graph claims to be. The pull is how far ICP moved the source keyframe, in world axes
+        let pull = {
+            let at = &self.key_poses[cur_idx].translation_global;
+            mat3::sub(
+                &mat3::add(&mat3::mat_vec(&icp.rotation, at), &icp.translation),
+                at,
+            )
+        };
+        let spread: Mat3 = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let graph = if by_graph {
+                    widen * diag.innovation_covariance[i][j]
+                } else if i == j {
+                    known
+                } else {
+                    0.0
+                };
+                graph
+                    + if i == j {
+                        closure_variance * diag.closure_noise_scale
+                    } else {
+                        0.0
+                    }
+            })
+        });
+        let disagrees = mat3::inverse(&spread).is_some_and(|information| {
+            let whitened = mat3::mat_vec(&information, &pull);
+            (0..3).map(|k| pull[k] * whitened[k]).sum::<f64>()
+                > crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability)
+        });
         if self.config.closure_uninformative_gate
             && closure_variance * diag.closure_noise_scale >= known
+            && !disagrees
         {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
@@ -1179,7 +1213,10 @@ impl GscPgo {
     }
 
     /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below
-    /// (-1) the estimate, from its posterior spread (the prior's before the residuals have measured it).
+    /// (-1) the estimate, from its posterior spread. For a source no committed closure has measured yet, each bound errs
+    /// towards letting evidence in, so nothing starves the learner: the gate's upper bound takes the prior's spread (a
+    /// tight closure might still be news), the solve's lower bound is the estimate itself (the stated noise; a lower bound
+    /// from the prior alone solved huge overtrust at x0.03-0.2, voting 979 of 980 closures out before any was learned from).
     pub(crate) fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
         // one-sided normal quantile z: P(|Z| < z) = 2p - 1
         let p = self.config.closure_gnc_inlier_probability;
@@ -1187,7 +1224,9 @@ impl GscPgo {
         let prior = self.odometry_noise_prior();
         std::array::from_fn(|c| {
             let sd = self.odometry_noise_ln_sd[c].unwrap_or_else(|| {
-                if prior[c] > 0.0 {
+                if side < 0.0 {
+                    0.0
+                } else if prior[c] > 0.0 {
                     prior[c]
                 } else {
                     crate::odometry_noise::standard_error(c, 0)
@@ -1388,33 +1427,42 @@ impl GscPgo {
                 _ => current,
             };
         let mut ln_closure_rotation = self.closure_noise_ln_rotation_scale;
-        let ln_closure = if self.config.closure_noise_from_residuals && fit_odometry {
-            ln_closure_rotation = joint(
-                0,
-                self.closure_noise_ln_rotation_scale_dispatched,
-                self.closure_noise_ln_rotation_scale,
-                &mut closure_redundancy,
-            );
-            joint(
-                1,
-                self.closure_noise_ln_scale_dispatched,
-                self.closure_noise_ln_scale,
-                &mut closure_redundancy,
-            )
-        } else if fit_closure {
-            match crate::odometry_noise::fit(
-                &innovations,
-                self.odometry_noise_prior(),
-                false,
-                true,
-                1.0 / volume.max(f64::MIN_POSITIVE),
-            ) {
-                Some((_, ln_closure, _)) => ln_closure,
-                None => self.closure_noise_ln_scale,
-            }
-        } else {
-            0.0
-        };
+        // the solved residuals split each loop's misfit between the closures and the odometry by their stated noises,
+        // so while no odometry source is measured (now or before) every misfit lands on the closures: an overtrusted
+        // odometry read as loose closures (huge overtrust: 4 kept closures, translation x4.3, then none kept and the
+        // learner never fed). Until then the closures keep their scale, as with no learner
+        let odometry_measured = self.odometry_noise_ln_sd.iter().any(Option::is_some)
+            || evidence.is_some_and(|e| e[..4].iter().any(|&(sum, r)| r > 0.5 && sum.is_finite()));
+        let ln_closure =
+            if self.config.closure_noise_from_residuals && fit_odometry && !odometry_measured {
+                self.closure_noise_ln_scale
+            } else if self.config.closure_noise_from_residuals && fit_odometry {
+                ln_closure_rotation = joint(
+                    0,
+                    self.closure_noise_ln_rotation_scale_dispatched,
+                    self.closure_noise_ln_rotation_scale,
+                    &mut closure_redundancy,
+                );
+                joint(
+                    1,
+                    self.closure_noise_ln_scale_dispatched,
+                    self.closure_noise_ln_scale,
+                    &mut closure_redundancy,
+                )
+            } else if fit_closure {
+                match crate::odometry_noise::fit(
+                    &innovations,
+                    self.odometry_noise_prior(),
+                    false,
+                    true,
+                    1.0 / volume.max(f64::MIN_POSITIVE),
+                ) {
+                    Some((_, ln_closure, _)) => ln_closure,
+                    None => self.closure_noise_ln_scale,
+                }
+            } else {
+                0.0
+            };
         // with the closures' own covariance their scale is measured from closure pairs (`closure_disagreement_scale`),
         // which never involve the long-loop odometry; the solved graph's residuals cannot tell a loose closure from a
         // loose odometry (an undertrusted odometry read as loose closures: athens x7000), so they learn the odometry only

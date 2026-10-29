@@ -152,3 +152,22 @@ fn the_overtrust_check_keeps_the_right_closures_and_teaches_the_learner() {
         );
     }
 }
+
+/// A learner that no committed closure has fed yet solves at the stated noise, as no learner would (a lower bound from
+/// the prior's spread alone took an overtrusted odometry's solve lower still and starved the learner it waited on), and
+/// gates at the prior's upper bound, admitting what might be news.
+#[test]
+fn an_unfed_learner_solves_at_the_stated_noise_and_gates_wide() {
+    let pgo = GscPgo::new(Config {
+        odometry_noise_from_closures: true,
+        closure_uninformative_noise_upper_bound: true,
+        odometry_noise_solve_lower_bound: true,
+        odom_noise_prior_ln_sd_xy: 1.72,
+        odom_noise_prior_ln_sd_z: 2.05,
+        odom_noise_prior_ln_sd_yaw: 1.15,
+        odom_noise_prior_ln_sd_tilt: 0.96,
+        ..Config::default()
+    });
+    assert_eq!(pgo.odometry_noise_for_solve(), [1.0; 4]);
+    assert!(pgo.odometry_noise_for_gate().iter().all(|&g| g > 1.0));
+}

@@ -437,7 +437,7 @@ impl GscPgo {
         self.graph_error = solution.error;
         self.update_odometry_noise_scale(solution.odometry_noise_evidence);
         // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise,
-        // closure scales and the gravity bound's sd, -1 for none), for tracing the noise learner against ground truth offline
+        // closure scales, the gravity bound's sd (-1 for none) and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
             use std::io::Write;
             let kept: Vec<usize> = self
@@ -448,14 +448,18 @@ impl GscPgo {
                 .map(|(i, _)| i)
                 .collect();
             let line = format!(
-                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}],\"gravity_sd\":{}}}\n",
+                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}],\"gravity_sd\":{},\"evidence\":{:?}}}\n",
                 n,
                 self.committed_closures.len(),
                 kept,
                 self.odometry_noise(),
                 self.closure_noise_rotation_scale(),
                 self.closure_noise_scale(),
-                self.odometry_gravity_variance().map_or(-1.0, f64::sqrt)
+                self.odometry_gravity_variance().map_or(-1.0, f64::sqrt),
+                solution
+                    .odometry_noise_evidence
+                    .map(|e| e.map(|(sum, r)| [sum, r]))
+                    .unwrap_or([[f64::NAN; 2]; 6])
             );
             if let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)
