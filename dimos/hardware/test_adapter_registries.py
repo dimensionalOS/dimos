@@ -71,6 +71,7 @@ EXPECTED_NAMES = {
         "mock_whole_body",
         "openarm_damiao",
         "openyam_damiao",
+        "seeed_b601_dm",
         "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",

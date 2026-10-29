@@ -365,6 +365,20 @@ Code style rules:
 - Don't hardcode ports/URLs — use the owning module's configuration and shared constants.
 - Type annotations required. Mypy strict mode.
 
+### Damiao arm integration
+
+Damiao arms reuse `DamiaoWholeBodyAdapter` and `can-motor-control`.
+Robot adapters declare topology; missing profiles and transports belong in
+the shared driver. At the driver level `4340 = 4340P`, so both use
+`damiao.MotorType.DM4340`. Compare protocol scaling before treating a model
+name as unsupported. Read the Damiao section of
+`docs/capabilities/manipulation/adding_a_custom_arm.md` before implementing.
+
+| Rule | Enforcement |
+| --- | --- |
+| B601 shares the Damiao driver and lifecycle rather than a vendor SDK stack | `dimos/hardware/whole_body/seeed_b601_dm/test_adapter.py::test_b601_dm_reuses_shared_driver_and_lifecycle` |
+| B601 4340P motors use the shared DM4340 profile | `dimos/hardware/whole_body/seeed_b601_dm/test_adapter.py::test_official_4340p_uses_equivalent_4340_driver_profile` |
+
 ---
 
 ## `all_blueprints.py` is auto-generated

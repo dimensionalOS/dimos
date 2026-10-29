@@ -2,9 +2,48 @@
 
 This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
+## Choose the existing motor stack first
+
+For a Damiao arm, use `DamiaoWholeBodyAdapter` in
+[`whole_body/damiao/adapter.py`](/dimos/hardware/whole_body/damiao/adapter.py)
+and the shared `can-motor-control` driver. Add a robot topology under
+`dimos/hardware/whole_body/`, rather than wrapping the vendor's arm SDK.
+The generic manipulator skeleton below is for hardware without an existing
+shared motor stack.
+
+Motor model names are not driver boundaries. At the driver level,
+**4340 = 4340P**: both use the existing `damiao.MotorType.DM4340` profile,
+with position range +/-12.5 rad, velocity range +/-10 rad/s, and torque
+range +/-28 Nm. The `P` suffix does not require another driver.
+These are protocol scaling ranges, not safe operating limits for an arm.
+
+Before treating another model as unsupported, compare its protocol and
+configured PMAX, VMAX, and TMAX with the shared codec's profiles.
+If a profile or transport is actually missing, extend `can-motor-control`
+and its bindings, then reuse the same dimOS adapter. Do not add a parallel
+Motorbridge, Python CAN codec, or vendor control loop to work around a
+missing name or transport. A vendor serial bridge is a transport choice,
+not a reason to replace the motor driver. State unsupported transport
+requirements explicitly instead of silently substituting another backend.
+
+A Damiao integration declares motor IDs and profiles, arm and gripper groups,
+the robot model, and its registered factory. The shared adapter continues
+to own lifecycle, feedback, MIT commands, gravity compensation, and faults.
+Use `HardwareType.WHOLE_BODY`, `WholeBodyConfig`, and the whole-body registry.
+Configure devices through `DamiaoRuntimeConfig.bus_devices`, not `address`.
+Keep model checkout lazy and pin it to an immutable upstream commit.
+
+Follow [the B601 example](/docs/capabilities/manipulation/seeed_b601_dm_integration.md)
+for a six-axis arm with a gripper, or
+[the OpenArm integration](/docs/capabilities/manipulation/openarm_integration.md)
+for multiple buses. Verify gripper direction and current for the actual
+mechanism. Reusing the driver does not establish those mechanical settings.
+
 ## Architecture Overview
 
-dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+dimOS uses a **Protocol-based adapter pattern**. Reuse an existing adapter stack
+when it applies, including the Damiao base class above. For other hardware,
+a vendor SDK wrapper can implement the protocol without inheritance:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
