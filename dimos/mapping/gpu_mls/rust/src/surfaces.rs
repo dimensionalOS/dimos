@@ -766,6 +766,23 @@ impl SurfaceExtractor {
         }
     }
 
+    /// The fitted plane's upward normal at each of `keys`, None where the
+    /// cell has no plane; the slope the standable stage judges.
+    pub fn plane_normals(&self, keys: &[VoxelKey]) -> Vec<Option<[f32; 3]>> {
+        let packed: Vec<u32> = self
+            .gpu
+            .read(&self.buffers.cell_normals, self.window.cells() as usize);
+        let planar: std::collections::HashSet<VoxelKey> =
+            self.read_bits(&self.buffers.planar).into_iter().collect();
+        keys.iter()
+            .map(|&k| {
+                planar
+                    .contains(&k)
+                    .then(|| unpack_normal(packed[self.cell_of(k)]))
+            })
+            .collect()
+    }
+
     /// Raw surface bitmask words, the readback a CPU consumer would pay.
     pub fn read_surface_words(&self) -> Vec<u32> {
         let w = self.window;

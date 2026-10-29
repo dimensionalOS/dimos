@@ -254,7 +254,6 @@ fn divergence(label: &str, cpu: &AHashSet<VoxelKey>, gpu: &AHashSet<VoxelKey>) -
 fn check_box(
     map: &mut BrickMap,
     healthy: &AHashSet<VoxelKey>,
-    normals: &ahash::AHashMap<VoxelKey, [f32; 3]>,
     center: Point,
     voxel_size: f32,
 ) -> bool {
@@ -331,11 +330,9 @@ fn check_box(
         config.step_threshold_m,
     );
     explain_standable(
-        &occupied,
-        normals,
+        &extractor,
         &cpu_standable,
         &gpu_standable,
-        clearance,
         config.max_slope_deg,
     );
     standable <= STANDABLE_DIVERGENCE && walls <= WALL_DIVERGENCE
@@ -406,36 +403,28 @@ fn explain_walls(
     );
 }
 
-/// Splits the standable cells only the CPU has by the nearest occupied voxel
-/// above: just past the CPU's whole-voxel clearance, where the GPU's
-/// headroom in meters can fall short, versus the rest.
+/// Splits the standable cells only the CPU has by the GPU's two reasons to
+/// turn a cell down: its fitted plane is too steep, or its headroom in meters
+/// is short.
 fn explain_standable(
-    occupied: &AHashSet<VoxelKey>,
-    normals: &ahash::AHashMap<VoxelKey, [f32; 3]>,
+    extractor: &SurfaceExtractor,
     cpu: &AHashSet<VoxelKey>,
     gpu: &AHashSet<VoxelKey>,
-    clearance: i32,
     max_slope_deg: f32,
 ) {
     let only_cpu: Vec<VoxelKey> = cpu.difference(gpu).copied().collect();
     let min_up = max_slope_deg.to_radians().cos();
-    let near_ceiling = |k: &VoxelKey| {
-        (clearance + 1..=clearance + 2).any(|dz| occupied.contains(&(k.0, k.1, k.2 + dz)))
-    };
-    let steep = |k: &VoxelKey| normals.get(k).is_some_and(|n| n[2].abs() < min_up);
-    let planeless = |k: &VoxelKey| !normals.contains_key(k);
-    let count = |f: &dyn Fn(&VoxelKey) -> bool| only_cpu.iter().filter(|k| f(k)).count();
-    let (c_steep, c_planeless, c_ceiling) =
-        (count(&steep), count(&planeless), count(&near_ceiling));
-    let either = count(&|k| steep(k) || planeless(k) || near_ceiling(k));
-    let share = |n: usize| 100.0 * n as f64 / only_cpu.len().max(1) as f64;
+    let steep = extractor
+        .plane_normals(&only_cpu)
+        .iter()
+        .filter(|n| n.is_some_and(|n| n[2] < min_up))
+        .count();
     println!(
-        "    of the {} standable cells only on the cpu: {c_steep} ({:.0}%) steeper than {max_slope_deg} deg by their voxel's plane, {c_planeless} ({:.0}%) planeless, {c_ceiling} ({:.0}%) a voxel 1 to 2 cells past the cpu's clearance, {either} ({:.0}%) any",
+        "    of the {} standable cells only on the cpu: {steep} ({:.0}%) have a plane steeper than {max_slope_deg} deg, {} ({:.0}%) are short of headroom in meters",
         only_cpu.len(),
-        share(c_steep),
-        share(c_planeless),
-        share(c_ceiling),
-        share(either)
+        100.0 * steep as f64 / only_cpu.len().max(1) as f64,
+        only_cpu.len() - steep,
+        100.0 * (only_cpu.len() - steep) as f64 / only_cpu.len().max(1) as f64
     );
 }
 
@@ -511,16 +500,11 @@ fn run_parity(path: &str, voxel_size: f32, max_frames: usize) {
         .filter(|v| v.health > 0)
         .map(|v| v.key)
         .collect();
-    let normals: ahash::AHashMap<VoxelKey, [f32; 3]> = snapshot
-        .iter()
-        .filter(|v| v.health > 0)
-        .filter_map(|v| v.normal.map(|n| (v.key, n)))
-        .collect();
     drop(snapshot);
     let mut boxes_ok = 0;
     for b in 0..BOXES {
         let center = origins[(b * origins.len() + origins.len() / 2) / BOXES];
-        boxes_ok += check_box(&mut map, &healthy, &normals, center, voxel_size) as usize;
+        boxes_ok += check_box(&mut map, &healthy, center, voxel_size) as usize;
     }
     let map_ok = mismatch <= MAP_MISMATCH && d.moment_rel_err < MOMENT_TOLERANCE && overflow == 0;
     println!(
@@ -586,9 +570,175 @@ fn run_control(path: &str, voxel_size: f32, max_frames: usize) {
     );
 }
 
+/// Voxel classes for `export`, in the order the viewer's legend lists them.
+const EXPORT_CLASSES: [&str; 10] = [
+    "occupied",
+    "standable on both",
+    "standable only on cpu: plane steeper than the slope limit",
+    "standable only on cpu: short of headroom in meters",
+    "standable only on gpu",
+    "wall on both",
+    "wall only on gpu: rise over the step threshold",
+    "wall only on gpu: beside a cell the gpu turned down",
+    "wall only on gpu: other",
+    "wall only on cpu",
+];
+
+/// One box of a stretch of the recording as JSON for a voxel viewer: every
+/// occupied or surface cell with its class in EXPORT_CLASSES.
+fn run_export(
+    path: &str,
+    voxel_size: f32,
+    first: usize,
+    count: usize,
+    center: Point,
+    half_m: f32,
+    out: &str,
+) {
+    let gpu = Gpu::new().expect("a GPU");
+    let mut map = gpu_map(&gpu, voxel_size);
+    for (origin, pts) in open_frames(path).skip(first).take(count) {
+        map.integrate(origin, &pts);
+    }
+    map.finish();
+    let snapshot = map.snapshot();
+    let config = SurfaceConfig::mls_defaults();
+    let (clearance, closing, step) = (
+        config.clearance_cells(voxel_size),
+        config.closing_cells(voxel_size),
+        config.step_cells(voxel_size),
+    );
+    let cell = |c: f32, half: f32| {
+        (
+            ((c - half) / voxel_size).floor() as i32,
+            ((c + half) / voxel_size).ceil() as i32,
+        )
+    };
+    let (x, y, z) = (
+        cell(center.0, half_m),
+        cell(center.1, half_m),
+        cell(center.2, BOX_M.2 / 2.0),
+    );
+    let inside = |k: &VoxelKey| {
+        (x.0..x.1).contains(&k.0) && (y.0..y.1).contains(&k.1) && (z.0..z.1).contains(&k.2)
+    };
+    let healthy: Vec<&VoxelSnapshot> = snapshot.iter().filter(|v| v.health > 0).collect();
+    let in_box: Vec<VoxelKey> = healthy
+        .iter()
+        .map(|v| v.key)
+        .filter(|k| inside(k))
+        .collect();
+    let window = Window::covering(in_box.iter().copied(), closing + 1).expect("an occupied box");
+    let (lo, size) = (window.min, window.size);
+    let in_window = |k: &VoxelKey| {
+        (0..size.0 as i32).contains(&(k.0 - lo.0))
+            && (0..size.1 as i32).contains(&(k.1 - lo.1))
+            && (0..size.2 as i32).contains(&(k.2 - lo.2))
+    };
+    let occupied: AHashSet<VoxelKey> = healthy
+        .iter()
+        .map(|v| v.key)
+        .filter(|k| in_window(k))
+        .collect();
+    let mut extractor =
+        SurfaceExtractor::new(&map, window, config).expect("window fits the device");
+    extractor.extract(&mut map);
+    map.finish();
+    let result = extractor.read();
+    let cpu_standable: AHashSet<VoxelKey> =
+        surface_cells(&occupied, clearance, 0).into_iter().collect();
+    let gpu_standable: AHashSet<VoxelKey> = result.standable.iter().copied().collect();
+    let cpu_walls: AHashSet<VoxelKey> =
+        wall_distances(&occupied, &result.surface, clearance, step, voxel_size)
+            .into_iter()
+            .filter(|(_, d)| *d == 0.0)
+            .map(|(k, _)| k)
+            .collect();
+    let gpu_walls: AHashSet<VoxelKey> = result.walls.iter().copied().collect();
+    let height: ahash::AHashMap<VoxelKey, f32> = result
+        .surface
+        .iter()
+        .copied()
+        .zip(result.heights.iter().copied())
+        .collect();
+    let neighbors = |k: VoxelKey| {
+        [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .flat_map(move |(dx, dy)| (-step..=step).map(move |dz| (k.0 + dx, k.1 + dy, k.2 + dz)))
+    };
+    let min_up = config.max_slope_deg.to_radians().cos();
+    let only_cpu: Vec<VoxelKey> = cpu_standable.difference(&gpu_standable).copied().collect();
+    let steep: AHashSet<VoxelKey> = only_cpu
+        .iter()
+        .zip(extractor.plane_normals(&only_cpu))
+        .filter(|(_, n)| n.is_some_and(|n| n[2] < min_up))
+        .map(|(k, _)| *k)
+        .collect();
+    let class = |k: VoxelKey| -> usize {
+        let (cw, gw) = (cpu_walls.contains(&k), gpu_walls.contains(&k));
+        if cw && gw {
+            return 5;
+        }
+        if gw {
+            let h = height.get(&k).copied().unwrap_or(f32::NAN);
+            if neighbors(k).any(|n| {
+                height
+                    .get(&n)
+                    .is_some_and(|m| (m - h).abs() > config.step_threshold_m)
+            }) {
+                return 6;
+            }
+            if neighbors(k).any(|n| cpu_standable.contains(&n) && !gpu_standable.contains(&n)) {
+                return 7;
+            }
+            return 8;
+        }
+        if cw {
+            return 9;
+        }
+        match (cpu_standable.contains(&k), gpu_standable.contains(&k)) {
+            (true, true) => 1,
+            (true, false) if steep.contains(&k) => 2,
+            (true, false) => 3,
+            (false, true) => 4,
+            (false, false) => 0,
+        }
+    };
+    let mut cells: Vec<VoxelKey> = occupied
+        .iter()
+        .copied()
+        .chain(result.surface.iter().copied())
+        .filter(|k| inside(k))
+        .collect();
+    cells.sort();
+    cells.dedup();
+    let mut counts = [0usize; EXPORT_CLASSES.len()];
+    let mut flat = Vec::with_capacity(cells.len() * 4);
+    for k in &cells {
+        let c = class(*k);
+        counts[c] += 1;
+        flat.extend([k.0 - x.0, k.1 - y.0, k.2 - z.0, c as i32]);
+    }
+    let json = format!(
+        "{{\"voxel_size\":{voxel_size},\"min\":[{},{},{}],\"frames\":[{first},{}],\"classes\":[{}],\"counts\":{:?},\"cells\":{:?}}}",
+        x.0,
+        y.0,
+        z.0,
+        first + count,
+        EXPORT_CLASSES.map(|c| format!("\"{c}\"")).join(","),
+        counts,
+        flat
+    );
+    std::fs::write(out, json).expect("a writable output");
+    println!("{} cells to {out}", cells.len());
+    for (name, n) in EXPORT_CLASSES.iter().zip(counts) {
+        println!("  {name}: {n}");
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames]";
+    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
     let path = args.get(1).expect(usage);
     let voxel_size = args
         .get(3)
@@ -596,6 +746,18 @@ fn main() {
     match args.get(2).map(String::as_str) {
         Some("cpu") => run_cpu(path, voxel_size),
         Some("gpu") => run_gpu(path, voxel_size),
+        Some("export") => {
+            let num = |i: usize| -> f32 { args.get(i).expect(usage).parse().expect("a number") };
+            run_export(
+                path,
+                voxel_size,
+                num(4) as usize,
+                num(5) as usize,
+                (num(6), num(7), num(8)),
+                num(9),
+                args.get(10).expect(usage),
+            )
+        }
         Some("control") => run_control(
             path,
             voxel_size,
