@@ -829,12 +829,12 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
     """
     want = global_config.transport
     prefix = zenoh_prefix(global_config)
-    is_pickled = type(transport) in (pLCMTransport, pZenohTransport)
+    is_untyped = type(transport) in (pLCMTransport, pZenohTransport)
     is_lcm = type(transport) in (LCMTransport, pLCMTransport)
     is_zenoh = type(transport) in (ZenohTransport, pZenohTransport)
     if not isinstance(transport, PubSubTransport) or not (is_lcm or is_zenoh):
         return transport
-    if is_pickled:
+    if is_untyped:
         raw, msg_type = transport.topic, None
     else:
         raw, msg_type = transport.topic.topic, transport.topic.lcm_type

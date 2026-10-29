@@ -24,7 +24,7 @@ from typing import Any, Literal
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin, LCMEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
@@ -323,10 +323,10 @@ class Zenoh(  # type: ignore[misc]
     ...
 
 
-class PickleZenoh(
-    PickleEncoderMixin,  # type: ignore[type-arg]
+class CborZenoh(
+    CborEncoderMixin,  # type: ignore[type-arg]
     ZenohPubSubBase,
 ):
-    """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
+    """Zenoh pub/sub with CBOR encoding for Python values without an LCM form."""
 
     ...

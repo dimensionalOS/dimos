@@ -617,7 +617,7 @@ class Stats(Panel):
     """dtop as a page: per-process CPU, memory, thread, fd and child stats
     of the running system, one row per worker. The bridge subscribes the
     resource monitor's /resource_stats topic (dimos/core/resource_monitor/,
-    a pickled dict at 1 Hz; the monitor publishes nowhere else) and
+    a plain dict at 1 Hz; the monitor publishes nowhere else) and
     re-encodes it as stats.json.v1. Meant for `pages=`; works in the grid
     too. The monitor runs only under GlobalConfig.dtop, so cockpit()
     switches that on whenever a Stats panel is present (a page that stays

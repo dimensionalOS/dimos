@@ -57,7 +57,7 @@ class TypedMsg:
 
 
 class UntypedMsg:
-    """A message without lcm_encode. Triggers pickle transport."""
+    """A message without lcm_encode. Triggers the untyped transport."""
 
     pass
 
@@ -151,7 +151,7 @@ def test_lcm_transport_returned_when_transport_is_lcm(use_lcm, blueprint) -> Non
     assert isinstance(transport, LCMTransport)
 
 
-def test_lcm_pickle_transport_returned_for_untyped_when_lcm(use_lcm, blueprint) -> None:
+def test_lcm_untyped_transport_returned_when_lcm(use_lcm, blueprint) -> None:
     transport = _get_transport_for(blueprint, "untyped_data", UntypedMsg)
     assert isinstance(transport, pLCMTransport)
 
@@ -161,7 +161,7 @@ def test_zenoh_transport_returned_when_transport_is_zenoh(use_zenoh, blueprint) 
     assert isinstance(transport, ZenohTransport)
 
 
-def test_zenoh_pickle_transport_returned_for_untyped_when_zenoh(use_zenoh, blueprint) -> None:
+def test_zenoh_untyped_transport_returned_when_zenoh(use_zenoh, blueprint) -> None:
     transport = _get_transport_for(blueprint, "untyped_data", UntypedMsg)
     assert isinstance(transport, pZenohTransport)
 
@@ -196,7 +196,7 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
 
 
 def test_pzenoh_transport_broadcast_and_subscribe(retry_until, session_pool, collector) -> None:
-    t = pZenohTransport("dimos/test/pickle_transport", session_pool=session_pool)
+    t = pZenohTransport("dimos/test/untyped_transport", session_pool=session_pool)
     t.start()
     t.subscribe(collector.callback)
 
@@ -245,7 +245,7 @@ def test_coerce_lcm_to_zenoh_typed(use_zenoh) -> None:
     assert t.topic.topic == "dimos/cmd_vel"
 
 
-def test_coerce_pickled_lcm_to_zenoh(use_zenoh) -> None:
+def test_coerce_untyped_lcm_to_zenoh(use_zenoh) -> None:
     t = _coerce_transport_to_backend(pLCMTransport("/human_input"))
     assert type(t) is pZenohTransport
     assert t.topic == "dimos/human_input"

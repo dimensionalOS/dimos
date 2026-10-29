@@ -30,12 +30,12 @@ import numpy as np
 
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, CborLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.protocol.pubsub.impl.zenohpubsub import (
-    PickleZenoh,
+    CborZenoh,
     Topic as ZenohTopic,
     Zenoh,
     ZenohQoS,
@@ -122,7 +122,7 @@ class pLCMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
-        self.lcm = PickleLCM(**kwargs)
+        self.lcm = CborLCM(**kwargs)
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic, **self.lcm.config.model_dump(exclude={"lcm"})}
@@ -575,7 +575,7 @@ class ZenohTransport(PubSubTransport[T]):
 
 
 class pZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with pickle encoding for arbitrary Python objects.
+    """Zenoh transport for values without an LCM form, CBOR-encoded.
 
     Accepts either a plain topic string or a full `ZenohTopic` carrying
     per-topic settings (QoS). `self.topic` stays the plain string.
@@ -586,7 +586,7 @@ class pZenohTransport(PubSubTransport[T]):
     def __init__(self, topic: str | ZenohTopic, qos: ZenohQoS | None = None, **kwargs: Any) -> None:
         self._zenoh_topic = ZenohTopic(topic, qos=qos) if isinstance(topic, str) else topic
         super().__init__(self._zenoh_topic.pattern)
-        self.zenoh = PickleZenoh(**kwargs)
+        self.zenoh = CborZenoh(**kwargs)
         self._start_lock = threading.RLock()
 
     @property

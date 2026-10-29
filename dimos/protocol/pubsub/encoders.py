@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
 from dimos.msgs.protocol import DimosMsg
@@ -86,16 +85,6 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
             callback(decoded_message, topic)
 
         return cast("Callable[[], None]", super().subscribe(topic, wrapper_cb))  # type: ignore[misc]
-
-
-class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
-    """Encoder mixin that uses pickle for serialization. Works with any Python object."""
-
-    def encode(self, msg: MsgT, _: TopicT) -> bytes:
-        return pickle.dumps(msg)
-
-    def decode(self, msg: bytes, _: TopicT) -> MsgT:
-        return cast("MsgT", pickle.loads(msg))
 
 
 class CborEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):

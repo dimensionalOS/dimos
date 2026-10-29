@@ -199,9 +199,9 @@ Shared runtime config. Values cascade: defaults → blueprint → JSON config �
 ### Transports
 
 - **ZenohTransport**: Default. Typed messages with LCM encoding over Zenoh.
-- **pZenohTransport**: Pickled Zenoh — use for complex Python objects.
+- **pZenohTransport**: CBOR-encoded Zenoh for Python values without an LCM form.
 - **LCMTransport**: Opt-in legacy backend. Multicast UDP.
-- **pLCMTransport**: Pickled LCM — use for complex Python objects.
+- **pLCMTransport**: CBOR-encoded LCM for Python values without an LCM form.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
 - **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 

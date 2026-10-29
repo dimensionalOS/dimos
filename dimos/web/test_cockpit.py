@@ -769,7 +769,7 @@ def test_stats_panel_blueprint() -> None:
     assert manifest["pages"] == ["p1"]
     assert parse_manifest(manifest).model_dump() == manifest
     # The producer is the coordinator's resource monitor, not a module: the
-    # generated In[dict] port autoconnects to its pickled /resource_stats
+    # generated In[dict] port autoconnects to its /resource_stats
     # topic by name.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("resource_stats", "in")] is dict

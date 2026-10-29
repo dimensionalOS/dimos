@@ -26,7 +26,7 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
-from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh, Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import CborZenoh, Zenoh
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -154,9 +154,9 @@ testdata.append(
 
 
 @contextmanager
-def zenoh_pickle_context() -> Generator[PickleZenoh, None, None]:
+def zenoh_cbor_context() -> Generator[CborZenoh, None, None]:
     pool = ZenohSessionPool()
-    zenoh_pubsub = PickleZenoh(session_pool=pool)
+    zenoh_pubsub = CborZenoh(session_pool=pool)
     zenoh_pubsub.start()
     try:
         yield zenoh_pubsub
@@ -167,8 +167,8 @@ def zenoh_pickle_context() -> Generator[PickleZenoh, None, None]:
 
 testdata.append(
     (
-        zenoh_pickle_context,
-        Topic("dimos/test/spec/pickle"),
+        zenoh_cbor_context,
+        Topic("dimos/test/spec/cbor"),
         [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}],
     )
 )

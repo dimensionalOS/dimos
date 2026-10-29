@@ -578,7 +578,7 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
 
 
 def test_stats_panel_forwards_snapshots(monkeypatch) -> None:
-    # The resource monitor's pickled dict crosses as stats.json.v1 on a latest
+    # The resource monitor's dict crosses as stats.json.v1 on a latest
     # channel (the newest snapshot wins), whitelisted keys only.
     message = {
         "coordinator": {**asdict(ProcessStats(pid=1234, alive=True, cpu_percent=12.5)), "rss": 1},

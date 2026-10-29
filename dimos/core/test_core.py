@@ -110,7 +110,7 @@ def test_basic_deployment(dimos) -> None:
     # this one encodes proper LCM messages
     robot.lidar.transport = LCMTransport("/lidar", PointCloud2)
 
-    # odometry & mov using just a pickle over LCM
+    # odometry & mov on the untyped (CBOR) LCM transport
     robot.odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")
 
