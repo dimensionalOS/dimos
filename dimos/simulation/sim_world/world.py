@@ -56,8 +56,14 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
-from dimos.simulation.sim_world.body import Body, BodyShape, Rig, Sensor
+from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
+from dimos.simulation.sim_world.body import (
+    COLLISION_GROUP,
+    Body,
+    BodyShape,
+    Rig,
+    Sensor,
+)
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.logging_config import setup_logger
@@ -65,10 +71,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 FRAME_DT = 0.1
-ROBOT_VISUAL_GROUP = 2
-COLLISION_GROUP = 3
-# Collision primitives are left out.
-LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, ROBOT_VISUAL_GROUP)).astype(np.uint8)
 # Looks only. The lidar and the contacts never read color or light.
 BOX_RGBA = {
     "wall": (0.86, 0.84, 0.78, 1.0),
@@ -254,8 +256,18 @@ class Sim:
         self.model = build_model(scene, rig)
         self.data = mujoco.MjData(self.model)
         self.robot = body(self.model, self.data)
+        base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, rig.base_body)
+        self.lidar_groups = np.isin(np.arange(6), (SCENE_GROUP, rig.lidar_group)).astype(np.uint8)
         self.lidars = [
-            sensor.lidar(MujocoRaycaster(self.model, self.data, LIDAR_GROUPS), seed + i)
+            sensor.lidar(
+                MujocoRaycaster(
+                    self.model,
+                    self.data,
+                    self.lidar_groups,
+                    NO_BODY_EXCLUDED if sensor.sees_base else base,
+                ),
+                seed + i,
+            )
             for i, sensor in enumerate(rig.sensors)
         ]
         self.lio = GroundTruthLio()
