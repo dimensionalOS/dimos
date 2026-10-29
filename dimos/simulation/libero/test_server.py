@@ -33,7 +33,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.libero import server
 
-NATIVE_FILES = [Path(server.__file__)]
+NATIVE_FILES = [Path(server.__file__), Path(server.__file__).with_name("xarm_robot.py")]
 
 
 def test_color_image_round_trip() -> None:
@@ -94,3 +94,11 @@ def test_native_files_stay_out_of_dimos_and_on_python_3_10(path: Path) -> None:
         else:
             continue
         assert not any(m == "dimos" or m.startswith("dimos.") for m in modules), modules
+
+
+@pytest.mark.parametrize(
+    ("command", "ctrl"), [(0.85, 0.0), (0.0, 255.0), (2.0, 0.0), (0.425, 127.5)]
+)
+def test_xarm_gripper_command_maps_like_mujoco_sim(command: float, ctrl: float) -> None:
+    # MujocoSimModule: 0.85 (open) -> ctrl 0, 0 (closed) -> ctrl 255, clipped.
+    assert server.xarm_gripper_ctrl(command) == pytest.approx(ctrl)

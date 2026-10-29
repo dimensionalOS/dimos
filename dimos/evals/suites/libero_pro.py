@@ -89,30 +89,35 @@ BROKEN_UPSTREAM = {
 }
 
 
-def case(folder: str, bddl: Path) -> EvalCase:
+def case(folder: str, bddl: Path, blueprint: str = "panda-libero-sim") -> EvalCase:
     base = next((s for s in ("libero_90", *BENCHMARK_SUITES) if folder.startswith(s)), folder)
     return EvalCase(
         id=f"{folder}.{bddl.stem}",
         inputs=f"{bddl_language(bddl).capitalize()}. {GUIDANCE}",
-        environment=LiberoEnvironment(disable=PERCEPTION_MODULES, bddl=bddl),
+        environment=LiberoEnvironment(
+            blueprint=[blueprint, "mcp-server", "observe-skill"],
+            disable=PERCEPTION_MODULES,
+            bddl=bddl,
+        ),
         grade=libero_success,
         timeout_s=900.0,
         tags=frozenset({"mujoco", "libero_pro", "manipulation", folder, base}),
     )
 
 
-def cases() -> list[EvalCase]:
+def cases(blueprint: str = "panda-libero-sim") -> list[EvalCase]:
+    """Every buildable task, run with ``blueprint`` (``panda-libero-sim`` or ``xarm-libero-sim``)."""
     out = []
     for folder in sorted(p for p in bddl_root().iterdir() if p.is_dir()):
         for bddl in sorted(folder.glob("*.bddl")):
             if not bddl_object_types(bddl) & UNAVAILABLE_OBJECTS:
-                out.append(case(folder.name, bddl))
+                out.append(case(folder.name, bddl, blueprint))
     for suite in BENCHMARK_SUITES:
         for kind in PERTURBATIONS:
             for bddl in sorted((bddl_root() / suite).glob("*.bddl")):
                 perturbed = perturbed_bddl(bddl, suite, kind)
                 if perturbed.read_text() != bddl.read_text():
-                    out.append(case(f"{suite}_{kind}", perturbed))
+                    out.append(case(f"{suite}_{kind}", perturbed, blueprint))
     return [c for c in out if c.id not in BROKEN_UPSTREAM]
 
 

@@ -12,30 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO native: a LIBERO(-PRO) task with LIBERO's own Panda, stepped live and published on zenoh.
+"""LIBERO native: a LIBERO(-PRO) task with its robot, stepped live and published on zenoh.
 
 Runs in LIBERO's own Python (3.10, robosuite 1.4), so no dimos imports; ``dimos_lcm``
 provides the encoders. Reads one JSON line on stdin: ``topics`` (port -> zenoh key),
 ``config``, ``session``.
 
-LIBERO builds the scene from the BDDL file, robot included, and starts it from one of
-the task's recorded initial states (``seed`` picks which) when LIBERO ships them, else
-from a layout it samples with ``seed``. The Panda's torque motors then track the joint
-targets on ``sim_command`` with a joint-space impedance law (robosuite's
-``JOINT_POSITION`` controller, run every physics step); robosuite's own controllers
-never run. Published, in the shapes ``MujocoSimModule`` uses:
+LIBERO builds the scene from the BDDL file with ``robot`` in it:
 
-- ``sim_state``: joint1..7 then the gripper opening in metres (0 closed .. 0.08 open);
+- ``Panda`` (LIBERO's own): starts from one of the task's recorded initial states
+  (``seed`` picks which) when LIBERO ships them; its torque motors track the joint
+  targets with a joint-space impedance law (robosuite's ``JOINT_POSITION`` controller,
+  run every physics step).
+- ``XArm7`` (dimos's, registered by ``xarm_robot.py``): stands in the Panda's place on a
+  sampled layout (recorded states are Panda states); its position servos take the joint
+  targets directly.
+
+Otherwise the layout is sampled with ``seed``. robosuite's own controllers never run.
+Published, in the shapes ``MujocoSimModule`` uses:
+
+- ``sim_state``: joint1..7 then the gripper, in the robot's gripper units;
 - ``color_image`` / ``depth_image`` / ``camera_info`` from the hand camera, and ``tf``
   for the camera frames under ``link7`` plus ``world`` -> every LIBERO object;
 - ``task_status``: LIBERO's own goal check as JSON, ``{"success", "predicates", ...}``.
 
-Poses are published in a ``world`` frame shifted so the Panda's ``link0`` is the
-origin, so the planning model needs no per-scene base pose.
+Poses are published in a ``world`` frame shifted so the robot's base sits where its
+dimos planning model expects it, so that model needs no per-scene base pose.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -61,18 +68,17 @@ import mujoco
 import numpy as np
 import zenoh
 
+_spec = importlib.util.spec_from_file_location(
+    "_libero_xarm_robot", Path(__file__).parent / "xarm_robot.py"
+)
+assert _spec is not None and _spec.loader is not None
+xarm_robot = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(xarm_robot)
+
 PREFIX = "robot0_"
 ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 8))
 GRIPPER_JOINT = "gripper"
-# The gripper position: the opening between the fingers, each 0..0.04 m.
-GRIPPER_RANGE = (0.0, 0.08)
-FINGERS = ("gripper0_finger_joint1", "gripper0_finger_joint2")
-FINGER_ACTUATORS = ("gripper0_gripper_finger_joint1", "gripper0_gripper_finger_joint2")
-# Joint-space impedance on the arm's torque motors: tau = M (kp e - kd qdot) + bias.
-KP = 400.0
-KD = 2.0 * math.sqrt(KP)
-# robosuite's hand camera; published under dimos's wrist-camera frame names.
-SIM_CAMERA = PREFIX + "eye_in_hand"
+# Published under dimos's wrist-camera frame names, whichever robot carries it.
 CAMERA = "wrist_camera"
 
 
@@ -237,13 +243,124 @@ def init_states(bddl: Path) -> Any:
         return pickle.loads(archive.read(name))
 
 
+class Panda:
+    """LIBERO's own Panda: joint-space impedance on its torque motors, Franka Hand fingers.
+
+    The gripper position is the opening between the fingers, 0 closed .. 0.08 m open.
+    """
+
+    name = "Panda"
+    camera = PREFIX + "eye_in_hand"
+    base_body = PREFIX + "link0"
+    # Where dimos's planning model puts base_body: the origin.
+    base_at = np.zeros(3)
+    # LIBERO's recorded initial states are Panda states.
+    uses_init_states = True
+    gripper_range = (0.0, 0.08)
+    fingers = ("gripper0_finger_joint1", "gripper0_finger_joint2")
+    finger_actuators = ("gripper0_gripper_finger_joint1", "gripper0_gripper_finger_joint2")
+    # tau = M (kp e - kd qdot) + bias, robosuite's JOINT_POSITION law, every physics step.
+    kp = 400.0
+    kd = 2.0 * math.sqrt(kp)
+
+    @staticmethod
+    def prepare(cfg: dict[str, Any]) -> None:
+        """Nothing to register: LIBERO ships the Panda."""
+
+    def __init__(self, m: Any, d: Any) -> None:
+        self.m, self.d = m, d
+        self.arm_act = [m.actuator(f"{PREFIX}torq_j{i}").id for i in range(1, 8)]
+        self.arm_qpos = [m.jnt_qposadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
+        self.arm_dof = [m.jnt_dofadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
+        self.torque_range = m.actuator_ctrlrange[self.arm_act]
+        self.finger_act = [m.actuator(a).id for a in self.finger_actuators]
+        self.finger_qpos = [m.jnt_qposadr[m.joint(f).id] for f in self.fingers]
+        self.mass = np.zeros((m.nv, m.nv))
+        # Hold the start pose until the first command.
+        self.target = d.qpos[self.arm_qpos].copy()
+        self.set_gripper(self.gripper())
+
+    def set_arm(self, positions: list[float]) -> None:
+        self.target = np.asarray(positions, dtype=float)
+
+    def set_gripper(self, position: float) -> None:
+        self.d.ctrl[self.finger_act] = finger_targets(position)
+
+    def gripper(self) -> float:
+        left, right = (float(self.d.qpos[a]) for a in self.finger_qpos)
+        return left - right
+
+    def apply(self) -> None:
+        m, d = self.m, self.d
+        mujoco.mj_fullM(m, self.mass, d.qM)  # type: ignore[attr-defined]
+        mass = self.mass[np.ix_(self.arm_dof, self.arm_dof)]
+        error = self.target - d.qpos[self.arm_qpos]
+        torque = mass @ (self.kp * error - self.kd * d.qvel[self.arm_dof])
+        torque += d.qfrc_bias[self.arm_dof]
+        d.ctrl[self.arm_act] = np.clip(torque, self.torque_range[:, 0], self.torque_range[:, 1])
+
+
+class XArm7:
+    """dimos's xArm7, registered as a LIBERO robot (``xarm_robot.py``), on its position servos.
+
+    The gripper position is the driver joint's, 0.85 open .. 0 closed, as in the xArm sim.
+    """
+
+    name = "XArm7"
+    camera = PREFIX + "wrist_camera"
+    base_body = PREFIX + "link_base"
+    # Where the default dimos xArm sim mounts link_base.
+    base_at = np.array([0.0, 0.0, 0.12])
+    uses_init_states = False
+    gripper_range = (0.0, 0.85)
+    gripper_ctrl_range = (0.0, 255.0)
+
+    @staticmethod
+    def prepare(cfg: dict[str, Any]) -> None:
+        xarm_robot.register(
+            Path(cfg["xarm_mjcf"]), Path(cfg["cache_dir"]), float(cfg.get("base_forward_m", 0.0))
+        )
+
+    def __init__(self, m: Any, d: Any) -> None:
+        self.m, self.d = m, d
+        self.arm_act = [m.actuator(f"{PREFIX}act{i}").id for i in range(1, 8)]
+        self.gripper_act = m.actuator(f"{PREFIX}gripper").id
+        self.arm_qpos = [m.jnt_qposadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
+        self.arm_dof = [m.jnt_dofadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
+        self.driver_qpos = [
+            m.jnt_qposadr[m.joint(f"{PREFIX}{s}_driver_joint").id] for s in ("left", "right")
+        ]
+        for adr, q in zip(self.arm_qpos, xarm_robot.HOME, strict=True):
+            d.qpos[adr] = q
+        d.ctrl[self.arm_act] = xarm_robot.HOME
+        self.set_gripper(self.gripper_range[1])  # open
+
+    def set_arm(self, positions: list[float]) -> None:
+        self.d.ctrl[self.arm_act] = positions
+
+    def set_gripper(self, position: float) -> None:
+        self.d.ctrl[self.gripper_act] = xarm_gripper_ctrl(position)
+
+    def gripper(self) -> float:
+        lo, hi = self.gripper_range
+        return lo + hi - float(np.mean([self.d.qpos[a] for a in self.driver_qpos]))
+
+    def apply(self) -> None:
+        """The position servos track ctrl themselves."""
+
+
+ROBOTS: dict[str, type[Panda] | type[XArm7]] = {"Panda": Panda, "XArm7": XArm7}
+
+
 class LiberoSim:
-    """One LIBERO task: LIBERO builds and resets it, then the Panda is driven directly."""
+    """One LIBERO task: LIBERO builds and resets it, robot included; then the arm is driven."""
 
     def __init__(self, cfg: dict[str, Any]) -> None:
         from libero.libero.envs import TASK_MAPPING  # type: ignore[import-not-found]
         import libero.libero.envs.bddl_utils as bddl_utils  # type: ignore[import-not-found]
 
+        robot_cls = ROBOTS[cfg.get("robot", "Panda")]
+        robot_cls.prepare(cfg)
         bddl = Path(cfg["bddl"]).resolve()
         seed = int(cfg.get("seed", 0))
         random.seed(seed)
@@ -251,14 +368,14 @@ class LiberoSim:
         self.problem = bddl_utils.robosuite_parse_problem(str(bddl))
         self.env = TASK_MAPPING[self.problem["problem_name"]](
             bddl_file_name=str(bddl),
-            robots=["Panda"],
+            robots=[robot_cls.name],
             has_renderer=False,
             has_offscreen_renderer=False,
             use_camera_obs=False,
             ignore_done=True,
         )
         self.env.reset()
-        states = init_states(bddl)
+        states = init_states(bddl) if robot_cls.uses_init_states else None
         if states is not None:
             # As LIBERO's own evaluation does (env_wrapper.set_init_state): episode i
             # starts from recorded state i.
@@ -267,24 +384,14 @@ class LiberoSim:
         self.model: Any = self.env.sim.model._model
         self.data: Any = self.env.sim.data._data
         m, d = self.model, self.data
-
-        self.arm_act = [m.actuator(f"{PREFIX}torq_j{i}").id for i in range(1, 8)]
-        self.arm_qpos = [m.jnt_qposadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
-        self.arm_dof = [m.jnt_dofadr[m.joint(PREFIX + j).id] for j in ARM_JOINTS]
-        self.torque_range = m.actuator_ctrlrange[self.arm_act]
-        self.finger_act = [m.actuator(a).id for a in FINGER_ACTUATORS]
-        self.finger_qpos = [m.jnt_qposadr[m.joint(f).id] for f in FINGERS]
-        self.mass = np.zeros((m.nv, m.nv))
+        self.robot = robot_cls(m, d)
         d.qvel[:] = 0.0
         mujoco.mj_forward(m, d)
-        # Hold the start pose until the first command.
-        self.target = d.qpos[self.arm_qpos].copy()
-        self.set_gripper(self.gripper_opening())
 
-        base = d.body(PREFIX + "link0").xpos.copy()
-        self.shift = -base
+        base = d.body(robot_cls.base_body).xpos.copy()
+        self.shift = robot_cls.base_at - base
         self.link7 = m.body(PREFIX + "link7").id
-        self.camera = m.camera(SIM_CAMERA).id
+        self.camera = m.camera(robot_cls.camera).id
         self.fovy = float(m.cam_fovy[self.camera])
         # Every LIBERO object and fixture, by the BDDL's own names.
         self.objects = {
@@ -295,8 +402,9 @@ class LiberoSim:
         self.command: list[float] | None = None
         start = "recorded state" if states is not None else "sampled layout"
         log(
-            f"ready: {bddl.name} '{' '.join(self.problem['language_instruction'])}' "
-            f"{start} {seed} base={np.round(base, 3).tolist()} timestep={m.opt.timestep}"
+            f"ready: {robot_cls.name} {bddl.name} "
+            f"'{' '.join(self.problem['language_instruction'])}' {start} {seed} "
+            f"base={np.round(base, 3).tolist()} timestep={m.opt.timestep}"
         )
 
     # Commands arrive on the zenoh thread; they are applied before the next step.
@@ -304,34 +412,22 @@ class LiberoSim:
         with self.lock:
             self.command = positions
 
-    def set_gripper(self, opening: float) -> None:
-        self.data.ctrl[self.finger_act] = finger_targets(opening)
-
-    def gripper_opening(self) -> float:
-        left, right = (float(self.data.qpos[a]) for a in self.finger_qpos)
-        return left - right
-
     def step(self) -> None:
         with self.lock:
             command, self.command = self.command, None
         if command is not None and len(command) >= len(ARM_JOINTS):
-            self.target = np.asarray(command[: len(ARM_JOINTS)], dtype=float)
+            self.robot.set_arm(command[: len(ARM_JOINTS)])
             if len(command) > len(ARM_JOINTS):
-                self.set_gripper(command[len(ARM_JOINTS)])
-        m, d = self.model, self.data
-        mujoco.mj_fullM(m, self.mass, d.qM)  # type: ignore[attr-defined]
-        mass = self.mass[np.ix_(self.arm_dof, self.arm_dof)]
-        error = self.target - d.qpos[self.arm_qpos]
-        torque = mass @ (KP * error - KD * d.qvel[self.arm_dof]) + d.qfrc_bias[self.arm_dof]
-        d.ctrl[self.arm_act] = np.clip(torque, self.torque_range[:, 0], self.torque_range[:, 1])
-        mujoco.mj_step(m, d)
+                self.robot.set_gripper(command[len(ARM_JOINTS)])
+        self.robot.apply()
+        mujoco.mj_step(self.model, self.data)
 
     def joint_state(self) -> tuple[list[str], list[float], list[float], list[float]]:
-        d = self.data
-        pos = [float(d.qpos[a]) for a in self.arm_qpos]
-        vel = [float(d.qvel[a]) for a in self.arm_dof]
-        eff = [float(d.qfrc_actuator[a]) for a in self.arm_dof]
-        pos.append(self.gripper_opening())
+        d, robot = self.data, self.robot
+        pos = [float(d.qpos[a]) for a in robot.arm_qpos]
+        vel = [float(d.qvel[a]) for a in robot.arm_dof]
+        eff = [float(d.qfrc_actuator[a]) for a in robot.arm_dof]
+        pos.append(robot.gripper())
         vel.append(0.0)
         eff.append(0.0)
         return [*ARM_JOINTS, GRIPPER_JOINT], pos, vel, eff
@@ -374,10 +470,18 @@ class LiberoSim:
 
 
 def finger_targets(opening: float) -> tuple[float, float]:
-    """Gripper opening (0 closed .. 0.08 open) -> the two finger servos, mirrored."""
-    lo, hi = GRIPPER_RANGE
+    """Panda gripper opening (0 closed .. 0.08 open) -> the two finger servos, mirrored."""
+    lo, hi = Panda.gripper_range
     half = min(max(opening, lo), hi) / 2.0
     return half, -half
+
+
+def xarm_gripper_ctrl(command: float) -> float:
+    """xArm gripper position (0.85 open .. 0 closed) -> the tendon actuator's ctrl."""
+    lo, hi = XArm7.gripper_range
+    clo, chi = XArm7.gripper_ctrl_range
+    t = (min(max(command, lo), hi) - lo) / (hi - lo)
+    return chi - t * (chi - clo)
 
 
 def main() -> None:
