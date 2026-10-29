@@ -313,6 +313,39 @@ pub fn overlap_score(a: &[[f32; 3]], b: &[[f32; 3]], params: &OverlapScoreParams
     }
 }
 
+/// The width w of the half-normal part of nearest-neighbour `distances` modelled as a mixture of half-normal(w) (points
+/// on a surface the other cloud saw) and uniform on [0, `reach`] (the rest), by EM from the median distance at an even
+/// mixture. None for fewer than 20 distances or no half-normal part.
+pub fn half_normal_width(distances: &[f64], reach: f64) -> Option<f64> {
+    if distances.len() < 20 || !(reach > 0.0) {
+        return None;
+    }
+    let mut sorted = distances.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let (mut width, mut share) = (sorted[sorted.len() / 2].max(f64::EPSILON), 0.5);
+    let norm = (2.0 / std::f64::consts::PI).sqrt();
+    for _ in 0..100 {
+        let (mut weight, mut squared) = (0.0, 0.0);
+        for &d in distances {
+            let good = share * norm / width * (-d * d / (2.0 * width * width)).exp();
+            let r = good / (good + (1.0 - share) / reach);
+            weight += r;
+            squared += r * d * d;
+        }
+        if !(weight > 0.0) {
+            return None;
+        }
+        let next = (squared / weight).sqrt().max(f64::EPSILON);
+        share = weight / distances.len() as f64;
+        let settled = (next - width).abs() < 1e-6 * width;
+        width = next;
+        if settled {
+            break;
+        }
+    }
+    Some(width)
+}
+
 /// A cloud's sensor noise and sample spacing, measured from the cloud on about 500 of its points: the noise is the median
 /// thickness (sqrt of the smallest covariance eigenvalue) of each point's 10 nearest neighbours, the spacing the median
 /// distance to its nearest neighbour.

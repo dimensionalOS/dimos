@@ -111,6 +111,8 @@ class PGOConfig(NativeModuleConfig):
     odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
     closure_commitments: bool = False
+    # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_score_thresh
+    closure_inlier_distance_from_odometry: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits

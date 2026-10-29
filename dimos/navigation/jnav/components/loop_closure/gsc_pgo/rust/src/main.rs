@@ -127,6 +127,7 @@ config! {
     closure_icp_covariance: bool,
     odometry_gravity_bound: bool,
     closure_commitments: bool,
+    closure_inlier_distance_from_odometry: bool,
     closure_hessian_observability: bool,
     closure_likelihood_visibility: bool,
     closure_likelihood_beam: bool,
