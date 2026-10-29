@@ -24,7 +24,6 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import CommandStatus
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.robot.assets import composition
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_makermods_metal import model as model_module
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
@@ -120,7 +119,6 @@ def test_derived_model_prefixes_frames_and_keeps_individual_mounts(tmp_path: Pat
         "make_metal_model_config",
         return_value=SimpleNamespace(model=RobotModel.from_file(source)),
     )
-    mocker.patch.object(composition, "DEFAULT_ROBOT_ASSET_CACHE_ROOT", tmp_path)
     model = dual_metal_model_config(
         left_xyz=(0, 0.25, 0), right_xyz=(0, -0.25, 0), right_rpy=(0, 0, 1.0)
     ).model.load()

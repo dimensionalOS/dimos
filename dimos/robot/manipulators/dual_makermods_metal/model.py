@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lazy composition of two copies of the pinned official Metal model."""
+"""Two official Metal arm trees fixed to the configured mounting base."""
+
+from pathlib import Path
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel, RobotModelInstance
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS, ARM_JOINTS, SIDES
 from dimos.robot.manipulators.makermods_metal.model import make_metal_model_config
+
+DUAL_METAL_BASE = RobotModel.from_file(Path(__file__).with_name("base.urdf"))
 
 Vector3 = tuple[float, float, float]
 # Example bench layout only; no published official bimanual mount transform was found.
@@ -39,13 +43,20 @@ def dual_metal_model_config(
         raise ValueError("Metal arm bases must have distinct positions")
     single = make_metal_model_config().model
     return RobotModelConfig(
-        model=RobotModel.compose(
-            [
-                RobotModelInstance(single, "left_", xyz=left_xyz, rpy=left_rpy),
-                RobotModelInstance(single, "right_", xyz=right_xyz, rpy=right_rpy),
-            ],
-            name="dual_makermods_metal",
-            root_link="dual_metal_base",
+        model=DUAL_METAL_BASE.with_attached_model(
+            single,
+            parent_link="dual_metal_base",
+            joint_name="left_mount",
+            prefix="left_",
+            xyz=left_xyz,
+            rpy=left_rpy,
+        ).with_attached_model(
+            single,
+            parent_link="dual_metal_base",
+            joint_name="right_mount",
+            prefix="right_",
+            xyz=right_xyz,
+            rpy=right_rpy,
         ),
         joint_names=list(ALL_ARM_JOINTS),
         base_link="dual_metal_base",

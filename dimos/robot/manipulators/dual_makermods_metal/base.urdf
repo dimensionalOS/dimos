@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!-- Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0. -->
+<robot name="dual_makermods_metal">
+  <link name="dual_metal_base"/>
+</robot>

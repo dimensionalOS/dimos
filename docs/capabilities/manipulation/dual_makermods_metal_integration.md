@@ -22,8 +22,8 @@ normalized gripper; finger geometry remains fixed in the planning model.
 
 ## Geometry and dimensions
 
-The model uses `RobotModel.compose` and two `RobotModelInstance` mounts to lazily
-compose copies of the same pinned official Metal URDF used
+The model starts from a base-only URDF and calls `with_attached_model` twice
+to weld copies of the same pinned official Metal URDF used
 by the [single-arm integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
 Links, joints, material names, and references are prefixed `left_` / `right_`.
 The root is `dual_metal_base`, with tips `left_gripper_base` and
@@ -55,9 +55,10 @@ uv run dimos run dual-makermods-metal-planner-coordinator \
   --right-base-xyz '[0, -0.25, 0]'
 ```
 
-The shared RobotModel API owns namespacing, asset resolution, and composition.
-The combined model is cached by its content, including mount transforms.
-Importing the blueprint does not download or generate assets.
+The RobotModel attachment API owns namespacing, asset resolution, and fixed
+welds to `dual_metal_base`. It uses the existing in-memory load pipeline without
+generating URDF files or adding a separate cache. The model retains the mounting
+base URDF as its source. Importing the blueprint does not load the arm assets.
 
 ## Gripper task bindings
 
