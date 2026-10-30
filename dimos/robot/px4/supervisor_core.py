@@ -17,7 +17,7 @@
 States::
 
   IDLE -> PREFLIGHT -> STREAMING -> OFFBOARD_REQ -> ARMING -> TAKEOFF -> HOVER
-  HOVER <-> TELEOP                            (operator selects the guidance mode)
+  HOVER <-> YAW_TRACK / FOLLOW / TELEOP       (operator selects the guidance mode)
   any guidance state -> GOTO -> HOVER         (operator go-to; ends hovering at the goal)
   any armed state -> LANDING -> IDLE          (operator land)
   any armed state -> ABORT -> IDLE            (safety rule: PX4 put in Hold, setpoints stop)
@@ -44,6 +44,7 @@ from typing import Any, Literal, Protocol
 import numpy as np
 
 from dimos.robot.px4.config import GotoConfig, GuidanceConfig, SupervisorLimits
+from dimos.robot.px4.follow import follow_velocity, yaw_track_rate
 from dimos.robot.px4.mavlink import (
     LANDED_ON_GROUND,
     MAIN_AUTO,
@@ -57,7 +58,7 @@ from dimos.utils.transform_utils import normalize_angle
 
 # GOTO is a guidance state but not a selectable mode: it needs a goal, so only goto_cmd
 # enters it.
-GUIDANCE_STATES = frozenset({"HOVER", "TELEOP", "GOTO"})
+GUIDANCE_STATES = frozenset({"HOVER", "YAW_TRACK", "FOLLOW", "TELEOP", "GOTO"})
 ARMED_STATES = GUIDANCE_STATES | {"ARMING", "TAKEOFF", "LANDING"}
 # Where the safety rules apply: the armed states but LANDING (PX4 owns the descent), and the
 # pre-stream before the arm command.
@@ -66,8 +67,8 @@ _ABORTABLE = (ARMED_STATES - {"LANDING"}) | {"STREAMING", "OFFBOARD_REQ"}
 TAKEOFF_STATES = frozenset({"PREFLIGHT", "STREAMING", "OFFBOARD_REQ", "ARMING", "TAKEOFF"})
 # The HOVER reason that tells a finished go-to from an interrupted or timed-out one.
 GOTO_ARRIVED = "arrived at the go-to goal"
-GuidanceMode = Literal["HOVER", "TELEOP"]
-GUIDANCE_MODES: tuple[GuidanceMode, ...] = ("HOVER", "TELEOP")
+GuidanceMode = Literal["HOVER", "YAW_TRACK", "FOLLOW", "TELEOP"]
+GUIDANCE_MODES: tuple[GuidanceMode, ...] = ("HOVER", "YAW_TRACK", "FOLLOW", "TELEOP")
 
 _ABORT_DWELL_S = 2.0
 _PREFLIGHT_TIMEOUT_S = 10.0
@@ -217,6 +218,14 @@ class SupervisorCore:
         self.reason = "startup"
         self.guidance_mode: GuidanceMode = "HOVER"
         self.fake_enable = False
+        # The followed target, written by the owner as its streams arrive: the position and
+        # velocity (n, e, vn, ve) and the gimbal yaw (body-relative, clockwise) to it.
+        self.target_valid = False
+        self.target: tuple[float, float, float, float] | None = None
+        self.target_t = 0.0
+        self.los_yaw_deg: float | None = None
+        self.los_t = 0.0
+        self.target_fresh_t = 0.0  # the last tick FOLLOW had a target to fly on
         self.sp: Setpoint | None = None
         self.yaw_cmd: float = 0.0
         self.takeoff: TakeoffPoint | None = None
@@ -583,6 +592,10 @@ class SupervisorCore:
             self.sp = Setpoint.hold(self.hover, self.yaw_cmd)
             if self.guidance_mode != "HOVER" and now - self.state_since > self.cfg.hover_settle_s:
                 self.goto(self.guidance_mode, "settled", now)
+        elif s == "YAW_TRACK":
+            self._step_yaw_track(st, now, dt)
+        elif s == "FOLLOW":
+            self._step_follow(st, now, dt)
         elif s == "TELEOP":
             self._step_teleop(st, now)
         elif s == "GOTO":
@@ -590,6 +603,41 @@ class SupervisorCore:
         elif s == "LANDING":
             if st.landed_state == LANDED_ON_GROUND and not armed:
                 self.goto("IDLE", "landed and disarmed", now)
+
+    def target_fresh(self, now: float) -> bool:
+        stale = now - self.target_t > self.cfg.target_stale_s
+        return self.target_valid and self.target is not None and not stale
+
+    def _step_yaw_track(self, st: VehicleSnapshot, now: float, dt: float) -> None:
+        self.hover = self.hover or self.here(st)
+        fresh = now - self.los_t <= self.cfg.target_stale_s
+        rate = yaw_track_rate(self.los_yaw_deg if fresh else None, self.gcfg.yaw_track)
+        self.yaw_cmd = _wrap180(self.yaw_cmd + rate * dt)
+        self.sp = Setpoint.hold(self.hover, self.yaw_cmd)
+
+    def _step_follow(self, st: VehicleSnapshot, now: float, dt: float) -> None:
+        if self.target_fresh(now):
+            assert st.local is not None and self.takeoff is not None and self.target is not None
+            self.target_fresh_t = now
+            here, d0 = st.local, self.takeoff.d0
+            vn, ve, vd, bearing = follow_velocity(
+                here.n, here.e, here.d, d0, self.target, self.gcfg.follow
+            )
+            rate = self.gcfg.yaw_track.max_yaw_rate_dps
+            self.yaw_cmd = rate_limit_yaw(self.yaw_cmd, bearing, rate, dt)
+            self.sp = Setpoint(kind="vel", vn=vn, ve=ve, vd=vd, yaw=self.yaw_cmd)
+            self.hover = None
+            self.reason = "following"
+            return
+        # The loss clock starts at the later of the last target and entering FOLLOW.
+        age = now - max(self.target_fresh_t, self.state_since)
+        self.hover = self.hover or self.here(st)
+        if age <= self.gcfg.follow.loss_hover_s:
+            self.sp = Setpoint.hold(self.hover, self.yaw_cmd)
+            self.reason = f"target lost {age:.1f}s: holding position"
+        else:
+            self.guidance_mode = "HOVER"
+            self.goto("HOVER", f"target lost {age:.1f}s, holding here", now)
 
     def _step_teleop(self, st: VehicleSnapshot, now: float) -> None:
         c, here = self.cfg, self.here(st)
@@ -681,6 +729,10 @@ class SupervisorCore:
             local=None if st.local is None else dict(n=st.local.n, e=st.local.e, d=st.local.d),
             batt_pct=st.sys_status.batt_pct if st.sys_status else None,
             gps=None if st.gps is None else dict(fix=st.gps.fix, sats=st.gps.sats, eph=st.gps.eph),
+            target_fresh=self.target_fresh(t),
+            target=None
+            if self.target is None
+            else dict(n=self.target[0], e=self.target[1], gimbal_yaw_body_deg=self.los_yaw_deg),
             position_valid=None if st.estimator is None else st.estimator.position_valid,
             estop_latched=self.estop_latched,
             last_rejection=None if self.last_rejection is None else self.last_rejection.value,

@@ -407,6 +407,12 @@ robots:
         px4-sitl-agentic:
           title: PX4 agent in SITL
           description: The same agent against PX4 SITL.
+        px4-a8-follow:
+          title: PX4 drone following a target
+          description: YOLO on the A8's frames; the drone follows or yaws toward the selected track.
+        px4-sitl-follow:
+          title: PX4 follow in SITL
+          description: Target following against PX4 SITL with a fake A8 and a bright-square detector; no model, no GPU.
     m20:
       name: DeepRobotics M20
       description: DeepRobotics' wheel-legged quadruped; dimos runs on the robot.

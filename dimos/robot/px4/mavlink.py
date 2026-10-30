@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 import math
+import statistics
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ from dimos.hardware.gimbal.siyi.frame import normalize_attitude
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.px4.config import GIMBAL_COMPID, PX4_COMPID, PX4_SYSID
+from dimos.robot.px4.timebase import Px4Timebase, TimedBuffer, boot_s
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -122,8 +124,9 @@ def ned_to_flu(n: float, e: float, d: float) -> tuple[float, float, float]:
     return n, -e, -d
 
 
-# Body FRD (forward, right, down) -> body FLU (forward, left, up): the same flip.
-frd_to_flu = ned_to_flu
+# Body FRD (forward, right, down) -> body FLU (forward, left, up), and dimOS world -> NED:
+# the same flip.
+frd_to_flu = flu_to_ned = ned_to_flu
 
 
 def quaternion_from_ned_euler(roll: float, pitch: float, yaw: float) -> Quaternion:
@@ -147,7 +150,7 @@ def body_flu_velocity_to_ned(
 
 
 # Vehicle state. Every entry carries its wall-clock receive time ``t`` (what the camera
-# stamps frames with).
+# stamps frames with); ``boot_s`` is the vehicle's own clock from the message.
 
 _UINT16_INVALID = 65535
 _STATUSTEXT_KEEP = 64
@@ -180,6 +183,7 @@ class LocalPosition:
     ve: float
     vd: float
     t: float
+    boot_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -187,7 +191,9 @@ class GlobalPosition:
     lat: float
     lon: float
     alt_msl: float
+    rel_alt: float
     t: float
+    boot_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +240,7 @@ class ImuSample:
     ygyro: float
     zgyro: float
     t: float
+    boot_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -317,6 +324,8 @@ class VehicleState:
         self.lock = threading.Lock()
         self._gimbal_inverted = gimbal_inverted
         self.attitude: Attitude | None = None
+        # So odometry can take the attitude at the position sample's own instant.
+        self.attitude_history = TimedBuffer(2.0, angular=("roll", "pitch", "yaw"))
         self.gimbal: Attitude | None = None
         self.gimbal_flags = 0
         self.gimbal_failure = 0
@@ -361,16 +370,19 @@ class VehicleState:
             # Body rates from ATTITUDE: HIGHRES_IMU is not streamed on a telemetry radio.
             rates = (msg.rollspeed, msg.pitchspeed, msg.yawspeed)
             self.attitude = Attitude(roll, pitch, yaw, t, rates)
+            self.attitude_history.push(t, dict(roll=roll, pitch=pitch, yaw=yaw), boot=boot_s(msg))
         elif name == "LOCAL_POSITION_NED":
             self.local = LocalPosition(
-                n=msg.x, e=msg.y, d=msg.z, vn=msg.vx, ve=msg.vy, vd=msg.vz, t=t
+                n=msg.x, e=msg.y, d=msg.z, vn=msg.vx, ve=msg.vy, vd=msg.vz, t=t, boot_s=boot_s(msg)
             )
         elif name == "GLOBAL_POSITION_INT":
             self.global_pos = GlobalPosition(
                 lat=msg.lat / 1e7,
                 lon=msg.lon / 1e7,
                 alt_msl=msg.alt / 1000.0,
+                rel_alt=msg.relative_alt / 1000.0,
                 t=t,
+                boot_s=boot_s(msg),
             )
         elif name == "GPS_RAW_INT":
             self.gps = GpsFix(
@@ -429,6 +441,7 @@ class VehicleState:
                 ygyro=msg.ygyro,
                 zgyro=msg.zgyro,
                 t=t,
+                boot_s=boot_s(msg),
             )
         elif name == "STATUSTEXT":
             self._statustext_seq += 1
@@ -481,10 +494,13 @@ MAV_FRAME_LOCAL_NED = 1
 _MAV_TYPE_ONBOARD_CONTROLLER = 18
 _MAV_AUTOPILOT_INVALID = 8
 _MAV_STATE_ACTIVE = 4
+MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW = 1000
+MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE = 1001
 _MAV_CMD_SET_MESSAGE_INTERVAL = 511
 _MAV_RESULT_ACCEPTED = 0
 
 _RECV_TIMEOUT_S = 0.5
+_STAMP_LAG_WINDOW = 600
 # PX4's boot clock running this far backwards is a reboot, not reordering or sample age.
 _REBOOT_BACKSTEP_MS = 1000
 
@@ -512,12 +528,14 @@ class MavlinkIO:
     def __init__(
         self,
         state: VehicleState,
+        timebase: Px4Timebase,
         *,
         url: str,
         source_system: int,
         source_component: int,
     ) -> None:
         self._state = state
+        self._timebase = timebase
         self._url = url  # a serial device takes its baud as "dev,baud"
         self._source_system = source_system
         self._source_component = source_component
@@ -530,6 +548,7 @@ class MavlinkIO:
         self._bad_data = 0
         self._acks: dict[int, Future[int]] = {}
         self._ack_results: dict[int, int] = {}
+        self._stamp_lag_ms: deque[float] = deque(maxlen=_STAMP_LAG_WINDOW)
         # Message rates asked of PX4 (name -> Hz); PX4 forgets them when it reboots.
         self._rates: dict[str, float] = {}
         self._px4_boot_ms: int | None = None
@@ -605,7 +624,7 @@ class MavlinkIO:
                 logger.exception("MAVLink message dropped", type=msg.get_type())
 
     def _ingest(self, msg: Any) -> None:
-        """One decoded message: counters, vehicle state, acks."""
+        """One decoded message: counters, vehicle state, acks, timebase."""
         name = msg.get_type()
         now = time.time()
         with self._stats_lock:
@@ -622,6 +641,12 @@ class MavlinkIO:
             self._px4_boot_ms = boot_ms
         if name == "COMMAND_ACK":
             self._resolve_ack(int(msg.command), int(msg.result))
+        elif name == "SYSTEM_TIME":
+            self._timebase.add_system_time(msg.time_unix_usec / 1e6, msg.time_boot_ms / 1e3, now)
+        elif name == "LOCAL_POSITION_NED" and self._timebase.quality != "none":
+            # Receive time minus the converted vehicle stamp: link latency plus timebase
+            # error, without any publish or transport delay.
+            self._stamp_lag_ms.append((now - self._timebase.to_utc(msg.time_boot_ms / 1e3)) * 1e3)
 
     def _on_px4_reboot(self) -> None:
         """PX4 restarted (a battery swap on the bench): ask again for the rates it forgot.
@@ -630,6 +655,7 @@ class MavlinkIO:
         twice, as a radio loses the odd command.
         """
         self._px4_reboots += 1
+        self._timebase.reset()
         rates = dict(self._rates)  # request_rates may add to it from the start thread
         logger.warning("PX4 rebooted; asking again for message rates", rates=rates)
         for _ in range(2):
@@ -697,6 +723,38 @@ class MavlinkIO:
     def arm(self, value: bool) -> None:
         self.send_command(MAV_CMD_COMPONENT_ARM_DISARM, 1.0 if value else 0.0)
 
+    # Gimbal manager (PX4 is the manager, the A8 is device 154). Only used when the
+    # connection is configured to own gimbal control.
+
+    def claim_gimbal_control(self, gimbal_device: int = GIMBAL_COMPID) -> Future[int]:
+        """Take primary control for our own (system, component)."""
+        return self.send_command(
+            MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,
+            float(self._source_system),
+            float(self._source_component),
+            -1.0,
+            -1.0,
+            0.0,
+            0.0,
+            float(gimbal_device),
+        )
+
+    def send_gimbal_pitchyaw(
+        self, pitch_deg: float, yaw_deg: float, gimbal_device: int = GIMBAL_COMPID
+    ) -> None:
+        """Absolute pitch/yaw in degrees, flags 0 = yaw in the body (follow) frame."""
+        nan = float("nan")
+        self.send_command(
+            MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
+            pitch_deg,
+            yaw_deg,
+            nan,
+            nan,
+            0.0,
+            0.0,
+            float(gimbal_device),
+        )
+
     def send_position_setpoint(self, n: float, e: float, d: float, yaw_rad: float) -> None:
         self._send_setpoint(MASK_POS_YAW, n, e, d, 0.0, 0.0, 0.0, yaw_rad, 0.0)
 
@@ -751,6 +809,14 @@ class MavlinkIO:
             "bad_data": self._bad_data,
             "last_ack_result": acks,
             "px4_reboots": self._px4_reboots,
+            "timebase": {
+                "quality": self._timebase.quality,
+                "samples": self._timebase.samples,
+                "rejected": self._timebase.rejected,
+                "stamp_lag_ms_p50": (
+                    statistics.median(self._stamp_lag_ms) if self._stamp_lag_ms else None
+                ),
+            },
         }
 
     def stats_snapshot(self) -> dict[str, _MsgStat]:

@@ -37,18 +37,21 @@ from dimos.robot.px4.mavlink import (
     MavlinkIO,
     VehicleState,
     body_flu_velocity_to_ned,
+    flu_to_ned,
     frd_to_flu,
     mode_name,
     ned_to_flu,
     quaternion_from_ned_euler,
 )
 from dimos.robot.px4.supervisor_core import SupervisorCore
+from dimos.robot.px4.timebase import Px4Timebase
 
 
 def test_ned_to_flu_matches_the_drone_module_signs() -> None:
     # Same convention as dimos/robot/drone/test_drone.py::test_ned_to_ros_coordinate_conversion:
     # north -> +x, east -> -y, down -> -z.
     assert ned_to_flu(3.0, 4.0, -1.0) == (3.0, -4.0, 1.0)
+    assert flu_to_ned(*ned_to_flu(3.0, 4.0, -1.0)) == (3.0, 4.0, -1.0)
     assert frd_to_flu(1.0, 2.0, 9.8) == (1.0, -2.0, -9.8)
 
 
@@ -103,10 +106,15 @@ def test_messages_from_other_components_are_ignored() -> None:
 def test_snapshot_ages_use_snapshot_time() -> None:
     st = VehicleState()
     st.handle(Msg("HEARTBEAT", base_mode=0, custom_mode=0), now=100.0)
-    st.handle(Msg("LOCAL_POSITION_NED", x=1, y=2, z=-3, vx=0, vy=0, vz=0), now=100.2)
-    st.handle(Msg("ATTITUDE", roll=0.0, pitch=0.0, yaw=math.radians(90)), now=100.2)
+    st.handle(
+        Msg("LOCAL_POSITION_NED", time_boot_ms=5000, x=1, y=2, z=-3, vx=0, vy=0, vz=0), now=100.2
+    )
+    st.handle(
+        Msg("ATTITUDE", time_boot_ms=5000, roll=0.0, pitch=0.0, yaw=math.radians(90)), now=100.2
+    )
     snap = st.snapshot(now=101.0)
     assert snap.heartbeat_age == 1.0
+    assert snap.local is not None and snap.local.boot_s == 5.0
     assert math.isclose(snap.local_age, 0.8)
     assert snap.yaw_deg == 90.0
     assert snap.rc is None and snap.rc_age == math.inf
@@ -211,7 +219,7 @@ def test_battery_unknowns_are_nan_not_measurements() -> None:
 
 
 def _io() -> MavlinkIO:
-    return MavlinkIO(VehicleState(), url="", source_system=1, source_component=195)
+    return MavlinkIO(VehicleState(), Px4Timebase(), url="", source_system=1, source_component=195)
 
 
 def _record_commands(io: MavlinkIO, then: Any = None) -> list[tuple[int, list[float]]]:
@@ -330,3 +338,41 @@ def test_only_the_radio_link_asks_for_faster_position() -> None:
     assert LINK_STREAM_HZ["onboard"] == {}
     # The supervisor refuses a takeoff on a local position older than 0.5 s.
     assert LINK_STREAM_HZ["radio"]["LOCAL_POSITION_NED"] > 2.0
+
+
+# Vehicle clock and gimbal manager.
+
+
+def test_system_time_reaches_the_timebase() -> None:
+    tb = Px4Timebase(min_samples=5)
+    io = MavlinkIO(VehicleState(), tb, url="", source_system=1, source_component=195)
+    for i in range(5):
+        io._ingest(
+            Msg("SYSTEM_TIME", time_unix_usec=(1.8e9 + i) * 1e6, time_boot_ms=(40 + i) * 1e3)
+        )
+    assert io.stats()["timebase"]["quality"] == "system_time"
+    assert tb.offset_s == pytest.approx(1.8e9 - 40.0)
+    io._ingest(Msg("SYSTEM_TIME", src=(1, 154), time_unix_usec=9e15, time_boot_ms=1))  # not PX4's
+    assert tb.samples == 5
+
+
+def test_a_px4_reboot_forgets_the_vehicle_clock() -> None:
+    tb = Px4Timebase(min_samples=1)
+    io = MavlinkIO(VehicleState(), tb, url="", source_system=1, source_component=195)
+    _record_commands(io)
+    # No GPS time (unix 0): the offset comes from receive time minus boot time.
+    io._ingest(Msg("SYSTEM_TIME", time_unix_usec=0, time_boot_ms=600_000))
+    before = tb.offset_s
+    io._ingest(Msg("SYSTEM_TIME", time_unix_usec=0, time_boot_ms=1_000))  # PX4 rebooted
+    assert tb.offset_s == pytest.approx(before + 599.0, abs=1.0)  # the new boot, not the old
+
+
+def test_gimbal_manager_command_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    io = _io()
+    written = _record_commands(io)
+    io.claim_gimbal_control()
+    io.send_gimbal_pitchyaw(-20.0, 30.0)
+    assert written[0] == (1001, [1.0, 195.0, -1.0, -1.0, 0.0, 0.0, 154.0])
+    command, p = written[1]
+    assert command == 1000 and p[:2] == [-20.0, 30.0] and p[4:] == [0.0, 0.0, 154.0]
+    assert math.isnan(p[2]) and math.isnan(p[3])
