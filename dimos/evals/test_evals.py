@@ -188,6 +188,13 @@ def test_parsers() -> None:
     assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
+    # Options ending in '%' are not word chars; \\b would reject a correct reply.
+    coverage = choice(["under 25%", "25% to under 50%", "50% to under 75%", "75% or more"])
+    assert coverage("under 25%") == "under 25%"
+    assert coverage('"under 25%"') == "under 25%"
+    assert coverage('"25% to under 50%"') == "25% to under 50%"
+    assert coverage("I estimate 75% or more of the frame.") == "75% or more"
+    assert coverage("Maybe under 25%, but finally 50% to under 75%.") == "50% to under 75%"
 
 
 def test_dataset_start_hands_out_the_selection(dataset: str) -> None:

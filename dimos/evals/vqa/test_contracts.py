@@ -54,7 +54,7 @@ from dimos.evals.vqa.generate import (
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
-from dimos.evals.vqa.suite import load_suite
+from dimos.evals.vqa.suite import format_case_inputs, load_suite
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
@@ -981,6 +981,46 @@ def test_standalone_rows_match_public_private_contract() -> None:
         "id": "frame-000004-chair-presence",
         "answer": "yes",
     }
+
+
+def test_format_case_inputs_adds_body_frame_rules_for_spatial_choices() -> None:
+    image_case = PublicCase(
+        id="presence",
+        image="assets/x.png",
+        question="Is there a chair?",
+        choices=("yes", "no"),
+    )
+    ego_case = PublicCase(
+        id="ego",
+        image="assets/x.png",
+        question="Is the chair ahead of the robot or behind it?",
+        choices=("ahead", "behind"),
+    )
+    image_inputs = format_case_inputs(image_case)
+    ego_inputs = format_case_inputs(ego_case)
+    assert "Choices: [" in image_inputs
+    assert "Do not refuse" in image_inputs
+    assert "Spatial answering rules" not in image_inputs
+    assert "Spatial answering rules" in ego_inputs
+    assert "question time" in ego_inputs
+    assert "robot body" in ego_inputs
+    assert "Earlier frames are history" in ego_inputs
+    assert "only when the referent lies roughly behind" in ego_inputs
+    assert "never invent spellings" in ego_inputs
+    assert 'Choices: ["ahead", "behind"]' in ego_inputs
+
+    turn_case = PublicCase(
+        id="turn",
+        image="assets/x.png",
+        question=(
+            "To face the chair, should the robot turn left, turn right, "
+            "turn around, or is it already ahead?"
+        ),
+        choices=("left", "right", "turn around", "ahead"),
+    )
+    turn_inputs = format_case_inputs(turn_case)
+    assert '"left"' in turn_inputs and "turn left" in turn_inputs
+    assert "copied verbatim" in turn_inputs
 
 
 @pytest.mark.parametrize("choices", (("yes",), ("yes", "YES")))

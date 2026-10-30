@@ -63,6 +63,53 @@ def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], flo
     return grade
 
 
+_SPATIAL_CHOICE_HINTS = frozenset(
+    {
+        "ahead",
+        "behind",
+        "left",
+        "right",
+        "center",
+        "turn around",
+        "turn left",
+        "turn right",
+    }
+)
+
+
+def _is_spatial_case(case: PublicCase) -> bool:
+    """True when choices are ego-spatial labels (ahead/behind/left/right/turn)."""
+    return any(choice.casefold() in _SPATIAL_CHOICE_HINTS for choice in case.choices)
+
+
+def format_case_inputs(case: PublicCase) -> str:
+    """Question + Choices + answering rules (extra body-frame rules for spatial)."""
+    choice_list = ", ".join(json.dumps(c) for c in case.choices)
+    lines = [
+        case.question,
+        f"Choices: {json.dumps(case.choices)}",
+        (
+            "Reply with exactly one token from Choices, copied verbatim "
+            f"(one of: {choice_list}). "
+            'If the question says "turn left" / "turn right", the matching Choice tokens are '
+            'still "left" / "right" — never invent spellings like "turn left". '
+            "Do not refuse or say you lack information."
+        ),
+    ]
+    if _is_spatial_case(case):
+        lines += [
+            "",
+            "Spatial answering rules:",
+            "- Images are the robot forward camera in time order; each [t=…] stamp is seconds from the first shown frame.",
+            "- Earlier frames are history to help you understand where the referent is relative to the robot; they are not the answer moment.",
+            "- The LAST image is question time (current robot pose / heading). Judge ahead, behind, left, right, and turn around in the robot body frame at that last frame only.",
+            "- Prefer left / right / ahead when the referent's bearing at question time is clearly to that side or already in front.",
+            "- Choose turn around only when the referent lies roughly behind the robot at question time (about a 180° yaw). Do not pick it merely because the referent appeared earlier in the clip.",
+            "- An object can be behind at question time even if it is no longer in the final forward-camera image.",
+        ]
+    return "\n".join(lines)
+
+
 def load_suite(dataset: Path) -> Suite:
     """Load public cases, private labels, and images from a generated dataset."""
     root = dataset.resolve()
@@ -104,8 +151,7 @@ def load_suite(dataset: Path) -> Suite:
         suite.append(
             EvalCase(
                 id=case.id,
-                inputs=f"{case.question}\nChoices: {json.dumps(case.choices)}\n"
-                "Answer with exactly one choice.",
+                inputs=format_case_inputs(case),
                 environment=ImageFile(_resolve_image(root, case.image)),
                 grade=grade_choice(case.choices, label.answer),
                 tags=frozenset({"vqa"}),

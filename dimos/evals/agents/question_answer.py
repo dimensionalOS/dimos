@@ -54,6 +54,12 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
     frames_per_stream: int = Field(default=8, ge=1)
+    system_prompt: str = (
+        "Answer using only the provided observations. "
+        "Multi-frame clips are the robot forward camera in time order: earlier frames are history; "
+        "the last frame is question time. Judge spatial relations in the robot body frame at that "
+        "last frame. Copy one Choice token exactly as written (e.g. left not turn left). Do not refuse."
+    )
 
 
 class QuestionAnswer(SingleCallAgent):
@@ -77,15 +83,26 @@ class QuestionAnswer(SingleCallAgent):
                     observations[round(i * (len(observations) - 1) / (n - 1))] for i in range(n)
                 ]
             t0 = observations[0].ts
-            blocks.append(
-                {
-                    "type": "text",
-                    "text": f"observations from stream {stream.name!r} (t is seconds from the first shown):",
-                }
+            multi = len(observations) > 1
+            header = (
+                f"observations from stream {stream.name!r}: robot forward-camera frames "
+                f"in time order (t is seconds from the first shown)."
             )
+            if multi:
+                header += (
+                    " The last frame below is question time (current robot pose); "
+                    "answer spatial questions relative to that frame."
+                )
+            blocks.append({"type": "text", "text": header})
             blocks += _legend_block(observations[0])
-            for obs in observations:
-                blocks += _observation_blocks(obs, f"[t={obs.ts - t0:.1f}s]")
+            last_i = len(observations) - 1
+            for i, obs in enumerate(observations):
+                stamp = f"[t={obs.ts - t0:.1f}s] robot forward-camera"
+                if multi and i == last_i:
+                    stamp += " at question time (current pose)"
+                elif multi:
+                    stamp += " (earlier in the clip)"
+                blocks += _observation_blocks(obs, stamp)
         if not blocks:
             raise ValueError("nothing in the recording to encode; the run would be blind")
         return blocks
