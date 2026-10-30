@@ -1,165 +1,234 @@
-# sim2 core handoff for Jeff
+# sim2: the interface a caller uses and a backend implements
 
-**Proposed contract for review; not implemented by the current PR.** Keep the
-working G1 application as the integration test. Extract a small physics core:
-**one world state, one complete input per physics step, one backend interface.**
-Extend the existing shared model and URDF manager for model identity, frames
-and attachments. Do not make the physics loop depend on live TF or manager RPCs.
+**Proposal for review with Jeff, not a new implemented runtime API.** The current
+PR already has `describe_world`, `read_state`, `submit`, `set_paused` and `reset`.
+This proposal gives those calls precise, smaller data types and behavior.
+The complete typed contract is [sim2_contract.py](/docs/development/sim2_contract.py).
+The Python examples below import that proposal and define functions; they do not
+command the running simulator. Do not send these new types to the current PR.
 
-## The ownership boundary
+## 1. What a user does
 
-```mermaid
-flowchart LR
-    Model[Shared RobotModel and scene descriptions] --> Backend[Physics backend]
-    Model --> Manager[URDF manager]
-    Model --> Sensors[Sensor and renderer adapters]
-    Control[Existing robot controller and connection] --> Runtime[Simulation runtime]
-    Runtime -->|StepInput| Backend
-    Backend -->|WorldState| Runtime
-    Runtime -->|JointState| Manager
-    Runtime -->|Root TF via adapter| TF[TF consumers]
-    Manager -->|Joint TF| TF
-    Runtime -->|Snapshot at acquisition time| Sensors
+Run the ordinary robot blueprint. The existing coordinator collects robot
+instances from their connections, adds one simulation module, and supplies the
+selected backend with the robot models and scene before it builds the world.
+
+```bash skip
+dimos --simulation mujoco --transport zenoh run unitree-g1-groot-control
 ```
 
-| Owner | Owns | Does not own |
-| --- | --- | --- |
-| Shared model layer, extended with Jeff | Canonical body/joint IDs, topology, axes, units, limits, geometry, inertia and named fixed frames | Live simulation state or stepping |
-| `UrdfManager` | Robot TF publication and model/asset distribution | Contact solving, command expiry or sensor acquisition |
-| sim2 core | Physical body/joint state, applied inputs, step/reset ordering and overload behavior | Another robot model, mount registry or TF tree |
-| Backend adapter | Model compilation, engine handles, integration, native actuator/force conversion | Robot policy, task reward or Desktop behavior |
-| Sensor, renderer and robot adapters | Acquisition, images/clouds, hardware motor ordering, policy feedback, renderer-specific assets | Redefining the robot's mounted frames |
+The store/Unreal blueprint remains `unitree-g1-groot-wbc-unreal`, with the existing
+scene-package and renderer options. Desktop consumes its normal robot, TF, image
+and point-cloud streams. This proposal changes the physics boundary, not that
+launch workflow. A compatible backend selection changes the engine; it must
+validate the requested model/control profile before starting.
+Today the Genesis G1 path supports control-only; the Mid360/Point-LIO navigation
+blueprint still requires MuJoCo. A shared physics contract does not automatically
+port sensor implementations or make native asset formats interchangeable.
 
-The existing [RobotModel](/dimos/robot/assets/model.py) already resolves URDF/Xacro,
-canonical joint renames, topology, model variants and `with_fixed_frame()`.
-[UrdfManager](/dimos/robot/urdf_manager.py) already publishes fixed/scalar joint
-transforms and serves assets. Typed link/inertia/collision/sensor catalogs would
-be extensions; they are not already exposed by `LoadedRobotModel`.
-
-## Exact physical state
-
-Reuse DimOS `Pose` and `Twist`. No separate robot-shaped copy, IMU, camera frame,
-mesh, task reward or engine checkpoint in this state.
+An application obtains the running module through the existing DimOS client.
+Inside another module, the same `Simulation` Spec can be injected normally.
+This connection example is for **after** the proposed types are implemented:
 
 ```python
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Literal, Protocol
-from uuid import UUID
-
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]  # xyzw, unit quaternion
-DriveKind = Literal["pd_effort", "native_position"]
+from dimos.core.global_config import global_config
+from dimos.porcelain.dimos import Dimos
+from docs.development.sim2_contract import Simulation
 
 
-@dataclass(frozen=True)
-class StateId:
-    epoch: UUID  # new on build/reset; old-run inputs cannot be reused
-    tick: int   # completed public steps in this epoch; starts at zero
-
-
-@dataclass(frozen=True)
-class BodyState:
-    pose: Pose    # world pose of the authored body/link origin
-    twist: Twist  # world-expressed velocities AT THAT SAME ORIGIN
-
-
-@dataclass(frozen=True)
-class ScalarJointState:
-    position: float                  # rad for hinge, m for slider
-    velocity: float                  # rad/s or m/s
-    actuator_effort: float | None     # Nm or N, final internal integration step
-
-
-@dataclass(frozen=True)
-class BallJointState:
-    orientation: Quat                 # child joint frame in parent joint frame
-    angular_velocity: Vec3            # relative velocity, in CHILD joint axes
-    actuator_torque: Vec3 | None       # Nm, same axes
-
-
-@dataclass(frozen=True)
-class WorldState:
-    id: StateId
-    sim_time: float                   # seconds since this epoch began
-    model_revision: str              # identifies the shared compiled description
-    bodies: Mapping[str, BodyState]
-    joints: Mapping[str, ScalarJointState | BallJointState]
+def connect_to_sim() -> tuple[Dimos, Simulation]:
+    global_config.update(transport="zenoh")
+    app = Dimos.connect(timeout=15)
+    return app, app.find_module_by_spec(Simulation)
 ```
 
-| Question | Contract |
+The caller gets five operations; it never runs the physics loop itself:
+
+| Call | What it does |
 | --- | --- |
-| What is an object? | An application grouping of physical bodies. A box has one body; G1 has many. Physics addresses bodies, not an additional object-pose copy. |
-| What is a joint? | A constraint between bodies. Its coordinates describe allowed relative motion. A joint does not imply a motor. |
-| Which frames appear in state? | Physical body/link frames. Optical frames and sensor mounts resolve through the shared model. |
-| Floating and fixed joints? | Free-root motion is already in `BodyState`. Fixed joints are topology only. Neither needs another dynamic joint-state entry. |
-| Effort meaning? | Actual actuator contribution used by the final internal integration step, after native transmission/limits; excludes contacts, constraint reactions, passive forces and external wrenches. Not a whole-step average. `None` on initial/reset state or when unavailable, never an invented zero. |
-| Joint coordinates? | Shared model zero/sign/axis and SI units, not SDK array order or encoder scaling. Ball rotation includes the authored joint-frame convention. |
-| Snapshot ownership? | Every field is from the same completed step; copied values must not alias mutable engine memory. |
-| Is this a save file? | No. Solver warm starts, actuator internal state and engine checkpoints remain backend-specific. |
+| `sim.describe_world()` | Lists valid body/joint IDs, body mobility, supported joint drive types, model revision and physics step duration. |
+| `sim.read_state()` | Returns the latest completed, coherent physical state. It does not advance time. |
+| `sim.submit(batch)` | Queues a partial scene command for the next physics boundary; returns accepted/rejected and its reason. |
+| `sim.set_paused(True / False)` | Stops/resumes physics time. No pose change or reset. |
+| `sim.reset()` | Restores the configured initial state, cancels pending actions and starts a new epoch. |
 
-Wall-clock receive/publication times belong in transport/runtime diagnostics.
-They must not replace `sim_time` or drive policy observation history.
-
-## Exact inputs and backend boundary
-
-Keep the distinction the current G1 profiles already need: GR00T commands PD
-motors; stock G1 uses authored position servos. The current `JointDrive` hides
-that distinction behind fields which some actuators reject.
+### Push G1 while its controller keeps it standing
 
 ```python
-@dataclass(frozen=True)
-class JointInfo:
-    kind: Literal["revolute", "prismatic", "spherical", "fixed"]
-    drive: DriveKind | None  # None means no supported one-to-one scalar drive
+from uuid import uuid4
+from docs.development.sim2_contract import (
+    BodyWrench, CommandBatch, CommandReport, Simulation,
+)
 
 
-@dataclass(frozen=True)
-class WorldDescription:
-    model_revision: str
-    step_dt: float  # one public step in simulated seconds; fixed while loaded
-    bodies: Mapping[str, Literal["dynamic", "static", "kinematic"]]
-    joints: Mapping[str, JointInfo]
-    # IDs refer to the shared model; no second copy of origins, axes or mounts.
+def push_g1(sim: Simulation) -> CommandReport:
+    state = sim.read_state()
+    return sim.submit(CommandBatch(
+        command_id=uuid4().hex,
+        epoch=state.id.epoch,
+        commands=(BodyWrench("g1/pelvis", force_world=(20.0, 0.0, 0.0)),),
+        duration=0.1,
+    ))
+```
+
+This asks for **20 N along world +X at the pelvis center of mass for 0.1 simulated
+seconds**. G1's controller continues supplying its 29 motor targets. The caller
+supplies only the push. `SimulationModule` combines it with those targets.
+
+For a world with `step_dt=0.005`, accepted after tick 100: the force first affects
+100→101; `applied` names state 101. It affects 20 intervals through 119→120, then
+`expired` names state 120. It is absent from 120→121. Acceptance does not promise
+that G1 stays upright or reaches a target position.
+
+Subscribe to `app.SimulationModule.get_stream("world_state")` for resulting motion
+and `get_stream("command_reports")` for this command's lifecycle. Both use the
+existing `.subscribe(callback)` interface. Subscribe before submitting; the
+returned unsubscribe functions detach listeners. `app.stop()` disconnects this
+remote client without stopping the running blueprint.
+Publication may be slower than physics; gaps between published tick numbers do
+not imply skipped physics steps. `read_state()` returns the latest completed tick.
+
+### Read what actually happened
+
+```python
+from dimos.msgs.geometry_msgs.Pose import Pose
+from docs.development.sim2_contract import ScalarJointState, Simulation
 
 
-@dataclass(frozen=True)
-class JointPD:
-    joint: str
-    position: float
-    velocity: float
-    kp: float
-    kd: float
-    feedforward: float
+def read_g1(sim: Simulation, knee_joint: str) -> tuple[Pose, ScalarJointState]:
+    state = sim.read_state()
+    knee = state.joints[knee_joint]  # canonical ID from describe_world().joints
+    if not isinstance(knee, ScalarJointState):
+        raise ValueError("Expected a scalar G1 knee joint")
+    return state.bodies["g1/pelvis"].pose, knee
+```
 
+The knee contains its measured angle, speed and actual actuator effort. The
+pelvis contains its world pose and twist. A command report records that an input
+was applied; state records the physical response. Actual motor effort is not an
+echo of the target. A complete log of requested inputs belongs to runtime
+tracing, correlated with the resulting state ID.
 
-@dataclass(frozen=True)
-class JointPosition:
-    joint: str
-    position: float  # native servo retains authored gains and dynamics
+### A box, a door and a robot link use the same body-force call
 
+| Target | Request | Meaning |
+| --- | --- | --- |
+| Free box body | `BodyWrench("box", force_world=(20, 0, 0))` | Push at its center of mass; collisions and inertia determine motion. |
+| Passive door leaf | `BodyWrench("door_leaf", torque_world=(0, 0, 3))` | Apply a 3 Nm couple; its hinge constrains the resulting motion. |
+| Motorized door hinge | `JointPosition("door_hinge", position=1.0)` | Ask its declared native position servo for 1 rad. |
+| PD-driven hinge | `JointPD("door_hinge", 1.0, 0.0, 30.0, 2.0, 0.0)` | Ask for a 1 rad target with explicit gains, desired speed and feedforward. |
+| Static store fixture | Any `BodyWrench` | Reject: the body is static. |
+| Passive hinge | Either joint-drive command | Reject: no supported actuator. |
+| G1 knee owned by its controller | Generic scene joint-drive command | Reject: use the existing robot control path or deliberately select a different controller. |
 
-@dataclass(frozen=True)
-class BodyWrench:
-    body: str
-    force_world: Vec3 = (0.0, 0.0, 0.0)
-    torque_world: Vec3 = (0.0, 0.0, 0.0)
-    point_world: Vec3 | None = None  # None means the body's current CoM
+A **body** has pose, velocity and inertia. A **joint** constrains relative motion
+between bodies. An **actuator** supplies effort to an allowed joint coordinate.
+G1 is a collection of these bodies/joints, not another physics entity type.
+There is no generic action that teleports an object or makes a joint hit its
+requested position instantly.
 
+The current Konbini store fixtures are static. The free box and hinged door above
+are proposed additions to the G1 conformance scene, not claims about those assets.
+Making them movable requires a physical body/inertia/collision and, for the door,
+a hinge in the authored scene. Unreal visual meshes alone do not provide that.
 
-@dataclass(frozen=True)
-class StepInput:
-    from_state: StateId
-    drives: tuple[JointPD | JointPosition, ...]
-    wrenches: tuple[BodyWrench, ...] = ()
+## 2. Exact state and action types
+
+[The contract file](/docs/development/sim2_contract.py) is authoritative for field
+names and Python types. These are the contents, not extra messages to implement:
+
+| Value | Exact contents |
+| --- | --- |
+| `StateId` | `epoch: UUID`, `tick: int` |
+| `WorldState` | `id: StateId`, `sim_time: float`, `model_revision: str`, `bodies: Mapping[str, BodyState]`, `joints: Mapping[str, ScalarJointState \| BallJointState]` |
+| `BodyState` | `pose: Pose`, `twist: Twist` |
+| `ScalarJointState` | `position: float`, `velocity: float`, `actuator_effort: float \| None` |
+| `BallJointState` | `orientation: Quat`, `angular_velocity: Vec3`, `actuator_torque: Vec3 \| None` |
+| `WorldDescription` | `model_revision: str`, `step_dt: float`, `bodies: Mapping[str, dynamic/static/kinematic]`, `joints: Mapping[str, JointInfo]` |
+| `JointInfo` | `kind: revolute/prismatic/spherical/fixed`, `drive: pd_effort/native_position/None` |
+| `JointPD` | `joint: str`, `position, velocity, kp, kd, feedforward: float` |
+| `JointPosition` | `joint: str`, `position: float` |
+| `BodyWrench` | `body: str`, `force_world: Vec3`, `torque_world: Vec3`, `point_world: Vec3 \| None` |
+| `CommandBatch` | `command_id: str`, `epoch: UUID`, `commands: tuple[JointPD \| JointPosition \| BodyWrench, ...]`, `duration: float` |
+| `CommandReport` | `command_id: str`, `state: StateId`, `status: accepted/applied/rejected/expired/cancelled`, `reason: str` |
+
+Coordinates and completeness are part of the contract:
+
+- SI units, right-handed Z-up world; quaternion order **xyzw**. Pose and both
+  twist vectors use world axes. Linear velocity is at the authored body origin,
+  not at its center of mass. Joint values use shared-model signs/zeros/axes.
+- Scalar joints use rad/rad·s⁻¹/Nm or m/m·s⁻¹/N. Ball orientation maps child joint
+  coordinates into parent joint coordinates; relative angular velocity and torque
+  use child joint axes. Ball-joint drives are outside the first core contract.
+- `bodies` includes every described physical body. `joints` includes every
+  described non-fixed joint. Free roots appear only as body state; fixed joints
+  are topology only. Sensor/optical frames resolve through the shared model.
+- Reported effort is the actuator contribution used in the final internal
+  integration step, after transmission/limits. It excludes contact reactions,
+  passive forces and external wrenches. `None` on initial/reset state or if
+  unavailable. It is not a whole-step average.
+- All state values come from one completed step and own their data; no live engine
+  buffer aliases. `model_revision` identifies the compiled model/profile; a
+  topology/profile change requires rebuild. This state is not an engine checkpoint.
+
+### Submission, ownership and lifetime
+
+- Validate the whole batch before enqueueing: current epoch, nonempty unique
+  command ID for that epoch, nonempty commands, finite values, nonnegative
+  duration/gains, valid IDs and supported drive types. Reject the whole batch on
+  error, with a reason; no partial application.
+- Queue in owner acceptance order and apply at the next available physics
+  boundary. Wrenches add. Duplicate/overlapping joint writers are rejected,
+  including robot-owned joints. A batch reserves its scene joints until expiry.
+- Duration starts at the first affected interval. `0` means one public step;
+  positive durations use `ceil(duration / step_dt)` intervals. Time is simulated
+  time; pausing or slow rendering does not consume the duration.
+- A world-space force remains fixed in world axes. `point_world=None` follows the
+  body's instantaneous center of mass. Otherwise the point is fixed in world
+  coordinates and contributes `(point_world - com_world) × force_world` in
+  addition to `torque_world`, recomputed at every internal integration substep.
+  Only dynamic bodies accept wrenches, including bodies constrained by hinges.
+- Reports: accepted/rejected names the latest state at admission; applied names
+  the first completed affected tick; expired names the final affected tick. Reset
+  cancels queued/active commands against the last old-epoch state, then publishes
+  the new initial state. A backend failure stops stepping and cancels active work
+  with a reason; it must not emit an applied report for a failed step.
+- A scene PD drive returns to zero gains/feedforward on expiry. A native position
+  servo holds the position measured at expiry; removing its target does not mean
+  removing its authored servo. The runtime supplies these fallback inputs
+  explicitly. Robot fallback belongs to the selected control profile.
+- Pause preserves epoch and active commands; submissions while paused wait for
+  resume. Reset clears commands, restores initial state, creates a new UUID epoch
+  and returns tick/time to zero. The model stays loaded. If a separate wall-clock
+  connection-loss rule expired while paused, resume waits for fresh robot control
+  instead of silently replacing the held controller targets with damping.
+
+## 3. What happens inside the module
+
+The caller submits a **partial batch**. The runtime alone constructs a **complete
+input for one physics step**. That separation is why pushing a box does not
+require the caller to send 29 G1 motor targets.
+
+| Runtime input | Translation before stepping |
+| --- | --- |
+| GR00T → existing G1 connection → `MotorCommandArray` | All 29 `q/dq/kp/kd/tau` entries become `JointPD`, using the connection's motor-order-to-model-ID mapping. |
+| Stock G1 velocity command → its locomotion policy | All 29 position targets become `JointPosition`; native servo gains/dynamics stay in the model profile. |
+| Application `CommandBatch` | Expand active durations into this step's scene drives and body wrenches. |
+| Missing/expired control | Supply the declared control-profile fallback and record why; no backend-specific implicit hold. |
+
+The actual G1 conversion functions are in
+[sim2_contract.py](/docs/development/sim2_contract.py). One G1 connection remains.
+Stock and GR00T are different control/physics profiles of that connection.
+Hardware still receives `MotorCommandArray`; this does not replace its message.
+
+The engine implementer implements precisely:
+
+```python
+from typing import Protocol
+from docs.development.sim2_contract import StepInput, WorldDescription, WorldState
 
 
 class PhysicsBackend(Protocol):
-    # Factory configures the backend with model instances before build().
     def build(self) -> WorldDescription: ...
     def read_state(self) -> WorldState: ...
     def step(self, inputs: StepInput) -> WorldState: ...
@@ -167,136 +236,93 @@ class PhysicsBackend(Protocol):
     def close(self) -> None: ...
 ```
 
-- `step()` validates the entire input before changing state. `from_state` must
-  match the current epoch/tick. Success advances exactly `step_dt` and returns
-  tick + 1. Invalid input changes nothing. All vectors must be finite.
-- Every declared driven joint gets exactly one correctly typed drive per step.
-  The runtime expands held targets and fallback behavior explicitly. Missing,
-  duplicate or unsupported drives are errors; no backend chooses an implicit hold.
-- For `pd_effort`, compute desired effort `kp*(q_target-q) + kd*(dq_target-dq) + feedforward`
-  each integration step, with nonnegative gains. Apply through the declared
-  actuator/transmission, retaining its limits and dynamics. A native position
-  servo accepts `JointPosition` instead. Unsupported transmissions fail at build.
-- Wrenches last one public step and add. `point_world` is an absolute world point;
-  its contribution about the CoM is `(point_world - com_world) × force_world`.
-  `torque_world` is an additional pure couple. Only dynamic bodies accept wrenches.
-  With internal substeps, the world point stays fixed and the moment arm is
-  recomputed against the moving CoM on each internal step.
-- World coordinates keep TF lookup outside the backend. A caller can resolve a
-  body- or sensor-relative push using the shared frame definition and this state.
-- `reset()` restores the configured initial state, with a new epoch, tick 0 and
-  time 0. It preserves model/topology. Model changes require rebuild/new revision.
-  Pausing is a runtime operation: do not step or advance simulation time.
+`StepInput` contains `from_state: StateId`, `drives: tuple[JointPD | JointPosition, ...]`
+and `wrenches: tuple[BodyWrench, ...]`. The existing composition factory configures
+models/instances/scene before `build()`; this proposal does not add a scene format.
 
-No separate `apply_force()` call followed by an unrelated `step()`: the inputs
-and the interval they affect stay together. Kinematic pose scripting, contact
-queries, native checkpoints and robosuite task actions/rewards are optional
-interfaces beside this core. They are not mandatory backend methods.
+- Build returns the compiled description and establishes tick/time zero with a
+  new epoch. Read returns that state or the latest completed state without stepping.
+- Each step validates everything before mutation. `from_state` must exactly match
+  current epoch/tick. Every declared driven joint has exactly one drive of its
+  declared type. Unsupported actuation/transmissions fail at build.
+- Success advances exactly `step_dt`, increments tick once and returns the new
+  state. Invalid input changes nothing. Internal solver substeps are backend-owned.
+- For PD effort, calculate `kp*(q_target-q) + kd*(dq_target-dq) + feedforward` at
+  each integration step, then apply through the declared actuator/transmission,
+  retaining limits and dynamics. Native position drives retain authored servos.
+- Wrenches affect this public step only. Reset creates the initial state of a new
+  epoch. Close releases engine resources and is safe to repeat. Calls after close
+  fail; build is called once per backend instance.
 
-## The actual G1 case
+Physics, command admission and reset have one owner. Sensor work, rendering and
+network publication run outside its critical section, consuming completed state.
+Control observations use simulation time. The runtime records input source,
+accepted age, effective drives, fallback decisions and resulting tick. A separate
+wall-clock connection-loss rule must not disguise scheduler stalls as new motor
+commands. See the recorded [idle-jolt evidence](/docs/development/sim2-idle-jolts.md).
 
-The example consumes a complete command from the existing 29-motor GR00T path.
-`motor_joint_ids` is the connection adapter's motor-order mapping into shared
-model IDs; it is resolved once, not another robot definition. This scene has
-G1, a free box and a passive hinged door, with no other driven joints.
+Reset must also synchronize controller history and reject late old-epoch motor
+samples. `MotorCommandArray` currently has no epoch: the sim control bridge needs
+an epoch-bearing envelope or a proven reset barrier. Merely stamping an old motor
+packet with the current epoch at receipt is insufficient. This remains required
+implementation work, not a guarantee already provided by the proposal file.
 
-```python
-def step_g1_scene(
-    backend: PhysicsBackend,
-    state: WorldState,
-    motor_joint_ids: tuple[str, ...],
-    command: MotorCommandArray,
-) -> WorldState:
-    assert len(motor_joint_ids) == command.num_joints == 29
-    drives = tuple(
-        JointPD(joint, q, dq, kp, kd, tau)
-        for joint, q, dq, kp, kd, tau in zip(
-            motor_joint_ids, command.q, command.dq,
-            command.kp, command.kd, command.tau, strict=True,
-        )
-    )
-    return backend.step(StepInput(
-        from_state=state.id,
-        drives=drives,
-        wrenches=(
-            BodyWrench("box", force_world=(20.0, 0.0, 0.0)),
-            BodyWrench("door", torque_world=(0.0, 0.0, 3.0)),
-        ),
-    ))
-```
+## 4. The specific handoff to Jeff
 
-Both wrenches affect this step only. Calling again without them removes them;
-a 100 ms push is repeated for 100 ms of **simulation** time by the runtime.
-Read G1's resulting pose in `next_state.bodies["g1/pelvis"]`, its joints by
-canonical joint ID, and the door angle from its hinge's `ScalarJointState`.
-The door receives a physical torque on its body and the hinge constrains its
-motion. It does not need a fictional actuator or a special object-control API.
+**Shared model owns names/topology/geometry and authored frames. Simulation owns
+changing physical state. UrdfManager publishes the resulting TF and model assets.**
 
-Stock G1 uses `JointPosition` for its declared native servos. One G1 connection
-remains; the control profile and model's declared drive type determine this
-translation. Arbitrary generalized effort on an unactuated joint would be a
-separate, explicitly defined capability, not a renamed `JointPD`.
-
-## What Jeff can extend
-
-Resolve a mount once from the shared model into **physical body ID + fixed
-body-to-frame transform**. At acquisition time, compose it with that body's
-pose in the corresponding `WorldState`. This is the boundary; no second sim
-mount authoring syntax is needed. The pure model API can be used in-process by
-backends and sensors; the live URDF manager publishes compatibility TF/assets.
-
-| Already exists | Extension to agree with Jeff |
+| Consumer asks the shared model for | Example/result |
 | --- | --- |
-| `RobotModel.with_fixed_frame()`, joint topology/names and URDF asset resolution | Typed links, inertia/collision/visual catalogs, instance-scoped IDs and frame lookup |
-| `UrdfManager` scalar/fixed TF and asset serving | Shared frame attachments, clear partial-state validity and multi-instance handling |
-| Root pose provided separately; manager skips floating/planar joints | One owner per TF edge; authoritative sim root plus joint state projected to standard messages |
-| Sensor-specific measurement configs | Reference shared mount IDs; keep intrinsics, scan pattern, noise and acquisition clocks in sensor/device configs |
+| Instance-scoped physical body and joint IDs | `g1/pelvis`, plus canonical G1 joint IDs used in state/commands. |
+| Joint topology, origins, axes, limits, geometry and inertia | Compile a backend or serve the same robot model to planning/Desktop. |
+| Resolve a named fixed frame to a physical ancestor | `g1/mid360` → physical body ID plus fixed body-to-lidar transform. |
 
-The manager currently substitutes zero for absent joint positions. That is not
-an acceptable source of authoritative physics state without an explicit
-partial-state policy. Likewise, physics ground truth must not invent a
-`world -> odom` alignment for a localization estimate.
+A sensor resolves that mount once. At acquisition time it composes the physical
+body pose from **that acquisition's WorldState** with the fixed mount transform.
+No live TF query inside physics; no repeated camera/lidar offsets in sim2.
+Measurement settings, noise and acquisition rates remain sensor configuration.
+Root TF comes from the simulated root body; joint TF comes from the manager.
+Each TF edge has one publisher. No repeated robot pose/joint arrays in WorldState.
 
-For a robot with a working DimOS connection, the target is **one shared model
-registration, zero new sim connection modules, zero repeated mount transforms**.
-Backend-generated assets are outputs, not a second authored robot. The current
-G1 stock/GR00T plants still differ; a canonical model plus named physics/control
-profiles must preserve their trained dynamics before those native assets can be
-retired. Moving mounts alone does not solve that remaining model duplication.
+[RobotModel](/dimos/robot/assets/model.py) already handles URDF/Xacro, variants,
+renamed joints and `with_fixed_frame()`. Typed link/inertia/collision catalogs and
+instance-aware frame resolution need extension. [UrdfManager](/dimos/robot/urdf_manager.py)
+already serves assets and publishes fixed/scalar joint TF; floating-root TF and
+partial-state validity need an explicit ownership contract. It currently defaults
+missing joint positions to zero, which must not become simulated physical truth.
 
-## Review findings and extraction order
+For a robot **with an existing DimOS connection**, the intended addition is one
+shared model registration/configuration, zero new sim connection modules and zero
+repeated mount transforms. A brand-new hardware robot still needs its connection
+and possibly a controller. Backend import/generated artifacts are outputs, not
+second authored robot definitions.
 
-| Current implementation | Core decision |
+G1 still has distinct stock/GR00T native assets today. One canonical authored
+model plus named physics/control profiles is the target; their trained dynamics
+must be reconciled and validated before deleting those assets. This handoff does
+not claim that moving mounts into RobotModel already solves model duplication.
+
+## 5. What changes from this PR
+
+| Current implementation | Proposed change |
 | --- | --- |
-| `WorldState.robots` duplicates joints/base and embeds IMU | Project standard robot feedback in an adapter; remove from core state |
-| `PhysicsBackend` requires visuals, checkpoints and task reward/action APIs | Five-method physics lifecycle; optional consumers/adapters own those APIs |
-| `JointDescription.actuated: bool` and overloaded `JointDrive` | Explicit drive kind and typed PD/position commands |
-| Omitted position servo holds in MuJoCo but becomes zero-force in Genesis | Complete per-step inputs; backend omission semantics disappear |
-| `Mount`, `VisualAttachment`, G1 TF constants and camera frame resolution overlap | Shared model owns authored frame definitions; retain only native compilation in adapters |
-| Robot timeout uses wall time, generic command duration uses sim time; publishing holds the command/physics lock | Runtime owns clock/freshness/expiry, queues input at step boundaries and publishes outside the owner critical section |
+| `WorldState.robots` repeats root/joints and embeds IMU | Keep body/joint state; robot adapters project standard feedback, sensor adapters acquire IMU. |
+| Backend requires task action/reward, visual and checkpoint APIs | Require only the five physics lifecycle methods. Keep robosuite tasks, sensors, Unreal and native viewer as optional adapters/capabilities. |
+| One overloaded `JointDrive`; different omitted-target behavior across engines | Explicit PD/native-position types and complete inputs assembled by the runtime. |
+| Generic joint batches overwrite robot controller drives | Reject conflicting ownership; external body pushes remain independent. |
+| Pause/resume increments epoch and clears commands | Preserve state/epoch/commands on pause; reset is the explicit invalidation boundary. |
+| Sim mounts, visual attachments and G1 TF constants repeat authored frames | Resolve the same shared model frames once; retain engine/renderer compilation in adapters. |
+| Wall-clock watchdog and publications share the physics lock | Make effective control and its clock explicit; publish outside the owner critical section. |
 
-The [idle-jolt evidence](/docs/development/sim2-idle-jolts.md) makes timing a core
-acceptance criterion. Record each effective `StepInput`, the originating control
-sample, expiry/fallback decision and resulting tick; actual actuator effort is
-feedback, not an echo of the requested value. Under overload, explicitly paced
-simulation/control steps should slow together. Retain a separately defined
-wall-clock connection-loss policy; do not silently turn a scheduling stall into
-unexplained motor-gain changes.
+Implement and validate against full G1 **stock and GR00T** first: all 29 joints,
+root state, pelvis push, a movable box/passive door, command expiry, reset with
+late inputs, and CPU overload. Then run the same contract cases on MuJoCo and
+Genesis. Common units/action semantics are required; identical trajectories are
+not. Engines must reject unsupported assets/actuators explicitly.
 
-Suggested extraction, without replacing the working demo first:
-
-1. Agree this contract and the shared-model/frame ownership boundary with Jeff.
-2. Extract `physics.py`, `runtime.py` and the thin DimOS `module.py`; keep native
-   model import and solver code inside each backend. Move task, sensor and
-   renderer APIs out of the required protocol rather than deleting their working features.
-3. Use the existing full G1 stock and GR00T profiles as conformance cases: all
-   driven joints, free-root pose/twist, a push on the pelvis/box, a passive door,
-   reset/stale-input rejection and deliberate CPU overload. Verify MuJoCo and
-   Genesis against the same units/step semantics; do not require identical trajectories.
-4. Jeff can then extend the shared model/frame catalog against these fixed IDs
-   and state semantics, and adapters can migrate without changing the core API.
-
-Sources: [current physics contract](/dimos/sim2/physics.py),
-[runtime](/dimos/sim2/world/runtime.py), [MuJoCo backend](/dimos/sim2/backends/mujoco.py),
-[Genesis backend](/dimos/sim2/backends/genesis.py), [G1 model profiles](/dimos/robot/unitree/g1/model.py),
-[shared model](/dimos/robot/assets/model.py), [URDF manager](/dimos/robot/urdf_manager.py).
+Sources: [physics.py](/dimos/sim2/physics.py),
+[runtime.py](/dimos/sim2/world/runtime.py), [module.py](/dimos/sim2/module.py),
+[G1 model profiles](/dimos/robot/unitree/g1/model.py),
+[MuJoCo backend](/dimos/sim2/backends/mujoco.py),
+[Genesis backend](/dimos/sim2/backends/genesis.py).
