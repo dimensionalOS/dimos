@@ -92,8 +92,8 @@ configured separately.
 
 ```bash
 # Same application and connection, different motor device.
-dimos run unitree-g1-groot-wbc --network-interface=enp2s0
-dimos --simulation mujoco run unitree-g1-groot-wbc
+dimos --viewer none run unitree-g1-groot-wbc --network-interface=enp2s0
+dimos --simulation mujoco --viewer none run unitree-g1-groot-wbc
 ```
 
 ```text
