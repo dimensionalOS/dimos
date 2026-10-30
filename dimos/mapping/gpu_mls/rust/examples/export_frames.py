@@ -18,7 +18,7 @@ Each frame is a little-endian u32 point count, the sensor origin as 3 f32,
 then the points as f32 xyz triples, placed with the pose interpolated at the
 frame's timestamp.
 
-    python export_frames.py mem2.db out.frames
+    python export_frames.py mem2.db out.frames [odometry_stream] [min_range_m]
 """
 
 import struct
@@ -31,13 +31,16 @@ from dimos.memory.store.sqlite import SqliteStore
 
 LIDAR_STREAM = "livox_lidar"
 ODOMETRY_STREAM = "fastlio_odometry"
-# The Mid-360 reports a shell of junk returns close in; real ones start past this.
-MIN_RANGE_M = 1.0
+# The Mid-360's junk shell sits within a few cm of the sensor. Real returns start
+# about 0.3 m out, and a stair the robot climbs is only ever that close.
+MIN_RANGE_M = 0.3
 
 
-def main(db: str, out: str) -> None:
+def main(
+    db: str, out: str, odometry_stream: str = ODOMETRY_STREAM, min_range_m: float = MIN_RANGE_M
+) -> None:
     store = SqliteStore(path=db)
-    odometry = store.stream(ODOMETRY_STREAM).to_list()
+    odometry = store.stream(odometry_stream).to_list()
     times = np.array([o.ts for o in odometry])
     positions = np.array(
         [[o.data.position.x, o.data.position.y, o.data.position.z] for o in odometry]
@@ -54,7 +57,7 @@ def main(db: str, out: str) -> None:
     with open(out, "wb") as f:
         for observation in store.stream(LIDAR_STREAM).time_range(times[0], times[-1]):
             cloud = np.asarray(observation.data.pointcloud.points, dtype=np.float64)
-            cloud = cloud[np.linalg.norm(cloud, axis=1) > MIN_RANGE_M]
+            cloud = cloud[np.linalg.norm(cloud, axis=1) > min_range_m]
             origin = np.array([np.interp(observation.ts, times, positions[:, k]) for k in range(3)])
             world = slerp([observation.ts]).apply(cloud) + origin
             f.write(struct.pack("<I3f", len(world), *origin))
@@ -65,4 +68,4 @@ def main(db: str, out: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(*sys.argv[1:4], *[float(v) for v in sys.argv[4:5]])
