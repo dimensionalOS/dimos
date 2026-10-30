@@ -21,6 +21,8 @@ import pytest
 
 from dimos.evals.vqa import localize_recording as localize_recording_module
 from dimos.evals.vqa.localize_recording import (
+    discover_object_names,
+    discover_object_names_vlm,
     proposals_from_localize_scene,
     scene_at_timestamp,
 )
@@ -76,6 +78,71 @@ def test_scene_at_timestamp_builds_named_evidence(monkeypatch: pytest.MonkeyPatc
             last_seen_timestamp=1.0,
         ),
     )
+
+
+def _rig_with_one_frame() -> SimpleNamespace:
+    from unittest.mock import Mock
+
+    frame_image = Mock()
+    observation = SimpleNamespace(data=frame_image, ts=1.0)
+
+    class _Color:
+        def after(self, _after: float) -> _Color:
+            return self
+
+        def before(self, _before: float) -> _Color:
+            return self
+
+        def transform(self, _op: object) -> list[SimpleNamespace]:
+            return [observation]
+
+    return SimpleNamespace(cameras={"cam": SimpleNamespace(color=_Color())})
+
+
+def test_discover_object_names_uses_query_score_rows_on_shared_detector() -> None:
+    from unittest.mock import Mock
+
+    import numpy as np
+
+    detector = Mock()
+    # one box: chair=0.05 (below floor), potted plant=0.40
+    detector.query_score_rows.return_value = (
+        np.asarray([[1.0, 2.0, 3.0, 4.0]], dtype=np.float64),
+        np.asarray([[0.05, 0.40]], dtype=np.float64),
+    )
+
+    names = discover_object_names(
+        _rig_with_one_frame(),  # type: ignore[arg-type]
+        0.0,
+        10.0,
+        detector=detector,
+        discovery_vocab=("chair", "potted plant"),
+        score_threshold=0.18,
+        max_frames=1,
+    )
+
+    assert names == ("potted plant",)
+    detector.query_score_rows.assert_called_once()
+    detector.stop.assert_not_called()
+
+
+def test_discover_object_names_vlm_merges_per_frame_lists() -> None:
+    from unittest.mock import Mock
+
+    vl_model = Mock()
+    vl_model.query_json.return_value = {"objects": ["green backpack", "object", "blue mug"]}
+
+    names = discover_object_names_vlm(
+        _rig_with_one_frame(),  # type: ignore[arg-type]
+        0.0,
+        10.0,
+        vl_model=vl_model,
+        max_frames=1,
+    )
+
+    assert names == ("green backpack", "blue mug")
+    vl_model.query_json.assert_called_once()
+    vl_model.stop.assert_not_called()
 
 
 def test_proposals_from_localize_scene_cover_singles_and_pairs() -> None:

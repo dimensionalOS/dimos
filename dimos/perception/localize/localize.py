@@ -418,6 +418,9 @@ def localize(
     state = [(groups if groups is not None else {}).setdefault(q, Groups()) for q in queries]
 
     candidates = retrieve(queries, index=index, rig=rig, embedder=embedder, params=params)
+    if params.release_embedder_after_retrieve:
+        logger.info("localize: releasing embedder after retrieve")
+        embedder.stop()
     planes = support_planes(rig, candidates, params)
     # detect hands each frame with boxes to associate, which marks it read
     pending: dict[FrameKey, list[int]] = {}

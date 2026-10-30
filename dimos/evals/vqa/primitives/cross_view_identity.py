@@ -179,6 +179,15 @@ def filter_instance_views(
     return tuple(v for v in views if sighting_framing_ok(v))
 
 
+def _full_frame_pixels_equal(left: SightingView, right: SightingView) -> bool:
+    """True when both sightings show the exact same full-frame RGB (no referent mark)."""
+    left_rgb = left.image.to_rgb().data
+    right_rgb = right.image.to_rgb().data
+    if left_rgb.shape != right_rgb.shape:
+        return False
+    return bool((left_rgb == right_rgb).all())
+
+
 def _instance_visible_at(
     views: Sequence[SightingView],
     timestamp: float,
@@ -313,6 +322,10 @@ def _pick_diff_pairs(
                     and left.camera_frame != right.camera_frame
                 ):
                     continue
+                # Same full-frame RGB twice (incl. same timestamp) → "no" is unanswerable:
+                # the public question never marks which box is the referent.
+                if left.timestamp == right.timestamp or _full_frame_pixels_equal(left, right):
+                    continue
                 # Either endpoint still co-visible on that camera → ambiguous "no".
                 if _co_visible_at(
                     views_a, views_b, left.timestamp, camera_frame=left.camera_frame
@@ -446,6 +459,11 @@ def answer_cross_view_same_object(
         raise InsufficientEvidenceError("same-object pair has mismatched instance ids")
     if (not pair.same_object) and pair.left.instance_id == pair.right.instance_id:
         raise InsufficientEvidenceError("different-object pair has identical instance ids")
+    if (not pair.same_object) and _full_frame_pixels_equal(pair.left, pair.right):
+        raise InsufficientEvidenceError(
+            "different-object pair uses identical full-frame images "
+            "(no public referent mark; label would be ambiguous)"
+        )
     if first_clip_duration_s < 0 or second_clip_duration_s < 0:
         raise InsufficientEvidenceError("cross-view clip durations must be non-negative")
 

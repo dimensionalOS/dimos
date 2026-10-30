@@ -16,11 +16,10 @@
 
 Default path (no preset queries):
 
-1. Discover object names in the window with prompt-free YOLO-E.
-2. Run Dan localize to verify those names in 3D.
-3. Attach per-frame :class:`LocalizeSceneEvidence` from ``base_link`` pose.
-
-Does not modify ``dimos.perception.localize``.
+1. QualityWindow frames → VLM names (open phrases, optional attributes).
+2. Meanwhile warm the Dan detector (OWL) on GPU.
+3. SigLIP embed + retrieve, then release SigLIP; OWL detect → EdgeTAM → lift.
+4. Attach per-frame :class:`LocalizeSceneEvidence` from ``base_link`` pose.
 """
 
 from __future__ import annotations
@@ -29,7 +28,12 @@ from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+import threading
+from typing import Any
+
+import numpy as np
 
 from dimos.evals.vqa.contracts import QuestionProposal
 from dimos.evals.vqa.primitives.cross_view_identity import SightingView
@@ -65,6 +69,19 @@ _ROOM_LOCALIZE_PARAMS = LocalizeParams(
     min_points=13,
     min_camera_range_m=0.5,
     fuse_voxel_m=0.03,
+    release_embedder_after_retrieve=True,
+)
+
+_DISCOVERY_VLM_PROMPT = (
+    "List distinct physical objects clearly visible in this image. "
+    "Prefer short noun phrases with distinguishing attributes when obvious "
+    '(color, material, size), e.g. "green backpack", "blue ceramic mug". '
+    "Do not invent objects that are not visible. "
+    'Avoid generic words like "object", "thing", "item", or "stuff". '
+    'Return JSON only: {"objects": ["name", ...]} with at most 12 names.'
+)
+_DISCOVERY_VLM_BAN = frozenset(
+    {"object", "objects", "thing", "things", "item", "items", "stuff", "image", "background"}
 )
 
 
@@ -211,6 +228,131 @@ def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[Questio
     return tuple(proposals)
 
 
+@lru_cache(maxsize=1)
+def lvis_discovery_vocab() -> tuple[str, ...]:
+    """Primary LVIS class names (before ``/`` aliases) for open-vocab discovery prompts."""
+    import ultralytics
+    import yaml
+
+    path = Path(ultralytics.__file__).resolve().parent / "cfg" / "datasets" / "lvis.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))["names"]
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in raw.values():
+        primary = str(value).split("/", 1)[0].strip()
+        if primary and primary not in seen:
+            seen.add(primary)
+            names.append(primary)
+    return tuple(names)
+
+
+def _build_dan_detector(name: str) -> Any:
+    from dimos.perception.localize import dandetect
+
+    return dandetect._build(dandetect._option(dandetect.DETECTORS, name))
+
+
+def _discovery_frames(
+    rig: Rig,
+    after: float,
+    before: float,
+    *,
+    max_frames: int,
+) -> list[Any]:
+    from dimos.memory.transform import QualityWindow
+
+    camera = next(iter(rig.cameras.values()))
+    span = max(before - after, 1e-3)
+    window = max(span / max_frames, 0.5)
+    return list(
+        camera.color.after(after)
+        .before(before)
+        .transform(QualityWindow(lambda image: image.sharpness, window=window))
+    )[:max_frames]
+
+
+def warmup_detector(detector: Any) -> None:
+    """Load detector weights and run one cheap forward (hides OWL cold start)."""
+    import time
+
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    t0 = time.perf_counter()
+    start = getattr(detector, "start", None)
+    if callable(start):
+        start()
+    query_score_rows = getattr(detector, "query_score_rows", None)
+    if callable(query_score_rows):
+        blank = Image(data=np.zeros((64, 64, 3), dtype=np.uint8), format=ImageFormat.RGB)
+        query_score_rows(blank, ["warmup object"], threshold=0.99)
+    logger.info(
+        f"localize detector warmup done: {type(detector).__name__} "
+        f"in {time.perf_counter() - t0:.1f}s"
+    )
+
+
+def discover_object_names_vlm(
+    rig: Rig,
+    after: float,
+    before: float,
+    *,
+    max_frames: int = _DISCOVERY_MAX_FRAMES,
+    max_queries: int = _DISCOVERY_MAX_QUERIES,
+    vl_model: Any | None = None,
+) -> tuple[str, ...]:
+    """VLM open-vocab naming over QualityWindow frames → localize queries."""
+    from dimos.models.vl.openai import OpenAIVlModel
+
+    if max_frames < 1:
+        raise ValueError("max_frames must be at least 1")
+    if before <= after:
+        raise ValueError("discovery window before must be greater than after")
+
+    frames = _discovery_frames(rig, after, before, max_frames=max_frames)
+    if not frames:
+        logger.warning("localize VLM discovery found no frames in window")
+        return ()
+
+    owns = vl_model is None
+    if vl_model is None:
+        vl_model = OpenAIVlModel()
+
+    counts: Counter[str] = Counter()
+    try:
+        for observation in frames:
+            image = observation.data
+            image.ts = observation.ts
+            payload = vl_model.query_json(image, _DISCOVERY_VLM_PROMPT)
+            names: list[Any]
+            if isinstance(payload, dict):
+                raw = payload.get("objects", payload.get("names", []))
+                names = list(raw) if isinstance(raw, list) else []
+            elif isinstance(payload, list):
+                names = payload
+            else:
+                names = []
+            for item in names:
+                if isinstance(item, dict):
+                    name = str(item.get("name", "") or "").strip()
+                else:
+                    name = str(item or "").strip()
+                if not name or name.lower() in _DISCOVERY_VLM_BAN:
+                    continue
+                counts[name] += 1
+    finally:
+        if owns:
+            stop = getattr(vl_model, "stop", None)
+            if callable(stop):
+                stop()
+
+    queries = tuple(name for name, _ in counts.most_common(max_queries))
+    logger.info(
+        f"localize VLM discovery: {len(frames)} frames → "
+        f"{len(queries)} queries {list(queries)}"
+    )
+    return queries
+
+
 def discover_object_names(
     rig: Rig,
     after: float,
@@ -218,45 +360,68 @@ def discover_object_names(
     *,
     max_frames: int = _DISCOVERY_MAX_FRAMES,
     max_queries: int = _DISCOVERY_MAX_QUERIES,
+    detector: Any | None = None,
+    discovery_vocab: Sequence[str] | None = None,
+    score_threshold: float | None = None,
 ) -> tuple[str, ...]:
-    """Prompt-free 2D recognition over sharp frames in the window → localize queries."""
-    from dimos.memory.transform import QualityWindow
-    from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
+    """Detector ``query_score_rows`` scan (e.g. LVIS) → localize queries.
 
+    Prefer :func:`discover_object_names_vlm` for attribute-rich open phrases.
+    """
     if max_frames < 1:
         raise ValueError("max_frames must be at least 1")
     if before <= after:
         raise ValueError("discovery window before must be greater than after")
 
-    camera = next(iter(rig.cameras.values()))
-    span = max(before - after, 1e-3)
-    window = max(span / max_frames, 0.5)
-    frames = list(
-        camera.color.after(after)
-        .before(before)
-        .transform(QualityWindow(lambda image: image.sharpness, window=window))
-    )
+    frames = _discovery_frames(rig, after, before, max_frames=max_frames)
     if not frames:
         logger.warning("localize discovery found no frames in window")
         return ()
 
+    owns_detector = detector is None
+    if detector is None:
+        detector = _build_dan_detector("owlv2")
+
+    query_score_rows = getattr(detector, "query_score_rows", None)
+    if not callable(query_score_rows):
+        raise ValueError("discovery detector must implement query_score_rows")
+
+    vocab = [
+        str(name).strip()
+        for name in (discovery_vocab if discovery_vocab is not None else lvis_discovery_vocab())
+        if str(name).strip()
+    ]
+    if not vocab:
+        raise ValueError("discovery_vocab must contain at least one non-empty name")
+
+    floor = (
+        float(score_threshold)
+        if score_threshold is not None
+        else float(_ROOM_LOCALIZE_PARAMS.candidate_floor)
+    )
+    logger.info(
+        f"localize discovery via query_score_rows "
+        f"detector={type(detector).__name__} vocab={len(vocab)} floor={floor}"
+    )
+
     counts: Counter[str] = Counter()
-    detector = Yoloe2DDetector(prompt_mode=YoloePromptMode.LRPC, conf=0.5)
     try:
-        for observation in frames[:max_frames]:
+        for observation in frames:
             image = observation.data
             image.ts = observation.ts
-            detections = detector.predict_image(image)
-            for detection in detections.detections:
-                name = str(getattr(detection, "name", "") or "").strip()
-                if name:
+            _boxes, rows = query_score_rows(image, vocab, threshold=floor)
+            if rows.size == 0:
+                continue
+            for j, name in enumerate(vocab):
+                if float(rows[:, j].max()) >= floor:
                     counts[name] += 1
     finally:
-        detector.stop()
+        if owns_detector:
+            detector.stop()
 
     queries = tuple(name for name, _ in counts.most_common(max_queries))
     logger.info(
-        f"localize discovery: {len(frames[:max_frames])} frames → "
+        f"localize discovery: {len(frames)} frames → "
         f"{len(queries)} queries {list(queries)}"
     )
     return queries
@@ -272,10 +437,18 @@ def localize_window(
     embedder: str = "siglip",
     detector: str = "owlv2",
     segmenter: str = "edgetam",
+    discover: str = "vlm",
 ) -> Iterator[LocalizeWindowResult]:
-    """Discover (if needed), localize, and yield verified hits + rig over ``[after, before]``."""
+    """Discover (if needed), localize, and yield verified hits + rig over ``[after, before]``.
+
+    Default ``discover='vlm'``: API VLM names frames while the Dan detector
+    warms on GPU; SigLIP is released after retrieve before OWL detect.
+    ``discover='lvis'`` keeps detector-vocab discovery instead.
+    """
     if before <= after:
         raise ValueError("localize window before must be greater than after")
+    if discover not in {"vlm", "lvis"}:
+        raise ValueError("discover must be 'vlm' or 'lvis'")
 
     # Heavy stack stays inside the optional path.
     from dimos.perception.localize.dandetect import DanDetector
@@ -283,6 +456,7 @@ def localize_window(
 
     store = open_dataset(dataset)
     store.start()
+    shared_detector: Any | None = None
     try:
         rig = Rig.from_store(store)
         rig.tf = window_tf(store, after, before)
@@ -290,8 +464,41 @@ def localize_window(
             rig.lidar = rig.lidar.after(after).before(before)
 
         query_list = [query.strip() for query in queries if query.strip()]
-        if not query_list:
-            query_list = list(discover_object_names(rig, after, before))
+        shared_detector = _build_dan_detector(detector)
+        warm_error: list[BaseException] = []
+
+        def _warm() -> None:
+            try:
+                warmup_detector(shared_detector)
+            except BaseException as exc:  # noqa: BLE001 — surface on join
+                warm_error.append(exc)
+                logger.exception("localize detector warmup failed")
+
+        if not query_list and discover == "vlm":
+            # API VLM leaves the GPU free — warm OWL in parallel.
+            warm_thread = threading.Thread(
+                target=_warm, name="localize-detector-warmup", daemon=True
+            )
+            warm_thread.start()
+            query_list = list(discover_object_names_vlm(rig, after, before))
+            warm_thread.join()
+            if warm_error:
+                raise RuntimeError("localize detector warmup failed") from warm_error[0]
+        elif not query_list:
+            # LVIS scan uses the detector; first forward is the warmup.
+            query_list = list(
+                discover_object_names(
+                    rig,
+                    after,
+                    before,
+                    detector=shared_detector,
+                    discovery_vocab=lvis_discovery_vocab(),
+                    score_threshold=_ROOM_LOCALIZE_PARAMS.candidate_floor,
+                )
+            )
+        else:
+            warmup_detector(shared_detector)
+
         if not query_list:
             logger.warning("localize window has no discovered or provided queries")
             yield LocalizeWindowResult(named_hits=(), rig=rig, queries=())
@@ -300,11 +507,18 @@ def localize_window(
         from dimos.evals.vqa.primitives.cross_view_identity import collect_query_instances
         from dimos.perception.localize.localize import LocalizeTrace
 
+        logger.info(
+            f"localize_window shared {type(shared_detector).__name__} "
+            f"detect prompts={query_list!r} discover={discover}"
+        )
+
         named: list[tuple[str, Localization]] = []
         first_seen_by_instance: dict[str, float] = {}
         views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = {}
         traces = [LocalizeTrace() for _ in query_list]
-        with DanDetector(embedder, detector, segmenter) as dan:
+        with DanDetector(embedder, shared_detector, segmenter) as dan:
+            # Enter succeeded: DanDetector.stop() owns embedder/detector/segmenter.
+            shared_detector = None
             index = embed_index(rig, dan.embedder, after, before)
             results = dan.localize(
                 query_list,
@@ -340,4 +554,6 @@ def localize_window(
             views_by_query=views_by_query,
         )
     finally:
+        if shared_detector is not None:
+            shared_detector.stop()
         store.stop()

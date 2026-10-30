@@ -85,6 +85,18 @@ def _owlv2() -> Detector:
     return Owlv2Detector(dtype=torch.float16)
 
 
+def _yoloe() -> Detector:
+    from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
+
+    # PROMPT weights (not prompt-free ``-pf``): text queries via set_prompts /
+    # query_score_rows. Lower conf so Dan's candidate_floor can decide.
+    return Yoloe2DDetector(
+        prompt_mode=YoloePromptMode.PROMPT,
+        conf=0.25,
+        max_area_ratio=None,
+    )
+
+
 @dataclass(frozen=True)
 class Option:
     """A registered model: how to build it, and the score deltas its scale shifts from OWLv2."""
@@ -107,6 +119,8 @@ DETECTORS: dict[str, Option] = {
         "dimos.perception.detection.detectors.grounding_dino:GroundingDinoDetector",
         {"candidate_floor": 0.10, "accept_score": 0.15},
     ),
+    # YOLO conf ≠ OWL logits; start unshifted and retune if hits look soft/hard.
+    "yoloe": Option(_yoloe),
 }
 SEGMENTERS: dict[str, Option] = {
     "edgetam": Option("dimos.models.segmentation.edge_tam:EdgeTAMImageSegmenter"),

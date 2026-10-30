@@ -98,6 +98,23 @@ def generate(
             "dataset/window match; still reads color frames from the recording"
         ),
     ),
+    localize_detector: str = typer.Option(
+        "owlv2",
+        "--localize-detector",
+        help=(
+            "With --with-localize: Dan detector (owlv2, omdet, gdino, yoloe). "
+            "OWL warms on GPU during VLM naming when discover=vlm"
+        ),
+    ),
+    localize_discover: str = typer.Option(
+        "vlm",
+        "--localize-discover",
+        help=(
+            "With --with-localize and no --localize-query: how to name objects. "
+            "vlm = OpenAI JSON names on QualityWindow frames (default); "
+            "lvis = detector score scan over LVIS labels"
+        ),
+    ),
 ) -> None:
     """Generate a standalone VQA dataset from selected color_image frames.
 
@@ -127,6 +144,8 @@ def generate(
             localize_coverage_k=localize_coverage_k,
             min_views=min_views,
             localize_evidence=localize_evidence,
+            localize_detector=localize_detector,
+            localize_discover=localize_discover,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:

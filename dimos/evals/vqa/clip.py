@@ -31,7 +31,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from dimos.msgs.sensor_msgs.Image import Image
 
 # Match QuestionAnswerConfig.frames_per_stream default: never exceed this per clip.
-DEFAULT_CLIP_MAX_FRAMES = 8
+# Cross-view / sighting clips: keyframe ± 1 → 3 frames. Ego memory clips cap at 3
+# while still keeping first-spot + query (+ height_order extras when they fit).
+DEFAULT_CLIP_MAX_FRAMES = 3
+# On-disk suites generated before the 3-frame default may still have up to 8.
+# ImageClip accepts that so older assets load; QuestionAnswer may downsample.
+CLIP_ASSET_MAX_FRAMES = 8
 # Half-width around an anchor when building a short sighting/history clip.
 DEFAULT_CLIP_RADIUS_S = 1.0
 

@@ -39,8 +39,9 @@ class ImageClip(Environment):
 
     A single path uses stream name ``clip``. Multiple paths use
     ``first_clip``, ``second_clip``, … so QuestionAnswer labels them distinctly.
-    Each clip must have ``≤ DEFAULT_CLIP_MAX_FRAMES`` frames so the default
-    agent does not sparsely subsample.
+    Each clip must have ``≤ CLIP_ASSET_MAX_FRAMES`` frames (generation default
+    is ``DEFAULT_CLIP_MAX_FRAMES``; older suites may still use up to the asset
+    cap). QuestionAnswer may evenly downsample when above ``frames_per_stream``.
     """
 
     config: ImageClipConfig
@@ -53,7 +54,7 @@ class ImageClip(Environment):
         super().__init__(paths=paths, agent_artifacts=artifact_names, **kwargs)
 
     def preflight(self, agent: Agent) -> None:
-        from dimos.evals.vqa.clip import DEFAULT_CLIP_MAX_FRAMES, load_clip_manifest
+        from dimos.evals.vqa.clip import CLIP_ASSET_MAX_FRAMES, load_clip_manifest
 
         if agent.config.modules:
             raise RuntimeError(
@@ -64,10 +65,10 @@ class ImageClip(Environment):
             if not clip_dir.is_dir():
                 raise FileNotFoundError(f"clip directory does not exist: {clip_dir}")
             manifest = load_clip_manifest(clip_dir)
-            if len(manifest.frames) > DEFAULT_CLIP_MAX_FRAMES:
+            if len(manifest.frames) > CLIP_ASSET_MAX_FRAMES:
                 raise ValueError(
                     f"clip {clip_dir} has {len(manifest.frames)} frames; "
-                    f"max {DEFAULT_CLIP_MAX_FRAMES} so QuestionAnswer encodes every frame"
+                    f"max {CLIP_ASSET_MAX_FRAMES} on disk"
                 )
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:

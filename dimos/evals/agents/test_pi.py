@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from typing import IO
 from unittest.mock import MagicMock
 
@@ -110,6 +111,26 @@ def pi_process(mocker: MockerFixture) -> Iterator[tuple[MagicMock, IO[bytes], Ma
     with os.fdopen(read_fd, "rb") as incoming, os.fdopen(write_fd, "wb") as outgoing:
         process.stdout = incoming
         yield process, outgoing, sweep
+
+
+def test_read_pi_events_rejects_truncated_frame_on_eof() -> None:
+    """A peer that closes mid-line must not become a pydantic ValidationError."""
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(read_fd, "rb") as incoming, os.fdopen(write_fd, "wb") as outgoing:
+        outgoing.write(b'{"type":"event","x":"' + b"A" * 1000)
+        outgoing.close()
+        with pytest.raises(RuntimeError, match="truncated NDJSON frame"):
+            list(pi.read_pi_events(incoming, deadline=time.monotonic() + 5.0))
+
+
+def test_read_pi_events_accepts_final_line_without_newline() -> None:
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(read_fd, "rb") as incoming, os.fdopen(write_fd, "wb") as outgoing:
+        outgoing.write(b'{"type":"idle"}')
+        outgoing.close()
+        assert list(pi.read_pi_events(incoming, deadline=time.monotonic() + 5.0)) == [
+            {"type": "idle"}
+        ]
 
 
 def test_run_preserves_retried_tool_exchange_and_matching_traces(

@@ -59,7 +59,7 @@ def _is_camera_observation(obs: Observation[Any]) -> bool:
 
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
-    frames_per_stream: int = Field(default=8, ge=1)
+    frames_per_stream: int = Field(default=3, ge=1)
     system_prompt: str = (
         "Answer using only the provided observations. "
         "When multi-frame camera clips are shown, earlier frames are history and the last frame is "

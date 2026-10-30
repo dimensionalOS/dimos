@@ -240,6 +240,67 @@ def test_contaminated_shared_frame_views_are_dropped_before_pairing() -> None:
         assert {pair.left.timestamp, pair.right.timestamp}.isdisjoint({10.0})
 
 
+def test_greptile_f1_co_visible_scene_emits_no_conflicting_labels() -> None:
+    """Two co-visible boxes on identical stationary frames must not yield yes+no.
+
+    Mirrors Greptile F1: same RGB at t=1/3/5 for two instances; a ``no`` pair
+    that reuses one frame on both sides is unanswerable without a referent mark.
+    """
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from dimos.evals.vqa.primitives.cross_view_identity import collect_query_instances
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+    rgb = np.full((240, 320, 3), 45, dtype=np.uint8)
+    boxes = [(80.0, 85.0, 140.0, 155.0), (180.0, 85.0, 240.0, 155.0)]
+    frames = [
+        Image.from_numpy(rgb.copy(), format=ImageFormat.RGB, frame_id="camera_optical", ts=t)
+        for t in (1.0, 3.0, 5.0)
+    ]
+    hits: list[SimpleNamespace] = []
+    groups: list[list[SimpleNamespace]] = []
+    for index in range(2):
+        hits.append(SimpleNamespace(instance_id=f"box-{index}", n_views=3, semantic_score=0.9))
+        groups.append(
+            [
+                SimpleNamespace(image=frame, bbox=boxes[index], confidence=0.9)
+                for frame in frames
+            ]
+        )
+    instances = collect_query_instances("storage box", hits, groups)
+    pairs = propose_identity_pairs(instances, min_views=3)
+    assert pairs == ()
+    assert not any(
+        (not p.same_object) and p.left.timestamp == p.right.timestamp for p in pairs
+    )
+
+
+def test_answer_rejects_diff_pair_with_identical_full_frames() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    # Same underlying RGB / timestamp → ambiguous "no".
+    left = _view(instance_id="a", bbox=centered, ts=1.0)
+    right = _view(instance_id="b", bbox=(80.0, 80.0, 140.0, 140.0), ts=1.0)
+    # Force identical pixels (shared image buffer semantics).
+    right = SightingView(
+        query=right.query,
+        instance_id=right.instance_id,
+        image=left.image,
+        bbox=right.bbox,
+        confidence=right.confidence,
+        timestamp=10.0,
+        n_views=right.n_views,
+        semantic_score=right.semantic_score,
+        camera_frame=right.camera_frame,
+    )
+    pair = IdentityPair(query="storage box", left=left, right=right, same_object=False)
+    with pytest.raises(InsufficientEvidenceError, match="identical full-frame"):
+        answer_cross_view_same_object(
+            pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8
+        )
+
+
 def test_same_pairs_keep_when_competitor_on_other_camera() -> None:
     centered = (70.0, 70.0, 130.0, 130.0)
     # B is only on another optical frame at the same times — must not kill A's yes pair.

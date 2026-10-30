@@ -204,6 +204,6 @@ dimos evals vqa run ~/.local/state/dimos/datasets/vqa/calibrated-recording-frame
 ```
 
 The default agent (`QuestionAnswer`) encodes every frame in each clip stream when the clip
-length is at most `frames_per_stream` (default 8). Generation keeps clips at or under that
+length is at most `frames_per_stream` (default 3). Generation keeps clips at or under that
 budget and always includes required anchors (first spot + query for ego; both sightings for
 cross-view). Results land under `~/.local/state/dimos/evals/run-*/`.
