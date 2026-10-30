@@ -202,6 +202,11 @@ class PlanExecutionManager:
                 )
                 self._store(result, active=False)
                 return result
+            with self._state_lock:
+                # A previous failed cancellation finished polling with UNCERTAIN.
+                # Successful retries must read the tasks again, not return that cache.
+                if self._latest_result is not None:
+                    self._active = True
             return self.wait(timeout)
         task = self._running_tasks[0]
         with self._operation_lock:
@@ -356,16 +361,18 @@ class PlanExecutionManager:
         return result
 
     def _cancel_task(self, task: str) -> bool:
-        """Cancel one task once; False when the outcome is unknown."""
+        """Remember confirmed cancellations; leave unknown outcomes retryable."""
         with self._state_lock:
             if task in self._cancelled_tasks:
                 return True
-            self._cancelled_tasks.add(task)
         try:
             outcome = self._coordinator.task_invoke(task, "cancel", {})
             if isinstance(outcome, TrajectoryCancellationResult):
-                return outcome.status is not TrajectoryCancellationStatus.UNCERTAIN
+                if outcome.status is TrajectoryCancellationStatus.UNCERTAIN:
+                    return False
             # A task that reports no cancellation result had nothing left to stop.
+            with self._state_lock:
+                self._cancelled_tasks.add(task)
             return True
         except Exception:
             logger.exception(f"Cancelling {task} failed")

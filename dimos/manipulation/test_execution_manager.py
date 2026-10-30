@@ -256,3 +256,39 @@ def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
 
     assert manager.status is ExecutionStatus.ACCEPTED
     assert set(robot.states.values()) == {TrajectoryState.EXECUTING}
+
+
+@pytest.mark.parametrize("failure", ["uncertain", "exception"])
+def test_failed_multitask_cancel_can_retry_after_close(mocker, failure):
+    robot = _WholeBody()
+    manager = robot.manager()
+    recovered = False
+    attempts = []
+    invoke = robot._task_invoke
+
+    def task_invoke(task, method, args=None):
+        if method == "cancel":
+            attempts.append(task)
+            if task == "base_traj" and not recovered:
+                if failure == "exception":
+                    raise TimeoutError("connection unavailable")
+                return TrajectoryCancellationResult(TrajectoryCancellationStatus.UNCERTAIN)
+        return invoke(task, method, args)
+
+    mocker.patch.object(robot.coordinator, "task_invoke", side_effect=task_invoke)
+    try:
+        assert (
+            manager.execute(_plan(("left/j1", *BASE)), blocking=False).status
+            is ExecutionStatus.ACCEPTED
+        )
+        manager.close()
+        assert manager.cancel().status is ExecutionStatus.UNCERTAIN
+        assert manager.cancel().status is ExecutionStatus.UNCERTAIN
+        assert robot.states["base_traj"] is TrajectoryState.EXECUTING
+        recovered = True
+        assert manager.cancel().status is ExecutionStatus.ABORTED
+        assert attempts.count("base_traj") == 3
+        assert attempts.count(JOINT_TRAJECTORY_TASK_NAME) == 1
+        assert manager.wait().status is ExecutionStatus.ABORTED
+    finally:
+        manager.close()
