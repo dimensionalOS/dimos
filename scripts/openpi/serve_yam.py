@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
+import time
+from typing import Any
 
 import jax.numpy as jnp
 from openpi import transforms
@@ -15,6 +18,29 @@ from openpi.policies.aloha_policy import AlohaInputs, AlohaOutputs
 from openpi.policies.policy import Policy
 from openpi.serving.websocket_policy_server import WebsocketPolicyServer
 from openpi.shared import normalize
+from openpi_client.base_policy import BasePolicy
+
+
+class LoggedPolicy(BasePolicy):
+    """Log total policy inference time for each server request."""
+
+    def __init__(self, policy: Policy) -> None:
+        self._policy = policy
+
+    def infer(self, obs: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        result = self._policy.infer(obs)
+        total_ms = (time.perf_counter() - started) * 1000
+        logging.info(
+            "OpenPI policy inference complete total_ms=%.1f reported_model_call_ms=%s",
+            total_ms,
+            result.get("policy_timing", {}).get("infer_ms"),
+        )
+        return result
+
+    def reset(self) -> None:
+        self._policy.reset()
+
 
 parser = argparse.ArgumentParser(description="Serve the Robocurve YAM checkpoint to DimOS")
 parser.add_argument("--checkpoint", required=True, type=Path)
@@ -22,6 +48,7 @@ parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", default=8000, type=int)
 args = parser.parse_args()
 ROOT = args.checkpoint
+logging.basicConfig(level=logging.INFO)
 
 stats = normalize.load(ROOT / "assets/yam-bimanual-merged")
 config = Pi0Config(pi05=True, action_horizon=16)
@@ -49,4 +76,6 @@ metadata = {
     "action_shape": [16, 14],
     "gripper_space": "normalized_opening_0_closed_1_open",
 }
-WebsocketPolicyServer(policy, host=args.host, port=args.port, metadata=metadata).serve_forever()
+WebsocketPolicyServer(
+    LoggedPolicy(policy), host=args.host, port=args.port, metadata=metadata
+).serve_forever()

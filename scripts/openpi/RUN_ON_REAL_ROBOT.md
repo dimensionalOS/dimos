@@ -108,6 +108,12 @@ does not stop dimOS or disable torque. For logs, use a separate terminal with
 `.venv/bin/dimos log -f` and look for `OpenPI action chunk received` and `OpenPI
 action chunk published`.
 
+Each `OpenPI websocket infer returned` log now includes the client round-trip
+time, the server's full policy-call time, and OpenPI's reported model-call time
+in milliseconds. The server journal also logs its full policy-call time for
+each request. The full policy-call and round-trip times include JAX device
+completion; the reported model-call time may measure asynchronous dispatch.
+
 ### Pause and resume without disabling torque
 
 The interactive launcher above handles `t` and `r`. These equivalent commands
