@@ -57,4 +57,4 @@ The numbers match the module diagram.
 | 4 | agent skills, `px4-agentic`, `px4-sitl-agentic` | `dimos/robot/px4/skill_container.py`, `dimos/robot/px4/blueprints/agentic` |
 | 5 | vehicle clock, geolocation, `PerceptionBridge`, `FOLLOW` and `YAW_TRACK`, `px4-a8-follow`, `px4-sitl-follow` | `dimos/robot/px4`, `dimos/perception/geolocation` |
 
-Setup, commands and tests: `dimos/robot/px4/README.md`.
+Setup and commands: `dimos/robot/px4/README.md`.

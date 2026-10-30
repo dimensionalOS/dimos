@@ -381,6 +381,32 @@ robots:
           title: Drone with an agent
           description: 'An autonomous drone you can talk to: maps, places and object tracking skills.'
           starter: 16
+    px4:
+      name: PX4 drone
+      description: 'A PX4 multirotor over MAVLink: Offboard flight supervisor and the SIYI A8 gimbal camera.'
+      type: drone
+      manufacturer: null
+      dirs: [dimos/robot/px4]
+      blueprints:
+        px4:
+          title: PX4 drone
+          description: 'Connection, flight supervisor, viewer and its keyboard: any PX4 vehicle behind mavlink-router.'
+          recommended_config:
+          - module: px4droneconnection
+            field: link
+            label: Link to PX4
+        px4-sitl:
+          title: PX4 in SITL
+          description: The same against PX4 SITL (make px4_sitl gz_x500), with the RC enable switch faked.
+        px4-a8:
+          title: PX4 drone + SIYI A8
+          description: The PX4 drone with the SIYI A8's RTSP camera and gimbal.
+        px4-agentic:
+          title: PX4 drone with an agent
+          description: 'Talk to the PX4 drone: takeoff, go-to, land and flight-status skills.'
+        px4-sitl-agentic:
+          title: PX4 agent in SITL
+          description: The same agent against PX4 SITL.
     m20:
       name: DeepRobotics M20
       description: DeepRobotics' wheel-legged quadruped; dimos runs on the robot.
@@ -815,6 +841,15 @@ robots:
         desk-marker-tf:
           title: Desk marker tracking
           description: A desk webcam that detects fiducial markers and mirrors them into TF.
+        rtsp-camera-vis:
+          title: RTSP camera viewer
+          description: An RTSP H.264/H.265 camera (or a capture file) in Rerun, with small JPEGs beside it.
+          recommended_config:
+          - module: rtspcamera
+            field: url
+            label: Camera URL
+            placeholder: rtsp://192.168.144.25:8554/main.264
+            required: true
     habitat:
       name: Habitat simulator
       description: 'A simulated robot in Meta''s Habitat scenes: no hardware.'
