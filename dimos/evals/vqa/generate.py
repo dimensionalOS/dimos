@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+﻿# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -465,7 +465,9 @@ def generate_frames_dataset(
                     generated_frames, all_cases, all_labels, k=coverage_k
                 )
 
-            if request.with_localize and color_frames:
+            # Multi-cam windows may leave color_frames empty; by-camera streams still clip.
+            has_color_streams = bool(color_frames) or bool(color_frames_by_camera)
+            if request.with_localize and has_color_streams:
                 all_cases, all_labels = _materialize_ego_memory_clips(
                     staging,
                     generated_frames,
@@ -476,7 +478,7 @@ def generate_frames_dataset(
                 )
 
             cross_view_stats: dict[str, object] | None = None
-            if request.with_localize and color_frames and views_by_query:
+            if request.with_localize and has_color_streams and views_by_query:
                 all_cases, all_labels, cross_view_stats = _materialize_cross_view_clips(
                     staging,
                     all_cases,
