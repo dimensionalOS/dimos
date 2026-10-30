@@ -24,8 +24,8 @@ from dimos.robot.deeprobotics.m20.blueprints._nav import (
     m20_nav_overrides,
     m20_nav_static,
 )
-from dimos.robot.deeprobotics.m20.blueprints.m20_kronknav import (
-    deeprobotics_m20_kronknav_control,
+from dimos.robot.deeprobotics.m20.blueprints.m20_nav import (
+    m20_nav,
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode import m20_sim_nav_episode
@@ -44,12 +44,10 @@ def _remappings(
 
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
-    sim, robot = _atoms(m20_sim_nav), _atoms(deeprobotics_m20_kronknav_control)
+    sim, robot = _atoms(m20_sim_nav), _atoms(m20_nav)
     for name in _atoms(_m20_nav):
         assert (sim[name].module, sim[name].kwargs) == (robot[name].module, robot[name].kwargs)
-        assert _remappings(m20_sim_nav, name) == _remappings(
-            deeprobotics_m20_kronknav_control, name
-        )
+        assert _remappings(m20_sim_nav, name) == _remappings(m20_nav, name)
 
 
 def test_the_world_feeds_the_streams_the_vendor_lio_feeds() -> None:
