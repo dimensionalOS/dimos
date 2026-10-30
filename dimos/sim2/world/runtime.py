@@ -39,6 +39,7 @@ from robosuite.wrappers.wrapper import Wrapper
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -49,7 +50,7 @@ from dimos.sim2.messages import EnvironmentStep, FrameMetadata, StateFrame
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.observations import ObservationFrame, collect_observations
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec, VelocityController
 from dimos.sim2.world.scene_types import SceneDescription
 
 STATE = mujoco.mjtState.mjSTATE_INTEGRATION
@@ -58,7 +59,7 @@ FeedbackCallback = Callable[[str, JointState, Imu | None, PoseStamped], None]
 
 @dataclass
 class RobotBinding:
-    config: SimulatedRobot
+    config: RobotInstanceSpec
     controller: MotorController
     root: int
     imu: tuple[int, int, int] | None
@@ -67,13 +68,15 @@ class RobotBinding:
     action_expires: float = 0.0
     received_command: bool = False
     command_active: bool = False
+    velocity_controller: VelocityController | None = None
+    velocity: Twist | None = None
 
 
 class SimulationRuntime:
     def __init__(
         self,
         environment: Callable[[], MujocoEnv | Wrapper],
-        robots: dict[str, SimulatedRobot] | None = None,
+        robots: dict[str, RobotInstanceSpec] | None = None,
         sensors: tuple[tuple[str | None, Sensor], ...] = (),
         snapshot_hz: float = 60.0,
     ) -> None:
@@ -202,6 +205,16 @@ class SimulationRuntime:
                     imu,
                     controller.positions.copy(),
                 )
+                if config.velocity_controller is not None:
+                    policy = config.velocity_controller(
+                        self.model,
+                        self.data,
+                        model.naming_prefix,
+                        config.joint_names,
+                        self.step_seconds,
+                    )
+                    policy.reset()
+                    self.robots[name].velocity_controller = policy
         self.waiting_for_control = {
             name for name, binding in self.robots.items() if binding.config.wait_for_first_command
         }
@@ -243,18 +256,45 @@ class SimulationRuntime:
     def accept_command(self, robot_id: str, command: MotorCommandArray) -> bool:
         with self.lock:
             binding = self.robots[robot_id]
-            rows = (command.q, command.dq, command.kp, command.kd, command.tau)
-            if any(len(row) != len(binding.config.joint_names) for row in rows):
+            if binding.config.command_kind != "motor":
                 return False
-            values = np.asarray(rows, dtype=np.float64)
-            if not np.isfinite(values).all() or np.any(values[2:4] < 0):
-                return False
-            if np.any(values[1:, binding.controller.position_servo] != 0):
+            values = self._command_values(binding, command)
+            if values is None:
                 return False
             issued = command.timestamp
             if issued is not None and (not math.isfinite(issued) or issued < self._reset_wall_time):
                 return False
             binding.action = values
+            binding.action_expires = time.monotonic() + binding.config.command_timeout
+            binding.received_command = True
+            return True
+
+    @staticmethod
+    def _command_values(
+        binding: RobotBinding, command: MotorCommandArray
+    ) -> NDArray[np.float64] | None:
+        rows = (command.q, command.dq, command.kp, command.kd, command.tau)
+        if any(len(row) != len(binding.config.joint_names) for row in rows):
+            return None
+        values = np.asarray(rows, dtype=np.float64)
+        if not np.isfinite(values).all() or np.any(values[2:4] < 0):
+            return None
+        if np.any(values[1:, binding.controller.position_servo] != 0):
+            return None
+        return values
+
+    def accept_velocity(self, robot_id: str, command: Twist) -> bool:
+        """Buffer one robot's base command; its locomotion policy runs on the tick."""
+        with self.lock:
+            binding = self.robots[robot_id]
+            if binding.config.command_kind != "velocity":
+                return False
+            values = (*command.linear.to_tuple(), *command.angular.to_tuple())
+            if not all(map(math.isfinite, values)):
+                return False
+            if command.linear.z != 0 or command.angular.x != 0 or command.angular.y != 0:
+                return False
+            binding.velocity = Twist(command)
             binding.action_expires = time.monotonic() + binding.config.command_timeout
             binding.received_command = True
             return True
@@ -285,11 +325,27 @@ class SimulationRuntime:
                 self._action = None
                 for binding in self.robots.values():
                     binding.action = None
+                    binding.velocity = None
                     binding.idle_position = binding.controller.positions.copy()
                     binding.command_active = False
+                    if binding.velocity_controller is not None:
+                        binding.velocity_controller.reset()
                 self._publish({}, force_snapshot=True)
 
     def _motor_action(self, binding: RobotBinding, now: float) -> NDArray[np.float64]:
+        if binding.velocity_controller is not None:
+            binding.command_active = binding.velocity is not None and now <= binding.action_expires
+            command = binding.velocity if binding.command_active else None
+            if command is None:
+                binding.velocity = None
+            values = self._command_values(
+                binding, binding.velocity_controller.step(command or Twist())
+            )
+            if values is None:
+                raise ValueError(
+                    f"{binding.config.robot_id}: locomotion policy returned invalid motor commands"
+                )
+            return values.ravel()
         if binding.action is not None and now <= binding.action_expires:
             binding.command_active = True
             return binding.action.ravel()
@@ -316,16 +372,19 @@ class SimulationRuntime:
                 return
             if self.robots:
                 now = time.monotonic()
-                action = np.concatenate(
-                    [self._motor_action(binding, now) for binding in self.robots.values()]
-                )
                 self.waiting_for_control.difference_update(
-                    name for name, binding in self.robots.items() if binding.command_active
+                    name
+                    for name, binding in self.robots.items()
+                    if (binding.action is not None or binding.velocity is not None)
+                    and now <= binding.action_expires
                 )
                 if self.waiting_for_control:
                     self._clock_origin = time.time() - float(self.data.time)
                     self._publish({}, force_snapshot=True)
                     return
+                action = np.concatenate(
+                    [self._motor_action(binding, now) for binding in self.robots.values()]
+                )
             else:
                 action = (
                     self._action

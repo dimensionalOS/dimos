@@ -20,23 +20,29 @@ import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.device import SimulatedDeviceFactory
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
 
 
 @pytest.fixture
-def rig(mocker):
-    robot = SimulatedRobot(
+def rig(mocker, tmp_path, request):
+    mode = getattr(request, "param", "motor")
+    robot = RobotInstanceSpec(
         robot_id="arm",
-        model=mocker.Mock(),
+        model=MujocoModelSpec(tmp_path / "robot.xml"),
         joint_names=("arm/elbow", "arm/wrist", "arm/grip"),
         frame_id="arm/base",
         position_only_joints=("arm/grip",),
+        command_kind=mode,
+        base_name="arm/base",
+        velocity_controller=mocker.Mock() if mode == "velocity" else None,
     )
-    topics = {kind: f"private/arm/{kind}" for kind in ("motor_command", "motor_states", "imu")}
+    command_kind = "cmd_vel" if mode == "velocity" else "motor_command"
+    topics = {kind: f"private/arm/{kind}" for kind in (command_kind, "motor_states", "imu")}
     config = SimulatedDeviceFactory(
         robot, topics, GlobalConfig(), ("motor_states", "imu"), halt_damping=4.5
     )
@@ -63,6 +69,27 @@ def rig(mocker):
         publish=publish,
     )
     device.stop()
+
+
+@pytest.mark.parametrize("rig", ["velocity"], indirect=True)
+def test_velocity_client_routes_checked_base_values_and_halts_without_motor_feedback(rig):
+    rig.device.start()
+    rig.device.write({"arm/base/vx": 0.2, "arm/base/vy": -0.1, "arm/base/wz": 0.3})
+    command = rig.transports["cmd_vel"].publish.call_args.args[0]
+    assert command == Twist(linear=(0.2, -0.1, 0), angular=(0, 0, 0.3))
+
+    rig.device.halt()
+
+    assert rig.transports["cmd_vel"].publish.call_args.args[0] == Twist()
+    with pytest.raises(ValueError, match="controlled by velocity"):
+        rig.device.set_motor_command(MotorCommandArray())
+
+
+def test_motor_client_does_not_accept_velocity_commands(rig):
+    rig.device.start()
+    with pytest.raises(ValueError, match="requires external motor commands"):
+        rig.device.set_velocity(Twist())
+    rig.transports["motor_command"].publish.assert_not_called()
 
 
 def test_commands_use_declared_joint_order_and_keep_every_pd_field(rig, mocker):

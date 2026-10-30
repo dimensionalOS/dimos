@@ -25,7 +25,7 @@ from dimos.sim2.environment import MotorScene
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
 
@@ -74,6 +74,7 @@ def robot_path(tmp_path):
     model = tmp_path / "robot.xml"
     model.write_text("""
 <mujoco>
+  <compiler angle="radian"/>
   <worldbody>
     <body name="base" pos="0 0 .3">
       <geom type="box" size=".1 .1 .1" mass="1"/>
@@ -110,17 +111,16 @@ def robot_factory(robot_path):
 
 
 @pytest.fixture
-def world_config(scene_path, robot_factory):
+def world_config(scene_path, robot_factory, robot_path):
     sensors = (
         ("left", Imu("imu", "imu")),
         ("left", Lidar("lidar", "scan", Fibonacci, model_kwargs={"ray_count": 512})),
     )
-    robot = SimulatedRobot(
+    robot = RobotInstanceSpec(
         robot_id="left",
-        model=robot_factory,
+        model=MujocoModelSpec(robot_path, initial_qpos=(0.1, 0.0), control_imu="imu"),
         joint_names=("shoulder", "gripper"),
         frame_id="left/base",
-        control_imu="imu",
         startup_kp=(10.0, 0.0),
         startup_kd=(1.0, 0.0),
         position_scale=(1.0, -0.04 / 850),

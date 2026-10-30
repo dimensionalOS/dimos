@@ -148,7 +148,7 @@ class ConnectionModule(Module, ABC):
         self._lock = threading.Lock()
         # Held around every write() and halt(), so they never overlap, and
         # around every change to _connected.
-        self._hardware_lock = threading.Lock()
+        self._hardware_lock = threading.RLock()
         self._stopping = False
         self._connected = False
         self._device: ConnectionDevice | None = None
@@ -286,7 +286,7 @@ class ConnectionModule(Module, ABC):
                 last_error=self._last_error,
             )
 
-    def command(self, values: Values) -> None:
+    def command(self, values: Values) -> bool:
         """Check one command against the limits table and send it to the hardware.
 
         Call it from a port subscription, on any thread. A refused command
@@ -298,18 +298,21 @@ class ConnectionModule(Module, ABC):
             values: Named values in each key's unit, e.g.
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
+
+        Returns:
+            Whether the command was accepted and written to the connected device.
         """
         prefix = f"{self.config.source}{SEPARATOR}"
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
         if not own:
-            return
+            return False
         result = validate_command(own, self.limits)
         if isinstance(result, Rejected):
             self._report(f"{result.reason}: {result.detail}", rejection=True)
-            return
+            return False
         with self._hardware_lock:
             if not self._connected:
-                return
+                return False
             with self._lock:
                 self._last_command_time = time.time()
                 self._deadman_fired = False
@@ -322,6 +325,8 @@ class ConnectionModule(Module, ABC):
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
+                return False
+            return True
 
     def frame(self, name: str) -> str:
         """The frame to stamp a reading with: ``name`` behind the config's

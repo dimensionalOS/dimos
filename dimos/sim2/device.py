@@ -26,16 +26,17 @@ import threading
 from typing import Any
 
 from dimos.control.connection.device import Feedback
-from dimos.control.contract.convert import motor_command_from_values
+from dimos.control.contract.convert import motor_command_from_values, twist_from_values
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec
 
 FEEDBACK_TYPES: dict[str, type] = {
     "motor_states": JointState,
@@ -53,17 +54,19 @@ class SimulatedDeviceFactory:
     ``topics`` are the exact same private topics configured on the shared world.
     """
 
-    robot: SimulatedRobot
+    robot: RobotInstanceSpec
     topics: dict[str, str]
     g: GlobalConfig
     feedback_ports: tuple[str, ...]
     halt_damping: float = 1.0
 
-    def __call__(self, publish: Feedback) -> "SimulatedMotorDevice":
-        return SimulatedMotorDevice(self, publish)
+    def __call__(self, publish: Feedback) -> "SimRobotClient":
+        return SimRobotClient(self, publish)
 
 
-class SimulatedMotorDevice:
+class SimRobotClient:
+    """A connection's robot-scoped client; owns transport, never physics."""
+
     def __init__(self, config: SimulatedDeviceFactory, publish: Feedback) -> None:
         self._config = config
         self._publish = publish
@@ -83,8 +86,11 @@ class SimulatedMotorDevice:
                 with self._lock:
                     self._accept_feedback = True
                 try:
+                    velocity = self._config.robot.command_kind == "velocity"
                     command = make_transport(
-                        self._config.topics["motor_command"], MotorCommandArray, g=self._config.g
+                        self._config.topics["cmd_vel" if velocity else "motor_command"],
+                        Twist if velocity else MotorCommandArray,
+                        g=self._config.g,
                     )
                     resources.callback(command.stop)
                     command.start()
@@ -118,11 +124,30 @@ class SimulatedMotorDevice:
         self._publish(kind, message)
 
     def write(self, values: dict[str, float]) -> None:
-        """Send one complete PD command, in the model's public joint order."""
+        """Send checked connection values through the declared command interface."""
         with self._lifecycle_lock:
             if self._command is None:
                 raise RuntimeError("simulated motor device has not started")
-            self._command.publish(motor_command_from_values(values, self._joints))
+            if self._config.robot.command_kind == "velocity":
+                self.set_velocity(twist_from_values(values, self._config.robot.base_name))
+            else:
+                self.set_motor_command(motor_command_from_values(values, self._joints))
+
+    def set_motor_command(self, command: MotorCommandArray) -> None:
+        if self._config.robot.command_kind != "motor":
+            raise ValueError("this robot is controlled by velocity, not external motor commands")
+        self._send(command)
+
+    def set_velocity(self, command: Twist) -> None:
+        if self._config.robot.command_kind != "velocity":
+            raise ValueError("this robot requires external motor commands")
+        self._send(command)
+
+    def _send(self, command: MotorCommandArray | Twist) -> None:
+        with self._lifecycle_lock:
+            if self._command is None:
+                raise RuntimeError("simulated motor device has not started")
+            self._command.publish(command)
 
     def halt(self) -> None:
         """Damp effort motors immediately, and hold native position servos.
@@ -131,6 +156,10 @@ class SimulatedMotorDevice:
         Native position servos use their own gains and accept only positions.
         """
         with self._lifecycle_lock:
+            if self._config.robot.command_kind == "velocity":
+                if self._command is not None:
+                    self._command.publish(Twist())
+                return
             with self._lock:
                 position = self._position
             if self._command is None or position is None:
