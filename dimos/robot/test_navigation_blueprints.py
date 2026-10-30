@@ -32,7 +32,6 @@ from dimos.robot.all_blueprints import all_blueprints
         ("unitree-g1-nav-simple", ""),
         ("unitree-g1-groot-wbc", ""),
         ("unitree-g1-groot-wbc", "mujoco"),
-        ("r1pro-nav", ""),
     ],
 )
 def test_navigation_blueprint_preserves_costmapper_config(

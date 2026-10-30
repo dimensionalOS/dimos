@@ -19,8 +19,9 @@ import platform
 
 import pytest
 
+from dimos.constants import LONG_TEST_TIMEOUT_S
 from dimos.control.components import HardwareType, make_twist_base_joints
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
@@ -73,6 +74,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
 
 
+@pytest.mark.timeout(LONG_TEST_TIMEOUT_S)
 @pytest.mark.skipif(
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
@@ -80,11 +82,19 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)
+    # The blueprint's chassis under a base task of the test's own: the mock base trails the clock on a loaded
+    # machine, so it may take as long as the test to settle, to a tolerance tighter than the check below.
+    base_task = TaskConfig(
+        name="base_trajectory",
+        type="planar_base_trajectory",
+        joint_names=make_twist_base_joints("chassis"),
+        params={"settle_timeout": LONG_TEST_TIMEOUT_S, "position_goal_tolerance": 0.01},
+    )
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
         hardware=config.hardware,
-        tasks=config.tasks,
+        tasks=[base_task],
     )
     coordinator.start()
     try:
@@ -94,10 +104,11 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
-            timeout=5.0,
-            message="the base trajectory never completed",
+            is not TrajectoryState.EXECUTING,
+            timeout=LONG_TEST_TIMEOUT_S,
         )
+        status = coordinator.task_invoke("base_trajectory", "get_status", {})
+        assert status.state is TrajectoryState.COMPLETED
         assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(0.2, abs=0.03)
     finally:
         coordinator.stop()

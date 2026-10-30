@@ -29,7 +29,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use depth2depth::{
-    Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
+    Anchor, Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
@@ -140,10 +140,43 @@ pub struct Depth2DepthCloud {
     #[config]
     config: Config,
 
+    pipeline: Option<Pipeline>,
+}
+
+/// The module's work without its ports: a module with ports of its own (e.g. one per camera) feeds it.
+pub struct Pipeline {
+    config: Config,
+    tf: Tf,
+    output: Output<PointCloud2>,
+    frame_hooks: Option<Arc<dyn FrameHooks>>,
     shared: Arc<Shared>,
     tasks: Vec<JoinHandle<()>>,
     to_model: Arc<Latest<Picked>>,
     model_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// What a module built on this one adds to each frame; `height_from_camera` is set when `height_frame` is.
+pub trait FrameHooks: Send + Sync {
+    /// Anchors added to the frame's lidar anchors (`visible`) before the frame is calibrated.
+    fn anchors(
+        &self,
+        _calibration: &Calibration,
+        _pred: &[f32],
+        _map: &UndistortMap,
+        _visible: &[Anchor],
+        _height_from_camera: Option<&Isometry3<f64>>,
+    ) -> Vec<Anchor> {
+        Vec::new()
+    }
+
+    /// The frame's camera-frame cloud, after the height crop, as it is to be published.
+    fn points(
+        &self,
+        points: Vec<[f32; 3]>,
+        _height_from_camera: Option<&Isometry3<f64>>,
+    ) -> Vec<[f32; 3]> {
+        points
+    }
 }
 
 /// What the handlers hand the worker.
@@ -242,14 +275,70 @@ struct Scan {
 
 impl Depth2DepthCloud {
     async fn start(&mut self) {
+        let mut pipeline = Pipeline::new(
+            self.config.clone(),
+            self.tf.clone(),
+            self.depth_cloud.clone(),
+        );
+        pipeline.start();
+        self.pipeline = Some(pipeline);
+    }
+
+    async fn stop(&mut self) {
+        if let Some(pipeline) = self.pipeline.as_mut() {
+            pipeline.stop().await;
+        }
+    }
+
+    async fn on_image(&mut self, msg: CompressedImage) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_image(msg);
+        }
+    }
+
+    async fn on_camera_info(&mut self, msg: CameraInfo) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_camera_info(msg);
+        }
+    }
+
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_lidar(msg);
+        }
+    }
+}
+
+impl Pipeline {
+    pub fn new(config: Config, tf: Tf, output: Output<PointCloud2>) -> Self {
+        Self {
+            config,
+            tf,
+            output,
+            frame_hooks: None,
+            shared: Arc::default(),
+            tasks: Vec::new(),
+            to_model: Arc::default(),
+            model_thread: None,
+        }
+    }
+
+    /// The same pipeline, with `frame_hooks` run on every frame.
+    pub fn with_frame_hooks(mut self, frame_hooks: Arc<dyn FrameHooks>) -> Self {
+        self.frame_hooks = Some(frame_hooks);
+        self
+    }
+
+    pub fn start(&mut self) {
         let worker = Arc::new(Worker {
             shared: self.shared.clone(),
             tf: self.tf.clone(),
-            output: self.depth_cloud.clone(),
+            output: self.output.clone(),
             runtime: tokio::runtime::Handle::current(),
             config: self.config.clone(),
             to_model: self.to_model.clone(),
             to_calibrate: Arc::default(),
+            frame_hooks: self.frame_hooks.clone(),
         });
         let (picker, resolver, model, calibrator) =
             (worker.clone(), worker.clone(), worker.clone(), worker);
@@ -262,7 +351,7 @@ impl Depth2DepthCloud {
     }
 
     /// Stop the stages and let the model thread drop the model while CUDA is still up.
-    async fn stop(&mut self) {
+    pub async fn stop(&mut self) {
         for task in self.tasks.drain(..) {
             task.abort();
         }
@@ -274,7 +363,7 @@ impl Depth2DepthCloud {
         }
     }
 
-    async fn on_image(&mut self, msg: CompressedImage) {
+    pub fn on_image(&self, msg: CompressedImage) {
         let oldest = seconds(&msg.header.stamp) - self.config.max_tf_lag_s;
         let mut frames = self.shared.frames.lock().unwrap();
         frames.push_back(msg);
@@ -288,11 +377,11 @@ impl Depth2DepthCloud {
         self.shared.frame_arrived.notify_one();
     }
 
-    async fn on_camera_info(&mut self, msg: CameraInfo) {
+    pub fn on_camera_info(&self, msg: CameraInfo) {
         *self.shared.camera_info.lock().unwrap() = Some(msg);
     }
 
-    async fn on_lidar(&mut self, msg: PointCloud2) {
+    pub fn on_lidar(&self, msg: PointCloud2) {
         // A blueprint may feed this cloud back on the lidar's port (one mapper input for both); it is no anchor.
         if msg.header.frame_id == self.output_frame() {
             return;
@@ -309,9 +398,7 @@ impl Depth2DepthCloud {
         drop(pending);
         self.shared.scan_arrived.notify_one();
     }
-}
 
-impl Depth2DepthCloud {
     fn output_frame(&self) -> String {
         let info = self.shared.camera_info.lock().unwrap();
         let info_frame = info.as_ref().map_or("", |i| i.header.frame_id.as_str());
@@ -327,6 +414,7 @@ struct Worker {
     config: Config,
     to_model: Arc<Latest<Picked>>,
     to_calibrate: Arc<Latest<Predicted>>,
+    frame_hooks: Option<Arc<dyn FrameHooks>>,
 }
 
 impl Worker {
@@ -504,12 +592,22 @@ impl Worker {
                 seconds(&frame.header.stamp),
             );
             let anchored = Instant::now();
-            let visible = depth2depth::cloud::thin_anchors(
+            let mut visible = depth2depth::cloud::thin_anchors(
                 depth2depth::cloud::visible_anchors(&anchors, &map.camera, map.height, map.width),
                 cfg.anchor_step as usize,
                 map.height,
                 map.width,
             );
+            if let Some(frame_hooks) = &self.frame_hooks {
+                let extra = frame_hooks.anchors(
+                    &calibration,
+                    &frame.pred,
+                    map,
+                    &visible,
+                    poses.height_from_camera.as_ref(),
+                );
+                visible.extend(extra);
+            }
             // Only the pixels the cloud keeps are calibrated.
             let mut calibrated =
                 calibration.apply_for_cloud(&frame.pred, map.height, map.width, &visible, &options);
@@ -524,6 +622,9 @@ impl Worker {
                     let height = (pose * Point3::new(x as f64, y as f64, z as f64)).z;
                     (cfg.min_height_m..=cfg.max_height_m).contains(&height)
                 });
+            }
+            if let Some(frame_hooks) = &self.frame_hooks {
+                points = frame_hooks.points(points, poses.height_from_camera.as_ref());
             }
             let calibrated_at = Instant::now();
             let cloud = make_cloud(&points, &frame.header, frame.frame_id);

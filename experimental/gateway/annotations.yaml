@@ -310,15 +310,12 @@ robots:
       blueprints:
         r1pro-nav:
           title: R1 Pro click-to-drive
-          description: 'Ray-traced costmap and A* replanning: click where the R1 Pro should go.'
+          description: 'Point-LIO, a ray-traced 3D map and the MLS planner: click where the R1 Pro should go.'
           starter: 11
-        r1pro-teleop:
-          title: R1 Pro driving
-          description: Drive the R1 Pro's base from the viewer.
-          starter: 12
         r1pro-coordinator:
-          title: R1 Pro control coordinator
-          description: The R1 Pro's ROS connection behind a ControlCoordinator.
+          title: R1 Pro driving
+          description: The R1 Pro's ROS connection behind a ControlCoordinator; drive its base from the viewer.
+          starter: 12
         r1pro-manipulation:
           title: R1 Pro manipulation (experimental)
           description: Upper-body manipulation planning on the R1 Pro.
