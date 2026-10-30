@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
+
 from dimos.evals.vqa.families import AVAILABLE_FAMILIES
 from dimos.evals.vqa.template_author import names_from_detections, proposals_from_detected_names
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-import numpy as np
 
 
 def _image() -> Image:
@@ -64,4 +65,7 @@ def test_proposals_from_detected_names_fill_templates() -> None:
     families_hit = {p.family for p in proposals}
     assert "presence" in families_hit
     assert "object_count" in families_hit
-    assert any(p.family == "largest_visible_area" and set(p.object_names) == {"chair", "plant"} for p in proposals)
+    assert any(
+        p.family == "largest_visible_area" and set(p.object_names) == {"chair", "plant"}
+        for p in proposals
+    )

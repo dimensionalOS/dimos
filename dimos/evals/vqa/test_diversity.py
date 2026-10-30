@@ -38,9 +38,7 @@ def test_select_diverse_caps_category_and_balances_families() -> None:
         DiversityCandidate("c1", "ego_fore_aft", "person", 1.0, "behind"),
         DiversityCandidate("c2", "ego_fore_aft", "person", 0.4, "ahead"),
     ]
-    kept = select_diverse_case_ids(
-        candidates, max_per_category=1, max_per_family_category=1
-    )
+    kept = select_diverse_case_ids(candidates, max_per_category=1, max_per_family_category=1)
     # chair appears in presence and object_count — category cap 1 keeps only one chair total
     chair_ids = {cid for cid in ("a1", "a2", "b1") if cid in kept}
     assert len(chair_ids) == 1

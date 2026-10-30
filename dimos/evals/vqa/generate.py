@@ -65,11 +65,6 @@ from dimos.evals.vqa.localize_coverage import (
     collect_coverage_candidates_from_audit,
     select_localize_coverage_ids,
 )
-from dimos.evals.vqa.template_author import (
-    LocalizeSightingCatalog,
-    OpenVocabDetectionCatalog,
-    TemplateDetectionAuthor,
-)
 from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrame,
     PointCloudFrameLoader,
@@ -87,6 +82,11 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.localize_scene import LocalizeSceneEvidence
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
+from dimos.evals.vqa.template_author import (
+    LocalizeSightingCatalog,
+    OpenVocabDetectionCatalog,
+    TemplateDetectionAuthor,
+)
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -209,9 +209,7 @@ class VqaGenerationConfig(BaseModel):
     question_author: NonEmptyString = "template"
     # Publish budget: cap repeats by category; prefer harder answers / rarer families.
     diversity_max_per_category: int = Field(default=DEFAULT_MAX_PER_CATEGORY, ge=1)
-    diversity_max_per_family_category: int = Field(
-        default=DEFAULT_MAX_PER_FAMILY_CATEGORY, ge=1
-    )
+    diversity_max_per_family_category: int = Field(default=DEFAULT_MAX_PER_FAMILY_CATEGORY, ge=1)
 
     @model_validator(mode="after")
     def valid_question_author(self) -> VqaGenerationConfig:

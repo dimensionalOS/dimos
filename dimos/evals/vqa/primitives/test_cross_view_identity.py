@@ -264,17 +264,12 @@ def test_greptile_f1_co_visible_scene_emits_no_conflicting_labels() -> None:
     for index in range(2):
         hits.append(SimpleNamespace(instance_id=f"box-{index}", n_views=3, semantic_score=0.9))
         groups.append(
-            [
-                SimpleNamespace(image=frame, bbox=boxes[index], confidence=0.9)
-                for frame in frames
-            ]
+            [SimpleNamespace(image=frame, bbox=boxes[index], confidence=0.9) for frame in frames]
         )
     instances = collect_query_instances("storage box", hits, groups)
     pairs = propose_identity_pairs(instances, min_views=3)
     assert pairs == ()
-    assert not any(
-        (not p.same_object) and p.left.timestamp == p.right.timestamp for p in pairs
-    )
+    assert not any((not p.same_object) and p.left.timestamp == p.right.timestamp for p in pairs)
 
 
 def test_answer_rejects_diff_pair_with_identical_full_frames() -> None:
@@ -296,9 +291,7 @@ def test_answer_rejects_diff_pair_with_identical_full_frames() -> None:
     )
     pair = IdentityPair(query="storage box", left=left, right=right, same_object=False)
     with pytest.raises(InsufficientEvidenceError, match="identical full-frame"):
-        answer_cross_view_same_object(
-            pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8
-        )
+        answer_cross_view_same_object(pair, first_clip_duration_s=0.5, second_clip_duration_s=0.8)
 
 
 def test_same_pairs_keep_when_competitor_on_other_camera() -> None:
