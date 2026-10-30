@@ -82,6 +82,17 @@ class State:
             logger.warning("listing the blueprints failed", error=str(error))
         return [entry["name"] for entry in self.listed or []]
 
+    def known_names(self) -> set[str] | None:
+        """Every name `dimos run` accepts: the listed blueprints and the registry's modules.
+
+        None until both a listing and a scan of this exact checkout exist; then the name is
+        left to dimos, as before. The scan's `names` is the registry as its child saw it, so a
+        module whose own scan timed out is still a name."""
+        cache = self.scanner.cache()
+        if self.listed is None or cache is None or self.scanner.snapshot()["stale"]:
+            return None
+        return {str(entry["name"]) for entry in self.listed} | set(cache["names"]["modules"])
+
     def blueprints_changed(self, added: list[str], removed: list[str]) -> None:
         self.cache = introspect.Cache()
         self.bus.send({"type": "blueprints", "added": added, "removed": removed})

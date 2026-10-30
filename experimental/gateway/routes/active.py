@@ -47,6 +47,9 @@ class CallRequest(BaseModel):
 
 
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
+    known = await asyncio.to_thread(state.known_names)
+    if known is not None and name not in known:
+        raise ApiError(404, f"no blueprint or module {name}")
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
     state.bus.launch(launch)
     return launch

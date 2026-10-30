@@ -28,6 +28,7 @@ import pytest
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches
+from experimental.gateway.state import State
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -341,3 +342,38 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
     client.post("/active/launch", json={"blueprint": "demo"})
     until(output_has(client, "gossip false"))
+
+
+def scanned(state: State, monkeypatch: pytest.MonkeyPatch, stale: bool = False) -> None:
+    """A listing and a finished scan in which `cam` scanned fine and `lidar` timed out."""
+    state.listed = [{"name": "demo", "kind": "builtin"}]
+    cache = {
+        "finished_at": "2026-01-01T12:00:00Z",
+        "fingerprint": "old" if stale else state.scanner.current_fingerprint(),
+        "names": {"blueprints": ["demo"], "modules": ["cam", "lidar"]},
+    }
+    monkeypatch.setattr(state.scanner, "cache", lambda: cache)
+
+
+def test_an_unknown_name_is_refused_before_anything_is_spawned(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
+    monkeypatch.setattr(launches, "start", lambda *args: pytest.fail(f"spawned {args[1]}"))
+    assert client.post("/active/launch", json={"blueprint": "nope"}).status_code == 404
+    assert client.post("/active/launch", json={"module": "cams"}).status_code == 404
+    assert client.post("/active/exec", json={"args": ["dmeo"]}).status_code == 404
+
+
+def test_known_names_are_the_listing_plus_the_registry_of_a_fresh_scan(
+    state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert state.known_names() is None  # never listed or scanned: the name is left to dimos
+    scanned(state, monkeypatch, stale=True)
+    assert state.known_names() is None  # the checkout changed since the scan
+    scanned(state, monkeypatch)
+    assert state.known_names() == {
+        "demo",
+        "cam",
+        "lidar",
+    }  # lidar's own scan timed out; still a name
