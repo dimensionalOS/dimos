@@ -112,7 +112,7 @@ fn points_outside_the_key_range_are_dropped() {
 #[test]
 fn find_misses_along_ray_hits_correct_voxels() {
     let voxel_size = 1.0;
-    let shadow_depth = 2.0;
+    let shadow_depth = 2.5;
     let origin = (0.5, 0.5, 0.5);
     let end = (5.5, 0.5, 0.5);
     let inv = 1.0 / voxel_size;
@@ -155,6 +155,49 @@ fn find_misses_along_ray_hits_correct_voxels() {
 
     assert_eq!(walk.misses, expected);
     assert!(walk.deferred.is_empty());
+}
+
+/// At the default 5 cm voxels the 0.2 m grace and 0.1 m shadow radii fall
+/// exactly on voxel centers; those ties are spared, whatever the rounding.
+#[test]
+fn radius_ties_are_spared() {
+    let voxel_size = 0.05;
+    let origin = (0.025, 0.025, 0.025);
+    let end = (1.025, 0.025, 0.025);
+    let inv = 1.0 / voxel_size;
+    let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
+    let mut voxels = ChunkMap::default();
+    for x in [
+        endpoint.0 - 5,
+        endpoint.0 - 4,
+        endpoint.0 + 1,
+        endpoint.0 + 2,
+    ] {
+        let mut voxel = Voxel::with_health(1);
+        voxel.normal = NormalFit::Fitted(None);
+        voxels.insert((x, 0, 0), voxel, 0);
+    }
+    let hits = AHashSet::new();
+    let frame = RayFrame {
+        voxels: &voxels,
+        hits: &hits,
+        origin,
+        origin_voxel: world_to_voxel(origin.0, origin.1, origin.2, inv),
+        voxel_size,
+        shadow_depth: 0.1,
+        grace_depth: 0.2,
+        graze_cos: 0.5,
+        map_frame: 0,
+        graze_recent_frames: u32::MAX,
+        fine_divisor: None,
+    };
+    let mut walk = RayWalk::default();
+    find_misses_along_ray(&mut walk, &frame, end, endpoint);
+
+    let expected: AHashSet<VoxelKey> = [(endpoint.0 - 5, 0, 0), (endpoint.0 + 1, 0, 0)]
+        .into_iter()
+        .collect();
+    assert_eq!(walk.misses, expected);
 }
 
 #[test]

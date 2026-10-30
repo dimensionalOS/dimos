@@ -1,0 +1,41 @@
+[package]
+name = "dimos-gpu-mls"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-resident voxel map and MLS surface extraction for dimos (wgpu compute)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_gpu_mls"
+path = "src/lib.rs"
+
+[dependencies]
+wgpu = "30"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+
+# Raw Vulkan for the host-read barrier wgpu leaves out; see Gpu::host_read_barrier.
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = "0.38"
+
+[dev-dependencies]
+dimos-voxel-ray-tracing = { path = "../../ray_tracing/rust" }
+dimos-mls-planner = { path = "../../../navigation/global_planner/mls_planner/rust" }
+ahash = "0.8"
+rayon = "1"
+nalgebra = "0.35.0"
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+opt-level = 1
+
+[profile.test]
+debug = 0
+opt-level = 1

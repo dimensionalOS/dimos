@@ -18,10 +18,12 @@
 
 use std::cmp::Ordering;
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
-use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
+use crate::adjacency::{
+    build_surface_cells, build_surface_lookup, CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL,
+};
 use crate::columns::ColumnIz;
 use crate::dijkstra::{
     chain_source, dijkstra, dijkstra_clusters, window_clusters, ClusterIndex, DijkstraState,
@@ -315,6 +317,31 @@ pub fn place_nodes(
     ensure_node_per_component(cells, &state.dist, params, &clusters, None, nodes);
 
     apply_wall_safe_penalty(cells, &state.dist, params);
+}
+
+/// Each surface cell's walked distance over surface links to the nearest
+/// wall-adjacent cell, the field node placement reads. For checking other
+/// wall-distance implementations against this one.
+pub fn wall_distances(
+    voxel_map: &AHashSet<VoxelKey>,
+    surface: &[VoxelKey],
+    clearance_cells: i32,
+    step_cells: i32,
+    voxel_size: f32,
+) -> Vec<(VoxelKey, f32)> {
+    let by_col = ColumnIz::from_voxels(voxel_map.iter());
+    let mut lookup = SurfaceLookup::default();
+    build_surface_lookup(surface, &mut lookup);
+    let mut cells = SurfaceCells::default();
+    build_surface_cells(&mut cells, &lookup, voxel_size, step_cells);
+    let mut seeds = Vec::new();
+    collect_wall_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
+    let mut state = DijkstraState::default();
+    dijkstra(&cells, &seeds, &mut state, Weight::Base);
+    cells
+        .ids()
+        .map(|id| (cells.coord(id), state.dist[id as usize]))
+        .collect()
 }
 
 /// Thin candidates with NMS, clearest-first, against every node already

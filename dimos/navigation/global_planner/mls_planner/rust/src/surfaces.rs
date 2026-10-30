@@ -70,6 +70,25 @@ pub fn extract_surfaces(
     close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
 }
 
+/// Whole-map surface cells of a voxel set, for checking other surface
+/// extractors against this one.
+pub fn surface_cells(
+    voxel_map: &AHashSet<VoxelKey>,
+    clearance_cells: i32,
+    closing_passes: u32,
+) -> Vec<VoxelKey> {
+    let mut by_col = ColumnIz::default();
+    let mut out = Vec::new();
+    extract_surfaces(
+        voxel_map,
+        clearance_cells,
+        closing_passes,
+        &mut by_col,
+        &mut out,
+    );
+    out
+}
+
 /// Standable cells in one column: any cell with robot clearance above, plus
 /// the topmost cell.
 fn standable_in_column(
