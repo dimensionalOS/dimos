@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The workcell model gives the planner the arms, the wrist cameras, the table
-and the post; the bin is an obstacle added per scene. A plan into the bin wall
-must fail, free space must plan."""
+"""The workcell model gives the planner the arms, the wrist cameras, the post and
+the overhead camera; the table reaches it from the camera and the bin is an
+obstacle added per scene. A plan into the bin wall must fail, free space must plan."""
 
 from __future__ import annotations
 
