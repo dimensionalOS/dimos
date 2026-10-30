@@ -24,7 +24,7 @@ from typing import Any, Literal
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin, LCMEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
@@ -147,27 +147,6 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self._drain_stops: list[Callable[[], None]] = []
         self._subscriber_lock = threading.Lock()
         self._stopped = False
-
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Drop the live publishers, subscribers and locks on top of the session."""
-        state = super().__getstate__()  # type: ignore[no-untyped-call]
-        for key in (
-            "_publishers",
-            "_publisher_lock",
-            "_subscribers",
-            "_drain_stops",
-            "_subscriber_lock",
-        ):
-            state.pop(key, None)
-        return state
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        super().__setstate__(state)
-        self._publishers = {}
-        self._publisher_lock = threading.Lock()
-        self._subscribers = []
-        self._drain_stops = []
-        self._subscriber_lock = threading.Lock()
 
     def _get_publisher(self, key_expr: str, qos: ZenohQoS | None) -> zenoh.Publisher:
         """Get or declare the cached publisher for a key expression.
@@ -344,10 +323,10 @@ class Zenoh(  # type: ignore[misc]
     ...
 
 
-class PickleZenoh(
-    PickleEncoderMixin,  # type: ignore[type-arg]
+class CborZenoh(
+    CborEncoderMixin,  # type: ignore[type-arg]
     ZenohPubSubBase,
 ):
-    """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
+    """Zenoh pub/sub with CBOR encoding for Python values without an LCM form."""
 
     ...

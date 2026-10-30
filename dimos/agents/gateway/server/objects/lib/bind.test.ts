@@ -26,6 +26,7 @@ function standing(busy: boolean): Standing {
       busy,
       userQueued: 0,
       detachable: [],
+      moved: [],
       messageKind: () => "user",
     },
   };
@@ -54,6 +55,7 @@ function recording(calls: string[]): Handlers<typeof CONVERSATION_ACTIONS> {
     summarizeUpTo: async () => done({ conversation: 2 as ConversationId }),
     summarizeFrom: async () => done({ conversation: 2 as ConversationId }),
     background: async () => done({ task: 1 as TaskId }),
+    stopBackground: async () => done(null),
     image: async () => done({ type: "image", data: "", mimeType: "image/png" }),
   };
 }

@@ -1,13 +1,13 @@
 # Python agent runtime
 
-Inspect a running DimOS system, deploy Python modules, and send notices to the conversation that created them through
+Inspect a running dimOS system, deploy Python modules, and send notices to the conversation that created them through
 [HarnessRuntime](/dimos/agents/harness/runtime/harness_runtime.py).
 
 ## Quickstart
 
 ### Load the runtime
 
-With a DimOS system already running, load the runtime and list the available modules, RPCs, and streams:
+With a dimOS system already running, load the runtime and list the available modules, RPCs, and streams:
 
 ```sh skip
 dimos agent load
@@ -147,7 +147,7 @@ the old revision has already stopped. Modules stop with the system; their saved 
 ### `AgentModule`
 
 `AgentModule` runs in a dedicated worker by default. `subscribe(stream, callback)` registers cleanup and logs callback
-exceptions through the normal DimOS logger. Ordinary `@rpc`, `@skill`, stream handlers, and module lifecycle methods
+exceptions through the normal dimOS logger. Ordinary `@rpc`, `@skill`, stream handlers, and module lifecycle methods
 remain available. Declare `In[T]` and `Out[T]` ports to join streams by name and type, and use
 [Specs](/docs/usage/modules.md) to call other modules.
 
@@ -172,7 +172,7 @@ Recording follows the system's normal topic selection and retention; the count d
 
 ### Files on disk
 
-The paths are defined in [constants.py](/dimos/agents/harness/runtime/constants.py) and the shared [DimOS constants](/dimos/constants.py).
+The paths are defined in [constants.py](/dimos/agents/harness/runtime/constants.py) and the shared [dimOS constants](/dimos/constants.py).
 
 | Path | Contents |
 | --- | --- |

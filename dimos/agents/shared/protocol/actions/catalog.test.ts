@@ -25,6 +25,7 @@ const BUSY: Standing = {
     busy: true,
     userQueued: 0,
     detachable: ["call_1" as CallId],
+    moved: ["call_2" as CallId],
     messageKind: (entry) => (entry === 12 ? "user" : entry === 13 ? "other" : null),
   },
 };
@@ -72,7 +73,15 @@ test("background of a call that is not detachable is refused not_running", () =>
   assert.equal(CONVERSATION_ACTIONS.background.rule({ call: "call_1" as CallId }, BUSY), null);
 });
 
-test("the viewer variant carries only the actions open to any client; the owner carries all nine", () => {
+test("stopBackground of a call that is not moved is refused not_running", () => {
+  assert.deepEqual(CONVERSATION_ACTIONS.stopBackground.rule({ call: "call_1" as CallId }, BUSY), {
+    code: "not_running",
+    call: "call_1",
+  });
+  assert.equal(CONVERSATION_ACTIONS.stopBackground.rule({ call: "call_2" as CallId }, BUSY), null);
+});
+
+test("the viewer variant carries only the actions open to any client; the owner carries all ten", () => {
   assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "viewer")), ["image"]);
   assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "owner")), [
     "send",
@@ -83,6 +92,7 @@ test("the viewer variant carries only the actions open to any client; the owner 
     "summarizeUpTo",
     "summarizeFrom",
     "background",
+    "stopBackground",
     "image",
   ]);
 });

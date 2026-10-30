@@ -138,6 +138,7 @@ const KEYS: readonly string[] = [
   "Sidebar: Up/Down select a stream; Left/Right fold or show it; Esc returns to chat",
   "Ctrl+O  switch conversations",
   "Ctrl+B  send the running tool call to the background",
+  "Down    with an empty editor, select a call in the background (↑/↓, then Enter shows its output, x stops it, Esc returns)",
   "Esc     while running, stop the run; with an empty editor, select a message (↑/↓, then e edit, u summarize up to, f summarize from)",
   "Up      with an empty editor, bring queued user messages back for editing",
   "Ctrl-C  clear the editor; with an empty editor, detach (the conversation keeps running)",

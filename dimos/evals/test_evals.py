@@ -284,11 +284,11 @@ def test_sim_attach_rejects_added_modules() -> None:
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     dataset: str, mocker: MockerFixture
 ) -> None:
-    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     proc.global_args = []
     proc.extra_env = {}
-    mocker.patch("dimos.evals.environments.sim.launched_mcp_url", return_value="http://x/mcp")
-    adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
+    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
     setup = mocker.Mock()
@@ -360,7 +360,7 @@ def test_sim_settle_stops_at_rest_or_at_the_budget(
                 odom.append(_pose(elapsed, 0.0), ts=elapsed)
 
         monkeypatch.setattr(
-            "dimos.evals.environments.sim.time",
+            "dimos.evals.environments.live.time",
             SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
         )
         env = _sim(at_rest_m=0.01, at_rest_s=0.1, settle_poll_s=0.02)
@@ -371,7 +371,7 @@ def test_sim_settle_stops_at_rest_or_at_the_budget(
 
 
 def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixture) -> None:
-    sleep = mocker.patch("dimos.evals.environments.sim.time.sleep")
+    sleep = mocker.patch("dimos.evals.environments.live.time.sleep")
     env = _sim()
     env.settle(10.0)
     with MemoryStore() as store:

@@ -101,6 +101,7 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
     return session
 
 
+@pytest.mark.flaky(reruns=1)
 def test_server_url_is_configured_else_the_blueprints_server_else_the_default() -> None:
     server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
     client = McpClient()

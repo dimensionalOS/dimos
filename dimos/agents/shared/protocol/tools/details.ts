@@ -60,6 +60,7 @@ export const DETAILS = {
   stream_get: Type.Object({ render, background, limit }),
   agent_module: Type.Object({ render, background, limit }),
   job: Type.Object({ limit }),
+  background: Type.Object({ limit }),
 };
 
 export type DetailsByTool = { readonly [N in keyof typeof DETAILS]: Static<(typeof DETAILS)[N]> };

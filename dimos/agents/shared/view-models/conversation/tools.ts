@@ -1,3 +1,4 @@
+import type { CallId, MovedCall } from "../../protocol/conversation/calls.ts";
 import type { EpochMs } from "../../protocol/time.ts";
 import type { TimelineRow } from "./timeline.ts";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -40,4 +41,35 @@ export function backgroundTarget(calls: readonly RunningCall[]): RunningCall | n
 export function movedToBackground(result: ToolResult): boolean {
   const details = result.details;
   return details.tool !== null && "background" in details.details && details.details.background !== undefined;
+}
+
+/** A call running in the background as a list shows it. */
+export type MovedRow = {
+  readonly call: CallId;
+  readonly tool: string;
+  /** `$ command` for bash, the tool and its arguments otherwise. */
+  readonly label: string;
+  readonly forMs: number;
+  /** The newest line it wrote; empty before any output. */
+  readonly lastLine: string;
+};
+
+export function movedRows(moved: readonly MovedCall[], now: EpochMs): readonly MovedRow[] {
+  return moved.map((call) => {
+    const command = call.arguments["command"];
+    return {
+      call: call.call,
+      tool: call.tool,
+      label:
+        call.tool === "bash" && typeof command === "string"
+          ? `$ ${command}`
+          : `${call.tool} ${JSON.stringify(call.arguments)}`,
+      forMs: now - call.since,
+      lastLine:
+        call.output
+          .split("\n")
+          .findLast((line) => line.trim() !== "")
+          ?.trim() ?? "",
+    };
+  });
 }

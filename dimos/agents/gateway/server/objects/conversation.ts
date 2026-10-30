@@ -46,6 +46,7 @@ export const serveConversation: ServeObject = (host, deps) =>
         live: room.live.value,
         queue: room.queue.value,
         detachable: room.detachable.value,
+        moved: room.moved.value,
       }),
     });
     const { agent } = deps;
@@ -93,6 +94,8 @@ export const serveConversation: ServeObject = (host, deps) =>
           ? done({ task: result.task })
           : refused({ code: "not_running", call: target });
       },
+      stopBackground: async ({ call: target }) =>
+        agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
       image: async ({ at }, call) => imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
     };
     if (!owner)

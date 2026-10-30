@@ -35,6 +35,7 @@ import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { editTool } from "./tools/edit.ts";
 import { executionEnv } from "./env.ts";
 import { jobFacts } from "./jobs/registry.ts";
+import { backgroundTool } from "./tools/background.ts";
 import { jobTool } from "./tools/job.ts";
 import { jobsExtension } from "./jobs/extension.ts";
 import { loadSkills, skillsExtension } from "./skills/catalog.ts";
@@ -100,6 +101,7 @@ type ToolTableDeps = {
   /** The runtime tool schemas McpServer last advertised, from the stored catalog. */
   readonly schemas: RuntimeToolSchemas;
   readonly job: AgentTool<"job">;
+  readonly background: AgentTool<"background">;
 };
 
 /**
@@ -173,6 +175,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
       exportsDir: options.toolResultsDir,
       schemas: catalog.schemas.value,
       job: jobTool(jobs),
+      background: backgroundTool(detacher),
     });
     registry.install(toolsExtension(table, limiter, detacher));
   };
@@ -277,5 +280,6 @@ function toolTable(deps: ToolTableDeps): AgentToolTable {
       exportsDir: deps.exportsDir,
     }),
     job: deps.job,
+    background: deps.background,
   };
 }

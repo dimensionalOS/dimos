@@ -20,7 +20,7 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
@@ -30,12 +30,11 @@ from dimos.evals.environments.sim import Sim, SimConfig
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class MujocoEnvironmentConfig(SimConfig):
     tracked_bodies: tuple[str, ...] = ()
-    at_rest_rad_s: float = 0.02
+    settle_on_joints: bool = True
     module_env: dict[str, str] = Field(default_factory=dict)
     ready_streams: tuple[str, ...] = ("color_image", "coordinator_joint_state")
     recorded_topics: tuple[str, ...] = (
@@ -102,31 +101,3 @@ class MujocoEnvironment(Sim):
                 else ""
             )
         )
-
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        """Base pose from ``odom`` for floating-base robots; a fixed-base arm has none."""
-        if "odom" not in recording.streams:
-            raise LookupError("No MuJoCo odometry recorded")
-        return cast("PoseStamped", recording.streams.odom.last().data)
-
-    def settle(self, budget_s: float) -> None:
-        """At rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``."""
-        recording = self._recording
-        if recording is None or "coordinator_joint_state" not in recording.streams:
-            super().settle(budget_s)
-            return
-        rest_since: float | None = None
-        deadline = time.monotonic() + budget_s
-        while time.monotonic() < deadline:
-            try:
-                state = recording.streams.coordinator_joint_state.last().data
-            except LookupError:
-                return
-            now = time.monotonic()
-            if any(abs(v) > self.config.at_rest_rad_s for v in state.velocity):
-                rest_since = None
-            elif rest_since is None:
-                rest_since = now
-            elif now - rest_since >= self.config.at_rest_s:
-                return
-            time.sleep(self.config.settle_poll_s)

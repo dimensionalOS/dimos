@@ -3,6 +3,7 @@ import { retryByRequestId } from "../../sdk/retry.ts";
 import { isChordError, type Ref } from "@earendil-works/chord";
 import { done } from "../../shared/protocol/outcome.ts";
 import { ConversationContract } from "../../shared/protocol/conversation/contract.ts";
+import type { CallId } from "../../shared/protocol/conversation/calls.ts";
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "../../shared/protocol/time.ts";
@@ -29,7 +30,9 @@ import {
   isKeyRepeat,
   matchesKey,
   truncateToWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { BackgroundPanel } from "./conversation/background.ts";
 import { FileRenderer } from "../../shared/render/render.ts";
 import { LoginPanel } from "./dialogs.ts";
 import { MessageSelection } from "./conversation/selection.ts";
@@ -42,8 +45,8 @@ import { SwitcherOverlay } from "./conversation/switcher.ts";
 import { TranscriptView } from "./conversation/transcript.ts";
 import { actionLine, pendingSends } from "../../shared/view-models/actions.ts";
 import { attachRefusal, viewingRefusal } from "../../sdk/conversation.ts";
-import { backgroundTarget, runningCalls } from "../../shared/view-models/conversation/tools.ts";
-import { clean } from "../../shared/view-models/text.ts";
+import { backgroundTarget, movedRows, runningCalls } from "../../shared/view-models/conversation/tools.ts";
+import { clean, cleanMultiline } from "../../shared/view-models/text.ts";
 import { unixSocket } from "../../sdk/node.ts";
 import { connect } from "../../sdk/main.ts";
 import { GatewayContract } from "../../shared/protocol/gateway/contract.ts";
@@ -64,6 +67,7 @@ import { newActionRequest, newUserRequest } from "../../shared/protocol/actions/
 import { refusalText } from "../../shared/view-models/outcome.ts";
 import { runSetup } from "./setup.ts";
 import { slashCommands } from "./commands.ts";
+import { stripVTControlCharacters } from "node:util";
 import { switcherRows } from "../../shared/view-models/gateway/switcher.ts";
 
 type TerminalOptions = {
@@ -243,6 +247,59 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   };
   const sidebar = new Sidebar(sidebarSource, frames, requestRender, () => device.rows);
 
+  /** One moved call's output, following its end; once the call ends it keeps the last output it showed. */
+  const movedOutput = (id: ConversationId, call: CallId): Component => {
+    let last: { readonly output: string; readonly truncated: boolean } | null = null;
+    return {
+      render: (width) => {
+        const moved =
+          showing?.id === id ? showing.conversation.moved.value.find((row) => row.call === call) : undefined;
+        if (moved !== undefined) last = moved;
+        const lines: string[] = [];
+        if (last?.truncated === true) lines.push(muted("[earlier output was cut]"));
+        const text = cleanMultiline(stripVTControlCharacters(last?.output ?? "")).replaceAll("\t", "  ");
+        if (text !== "") lines.push(...text.split("\n").flatMap((line) => wrapTextWithAnsi(line, width)));
+        else if (moved !== undefined) lines.push(muted("No output yet."));
+        if (moved === undefined) lines.push(muted("It is no longer running; its result is in the chat."));
+        return lines;
+      },
+      invalidate: () => {},
+    };
+  };
+  const background = new BackgroundPanel(
+    () => (showing === null ? [] : movedRows(showing.conversation.moved.value, Date.now() as EpochMs)),
+    {
+      open: (call) => {
+        if (showing === null) return;
+        const row = movedRows(showing.conversation.moved.value, Date.now() as EpochMs).find(
+          (candidate) => candidate.call === call,
+        );
+        fullScreen(
+          clean(row?.label ?? call),
+          movedOutput(showing.id, call),
+          true,
+          () => {
+            if (!background.isEmpty) tui.setFocus(background);
+          },
+          "end",
+        );
+      },
+      stop: (call) => {
+        if (showing === null) return;
+        const { conversation } = showing;
+        try {
+          void ui.actions.observe(`stop call ${call}`, owner(conversation).stopBackground({ call })).catch(note);
+        } catch (error) {
+          note(error);
+        }
+      },
+      leave: () => {
+        tui.setFocus(focusOf(mode));
+        requestRender();
+      },
+    },
+  );
+
   const conversationText = (): string => {
     if (showing === null) return "";
     if (showing.conversation.variant === "owner") return `#${showing.id}`;
@@ -337,6 +394,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     lineOf(actionText),
     lineOf(hintText),
     inputSlot,
+    background,
     new StatusLine(() => [footerText(), muted("/help")]),
   ]);
   const layout = new HStack([
@@ -397,14 +455,23 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   /** Closes the full-screen view back to the chat; null while the chat shows. */
   let closeFullScreen: (() => void) | null = null;
-  /** Shows `component` in place of the chat. Esc closes it unless `closesOnEscape` is false, for a view that handles Esc. */
-  const fullScreen = (title: string, component: Component, closesOnEscape: boolean, onClose: () => void) => {
+  /**
+   * Shows `component` in place of the chat. Esc closes it unless `closesOnEscape` is false, for a view that handles Esc.
+   * `onClose` runs once the chat is back, so it may move the focus; `follow: "end"` keeps a growing view at its end.
+   */
+  const fullScreen = (
+    title: string,
+    component: Component,
+    closesOnEscape: boolean,
+    onClose: () => void,
+    follow: "none" | "end" = "none",
+  ) => {
     sidebar.setVisible(false);
     const close = () => {
       closeFullScreen = null;
-      onClose();
       tui.setLayoutRoot(layout);
       tui.setFocus(focusOf(mode));
+      onClose();
       tui.requestRender();
     };
     closeFullScreen = close;
@@ -421,7 +488,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui.setLayoutRoot(
       new VStack([
         new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc returns to chat")]),
-        { component: new ScrollView(focused, { primary: true }), basis: 0, grow: 1 },
+        { component: new ScrollView(focused, { primary: true, follow }), basis: 0, grow: 1 },
       ]),
     );
     tui.setFocus(focused);
@@ -510,6 +577,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         shown.agent,
         shown.outcomes,
         shown.detachable,
+        shown.moved,
         shown.modules,
         shown.jobs,
         shown.streams,
@@ -818,6 +886,17 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       return { consume: true };
     }
     if (mode.kind !== "chat") return undefined;
+    if (
+      matchesKey(data, "down") &&
+      editor.focused &&
+      !editor.isShowingAutocomplete() &&
+      editor.getValue() === "" &&
+      !background.isEmpty
+    ) {
+      tui.setFocus(background);
+      requestRender();
+      return { consume: true };
+    }
     if (!matchesKey(data, "up") || !editor.focused || editor.isShowingAutocomplete() || editor.getValue() !== "")
       return undefined;
     if (showing === null || showing.conversation.variant !== "owner") return undefined;
@@ -862,6 +941,10 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     }),
   ];
 
+  const ticker = setInterval(() => {
+    if (!background.isEmpty) requestRender();
+  }, 1_000);
+
   const hangUp = () => resolveExit(129);
   const terminate = () => resolveExit(143);
   // Node prints the error and exits after the monitor, so the shell gets its screen and modes back first.
@@ -887,6 +970,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     requestRender();
     code = await exited;
   } finally {
+    clearInterval(ticker);
     for (const stop of stops) stop();
     closeSwitcher();
     menuView?.dispose();
