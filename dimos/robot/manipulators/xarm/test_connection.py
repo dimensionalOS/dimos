@@ -204,7 +204,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
 
     def build(sdk: FakeXArmAPI | None = None, start: bool = True, **config: Any) -> Rig:
         fake = sdk or FakeXArmAPI()
-        monkeypatch.setattr(connection, "XArmAPI", lambda ip, is_radian: fake)
+        monkeypatch.setattr(connection, "_open_sdk", lambda ip: fake)
         config.setdefault("arm", "xarm7")
         config.setdefault("ip", IP)
         config.setdefault("deadman_timeout_s", DEADMAN_S)
@@ -246,10 +246,10 @@ def test_nobody_at_the_address_fails_start_naming_it(
 ) -> None:
     r = rig(start=False)
 
-    def unreachable(ip: str, is_radian: bool) -> FakeXArmAPI:
+    def unreachable(ip: str) -> FakeXArmAPI:
         raise Exception("connect socket failed")
 
-    monkeypatch.setattr(connection, "XArmAPI", unreachable)
+    monkeypatch.setattr(connection, "_open_sdk", unreachable)
     with pytest.raises(ConnectionError, match=f"no xArm answers at {IP}: connect socket failed"):
         r.module.start()
 
