@@ -55,15 +55,16 @@ Keyboard controls:
 | Y/H | +Yaw/-Yaw |
 | ESC | Quit |
 
-### Motion Planning (two terminals)
+### Motion Planning
 
 ```bash
-# Terminal 1: Mock coordinator
-dimos run coordinator-mock
-
-# Terminal 2: Planner with Drake visualization
-dimos run xarm7-planner-coordinator
+# Planner and coordinator on a real xArm7 (xarm6-planner-coordinator for an xArm6)
+dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185
 ```
+
+The planner and the coordinator name the arm's joints `arm/joint1` ...; its
+links and tf frames keep their URDF names (`link7`, `link_tcp`). The other
+`xarm7-planner-coordinator` commands below need the same `--xarmconnection.ip`.
 
 Pink IK is the default solver. Tune it with nested module config overrides:
 
@@ -434,7 +435,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
+dimos run xarm-grasp-agent --xarmconnection.ip <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).

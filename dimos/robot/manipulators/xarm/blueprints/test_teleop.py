@@ -40,13 +40,15 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     keyboard_teleop_xarm7,
 )
 
+# Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
+# drive_joint behind XArmConnection.
 _GRIPPER_BLUEPRINTS = [
-    keyboard_teleop_xarm6,
-    keyboard_teleop_xarm7,
-    coordinator_teleop_xarm6,
-    coordinator_teleop_xarm7,
-    xarm7_planner_coordinator,
-    xarm_perception_sim,
+    (keyboard_teleop_xarm6, "arm/gripper"),
+    (keyboard_teleop_xarm7, "arm/gripper"),
+    (coordinator_teleop_xarm6, "arm/gripper"),
+    (coordinator_teleop_xarm7, "arm/gripper"),
+    (xarm7_planner_coordinator, "arm/drive_joint"),
+    (xarm_perception_sim, "arm/gripper"),
 ]
 
 
@@ -79,12 +81,12 @@ def test_xarm_roboplan_blueprints_use_compatible_visualization(blueprint: Bluepr
     assert config.visualization.requires_world_visualization is False
 
 
-@pytest.mark.parametrize("blueprint", _GRIPPER_BLUEPRINTS)
-def test_gripper_has_dedicated_task(blueprint: Blueprint) -> None:
+@pytest.mark.parametrize(("blueprint", "joint"), _GRIPPER_BLUEPRINTS)
+def test_gripper_has_dedicated_task(blueprint: Blueprint, joint: str) -> None:
     tasks = _coordinator_tasks(blueprint)
     gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", [joint])
 
 
 @pytest.mark.parametrize("blueprint", [coordinator_teleop_xarm6, coordinator_teleop_xarm7])
