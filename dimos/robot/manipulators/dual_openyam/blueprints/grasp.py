@@ -63,14 +63,21 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
-# Planner map cell. 1 cm, not the xArm stack's 2.5: the overhead camera maps the table
-# around the post and the arm bases, and a 2.5 cm cell there straddles those static
-# links; the benchmark's lowest grasps put the fingertips 1.5 cm above the table.
-DUAL_OPENYAM_VOXEL_SIZE = 0.01
-# How far past the model a return still counts as the robot, for the map and the
-# check's scene. This camera's arm returns sit 1 to 2 cm off the model (1.3 deg
-# extrinsic roll at 0.5 m plus depth noise; scene 56 replay 2026-10-29).
+# Planner map cell, the xArm grasp stack's value. 1 cm was tried (2026-10-30, run 9c56):
+# 68k cells, octree rebuilds under the world lock slowed the planner's tf to 4 Hz, a third
+# of the clouds dropped and scans took 13 s.
+DUAL_OPENYAM_VOXEL_SIZE = 0.025
+# How far past the model a return still counts as the robot in the check's scene. This
+# camera's arm returns sit 1 to 2 cm off the model (1.3 deg extrinsic roll at 0.5 m plus
+# depth noise; scene 56 replay 2026-10-29).
 DUAL_OPENYAM_SELF_PADDING = 0.02
+# The same for the planner's map: a cell must not straddle a static link, so the padding
+# covers the slop plus one cell. Replay of run 77c6: 2 cm left the init pose in
+# collision with table cells at the post and base feet, 4 cm cleared it.
+DUAL_OPENYAM_MAP_PADDING = 0.04
+# One period of the planner's tf (about 110 ms here), so a cloud is not dropped for
+# landing between two publishes.
+DUAL_OPENYAM_MAP_TF_TOLERANCE = 0.2
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
@@ -292,7 +299,8 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         manipulation_mapping(
             self_filter_model=dual_openyam_self_filter_model(),
             voxel_size=DUAL_OPENYAM_VOXEL_SIZE,
-            padding_m=DUAL_OPENYAM_SELF_PADDING,
+            padding_m=DUAL_OPENYAM_MAP_PADDING,
+            tf_tolerance_s=DUAL_OPENYAM_MAP_TF_TOLERANCE,
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),

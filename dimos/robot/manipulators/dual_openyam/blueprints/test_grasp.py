@@ -204,10 +204,11 @@ def test_planner_maps_the_overhead_cloud_like_the_xarm_stack() -> None:
 
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         voxel = _atom(stack, RayTracingVoxelMap).kwargs["voxel_size"]
-        assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.01
+        assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.025
         assert PointCloudBoxFilter in _modules(stack)
         clearing = _atom(stack, UrdfManagerPointClearing).kwargs
-        assert clearing["padding_m"] == 0.02
+        assert clearing["padding_m"] == 0.04
+        assert clearing["tf_tolerance_s"] == clearing["tf_forward_tolerance_s"] == 0.2
         loaded = clearing["model"].load()
         xml = loaded.xml
         # The whole rig, grippers and workcell included, with the fingers fixed.

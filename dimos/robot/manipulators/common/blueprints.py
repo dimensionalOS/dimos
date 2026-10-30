@@ -196,6 +196,7 @@ def manipulation_mapping(
     voxel_size: float,
     world_frame: str = "world",
     padding_m: float = 0.01,
+    tf_tolerance_s: float = 0.1,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -214,6 +215,8 @@ def manipulation_mapping(
         world_frame: Fixed frame the map is built and published in.
         padding_m: How far past the model's collision geometry a return still
             counts as the robot.
+        tf_tolerance_s: How far from a cloud's capture time the robot tf may be,
+            each way; one publish period of ManipulationModule's tf.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
@@ -226,8 +229,8 @@ def manipulation_mapping(
             # tolerance cannot bracket a ~92ms publish period and drops most
             # clouds. One full period admits them all, and the arm holds still
             # while scanning, so a transform a period old describes the same pose.
-            tf_tolerance_s=0.1,
-            tf_forward_tolerance_s=0.1,
+            tf_tolerance_s=tf_tolerance_s,
+            tf_forward_tolerance_s=tf_tolerance_s,
         ),
         # Tabletop reach, not a room-scale lidar sweep.
         RayTracingVoxelMap.blueprint(

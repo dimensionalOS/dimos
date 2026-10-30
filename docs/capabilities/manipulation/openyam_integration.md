@@ -121,10 +121,11 @@ xArm stack runs (`manipulation_mapping`). Two settings differ from the xArm
 because its wrist camera never sees the rest of the robot while the overhead
 camera sees all of it: the self filter model is the whole rig with the fingers
 fixed, not the arm alone, since the grippers' and wrist cameras' own cells
-otherwise pin the arm at its start pose, and the cells are 1 cm, not 2.5, since
-a 2.5 cm cell on the table straddles the feet of the post and the arm bases
-and reaches the fingertips of the lowest grasps. The filter padding is 2 cm
-for this camera (scene 56 replays, 2026-10-29). The
+otherwise pin the arm at its start pose, and the filter padding is 4 cm, not
+1, since a 2.5 cm table cell next to the post or an arm base straddles that
+static link unless the returns within a cell of it are gone, on top of this
+camera's 1 to 2 cm of slop (scene 56 replays, 2026-10-29). 1 cm cells were
+tried and made the planner's world too heavy on this machine. The
 place target is a taped tray square on the table on the arm's side (0.26,
 -0.20 for the right arm, 0.26, 0.20 for the left, tcp released at z 0.05):
 the pick-and-place module places top-down with the grasp orientation and a
