@@ -111,6 +111,12 @@ def test_nonzero_firmware_status_disables_auto_speaker(bridge: AudioBridgeTestMo
     assert bridge._ensure_speaker() is False
 
 
+def test_an_unanswered_request_counts_as_sent(bridge: AudioBridgeTestModule) -> None:
+    bridge.go2.publish_request.return_value = None
+
+    assert bridge._ensure_speaker() is True
+
+
 def test_quiet_audio_is_amplified_to_target_peak(bridge: AudioBridgeTestModule) -> None:
     pcm = np.array([-100, 0, 100], dtype=np.int16)
 
@@ -328,7 +334,7 @@ def test_response_code_extracts_supported_firmware_shapes(
 
 
 def test_request_rejects_empty_response(bridge: AudioBridgeTestModule) -> None:
-    bridge.go2.publish_request.return_value = None
+    bridge.go2.publish_request.return_value = {}
 
     with pytest.raises(RuntimeError, match="returned no response"):
         bridge._request(GET_AUDIO_LIST)

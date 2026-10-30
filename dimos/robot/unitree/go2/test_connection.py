@@ -33,30 +33,17 @@ from reactivex.disposable import Disposable
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
 
 
-@pytest.fixture
-def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
-    runs without dialing out."""
-    stub = MagicMock(name="UnitreeWebRTCConnection")
-    monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
-    return stub
-
-
-def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:
-    """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
-    cfg = ConnectionConfig(g=GlobalConfig())
-    go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
-    stub_webrtc.assert_called_once_with(
-        "192.168.123.161",
-        aes_128_key="cafe" * 8,
-        velocity_api=False,
-    )
+def test_make_connection_leaves_the_real_robot_to_the_rust_module() -> None:
+    """Webrtc gets no Python connection: GO2Connection's Rust module drives the real robot."""
+    assert go2_conn.make_connection("192.168.123.161", ConnectionConfig(g=GlobalConfig())) is None
 
 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
@@ -175,13 +162,13 @@ def test_odom_to_tf_unprefixed_by_default() -> None:
 
 
 @pytest.fixture
-def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connection]]:
-    """Build GO2Connections with the tf and odom ports stubbed, and stop them after."""
+def connection() -> Iterator[Callable[[bool], GO2Connection]]:
+    """Build replay GO2Connections (no robot, no DB opened) with the tf and odom ports stubbed, and stop them after."""
     built: list[GO2Connection] = []
 
     def build(publish_tf: bool) -> GO2Connection:
         conn = GO2Connection(
-            g=GlobalConfig(robot_ip="127.0.0.1"),
+            g=GlobalConfig(replay=True),
             publish_tf=publish_tf,
             odom_frame_id="go2_odom",
         )
@@ -286,3 +273,44 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+_CONTRACT = Path(go2_conn.__file__).parent / "webrtc" / "rust" / "tests" / "fixtures"
+
+
+def test_the_rust_module_gets_the_config_its_fixture_holds() -> None:
+    """The Rust `Config` rejects unknown fields and has no defaults; its tests parse this same file."""
+    config = ConnectionConfig(g=GlobalConfig(), ip="192.168.123.161").to_config_dict()
+    assert config == json.loads((_CONTRACT / "config.json").read_text())
+
+
+def test_the_aes_key_stays_off_the_logged_command_line() -> None:
+    config = ConnectionConfig(g=GlobalConfig(), ip="192.168.123.161", aes_128_key="cafe" * 8)
+    assert config.to_cli_args() == []
+
+
+def test_every_verb_the_rpcs_send_is_in_the_rust_fixture() -> None:
+    """The Rust `parse_verb` test parses each line of verbs.txt; these are all the verbs the rpcs send."""
+    conn = GO2Connection(g=GlobalConfig(robot_ip="192.168.123.161"))
+    assert conn.connection is None
+    sent: list[str] = []
+    conn._send = lambda verb: sent.append(verb) or True  # type: ignore[method-assign]
+    twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, -0.2))
+    conn.move(twist)
+    conn.move(twist, duration=1.5)
+    conn.standup()
+    conn.liedown()
+    conn.balance_stand()
+    conn.set_rage_mode(True)
+    conn.set_rage_mode(False)
+    conn.sport_command(1016)
+    conn.set_light(3)
+    conn.set_obstacle_avoidance(True)
+    conn.set_obstacle_avoidance(False)
+    conn.switch_joystick(True)
+    conn.switch_joystick(False)
+    conn.stop_movement()
+    conn.publish_request("rt/api/vui/request", {"api_id": 1005, "parameter": {"brightness": 3}})
+    conn.publish_request("rt/api/sport/request", {"api_id": 1009})
+    conn.stop()
+    assert sent == (_CONTRACT / "verbs.txt").read_text().splitlines()

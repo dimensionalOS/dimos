@@ -69,6 +69,8 @@ def test_the_generated_crate_reuses_the_module_profiles() -> None:
         "dimos/mapping/dim_slam/rust/Cargo.toml",
         # panic = "abort" so its supervisor sees a dead worker thread (main's choice for the go2 driver).
         "dimos/robot/unitree/go2/dds/rust/Cargo.toml",
+        # panic = "abort" for the same reason: a panicked WebRTC task must end the process.
+        "dimos/robot/unitree/go2/webrtc/rust/Cargo.toml",
     }
 
     # Tracked manifests only: a baked crate under build/ is gitignored, not a module.
