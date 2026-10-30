@@ -121,11 +121,16 @@ def color_frames_by_camera_from_rig(
 
 
 def color_frames_from_rig(rig: Rig, after: float, before: float) -> tuple[tuple[float, Image], ...]:
-    """Sorted ``(ts, Image)`` color frames from the first camera in ``[after, before]``."""
+    """Sorted ``(ts, Image)`` frames when the window has exactly one color camera.
+
+    Multi-camera windows must use ``color_frames_by_camera_from_rig`` and cut
+    clips per sighting ``camera_frame``. Returning the first camera here would
+    publish the wrong RGB for sightings from other optical frames.
+    """
     by_camera = color_frames_by_camera_from_rig(rig, after, before)
-    if not by_camera:
-        return ()
-    return next(iter(by_camera.values()))
+    if len(by_camera) == 1:
+        return next(iter(by_camera.values()))
+    return ()
 
 
 def scene_at_timestamp(
@@ -322,7 +327,8 @@ def localize_window(
                             first_seen_by_instance[hit.instance_id] = earliest
 
         by_camera = color_frames_by_camera_from_rig(rig, after, before)
-        color_frames = next(iter(by_camera.values())) if by_camera else ()
+        # Single-cam convenience only; multi-cam clips must use by_camera + sighting camera.
+        color_frames = next(iter(by_camera.values())) if len(by_camera) == 1 else ()
 
         yield LocalizeWindowResult(
             named_hits=tuple(named),

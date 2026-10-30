@@ -342,7 +342,7 @@ def localize_window_from_evidence(
             rig.lidar = rig.lidar.after(after).before(before)
 
         by_camera = color_frames_by_camera_from_rig(rig, after, before)
-        color_frames = next(iter(by_camera.values())) if by_camera else ()
+        color_frames = next(iter(by_camera.values())) if len(by_camera) == 1 else ()
 
         named_hits, first_seen, views_by_query = hydrate_views_and_hits(
             document,
