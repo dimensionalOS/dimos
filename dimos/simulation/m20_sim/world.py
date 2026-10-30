@@ -115,6 +115,7 @@ class SimM20World(SimWorld):
     """A generated scene with the walking M20 and its two simulated Airys, paced to the wall clock."""
 
     config: SimM20WorldConfig
+    rig = M20_RIG
 
     @rpc
     def start(self) -> None:
@@ -123,4 +124,4 @@ class SimM20World(SimWorld):
         super().start()
 
     def _build(self, scene: Scene, seed: int) -> Sim:
-        return Sim(scene, seed, M20_RIG, partial(LeggedM20, policy=self._policy))
+        return Sim(scene, seed, self.rig, partial(LeggedM20, policy=self._policy))
