@@ -27,10 +27,10 @@ from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.camera.unreal.client import RenderedFrame, RendererClient
+from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule, camera_view, frame_messages
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.client import RenderedFrame, RendererClient
-from dimos.sim2.unreal.module import UnrealCameraModule, camera_view, frame_messages
 from dimos.sim2.world.runtime import STATE
 
 
@@ -191,7 +191,9 @@ def camera_module(reader, mocker):
 
 @pytest.fixture
 def native_renderer(mocker):
-    process = mocker.patch("dimos.sim2.unreal.module.RendererProcess", autospec=True).return_value
+    process = mocker.patch(
+        "dimos.sim2.sensors.camera.unreal.module.RendererProcess", autospec=True
+    ).return_value
     client = mocker.create_autospec(RendererClient, instance=True)
     process.__enter__.return_value = client
     return client
@@ -256,7 +258,7 @@ def test_first_capture_uses_latest_state_after_asset_load_and_becomes_ready(
 def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module, mocker):
     module, publishers = camera_module
     module._on_snapshot(_snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2))
-    clock = mocker.patch("dimos.sim2.unreal.module.time.monotonic", return_value=100)
+    clock = mocker.patch("dimos.sim2.sensors.camera.unreal.module.time.monotonic", return_value=100)
     native_renderer = mocker.create_autospec(RendererClient, instance=True)
     # Crossing the external renderer boundary consumes 40 seconds of the same budget.
     native_renderer.capture.side_effect = lambda command: _rendered(command["timestamp"])
@@ -266,7 +268,7 @@ def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module,
         clock.return_value = 140
         return native_renderer
 
-    factory = mocker.patch("dimos.sim2.unreal.module.RendererProcess", autospec=True)
+    factory = mocker.patch("dimos.sim2.sensors.camera.unreal.module.RendererProcess", autospec=True)
     factory.return_value.__enter__.side_effect = after_process_start
 
     module._run()

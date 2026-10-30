@@ -17,7 +17,7 @@
 Writes camera captures and a validation report to the output directory.
 
 Example:
-    python -m dimos.sim2.unreal.demo_g1 --executable /path/to/DimosRenderer --walk --reset
+    python -m dimos.robot.unitree.g1.demo_unreal --executable /path/to/DimosRenderer --walk --reset
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.messages import FrameMetadata
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.module import UnrealCameraModule
 
 
 def observer_camera() -> Camera:

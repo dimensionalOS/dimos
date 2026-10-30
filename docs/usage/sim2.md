@@ -1,8 +1,18 @@
 # robosuite in DimOS
 
-DimOS runs a **robosuite environment**. Robosuite owns model composition, physics,
-controllers, observations, reset and task behavior. DimOS connects that environment
-to the existing robot application and its typed streams.
+DimOS runs a robosuite environment and connects it to typed streams. There are
+two entry paths: an existing robosuite task, or an existing DimOS hardware
+application whose motor device is replaced with a simulated device.
+
+| Path | Reused from robosuite | Supplied by DimOS |
+|---|---|---|
+| Stock task, such as Panda Lift | Robot, task, controller, observations, reward and reset | Worker lifecycle, action/result streams and snapshots |
+| Existing G1 application | `Task`/`RobotModel` composition and `MujocoEnv` stepping/reset | Existing G1 MJCF, GR00T policy, hardware PD semantics and connection binding |
+| MuJoCo camera or standalone IMU | `Observable` sampling, corruption, filtering and delay | Sensor attachment and typed message conversion |
+| Unreal camera and rolling Mid360 | Shared environment state | Independent capture, ray timing and message workers |
+
+MuJoCo computes physics in both entry paths. The live G1/Unreal composition does
+not use robosuite's stock task controllers or ordinary camera/IMU Observables.
 
 For a native Unreal RGB-D camera attached to the same world, see
 [Unreal cameras for sim2](/docs/usage/sim2-unreal.md).
@@ -52,6 +62,9 @@ Use robosuite's own domain-randomization wrapper in that factory:
 ```python
 from robosuite.wrappers import DomainRandomizationWrapper
 
+from dimos.robot.robosuite.blueprints.robosuite_lift import panda_lift
+from dimos.sim2.module import SimulationModule
+
 
 def randomized_panda_lift():
     return DomainRandomizationWrapper(
@@ -69,9 +82,11 @@ randomized_lift = SimulationModule.blueprint(environment=randomized_panda_lift)
 ```
 
 The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
-`reset()`; robosuite supplies the randomization. Independent lidar workers receive
-the new model on reset, so use per-reset randomization with those workers;
-model changes during an episode are not propagated to their compiled models.
+`reset()`; robosuite supplies the randomization. Snapshot workers receive new
+models on reset; model changes during an episode are not propagated. These
+modders do not control Unreal's native materials or lighting. Camera changes
+can reach Unreal through named model cameras; its fixed observer mount is
+configured separately.
 
 ## Run the existing G1 application
 
@@ -105,29 +120,51 @@ default joint tuning is not allowed to alter the G1 model.
 The connection attaches that model to DimOS using this actual binding:
 
 ```python
-return SimulatedRobot(
-    robot_id="g1",
-    model=partial(g1_model, scene),
-    joint_names=G1Model.public_motor_names,
-    frame_id=config.frame_id,
-    control_imu=G1Model.control_imu,
-    startup_kp=G1Model.startup_kp,
-    startup_kd=G1Model.startup_kd,
-    wait_for_first_command=True,
-)
+from functools import partial
+from pathlib import Path
+
+from dimos.robot.unitree.g1.simulation import G1Model, g1_model
+from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
+from dimos.sim2.spec import SimulatedRobot
+
+
+def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
+    return SimulatedRobot(
+        robot_id="g1",
+        model=partial(g1_model, scene),
+        joint_names=G1Model.public_motor_names,
+        frame_id=config.frame_id,
+        control_imu=G1Model.control_imu,
+        startup_kp=G1Model.startup_kp,
+        startup_kd=G1Model.startup_kd,
+        wait_for_first_command=True,
+    )
 ```
 
 `SimulatedRobot` describes the **connection binding**: public motor names, units,
-frames and startup/watchdog behavior. Geometry, joint anatomy, actuator behavior
-and placement are owned by the upstream model. There is no parallel `Joint`,
+frames and startup/watchdog behavior. Geometry, joint anatomy and actuator behavior come from the existing MJCF;
+robosuite supplies model composition and placement methods. There is no parallel `Joint`,
 `RobotConfig`, `RobotInstance` or `WorldConfig` simulation model schema.
 
-`composition.py` supplies the simulated device to the shared `ConnectionModule`
-and adds the environment. It also replaces supported sensor drivers under their
-existing instance names/remaps. The G1 connection remains in the blueprint and
-owns command validation, halt and public feedback in both modes. Automatic
-composition currently supports one PD motor connection; explicit `MotorScene`
-composition supports multiple models.
+### Where simulation attaches
+
+1. [ModuleCoordinator.build()](/dimos/core/coordination/module_coordinator.py)
+   sees `--simulation mujoco` after configuration is resolved and calls
+   [attach_simulation()](/dimos/sim2/composition.py).
+2. The connection's
+   [simulated_robot()](/dimos/robot/unitree/g1/wholebody_connection.py) hook
+   supplies the model binding. Attachment adds `SimulationModule` with
+   `MotorScene` and injects a `SimulatedDeviceFactory` into that connection's
+   `simulation_device` config.
+3. [ConnectionModule.connect()](/dimos/control/connection/connection_module.py)
+   starts that injected device. Without simulation, it starts the hardware device.
+   The connection keeps the same command validation, halt behavior and public ports.
+
+Supported standalone sensor drivers are replaced under their existing instance
+names/remaps. Unreal is attached separately with `UnrealCameraModule.blueprint()`;
+it reads snapshots from `SimulationModule` and never creates or advances a world.
+Automatic attachment currently supports one PD motor connection; explicit
+`MotorScene` composition supports multiple models.
 
 ## Add another robot
 
@@ -143,8 +180,15 @@ For an existing DimOS hardware application:
    units. Declare native position-only joints so halt preserves their positions.
 3. Reuse the same application blueprint. No robot-specific world class is needed.
 
-`MotorController` derives joint/actuator indices and native servo behavior from
-the compiled model. It preserves full PD plus feedforward commands; it does not
+This shares the application, connection and control configuration across real
+and sim. It does **not** yet make every robot description a single source:
+G1's URDF and simulation MJCF remain separate existing assets. Adding a robot
+without a suitable MJCF still requires creating and validating that physics
+model; the binding does not generate it from the hardware connection.
+
+`MotorScene` owns its controllers. The runtime configures public motor units on
+those same controllers. `MotorController` derives joint/actuator indices and
+native servo behavior from the compiled model. It preserves full PD plus feedforward commands; it does not
 replace the external locomotion policy with an upstream position or IK controller.
 Startup holds the model's initial configuration. After control begins, G1 halt
 and expired commands damp the motors until a new command or reset.
@@ -185,6 +229,9 @@ randomization is unavailable with this version pair; camera, lighting and dynami
 randomization are tested. macOS workers use `spawn` because native MuJoCo graphics
 can abort in forked processes; Linux workers retain `forkserver`.
 
-A stock robosuite task works through its native action interface. This does not
-claim every RoboCasa task accepts the G1 motor binding: embodiment, action-space
-and task compatibility still have to be established for each integration.
+The stock task example publishes its observation dictionary through
+`environment_result`; it does not automatically expose every observation as a
+Desktop camera topic. RoboCasa, demonstration collection and Gym/RL workflows
+are not configured or validated by this stack. Their embodiment, action-space
+and task compatibility still need integration; wrapping `MotorScene` does not
+supply benchmark task rewards or success conditions.

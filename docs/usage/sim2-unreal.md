@@ -21,12 +21,34 @@ Environment visuals can also reference native Unreal assets: generated MJCF
 contains their physics shapes, placements and asset bindings, while Unreal
 retains the assets' opaque materials and textures.
 
+The Python camera worker, protocol client and geometry conversion live under
+`dimos/sim2/sensors/camera/unreal`. The native Unreal project lives separately at
+`native/unreal/DimosRenderer`, with its C++ renderer and engine build configuration.
+Its `Scripts/demo_native_scene.py` is an editor authoring example that generates
+physics geometry and visual bindings; it is not part of camera acquisition.
+
+## Where the world attaches
+
+The G1 blueprint declares `G1WholeBodyConnection` once. With
+`--simulation mujoco`, `ModuleCoordinator.build` calls `attach_simulation` after
+resolving CLI settings. It reads `G1WholeBodyConnection.simulated_robot`, adds
+the shared `SimulationModule`, and supplies a simulation device to the retained
+connection. The camera is an additional module: its `SimulationSpec` reference
+and `snapshots` input connect to that world through normal blueprint wiring.
+Adding `UnrealCameraModule` does not create another simulation.
+
+The `g1_groot_wbc_simulation_profile()` helper only returns the G1 control and
+navigation stack without a viewer and requires the simulation operating profile.
+The world still attaches at build time. See
+[attach_simulation](/dimos/sim2/composition.py) and the
+[connection binding](/dimos/robot/unitree/g1/wholebody_connection.py).
+
 ## Build on macOS
 
 Requires an installed Unreal Engine 5.7 and its Xcode toolchain. From the repo:
 
 ```bash
-misc/unreal/DimosRenderer/Scripts/build_macos.sh \
+native/unreal/DimosRenderer/Scripts/build_macos.sh \
   "/Users/Shared/Epic Games/UE_5.7" \
   "$HOME/.cache/dimos/unreal-renderer"
 ```
@@ -41,7 +63,7 @@ keep `bCookAll=False`; Unreal cooks the map's referenced mesh, material, and
 texture dependencies. The runtime still starts in the empty Entry map.
 
 ```bash
-misc/unreal/DimosRenderer/Scripts/build_macos.sh \
+native/unreal/DimosRenderer/Scripts/build_macos.sh \
   "/Users/Shared/Epic Games/UE_5.7" \
   "$HOME/.cache/dimos/unreal-konbini-packaged" \
   "$HOME/.cache/dimos/unreal-konbini/DimosRenderer/DimosRenderer.uproject"
@@ -51,7 +73,7 @@ Check the packaged camera against a known plane, then move the plane and camera:
 
 ```bash
 renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
-.venv/bin/python misc/unreal/DimosRenderer/Scripts/demo_calibration.py \
+.venv/bin/python native/unreal/DimosRenderer/Scripts/demo_calibration.py \
   --executable "$renderer" --output /tmp/dimos-unreal-calibration
 ```
 
@@ -68,7 +90,7 @@ from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.sim2.sensors.camera.spec import Camera
-from dimos.sim2.unreal.module import UnrealCameraModule
+from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule
 
 
 def with_unreal(robot_application, executable: Path):
@@ -148,7 +170,7 @@ module added:
 
 ```bash
 renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
-.venv/bin/python -m dimos.sim2.unreal.demo_g1 \
+.venv/bin/python -m dimos.robot.unitree.g1.demo_unreal \
   --executable "$renderer" --walk --reset \
   --output /tmp/dimos-g1-unreal
 ```
@@ -171,7 +193,7 @@ Outputs: `preview.gif`, `rgb.png`, metric `depth.npy`, `calibration.json`, and
 `report.json`. The report checks actual walking displacement, controller and
 physics health, matching image timestamps, reset epochs and live lidar/odometry.
 
-Source: [demo_g1.py](/dimos/sim2/unreal/demo_g1.py). The only robot-specific model
+Source: [demo_unreal.py](/dimos/robot/unitree/g1/demo_unreal.py). The only robot-specific model
 code is still [simulation.py](/dimos/robot/unitree/g1/simulation.py); Unreal has no
 G1 class or separate robot asset definition.
 
@@ -242,7 +264,7 @@ authored map's gameplay, lighting or Chaos simulation.
 ## Authoring one scene for Unreal and MuJoCo
 
 The bounded implementation is
-[demo_native_scene.py](/misc/unreal/DimosRenderer/Scripts/demo_native_scene.py).
+[demo_native_scene.py](/native/unreal/DimosRenderer/Scripts/demo_native_scene.py).
 It authors a scratch map using copied Konbini assets: one shelf, one 0.3 kg
 cereal box, a floor, a back wall and a G1 spawn. It exports those four mesh
 actors and the spawn; it does not import the original convenience-store map.
@@ -309,7 +331,7 @@ scene_dir="$HOME/.local/state/dimos/unreal/konbini-proof"
 DIMOS_NATIVE_SCENE_OUTPUT="$scene_dir" DIMOS_NATIVE_SOURCE_PROJECT="$source_root" \
   "$engine_dir/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor" \
   "$native_project" -unattended -RenderOffscreen -nosound \
-  "-ExecutePythonScript=$PWD/misc/unreal/DimosRenderer/Scripts/demo_native_scene.py"
+  "-ExecutePythonScript=$PWD/native/unreal/DimosRenderer/Scripts/demo_native_scene.py"
 ```
 
 Use a real graphics backend for this editor script. `-NullRHI` crashed in UE

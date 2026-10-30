@@ -24,7 +24,7 @@ import pytest
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.unreal.assets import camera_parameters, export_scene, geom_poses
+from dimos.sim2.sensors.camera.unreal.assets import camera_parameters, export_scene, geom_poses
 
 
 def _compiled(xml):

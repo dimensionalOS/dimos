@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The G1's upstream robosuite model and existing GR00T startup configuration."""
+"""Adapt the existing G1 MJCF to robosuite and retain its GR00T startup settings."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def g1_model(scene: Path, spawn: str = "default", *, idn: str | int = "g1") -> G
 
 
 def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
-    """Bind the upstream G1 model to the retained connection's public motors."""
+    """Bind the existing G1 model to the retained connection's public motors."""
     return SimulatedRobot(
         robot_id="g1",
         model=partial(g1_model, scene),

@@ -37,13 +37,13 @@ from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
-from dimos.sim2.composition import simulate
+from dimos.sim2.composition import attach_simulation
 from dimos.sim2.environment import MotorScene
 from dimos.sim2.module import SimulationModule
+from dimos.sim2.sensors.camera.unreal.assets import export_scene
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.assets import export_scene
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene import scene_path
 from dimos.sim2.world.scene_types import SceneDescription
@@ -189,7 +189,7 @@ def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
 
 
 def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
-    result, module_kwargs = simulate(
+    result, module_kwargs = attach_simulation(
         unitree_g1_groot_wbc, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
     modules = {atom.name: atom.module for atom in result.active_blueprints}

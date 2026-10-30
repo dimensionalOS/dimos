@@ -23,14 +23,14 @@ import math
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    simulated_g1_groot_wbc,
+    g1_groot_wbc_simulation_profile,
 )
 from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.module import UnrealCameraModule
 
 unitree_g1_groot_wbc_unreal = autoconnect(
-    simulated_g1_groot_wbc(),
+    g1_groot_wbc_simulation_profile(),
     UnrealCameraModule.blueprint(
         sensor=Camera(
             "unreal",

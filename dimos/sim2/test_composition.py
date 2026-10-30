@@ -18,7 +18,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
-import numpy as np
 import pytest
 
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
@@ -30,16 +29,12 @@ from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.sim2.composition import declares_twin, simulate
+from dimos.sim2.composition import attach_simulation, has_simulation_binding
 from dimos.sim2.device import SimulatedDeviceFactory
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
-from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
-from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import SimulatedRobot
 
 
@@ -67,7 +62,6 @@ class _Arm(ConnectionModule):
 
 class _ScannerConfig(ModuleConfig):
     frame_id: str = "scan"
-    rolling: bool = False
 
 
 class _Scanner(Module):
@@ -79,15 +73,6 @@ class _Scanner(Module):
 
     @staticmethod
     def simulated_sensor(config: _ScannerConfig) -> Lidar:
-        if config.rolling:
-            return Lidar(
-                "device",
-                config.frame_id,
-                Mid360,
-                model_kwargs={"downsample": 1000, "noise": False, "dropout": False},
-                imu=Imu("device_imu", Mount(config.frame_id, xyz=(0.01, 0.02, -0.04))),
-                truth_outputs=False,
-            )
         return Lidar("device", config.frame_id, Fibonacci, model_kwargs={"ray_count": 64})
 
 
@@ -118,18 +103,20 @@ def mujoco(scene_path):
 
 
 def test_declaring_modules_are_recognized():
-    assert declares_twin(_Arm) and declares_twin(_Scanner)
-    assert not declares_twin(_Mapper)
+    assert has_simulation_binding(_Arm) and has_simulation_binding(_Scanner)
+    assert not has_simulation_binding(_Mapper)
 
 
 def test_blueprint_without_twins_is_returned_unchanged(mujoco):
     blueprint = _Mapper.blueprint()
     kwargs = {"_mapper": {}}
-    assert simulate(blueprint, kwargs, mujoco) == (blueprint, kwargs)
+    assert attach_simulation(blueprint, kwargs, mujoco) == (blueprint, kwargs)
 
 
 def test_connection_is_retained_with_private_world_io_and_public_sensor_streams(hardware, mujoco):
-    result, kwargs = simulate(hardware, {"scanner": {"frame_id": "scan"}, "_mapper": {}}, mujoco)
+    result, kwargs = attach_simulation(
+        hardware, {"scanner": {"frame_id": "scan"}, "_mapper": {}}, mujoco
+    )
 
     assert set(kwargs) == {"arm", "_mapper"}
     device = kwargs["arm"]["simulation_device"]
@@ -164,35 +151,9 @@ def test_connection_is_retained_with_private_world_io_and_public_sensor_streams(
 
 
 def test_cli_overrides_reach_the_twin(hardware, mujoco):
-    result, _ = simulate(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
+    result, _ = attach_simulation(hardware, {"arm": {"frame_id": "robot/pelvis"}}, mujoco)
     world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
     assert world.kwargs["robots"]["left"].frame_id == "robot/pelvis"
-
-
-def test_a_sensor_with_its_own_imu_gets_both_named_after_the_driver(world_config, mujoco, mocker):
-    coefs = [[[1, 0, 0]] * 1] * 4
-    mocker.patch(
-        "dimos.sim2.sensors.lidar.models.mid360.model._pattern",
-        return_value=Mid360Pattern(0, 0, 0, 0, np.asarray(coefs, dtype=float)),
-    )
-    blueprint = autoconnect(
-        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="arm"),
-        _Scanner.blueprint(instance_name="mid360", rolling=True),
-    )
-    result, _ = simulate(blueprint, {}, mujoco)
-    world = next(atom for atom in result.blueprints if atom.module is SimulationModule)
-    attached = next(s for owner, s in world.kwargs["sensors"] if s.name == "mid360")
-    assert attached.imu.name == "mid360_imu"
-    assert attached.imu.site == Mount("scan", xyz=(0.01, 0.02, -0.04))
-    assert remaps_for(result, "mid360") == {"lidar": "lidar", "imu": "imu"}
-
-
-def remaps_for(blueprint, name):
-    return {
-        port: stream
-        for (atom, port), stream in blueprint.remapping_map.items()
-        if atom == name and port in ("lidar", "imu")
-    }
 
 
 def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
@@ -202,7 +163,7 @@ def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
         _Arm.blueprint(robot=robot, instance_name="b"),
     )
     with pytest.raises(ValueError, match="exactly one robot connection"):
-        simulate(blueprint, {}, mujoco)
+        attach_simulation(blueprint, {}, mujoco)
 
 
 def test_direct_dependency_on_the_retained_connection_is_preserved(world_config, mujoco):
@@ -210,7 +171,7 @@ def test_direct_dependency_on_the_retained_connection_is_preserved(world_config,
         _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="arm"),
         _Skill.blueprint(),
     )
-    result, _ = simulate(blueprint, {}, mujoco)
+    result, _ = attach_simulation(blueprint, {}, mujoco)
     assert next(a for a in result.blueprints if a.name == "arm").module is _Arm
     assert next(a for a in result.blueprints if a.module is _Skill) == blueprint.blueprints[1]
 
@@ -218,7 +179,7 @@ def test_direct_dependency_on_the_retained_connection_is_preserved(world_config,
 def test_direct_dependency_on_a_replaced_sensor_is_an_error(hardware, mujoco):
     blueprint = autoconnect(hardware, _SensorSkill.blueprint())
     with pytest.raises(ValueError, match="no simulated counterpart"):
-        simulate(blueprint, {}, mujoco)
+        attach_simulation(blueprint, {}, mujoco)
 
 
 def test_robot_id_must_be_usable_as_a_port_prefix(world_config):

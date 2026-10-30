@@ -108,6 +108,9 @@ _G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
 # /g1/motor_states and /g1/imu and publishes /g1/motor_command for hardware id
 # "g1"; naming the connection's streams the same way puts both ends on the
 # default transport. The retained connection uses these in both modes.
+# This is the sole G1 connection declaration. With --simulation mujoco,
+# ModuleCoordinator.build calls attach_simulation, which resolves this class's
+# simulated_robot hook and injects its device after CLI settings are known.
 _robot = G1WholeBodyConnection.blueprint(release_sport_mode=True).remappings(
     [
         (G1WholeBodyConnection, "motor_command", "g1/motor_command"),
@@ -348,12 +351,14 @@ def _require_simulation_profile() -> str | None:
     return None
 
 
-def simulated_g1_groot_wbc() -> Blueprint:
-    """Reuse the G1 control and navigation stack, requiring its simulation profile.
+def g1_groot_wbc_simulation_profile() -> Blueprint:
+    """Return control and navigation without a viewer, requiring the simulation profile.
 
     Set ``--simulation mujoco`` before importing this module. The requirement
     rejects a missing or subsequently changed mode before deploying modules.
-    Viewers are composed separately by the caller.
+    This helper does not attach physics: ModuleCoordinator.build resolves the
+    connection's simulated_robot binding after CLI overrides. Cameras and
+    viewers are composed separately by the caller.
     """
     return autoconnect(_unitree_g1_groot_wbc_core, _navigation).requirements(
         _require_simulation_profile

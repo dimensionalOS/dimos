@@ -188,6 +188,8 @@ class MotorScene(NativeRendering):
 
     def _setup_references(self) -> None:
         super()._setup_references()
+        # The environment owns one controller per compiled robot. The DimOS
+        # runtime configures its public motor units without replacing it.
         self.controllers = {
             name: MotorController(self.sim, model) for name, model in self.robot_models.items()
         }

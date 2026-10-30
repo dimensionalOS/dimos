@@ -27,7 +27,7 @@ import time
 import numpy as np
 import pytest
 
-from dimos.sim2.unreal.client import (
+from dimos.sim2.sensors.camera.unreal.client import (
     IDENTITY_FIELDS,
     MAX_HEADER_BYTES,
     RendererClient,
@@ -359,7 +359,9 @@ def native_process(mocker):
         launched.set()
         return process
 
-    popen = mocker.patch("dimos.sim2.unreal.client.subprocess.Popen", side_effect=launch)
+    popen = mocker.patch(
+        "dimos.sim2.sensors.camera.unreal.client.subprocess.Popen", side_effect=launch
+    )
     try:
         yield popen, process, sockets, ready, launched
     finally:

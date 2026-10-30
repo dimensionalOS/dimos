@@ -15,7 +15,7 @@
 """Exercise actual Unreal RGB-D pixels, calibration, pose updates, reset and EOF.
 
 Run from an installed DimOS environment, passing the native executable:
-    python misc/unreal/DimosRenderer/Scripts/demo_calibration.py --executable ...
+    python native/unreal/DimosRenderer/Scripts/demo_calibration.py --executable ...
 Add --project .../DimosRenderer.uproject to test UnrealEditor -game instead.
 """
 
@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from dimos.sim2.unreal.client import RendererProcess
+from dimos.sim2.sensors.camera.unreal.client import RendererProcess
 
 
 def main() -> None:
