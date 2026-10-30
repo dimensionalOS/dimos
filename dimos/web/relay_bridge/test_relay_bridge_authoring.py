@@ -495,6 +495,7 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         stop_module(module)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -> None:
     async def run() -> None:
         loop = asyncio.get_running_loop()

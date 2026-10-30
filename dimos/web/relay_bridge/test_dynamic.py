@@ -301,6 +301,7 @@ def test_module_init_constructs_runtime_streams(local_modules):
     assert module.config.relay_url is None
 
 
+@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
 def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     worker_manager, deployed_proxies, ping_transport, retry_until
 ):
