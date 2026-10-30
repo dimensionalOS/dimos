@@ -267,8 +267,8 @@ def test_an_arm_in_error_at_start_takes_no_command_until_its_errors_are_cleared(
 
     r.module.clear_errors()
     assert [(name, args) for name, args, _ in r.sdk.calls] == [
-        ("clean_warn", ()),
         ("clean_error", ()),
+        ("clean_warn", ()),
         ("motion_enable", ()),
         ("set_mode", (1,)),
         ("set_state", (0,)),

@@ -187,8 +187,9 @@ class XArmConnection(ConnectionModule):
         with self._hardware_lock:
             if self._sdk is None:
                 raise XArmError("not connected")
-            _check("clean_warn", self._sdk.clean_warn())
+            # The arm refuses to clear a warning while an error is still set.
             _check("clean_error", self._sdk.clean_error())
+            _check("clean_warn", self._sdk.clean_warn())
             self._enable()
             self._fault = None
 
