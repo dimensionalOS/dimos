@@ -1,36 +1,36 @@
 <?xml version="1.0"?>
-<!-- cadpy:sourcePath=../../dimos/robot/unitree/g1/gen_desk.py -->
-<!-- cadpy:sourceHash=96d830615061a592888f530105ead9ae3886336ea7a0d6070880ef2eb6800f8c -->
+<!-- cadpy:sourcePath=gen_desk.py -->
+<!-- cadpy:sourceHash=a260a564820e41b843d8810eff4f173c3cd10f61954145f94484e48ddcfe2669 -->
 <robot name="office_desk">
   <link name="desk">
     <visual name="desk/desk">
       <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
       <geometry>
-        <mesh filename="desk.obj" />
+        <mesh filename="package://g1_desk/desk.obj" />
       </geometry>
       <material name="desk_desk">
         <color rgba="1 1 1 1" />
-        <texture filename="package://office/textures/plane_divided_wood_floor_BaseColor.png" />
+        <texture filename="package://g1_desk/textures/plane_divided_wood_floor_BaseColor.png" />
       </material>
     </visual>
     <visual name="desk/computer">
       <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
       <geometry>
-        <mesh filename="computer.obj" />
+        <mesh filename="package://g1_desk/computer.obj" />
       </geometry>
       <material name="desk_computer">
         <color rgba="1 1 1 1" />
-        <texture filename="package://office/textures/Computer_low_Desktop_BaseColor.png" />
+        <texture filename="package://g1_desk/textures/Computer_low_Desktop_BaseColor.png" />
       </material>
     </visual>
     <visual name="desk/chair">
       <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
       <geometry>
-        <mesh filename="chair.obj" />
+        <mesh filename="package://g1_desk/chair.obj" />
       </geometry>
       <material name="desk_chair">
         <color rgba="1 1 1 1" />
-        <texture filename="package://office/textures/SwivlChair_low_SwivlChair_BaseColor.png" />
+        <texture filename="package://g1_desk/textures/SwivlChair_low_SwivlChair_BaseColor.png" />
       </material>
     </visual>
     <collision>

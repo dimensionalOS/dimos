@@ -14,12 +14,10 @@
 
 from pydantic import TypeAdapter
 
-from dimos.robot.sim2_lab.model import lab_world
 from dimos.sim2.types import World
 
 
-def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants():
-    world = lab_world()
+def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants(world):
     adapter = TypeAdapter(World)
     restored = adapter.validate_python(adapter.dump_python(world))
     assert [type(s) for s in restored.sensors] == [type(s) for s in world.sensors]

@@ -2,7 +2,7 @@
 
 Prototype branch `pim/feat/sim2-minimal`, built from `main@64b2d8aa6b`.
 The main example is a **drivable G1, a desk/computer/chair from the existing office
-assets, and two loose boxes**. The small slide-robot lab remains a regression fixture.
+assets, and two loose boxes**. Small synthetic worlds exist only in pytest fixtures.
 The previous sim2 PR stack and running deployments are unchanged.
 
 ## Run
@@ -18,9 +18,14 @@ dimos run unitree-g1-sim2
 Use the normal lifecycle (`--daemon`, `dimos status`, `dimos shell`, `dimos stop`).
 No run.sh. If another blueprint already owns the default bus, stop it yourself
 before starting this one. This change did not stop the existing G1 run.
-The existing `g1_urdf` and `mujoco_sim` LFS packs provide meshes/textures;
+The `g1_urdf` and `g1_desk` LFS packs provide meshes/textures;
 `groot/balance.onnx` and `groot/walk.onnx` provide the GR00T WBC weights.
 They resolve through `LfsPath` on a fresh checkout.
+
+Scene content is one `data/.lfs/g1_desk.tar.gz` archive (three derived meshes and
+three unchanged office textures). Small `desk.urdf` and `box.urdf` descriptions
+stay reviewable under `assets/g1_desk/`, beside their preparation sources.
+The G1 runtime has no dependency on test fixtures or the full office asset pack.
 
 Open **Controller in DimOS Desktop** on the same bus. Use **world** as fixed frame,
 **g1/pelvis** as robot/follow frame, and the **humanoid** drive profile. WASD/arrows
@@ -174,7 +179,7 @@ native interactive viewer process; the previous stack's viewer remains intact.
 
 ## Verification and measured limits (2026-10-30)
 
-- 87 checks cover the core, shared descriptions, task evaluation, existing GR00T
+- 86 checks cover the core, shared descriptions, task evaluation, existing GR00T
   task behavior, actual GR00T control, real workers/sensors and blueprint registry.
 - G1 stands for ten simulated minutes: 8.5 cm total displacement from startup,
   minimum pelvis height .743 m. Forward/backward and both strafe directions run
@@ -201,9 +206,10 @@ native interactive viewer process; the previous stack's viewer remains intact.
 ```bash
 pytest dimos/sim2 dimos/robot/assets/test_model.py dimos/control/tasks/g1_groot_wbc_task -m '' -q
 pytest dimos/robot/test_all_blueprints_generation.py
-python -m dimos.evals.suites.sim2_lab --out /tmp/sim2-lab-eval
 ```
 
-The lab's pushing baseline scores 1; its no-op baseline scores 0. It remains a
-small repeatable contract fixture, not the proposed operator experience. No new
-G1 task benchmark or automatic coordinator world collection is claimed.
+`conftest.py` creates temporary primitive URDFs for the joint/force, two-robot,
+mount, sensor and reset tests. `test_eval.py` runs the existing EvalRunner against
+physical push/no-op outcomes (scores 1 and 0). There is no public lab robot,
+connection module, blueprint or eval CLI. Real worker integration is tested with
+the G1 example. No new G1 task benchmark or automatic world collection is claimed.

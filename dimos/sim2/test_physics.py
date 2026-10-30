@@ -17,7 +17,6 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.sim2_lab.model import PUSHER, lab_world
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.runtime import Runtime
@@ -26,8 +25,8 @@ from dimos.sim2.types import JointEfforts, JointTargets, Wrench
 
 
 @pytest.fixture
-def runtime():
-    return Runtime(MujocoBackend(lab_world()))
+def runtime(world):
+    return Runtime(MujocoBackend(world))
 
 
 def test_shared_world_moves_one_robot_and_pushes_box(runtime):
@@ -83,13 +82,13 @@ def test_invalid_batch_does_not_partially_apply_and_place_is_separate(runtime):
     )
 
 
-def test_urdf_manager_mount_chain_matches_native_sensor_pose(runtime):
+def test_urdf_manager_mount_chain_matches_native_sensor_pose(runtime, world):
     runtime.submit(
         JointTargets(runtime.epoch, ("left/slide_x", "left/slide_y"), (0.2, 0.1), ttl=3.0)
     )
     runtime.advance(600)
     state = runtime.snapshot()
-    model = PUSHER.with_prefix("left/")
+    model = world.instances[0].model
     manager = UrdfManager(model=model)
     transforms = manager.joint_transforms(
         JointState(name=list(runtime.backend.layout.joints), position=state.position.tolist())
@@ -113,8 +112,8 @@ def test_urdf_manager_mount_chain_matches_native_sensor_pose(runtime):
     np.testing.assert_allclose(poses[ancestor] @ mount, poses[frame], atol=1e-9)
 
 
-def test_sensor_history_and_image_follow_mounted_frame(runtime):
-    reader = MujocoSensors(lab_world(), runtime.backend.layout)
+def test_sensor_history_and_image_follow_mounted_frame(runtime, world):
+    reader = MujocoSensors(world, runtime.backend.layout)
     try:
         for _ in range(10):
             runtime.advance(10)
@@ -161,8 +160,8 @@ def test_world_state_is_an_owned_sample_not_a_live_native_view(runtime):
         sample.position[0] = 1.0
 
 
-def test_lidar_rejects_a_missing_interval_instead_of_bridging_it(runtime):
-    reader = MujocoSensors(lab_world(), runtime.backend.layout)
+def test_lidar_rejects_a_missing_interval_instead_of_bridging_it(runtime, world):
+    reader = MujocoSensors(world, runtime.backend.layout)
     try:
         reader.observe(runtime.snapshot())
         runtime.advance(100)

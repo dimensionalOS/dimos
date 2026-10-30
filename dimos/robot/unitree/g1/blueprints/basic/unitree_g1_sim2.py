@@ -33,9 +33,9 @@ from dimos.utils.data import LfsPath
 _ASSETS = Path(__file__).resolve().parents[6] / "assets"
 _drives = tuple(replace(d, joint="g1/" + d.joint) for d in WALKING_DRIVES)
 _desk = RobotModel.from_file(
-    _ASSETS / "g1_desk/desk.urdf", package_paths={"office": LfsPath("mujoco_sim/scene_office1")}
+    _ASSETS / "g1_desk/desk.urdf", package_paths={"g1_desk": LfsPath("g1_desk")}
 )
-_box = RobotModel.from_file(_ASSETS / "sim2_lab/box.urdf")
+_box = RobotModel.from_file(_ASSETS / "g1_desk/box.urdf")
 
 G1_DESK_WORLD = World(
     instances=(

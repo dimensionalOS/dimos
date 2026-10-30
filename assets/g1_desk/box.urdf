@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
-<!-- cadpy:sourcePath=../../dimos/robot/sim2_lab/gen_box.py -->
-<!-- cadpy:sourceHash=35faa6e3791f67b3ba643f97c7f04ad7c0b1f75ef2f517fedd42dc416c28142e -->
+<!-- cadpy:sourcePath=gen_box.py -->
+<!-- cadpy:sourceHash=71601b5dc0b3579b48f88f33204289e5b7de190002c6cfcb306d6858a96b00cf -->
 <robot name="box">
   <link name="box">
     <inertial>

@@ -20,18 +20,20 @@ desk, computer and chair (no cut faces); rotate Rx(pi/2) to Z up and
 translate its desk centre to (0,0,0). Root desk is fixed, with no invented mass.
 Visuals preserve the original UVs/diffuse maps. Collision boxes approximate the measured tabletop, legs and brace; the chair uses seat/back/base boxes. The computer is static decorative visual.
 Targets: URDF manager/Desktop and native MuJoCo. This is a scene fixture, no joints.
-Run prepare_meshes() explicitly before regenerating the URDF with the skill launcher.
+Run prepare_assets() explicitly to rebuild data/g1_desk before packing it for LFS.
+The URDF stays in this directory; its package URIs resolve through LfsPath("g1_desk").
 """
 
 from pathlib import Path
+import shutil
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import trimesh
 
-from dimos.utils.data import LfsPath
+from dimos.utils.data import LfsPath, get_data_dir
 
-ASSETS = Path(__file__).resolve().parents[4] / "assets" / "g1_desk"
+ASSETS = get_data_dir("g1_desk")
 _PARTS = (
     ("desk", "Cube_007_woodenDesk", "plane_divided_wood_floor_BaseColor.png"),
     ("computer", "Plane_037_Desktop", "Computer_low_Desktop_BaseColor.png"),
@@ -39,12 +41,13 @@ _PARTS = (
 )
 
 
-def prepare_meshes() -> None:
+def prepare_assets() -> None:
     """One-time derived visual assets; source remains the existing LFS office pack."""
     ASSETS.mkdir(parents=True, exist_ok=True)
-    source = Path(str(LfsPath("mujoco_sim/scene_office1/office_split")))
-    for name, stem, _ in _PARTS:
-        mesh = trimesh.load_mesh(source / (stem + ".obj"), process=False)
+    source = Path(str(LfsPath("mujoco_sim/scene_office1")))
+    (ASSETS / "textures").mkdir(exist_ok=True)
+    for name, stem, texture in _PARTS:
+        mesh = trimesh.load_mesh(source / "office_split" / (stem + ".obj"), process=False)
         centres = mesh.triangles_center
         z_min, z_max = (2.8, 4.0) if name == "chair" else (3.6, 4.4 if name == "computer" else 4.5)
         selected = (
@@ -57,6 +60,7 @@ def prepare_meshes() -> None:
         if not isinstance(part, trimesh.Trimesh) or not len(part.faces):
             raise ValueError(f"no faces selected for {name}")
         (ASSETS / (name + ".obj")).write_text(str(part.export(file_type="obj")).strip() + "\n")
+        shutil.copyfile(source / "textures" / texture, ASSETS / "textures" / texture)
 
 
 def gen_urdf() -> ET.Element:
@@ -65,10 +69,12 @@ def gen_urdf() -> ET.Element:
     for name, _, texture in _PARTS:
         visual = ET.SubElement(link, "visual", name="desk/" + name)
         ET.SubElement(visual, "origin", xyz="1.9 4.08 0", rpy="1.5707963267948966 0 0")
-        ET.SubElement(ET.SubElement(visual, "geometry"), "mesh", filename=name + ".obj")
+        ET.SubElement(
+            ET.SubElement(visual, "geometry"), "mesh", filename="package://g1_desk/" + name + ".obj"
+        )
         material = ET.SubElement(visual, "material", name="desk_" + name)
         ET.SubElement(material, "color", rgba="1 1 1 1")
-        ET.SubElement(material, "texture", filename="package://office/textures/" + texture)
+        ET.SubElement(material, "texture", filename="package://g1_desk/textures/" + texture)
     # Dimensions measured from the retained source desk, not an enclosing convex hull.
     for xyz, size in (
         ("0 0 .635", "1.65 .86 .07"),
