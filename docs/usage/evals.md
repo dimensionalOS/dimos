@@ -19,6 +19,9 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.blind
 # same cases, the Pi coding agent over the recording as a file (needs pi on PATH)
 dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi
 
+# same cases, the dimOS agent through `dimos agent run` (needs Node.js 24 or 26 on PATH)
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimos_agent
+
 # list suites
 dimos evals list
 ```
@@ -69,7 +72,7 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
   --allow "" --set model=gpt-6-astra
 ```
 
-`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, dimcode and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
+`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, dimcode, the dimOS agent and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
 venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. A robot
 is exposed as live topics through `raw-robot-bridge` (below) and nothing else: no recording,
 no MCP tool listing, no `dimos mcp call` guidance. `excluded_keywords` defaults to
@@ -335,13 +338,28 @@ change it.
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
-`launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
+`launch_timeout_s`. Pi, dimcode and the dimOS agent bound model HTTP requests with `max_steps`
 (including retries), and optionally cap output per request with `max_output_tokens`.
 There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent
 does. Sending observations a different way means writing a new agent class.
+
+**The dimOS agent.** `DimosAgentAdapter` sends each case to `dimos agent run --json`,
+which starts a gateway of its own. That gateway keeps its config under
+`CONFIG_DIR / "evals"`, its `agent.sqlite` and `gateway.log` under `agent-state/` in the
+case directory, and its socket in a temporary directory, so it never attaches to your
+gateway. When the case has a robot, the gateway links to the case's `McpServer`, and
+`dimos agent load` adds `HarnessRuntime`, plus a relay bridge when there is none, to the
+system it reaches on the transport bus. Without a robot, it dials a local port that nothing
+serves. A `models.json` in its config sends every model request through
+the trace proxy, so `raw/` holds each request and response, and it carries
+`max_output_tokens` as the model's output cap. The agent keeps its own system prompt,
+tools and skills, and the case guidance travels in the user message. It rejects
+`allowed_tools`, `no_dimos`, `skills` and `excluded_keywords`, and a `max_tool_seconds` you
+set, since its `bash` has no per-call time limit. The case's cleanup stops the gateway and its
+commands.
 
 ## Scoring
 

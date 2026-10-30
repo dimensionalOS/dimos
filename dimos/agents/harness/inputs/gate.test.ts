@@ -176,3 +176,55 @@ test("withdrawing the queue hands back every queued user text in one commit and 
   assert.deepEqual(reports, []);
   await harness.close(context);
 });
+
+test("abort stops the run before reading withdrawn texts, which fall back to the cut text when their file is gone", async () => {
+  const model = scriptedModel();
+  model.script([
+    async (_context, options) => {
+      await new Promise<void>((resolve) => options?.signal?.addEventListener("abort", () => resolve()));
+      return fauxAssistantMessage("stopped");
+    },
+  ]);
+  const storage = await SqliteStorage.open(await openNodeSqliteDatabase(join(scratch, "abort.sqlite")));
+  const harness = await Harness.open(storage, { models: model.models, registry: createRegistry() }, context);
+  const connection = new DimosConnection({
+    url: new URL("http://127.0.0.1:9/mcp"),
+    connectTimeoutMs: 1_000,
+    maxBackoffMs: 1_000,
+    report: () => undefined,
+  });
+  await connection.close();
+  const results = join(scratch, "abort-results");
+  const inputs = new InputGate({
+    harness,
+    observer: new RuntimeObserver({
+      harness,
+      runtime: new RuntimeClient(connection),
+      jobFacts: async () => ({}),
+      runsDir: join(scratch, "runs"),
+      reuseForMs: 0,
+      timeoutMs: 1_000,
+      report: () => undefined,
+    }),
+    limiter: new OutputLimiter({ dir: results, budget: new ContextBudget(model.models), defaultMaxChars: 2_000 }),
+  });
+  const { id } = await harness.createConversation(
+    { ownership: { kind: "ownerless" }, agent: { model: model.model } },
+    context,
+  );
+  assert.equal((await inputs.submit(id, typed("drive the square", "reject"), context)).kind, "submitted");
+  assert.ok((await harness.snapshot(LiveDoc, id, context))?.run !== undefined, "the run is live");
+  const long = `${"x".repeat(2_500)} end`;
+  assert.equal((await inputs.submit(id, typed(long, "followUp"), context)).kind, "submitted");
+  rmSync(results, { recursive: true, force: true });
+
+  const texts = await inputs.abortUser(id, "esc", context);
+  await (await harness.conversation(id, context))?.waitForIdle(context);
+
+  assert.equal((await harness.snapshot(LiveDoc, id, context))?.run, undefined, "the run was aborted");
+  assert.equal(texts.length, 1);
+  assert.equal(texts[0]?.mode, "followUp");
+  assert.ok(texts[0]?.text.startsWith("xxxx") && texts[0].text.length < long.length, "the cut text stands in");
+  assert.deepEqual(await inputs.abortUser(id, "esc", context), texts, "a retry answers the same");
+  await harness.close(context);
+});

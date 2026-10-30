@@ -7,6 +7,7 @@ import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { JobFiringDeps } from "./jobs/fire.ts";
 import type { Models } from "@earendil-works/pi-ai";
 import type { RuntimeToolSchemas } from "./tools/runtime-catalog.ts";
+import type { Storage } from "@earendil-works/pi-durable";
 import { ContextBudget } from "./limit/budget.ts";
 import { ConversationHistory } from "./history/forks.ts";
 import { Conversations } from "./conversations.ts";
@@ -69,6 +70,8 @@ type AgentOptions = {
 export type Agent = {
   /** pi-durable, for watching, aborting and configuring conversations. Inputs go through `inputs`, never `submit()`. */
   readonly harness: Harness;
+  /** The store's scan of a conversation's submissions, settled ones included, which the harness does not offer. */
+  readonly storage: Pick<Storage, "scanSubmissions">;
   readonly inputs: InputGate;
   readonly conversations: Conversations;
   readonly history: ConversationHistory;
@@ -233,6 +236,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
 
   return {
     harness,
+    storage,
     inputs,
     conversations,
     history,
