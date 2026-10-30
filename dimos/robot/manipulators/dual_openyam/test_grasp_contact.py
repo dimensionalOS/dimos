@@ -139,8 +139,7 @@ def test_rejects_what_the_arm_cannot_reach(checker: GraspContactChecker) -> None
 
 
 def test_open_fingers_clear_objects_up_to_the_jaw_span(checker: GraspContactChecker) -> None:
-    # 98 mm between the open noses: a 9.4 cm object fits at full
-    # finger depth, 10.4 cm does not.
+    # 98 mm between the open noses: a 9.4 cm object fits at full finger depth, 10.4 does not.
     top = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT
     assert _clear(checker, _pose(X, Y, top - 0.04), _object(0.094), _table(hole=0.057))
     assert not _clear(checker, _pose(X, Y, top - 0.01), _object(0.104), _table(hole=0.062))
@@ -160,6 +159,6 @@ def test_camera_table_points_under_the_fitted_top_do_not_collide_with_the_model(
     checker: GraspContactChecker,
 ) -> None:
     # The overhead D405 puts the table 3 to 15 mm under the fitted top. v5 carried a slab
-    # 1 cm under it, which swallowed those points and failed every grasp; v6 on has no table.
+    # 1 cm under it, which swallowed those points and failed every grasp; there is no table now.
     low_table = _table(hole=0.03) - np.array([0.0, 0.0, 0.012])
     assert _clear(checker, _pose(X, Y, MID), CAN, low_table)

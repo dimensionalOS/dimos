@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import numpy as np
@@ -32,7 +34,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     dual_openyam_self_filter_model,
 )
 from dimos.robot.manipulators.dual_openyam.scene_registration import (
-    SelfClearedSceneRegistrationConfig,
     SelfClearedSceneRegistrationModule,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
@@ -54,15 +55,13 @@ def _scene() -> PointCloud2:
 
 
 @pytest.fixture
-def module(monkeypatch: pytest.MonkeyPatch) -> SelfClearedSceneRegistrationModule:
-    m = SelfClearedSceneRegistrationModule.__new__(SelfClearedSceneRegistrationModule)
-    m.config = SelfClearedSceneRegistrationConfig(
-        model=dual_openyam_self_filter_model(), padding_m=0.02
+def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[SelfClearedSceneRegistrationModule]:
+    m = SelfClearedSceneRegistrationModule(model=dual_openyam_self_filter_model(), padding_m=0.02)
+    asyncio.run(
+        m.handle_coordinator_joint_state(JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS))
     )
-    m._states = TimestampedBufferCollection[JointState](600.0)
-    m._states.add(JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS))
-    m._root_link = "dual_openyam_base"
-    m._body_filter = RoboPlanBodyFilter(m.config.model.load(), 0.02)
+    # start() builds the filter from the config; the rest of start() needs the detector.
+    m._body_filter = RoboPlanBodyFilter(m.config.model.load(), m.config.padding_m)
     identity = Transform(
         translation=Vector3(0, 0, 0),
         rotation=Quaternion(0, 0, 0, 1),
@@ -77,7 +76,8 @@ def module(monkeypatch: pytest.MonkeyPatch) -> SelfClearedSceneRegistrationModul
     monkeypatch.setattr(
         ObjectSceneRegistrationModule, "get_full_scene_pointcloud", lambda self, *a, **k: _scene()
     )
-    return m
+    yield m
+    m.stop()
 
 
 def test_scene_keeps_the_table_and_drops_the_arm_base(

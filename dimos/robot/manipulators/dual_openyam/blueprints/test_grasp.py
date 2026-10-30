@@ -30,9 +30,11 @@ from dimos.robot.manipulators.dual_openyam.blueprints.agentic import (
     dual_openyam_agent_prompt,
     dual_openyam_grasp_agent,
 )
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
-from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DUAL_OPENYAM_GRIPPER_TASKS,
+    DualOpenYamCoordinator,
+)
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_RECORD_TOPICS,
     DUAL_OPENYAM_VIEW_TOPICS,
     dual_openyam_grasp,
