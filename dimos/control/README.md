@@ -294,7 +294,7 @@ permanent; neither is a downgrade from the other.
 
 Both carry canonical `{hardware_id}/{joint}` names sampled once per tick, so
 they line up with the commands sent on that tick. That is the *control* view.
-Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
+Connection modules (`GO2Connection`, `G1Connection`) publish the
 *device* view instead: raw state at the device's own rate, units and ordering.
 
 Choose by what the consumer is, not by how many robots the deployment has.

@@ -17,7 +17,7 @@
 One blueprint, ``--simulation`` flag picks the backend:
 
 Real hardware (default):
-    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) + transport_lcm
+    G1Connection (DDS rt/lowstate <-> rt/lowcmd) + transport_lcm
     whole-body adapter. 500 Hz tick. Safety profile: unarmed + dry-run on
     start; activate explicitly through ControlCoordinator RPC after
     verifying commands. The policy ramps from the current pose to its
@@ -305,10 +305,10 @@ else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+    from dimos.robot.unitree.g1.connection import G1Connection
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+    _backend = G1Connection.blueprint(connection_type="dds")
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
@@ -554,7 +554,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
-        # G1WholeBodyConnection over these topics. autoconnect already
+        # G1Connection over these topics. autoconnect already
         # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
         ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),

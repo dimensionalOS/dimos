@@ -265,6 +265,7 @@ class ControlCoordinator(Module):
         self._feedback_lock = threading.RLock()
         self._feedback: ControlFeedback | None = None
         self._reply: MotorControl | None = None
+        self._restart_feedback = False
         self._retired_epochs: set[str] = set()
         self._feedback_ready = threading.Event()
         self._velocity_lock = threading.Lock()
@@ -541,18 +542,21 @@ class ControlCoordinator(Module):
         with self._feedback_lock:
             if not self._feedback_ready.is_set():
                 return False
+            with self._hardware_lock:
+                if self._estopped:
+                    return False
             previous = self._feedback
             if feedback.epoch in self._retired_epochs:
                 return False
             if previous is not None and feedback.epoch == previous.epoch:
                 if feedback.tick < previous.tick:
                     return False
-                if feedback.tick == previous.tick:
+                if feedback.tick == previous.tick and not self._restart_feedback:
                     with self._hardware_lock:
                         if self._reply is not None and not self._estopped:
                             self.motor_control.publish(self._reply)
                     return False
-                if feedback.state.t_now <= previous.state.t_now:
+                if feedback.tick > previous.tick and feedback.state.t_now <= previous.state.t_now:
                     raise ValueError("feedback time must advance with its tick")
             state = feedback.state
             if (
@@ -565,14 +569,15 @@ class ControlCoordinator(Module):
             source = self._connections[robot]
             if set(state.joints.joint_positions) != set(source.joint_names):
                 raise ValueError("control feedback must contain this robot's complete joint state")
-            if previous is None or feedback.epoch != previous.epoch:
-                if previous is not None:
+            if previous is None or feedback.epoch != previous.epoch or self._restart_feedback:
+                if previous is not None and feedback.epoch != previous.epoch:
                     self._retired_epochs.add(previous.epoch)
                 self.reset_runtime_state()
                 source.drop_holds()
                 with self._velocity_lock:
                     self._velocity, self._velocity_until = Twist(), 0.0
             self._feedback, self._reply = feedback, None
+            self._restart_feedback = False
             self._feedback_error = ""
             joints = state.joints
             source.on_message(
@@ -1041,7 +1046,7 @@ class ControlCoordinator(Module):
         Args:
             estopped: True to stop, False to clear.
         """
-        with self._estop_lock:
+        with self._feedback_lock, self._estop_lock:
             if estopped:
                 logger.warning("E-STOP latched at coordinator")
                 # The tick loop sends while holding this lock, so a tick
@@ -1054,6 +1059,12 @@ class ControlCoordinator(Module):
                 with self._hardware_lock:
                     for connection in self._connections.values():
                         connection.drop_holds()
+                    if self._estopped and self.config.feedback_robot is not None:
+                        # Physics is waiting on this same sample. Start a clean
+                        # control history on its retransmission, instead of
+                        # waiting forever for a tick that cannot advance.
+                        self._restart_feedback = True
+                        self._reply = None
                     self._estopped = False
                 logger.warning("E-STOP cleared at coordinator")
         return True
@@ -1295,6 +1306,7 @@ class ControlCoordinator(Module):
         with self._feedback_lock:
             self._feedback, self._reply = None, None
             self._retired_epochs.clear()
+            self._restart_feedback = False
 
         # Route/command tables are kept: they track _tasks, which survives stop(),
         # and add_task() skips known names so a restart would never rebuild them.

@@ -18,6 +18,8 @@ from dataclasses import replace
 import math
 from pathlib import Path
 
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.connection import G1Connection
@@ -58,6 +60,29 @@ unitree_g1_sim2 = autoconnect(
         world=G1_DESK_WORLD, backend=MujocoBackend, control_joints=tuple(d.joint for d in _drives)
     ),
     G1Connection.blueprint(connection_type="sim2"),
+    ControlCoordinator.blueprint(
+        feedback_robot="g1",
+        model=G1_SENSOR_MODEL.with_prefix("g1/"),
+        motor_gains={d.joint: (d.kp, d.kd) for d in _drives},
+        tasks=[
+            TaskConfig(
+                name="groot_wbc",
+                type="g1_groot_wbc",
+                joint_names=[d.joint for d in _drives[:15]],
+                priority=50,
+                auto_start=True,
+                params={
+                    "hardware_id": "g1",
+                    "model_path": LfsPath("groot"),
+                    "all_joint_names": [d.joint for d in _drives],
+                    "auto_arm": True,
+                    "default_ramp_seconds": 0.0,
+                    "decimation": 1,
+                },
+            ),
+            joint_trajectory_task([d.joint for d in _drives[15:]], priority=20),
+        ],
+    ),
     SimSensorModule.blueprint(world=G1_DESK_WORLD, reader=MujocoSensors, prefix="g1").remappings(
         [("simsensormodule", "lidar", "lidar_raw")]
     ),

@@ -21,17 +21,17 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.unitree.g1.wholebody_connection import (
+from dimos.robot.unitree.g1.dds_device import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
-    G1WholeBodyConnection,
-    G1WholeBodyConnectionConfig,
+    G1DDSConfig,
+    G1DDSDevice,
 )
 
 
 @pytest.fixture
-def connection() -> Iterator[G1WholeBodyConnection]:
-    connection = G1WholeBodyConnection()
+def connection() -> Iterator[G1DDSDevice]:
+    connection = G1DDSDevice(G1DDSConfig(), lambda _ts, _sample: None)
     try:
         yield connection
     finally:
@@ -77,10 +77,10 @@ def _command():
     )
 
 
-def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
+def test_soft_start_is_damping_first(connection: G1DDSDevice):
     publisher = _wire(connection, soft_start_seconds=1000.0)
 
-    connection._on_motor_command(_command())
+    connection.write(_command())
 
     q, dq, kp, kd, tau = publisher.frames[0][0]
     # First frame: target and damping pass through, stiffness and tau do not —
@@ -91,13 +91,13 @@ def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
     assert abs(tau) < 0.1
 
 
-def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
+def test_stiffness_ramps_to_full(connection: G1DDSDevice):
     publisher = _wire(connection, soft_start_seconds=0.05)
 
-    connection._on_motor_command(_command())
+    connection.write(_command())
     # Rewind the clock instead of sleeping through the window.
     connection._soft_start_t0 -= 1.0
-    connection._on_motor_command(_command())
+    connection.write(_command())
 
     _q, _dq, kp, kd, tau = publisher.frames[-1][0]
     assert kp == 100.0
@@ -105,20 +105,20 @@ def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
     assert tau == 8.0
 
 
-def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
+def test_soft_start_disabled_passes_through(connection: G1DDSDevice):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection._on_motor_command(_command())
+    connection.write(_command())
 
     _q, _dq, kp, _kd, tau = publisher.frames[0][0]
     assert kp == 100.0
     assert tau == 8.0
 
 
-def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
+def test_wrong_joint_count_is_dropped(connection: G1DDSDevice):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    connection.write(MotorCommandArray(q=[0.0] * 5))
 
     assert publisher.frames == []
 
@@ -129,4 +129,4 @@ def test_non_finite_soft_start_is_rejected(value):
     # zero, so the scale would pin at 0 forever: full damping, no stiffness,
     # and no way back to the commanded gains.
     with pytest.raises(ValidationError):
-        G1WholeBodyConnectionConfig(soft_start_seconds=value)
+        G1DDSConfig(soft_start_seconds=value)

@@ -151,3 +151,34 @@ def test_velocity_deadman_uses_wall_time(controller, mocker):
         replace(next_sample, tick=352, state=replace(sample.state, t_now=7.04))
     )
     assert dispatch.call_args.args[1].linear.x == 0.0
+
+
+def test_estop_clear_recomputes_the_frozen_sample_once(controller):
+    control, task, sent, sample = controller
+    control.receive_feedback(sample)
+    control.set_estop(True)
+    waiting = replace(sample, tick=351, state=replace(sample.state, t_now=7.02))
+    assert not control.receive_feedback(waiting)
+    assert sent.call_count == 1
+    assert control.get_tick_count() == 1
+    control.set_estop(False)
+    assert control.receive_feedback(waiting)
+    assert (sent.call_args.args[0].epoch, sent.call_args.args[0].tick) == (
+        waiting.epoch,
+        waiting.tick,
+    )
+    assert not control.receive_feedback(waiting)
+    assert control.get_tick_count() == 2
+
+
+def test_reset_while_stopped_retires_the_previous_epoch(controller):
+    control, task, sent, sample = controller
+    control.receive_feedback(sample)
+    control.set_estop(True)
+    reset = replace(sample, epoch="episode-b", tick=0, state=replace(sample.state, t_now=0.0))
+    assert not control.receive_feedback(reset)
+    control.set_estop(False)
+    assert control.receive_feedback(reset)
+    assert not control.receive_feedback(sample)
+    assert control.get_tick_count() == 2
+    assert sent.call_args.args[0].epoch == "episode-b"

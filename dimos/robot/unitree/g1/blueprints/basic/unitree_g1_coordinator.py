@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 ControlCoordinator: G1WholeBodyConnection Module + servo task via LCM bridge.
+"""G1 ControlCoordinator: G1Connection Module + servo task via LCM bridge.
 
 Mirrors `unitree_go2_coordinator.py`. Run with `ROBOT_INTERFACE=<nic> dimos run unitree-g1-coordinator`.
 """
@@ -31,7 +31,8 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.dds_device import G1DDSConfig
 
 _g1_joints = make_humanoid_joints("g1")
 
@@ -43,9 +44,9 @@ class _G1Coordinator(ControlCoordinator):
 # ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
 unitree_g1_coordinator = (
     autoconnect(
-        G1WholeBodyConnection.blueprint(
-            release_sport_mode=True,
-            network_interface=os.getenv("ROBOT_INTERFACE", ""),
+        G1Connection.blueprint(
+            connection_type="dds",
+            dds=G1DDSConfig(network_interface=os.getenv("ROBOT_INTERFACE", "")),
         ),
         _G1Coordinator.blueprint(
             instance_name="ControlCoordinator",
