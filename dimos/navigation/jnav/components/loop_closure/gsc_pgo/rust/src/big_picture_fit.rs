@@ -513,7 +513,27 @@ pub(crate) fn solve_core(
             );
         }
         (weights, unary_weights, sighting_weights) = (tls_kept, tls_unary, tls_sightings);
-        let lower = truncated_cost(&gm_state) < truncated_cost(&state);
+        // Bayes model comparison: each verdict at its best-fitting odometry noise s (misfit / dof, at least 1), its
+        // truncated cost plus dof ln s, the -2 ln of its profile likelihood
+        let profiled = |state: &State, w: &[f64], u: &[f64], sw: &[f64]| -> f64 {
+            let misfit = |st: &State, od: &[Edge]| cost(st, &[], od, &[], &[], &[], &[], &[], &[]);
+            let dof = 6.0 * odometry.len().max(1) as f64;
+            let s = (misfit(state, odometry) / dof).max(1.0);
+            let loose: Vec<Edge> = odometry
+                .iter()
+                .map(|e| Edge {
+                    variances: e.variances.map(|v| v * s),
+                    ..e.clone()
+                })
+                .collect();
+            let mut st = state.clone();
+            levenberg_marquardt(
+                &mut st, &pattern, &loose, &scaled, w, unary, u, sightings, sw, 1e-5,
+            );
+            truncated_cost(&st) - misfit(&st, odometry) + misfit(&st, &loose) + dof * s.ln()
+        };
+        let lower = profiled(&gm_state, &gm_weights, &gm_unary, &gm_sightings)
+            < profiled(&state, &weights, &unary_weights, &sighting_weights);
         // GM's verdict is new evidence that the odometry is overtrusted only where TLS's own verdict shows none: where
         // TLS already keeps closures that bend the odometry past its noise (right or look-alike), the noise learner
         // reads that from TLS's residuals, and swapping in GM's larger set would only add closures the evidence did
