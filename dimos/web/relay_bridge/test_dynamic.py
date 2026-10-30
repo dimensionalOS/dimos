@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for pickle-safe dynamically generated relay bridge classes."""
+"""Tests for dynamically generated relay bridge classes that cross the worker pipe."""
 
 # No `from __future__ import annotations` here on purpose: under PEP 563 a
 # Module class whose annotations become strings silently loses its streams
 # (see the module-level note in test_relay_bridge_module.py).
 
 from dataclasses import dataclass
-import pickle
 import re
 import subprocess
 import sys
@@ -38,6 +37,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.relay_bridge import dynamic
 from dimos.web.relay_bridge.config import RelayBridgeConfig
@@ -129,9 +129,9 @@ def test_memoization_and_canonical_order():
     assert generated.dynamic_port_specs == tuple(sorted(_MAIN_SPECS, key=lambda s: s.stream))
 
 
-def test_pickle_roundtrip_returns_identical_class_object():
+def test_cbor_roundtrip_returns_identical_class_object():
     generated = make_relay_bridge_class(_MAIN_SPECS)
-    assert pickle.loads(pickle.dumps(generated)) is generated
+    assert decode(encode(generated)) is generated
 
 
 def test_two_shapes_coexist_in_one_process():
@@ -139,8 +139,8 @@ def test_two_shapes_coexist_in_one_process():
     shape_b = make_relay_bridge_class([DynamicPortSpec("marker_feed", _MarkerB, "rx")])
     assert shape_a is not shape_b
     assert shape_a.__name__ != shape_b.__name__
-    assert pickle.loads(pickle.dumps(shape_a)) is shape_a
-    assert pickle.loads(pickle.dumps(shape_b)) is shape_b
+    assert decode(encode(shape_a)) is shape_a
+    assert decode(encode(shape_b)) is shape_b
 
 
 def test_generated_class_is_published_for_reload_lookup():
@@ -169,24 +169,25 @@ def test_digest_name_collision_with_different_specs_raises(monkeypatch):
 
 
 _RELOAD_SCRIPT = """
-import importlib, pickle, sys
+import importlib, sys
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.web.relay_bridge.dynamic as dynamic
 
 C = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
-data = pickle.dumps(C)
+data = encode(C)
 mod = importlib.reload(sys.modules["dimos.web.relay_bridge.dynamic"])
 assert getattr(mod, C.__name__) is C, "restart getattr lost the class"
-assert pickle.loads(data) is C, "pre-reload pickle lost identity"
-assert pickle.loads(pickle.dumps(C)) is C, "re-pickle after reload failed"
+assert decode(data) is C, "pre-reload payload lost identity"
+assert decode(encode(C)) is C, "re-encode after reload failed"
 again = mod.make_relay_bridge_class([mod.DynamicPortSpec("reload_feed", Vector3, "rx")])
 assert again is C, "factory lost identity after reload"
 """
 
 
-def test_reload_then_repickle_preserves_identity():
+def test_reload_then_reencode_preserves_identity():
     """The coordinator's restart path reloads dynamic.py and then re-deploys
-    the surviving class object, which re-pickles it. Runs in a subprocess so
+    the surviving class object, which re-encodes it. Runs in a subprocess so
     the reload cannot poison this process's module state."""
     result = subprocess.run(
         [sys.executable, "-c", _RELOAD_SCRIPT], capture_output=True, text=True, timeout=120
@@ -236,7 +237,7 @@ def test_function_local_message_type_rejected():
 
 def test_unimportable_message_type_rejected():
     ghost = type("GhostType", (), {"__module__": __name__})
-    with pytest.raises(ValueError, match="pickled by reference"):
+    with pytest.raises(ValueError, match="sent by reference"):
         make_relay_bridge_class([DynamicPortSpec("ghost_feed", ghost, "rx")])
 
 
@@ -275,12 +276,12 @@ def test_autoconnect_matches_generated_ports_with_static_modules():
     ]
 
 
-def test_blueprint_pickle_preserves_generated_class_identity():
+def test_blueprint_roundtrip_preserves_generated_class_identity():
     generated = make_relay_bridge_class(_AUTOCONNECT_SPECS)
     blueprint = autoconnect(
         _PingProducer.blueprint(), generated.blueprint(), _NoteConsumer.blueprint()
     )
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     assert restored == blueprint
     restored_atom = next(a for a in restored.blueprints if a.name == generated.name)
     assert restored_atom.module is generated
@@ -304,7 +305,7 @@ def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     worker_manager, deployed_proxies, ping_transport, retry_until
 ):
     """The W5 flagship proof: the worker process exists before the class does,
-    so the class can only arrive in the worker through pickle, not fork
+    so the class can only arrive in the worker through the pipe, not fork
     inheritance. Deploy, call an RPC, wire a generated stream, see data."""
     assert worker_manager.workers[0].pid is not None
 

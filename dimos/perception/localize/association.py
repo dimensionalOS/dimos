@@ -26,7 +26,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-    from dimos.perception.localize.types import LocalizePolicy
+    from dimos.perception.localize.types import LocalizeParams
 
 # One row per accepted sighting. Everything verification reports is a reduction
 # over these columns, so no detection - and no image - is retained.
@@ -50,7 +50,7 @@ class Groups:
     raw: list[float] = field(default_factory=list)  # raw points folded in so far
     members: list[list[float]] = field(default_factory=list)  # flat, M_WIDTH per row
     trace: list[list[Detection3DPC]] = field(default_factory=list)
-    ingested: set[tuple[FrameKey, LocalizePolicy]] = field(default_factory=set)  # frames read
+    ingested: set[tuple[FrameKey, LocalizeParams]] = field(default_factory=set)  # by read_key()
     folded: set[tuple[FrameKey, tuple[int, ...]]] = field(default_factory=set)  # boxes lifted in
     ids: list[str] = field(default_factory=list)
 

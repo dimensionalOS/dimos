@@ -12,6 +12,10 @@
   position: absolute;
 }
 
+.clickable {
+  cursor: crosshair;
+}
+
 .error {
   color: var(--danger);
   font-family: var(--font-mono);

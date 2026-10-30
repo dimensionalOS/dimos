@@ -44,7 +44,7 @@ OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def openyam_hardware() -> HardwareComponent:
+def openyam_hardware(*, bus_devices: dict[str, str] | None = None) -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
     adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
@@ -56,11 +56,8 @@ def openyam_hardware() -> HardwareComponent:
             velocity_max=[None] * len(OPENYAM_JOINTS),
         )
     else:
-        bus_devices = (
-            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
-        )
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices=bus_devices,
+            bus_devices=bus_devices or {},
             gravity_comp=True,
         )
     return HardwareComponent(

@@ -15,6 +15,7 @@
 
 from reactivex import interval
 
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.mapping.models import LatLon
@@ -23,10 +24,12 @@ from dimos.mapping.models import LatLon
 class DemoRobot(Module):
     gps_location: Out[LatLon]
 
+    @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(interval(1.0).subscribe(lambda _: self._publish_gps_location()))
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 

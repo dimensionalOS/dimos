@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Pass/fail counts per self-hosted runner over the last N days of runs on main, as JSON.
+
+Results like:
+
+  {"<runner name>": [passed, failed], ...}
+
+Run:
+
+  GITHUB_REPOSITORY=dimensionalOS/dimos bin/ci/runner-health --days 30
+
+With --create-issues (the weekly runner-health workflow) a runner that failed
+every job of a kind (the labels asked for), or significantly more of them than
+the other runners serving that kind, gets an issue; one per runner while it
+stays open.
+"""
+
+import argparse
+from collections import defaultdict
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from itertools import count
+import json
+from math import comb
+import os
+import sys
+import time
+from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
+
+API = "https://api.github.com"
+PAGE = 100  # The API's maximum.
+BRANCH = "main"
+# The workflows with jobs on self-hosted runners.
+WORKFLOWS = ("ci.yml", "docker-build.yml")
+# Fewer jobs than this and "every job failed" is one unlucky run, not a runner.
+MIN_JOBS = 3
+# One-sided Fisher exact test against the other runners with the same labels.
+P_VALUE = 0.01
+LABEL = "ci-alerts"
+MARKER = "<!-- runner-health: {runner} -->"
+
+
+def fetch(
+    repo: str,
+    path: str,
+    token: str | None,
+    body: dict[str, Any] | None = None,
+    /,
+    **params: str | int,
+) -> Any:
+    req = urllib.request.Request(
+        f"{API}/repos/{repo}/{path}?{urllib.parse.urlencode(params)}",
+        data=json.dumps(body).encode() if body else None,  # A POST when given.
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
+    )
+    for attempt in count(1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.load(resp)
+        except OSError as err:  # HTTPError, URLError and socket errors alike.
+            # The API 5xxs now and then.
+            if (isinstance(err, urllib.error.HTTPError) and err.code < 500) or attempt == 3 or body:
+                raise
+            time.sleep(2**attempt)
+
+
+def paged(
+    repo: str, path: str, key: str, token: str | None, **params: str | int
+) -> Iterator[dict[str, Any]]:
+    for page in count(1):
+        for attempt in count(1):
+            items = fetch(repo, path, token, per_page=PAGE, page=page, **params)[key]
+            # The API lists nothing now and then; retry twice.
+            if items or page > 1 or attempt == 3:
+                break
+            time.sleep(2**attempt)
+        yield from items
+        if len(items) < PAGE:
+            return
+
+
+def fisher(failed: int, jobs: int, failed_others: int, jobs_others: int) -> float:
+    """Chance of this many failures occurring on this runner at random."""
+    total, fails = jobs + jobs_others, failed + failed_others
+    return sum(
+        comb(fails, i) * comb(total - fails, jobs - i) for i in range(failed, min(fails, jobs) + 1)
+    ) / comb(total, jobs)
+
+
+def file_issues(
+    pools: dict[str, dict[str, list[int]]],
+    counts: dict[str, list[int]],
+    days: int,
+    repo: str,
+    token: str | None,
+) -> list[str]:
+    """One issue per runner that failed every job of a kind or significantly more than its pool."""
+    flagged: dict[str, list[str]] = defaultdict(list)  # Runner -> what is wrong, per pool.
+    for pool, runners in sorted(pools.items()):
+        rows = "\n".join(f"| {r} | {runners[r][0]} | {runners[r][1]} |" for r in sorted(runners))
+        for runner in sorted(runners):
+            passed, failed = runners[runner]
+            jobs = passed + failed
+            others_failed = sum(runners[other][1] for other in runners if other != runner)
+            others = sum(sum(runners[other]) for other in runners if other != runner)
+            p = fisher(failed, jobs, others_failed, others)
+            if jobs >= MIN_JOBS and failed == jobs:
+                reason = f"all {jobs} of its jobs failed"
+            elif p < P_VALUE:
+                reason = (
+                    f"{failed} of its {jobs} jobs failed against {others_failed} of {others} on"
+                    f" the other {pool} runners (p = {p:.4f})"
+                )
+            else:
+                continue
+            flagged[runner].append(
+                f"`{runner}` ({pool}): {reason}.\n\n"
+                f"| Runner | Passed | Failed |\n|---|---|---|\n{rows}"
+            )
+    if not flagged:
+        return []
+
+    bodies = [
+        issue["body"] or ""
+        for issue in fetch(repo, "issues", token, labels=LABEL, state="open", per_page=PAGE)
+    ]
+    try:
+        fetch(repo, f"labels/{LABEL}", token)
+    except urllib.error.HTTPError as err:
+        if err.code != 404:
+            raise
+        label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/ci/runner-health"}
+        fetch(repo, "labels", token, label)
+    run = os.environ.get("GITHUB_RUN_ID")
+    filed_by = f"[runner-health](https://github.com/{repo}/actions/runs/{run})" if run else "hand"
+
+    actions = []
+    for runner, findings in sorted(flagged.items()):
+        if any(MARKER.format(runner=runner) in body for body in bodies):
+            actions.append(f"{runner}: an issue is already open")
+            continue
+        passed, failed = counts[runner]
+        details = "\n\n".join(findings)
+        issue = fetch(
+            repo,
+            "issues",
+            token,
+            {
+                "title": f"Self-hosted runner {runner} failed {failed} of {passed + failed} jobs"
+                f" in {days} days",
+                "body": f"""{MARKER.format(runner=runner)}
+{details}
+
+@Dreamsorcerer @spomichter
+Every self-hosted job of the last {days} days of runs on {BRANCH} ({", ".join(WORKFLOWS)}),
+cancelled ones excluded. Filed by {filed_by}.
+""",
+                "labels": [LABEL],
+            },
+        )
+        actions.append(f"{runner}: filed {issue['html_url']}")
+    return actions
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument(
+        "--create-issues", action="store_true", help="needs GITHUB_TOKEN with issues: write"
+    )
+    args = parser.parse_args()
+    repo = os.environ["GITHUB_REPOSITORY"]
+    token = os.environ.get("GITHUB_TOKEN")
+    since = datetime.now(timezone.utc) - timedelta(days=args.days)
+
+    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    # Labels asked for -> runner -> the same counts over the jobs that asked for
+    # them: a runner serves every kind of job its labels match, and each kind is
+    # compared with its own.
+    pools: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for workflow in WORKFLOWS:
+        seen = False
+        runs = paged(
+            repo, f"actions/workflows/{workflow}/runs", "workflow_runs", token, branch=BRANCH
+        )
+        for run in runs:  # Newest first.
+            seen = True
+            if datetime.fromisoformat(run["created_at"]) < since:
+                break
+            # Every attempt lists every job, the ones it did not re-run as
+            # copies (new ids, same start), so key executions by name and
+            # start. `filter=all` would list them all at once but 502s for
+            # some multi-attempt runs, deterministically.
+            jobs: dict[tuple[str, str | None], dict[str, Any]] = {}
+            for attempt in range(1, run["run_attempt"] + 1):
+                path = f"actions/runs/{run['id']}/attempts/{attempt}/jobs"
+                for job in paged(repo, path, "jobs", token):
+                    jobs[job["name"], job["started_at"]] = job
+            for job in jobs.values():
+                if "self-hosted" in job["labels"] and job["conclusion"] in ("success", "failure"):
+                    runner = job["runner_name"] or "(none)"
+                    pool = ", ".join(label for label in job["labels"] if label != "self-hosted")
+                    failed = job["conclusion"] == "failure"
+                    counts[runner][failed] += 1
+                    pools[pool][runner][failed] += 1
+        if not seen:
+            sys.exit(
+                f"The API listed no {workflow} runs on {BRANCH} at all, as it does now and then."
+            )
+    print(json.dumps(counts, sort_keys=True))
+    if args.create_issues:
+        for action in file_issues(pools, counts, args.days, repo, token):
+            print(action)
+
+
+if __name__ == "__main__":
+    main()

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pursuit-law building blocks shared across `laws/`; each reproduces one
-//! statement of `laws/seed.py`. Parity is per operation: numpy's tie-breaks
-//! and `math.remainder` wrapping are preserved, so add functions, do not edit.
+//! Pursuit-law building blocks for the trajectory follower's law.
 
 /// The numbers a law reads: the body's tuning plus its plant, driving inside
 /// one band; `emb::base_params` builds it from an `Emb`.
@@ -42,7 +40,7 @@ pub fn ieee_remainder(x: f64, y: f64) -> f64 {
     x - (x / y).round_ties_even() * y
 }
 
-/// Shortest signed angle from `b` to `a`, the python `_angle_diff`.
+/// Shortest signed angle from `b` to `a`.
 #[inline]
 pub fn angle_diff(a: f64, b: f64) -> f64 {
     ieee_remainder(a - b, TAU)
@@ -103,14 +101,6 @@ pub fn fan_target(
     }
 }
 
-/// First waypoint at or past `arcs[i] + look` (`searchsorted` side='left'), the seed's carrot.
-pub fn carrot_snap(path: &[[f64; 3]], arcs: &[f64], i: usize, look: f64) -> ([f64; 2], f64) {
-    let n = path.len();
-    let s = arcs[i] + look;
-    let k = arcs.partition_point(|&a| a < s).min(n - 1);
-    ([path[k][0], path[k][1]], path[k][2])
-}
-
 /// The point at exactly `arcs[i] + look`, interpolated within its segment;
 /// a short lookahead snapped to 0.1 m waypoints would chatter the heading.
 pub fn carrot_lerp(path: &[[f64; 3]], arcs: &[f64], i: usize, look: f64) -> ([f64; 2], f64) {
@@ -148,7 +138,7 @@ pub fn clearance_governor(
         return None;
     }
     // not a contiguous slice: fan waypoints before `i` share its arc, so scan
-    // the whole array like the numpy mask does
+    // the whole array
     let hi = arcs[i] + cfg.speed_lookahead;
     let mut room: Option<f64> = None;
     for (k, &a) in arcs.iter().enumerate() {
@@ -156,7 +146,7 @@ pub fn clearance_governor(
             room = Some(clr[k]);
         }
     }
-    // never empty (arcs[i] passes its own mask); the fallback mirrors the python
+    // never empty since arcs[i] passes its own mask
     let room = room.unwrap_or(clr[i]);
     let frac = (room - cfg.speed_floor_clearance)
         / (cfg.speed_clearance - cfg.speed_floor_clearance).max(1e-6);

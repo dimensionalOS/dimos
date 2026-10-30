@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import SupportsIndex
+from typing import Any, SupportsIndex
 
 from dimos.robot.assets.git_cache import GitAssetCache
 
@@ -69,8 +69,16 @@ class RobotDescriptionSource:
     def __hash__(self) -> int:
         return hash((self.url, self.ref))
 
+    def cbor_encode(self) -> dict[str, str]:
+        return {"url": self.url, "ref": self.ref}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, str]) -> RobotDescriptionSource:
+        return cls(data["url"], data["ref"])
+
     def __reduce__(self) -> tuple[type[RobotDescriptionSource], tuple[str, str]]:
-        """Recreate the source without serializing checkout state."""
+        """For copy.deepcopy, which clones blueprint config values before deployment:
+        recreate the source without its checkout state. Workers get cbor_encode()."""
         return (RobotDescriptionSource, (self.url, self.ref))
 
 
@@ -112,6 +120,7 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
         except AttributeError:
             return object.__getattribute__(self, name)
 
+        # The CBOR codec is not listed: it looks cbor_encode up on the class.
         if name.startswith("_robot_description_") or name in {
             "_resolve",
             "__reduce__",
@@ -164,8 +173,19 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
             )
         )
 
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "source": object.__getattribute__(self, "_robot_description_source"),
+            "relative_path": str(object.__getattribute__(self, "_robot_description_relative_path")),
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RobotDescriptionPath:
+        return cls(data["source"], Path(data["relative_path"]))
+
     def __reduce__(self) -> tuple[type[RobotDescriptionPath], tuple[RobotDescriptionSource, Path]]:
-        """Preserve the lazy source handle across worker serialization."""
+        """For copy.deepcopy of blueprint config values: keep the lazy source handle
+        instead of resolving the checkout. Workers get cbor_encode()."""
         source: RobotDescriptionSource = object.__getattribute__(self, "_robot_description_source")
         relative_path: Path = object.__getattribute__(self, "_robot_description_relative_path")
         return (RobotDescriptionPath, (source, relative_path))

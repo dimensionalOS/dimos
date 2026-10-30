@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `trajectory_follower`: the motion controller as a robot-side module, a port of `adapter/follower.py`.
+//! `trajectory_follower`: the motion controller as a robot-side module.
 //! The law is a pure pose+path -> twist function; this owns subscriptions, the control clock, arrival and the deadman.
 //! No map: the room the planner priced arrives in the path's own timestamps (`stamps::decode_ceilings`).
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::laws::hinted::update as hinted_update;
+use crate::hinted::update as hinted_update;
 use dimos_local_planner::planner::Emb;
 use dimos_module::{native_config, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::Twist;
@@ -32,7 +32,7 @@ use crate::emb;
 use dimos_local_planner::module::msg;
 use dimos_local_planner::module::tf_pose::PoseWatch;
 
-/// Mirrors `TrajectoryFollowerConfig` (adapter/follower.py).
+/// Mirrors TrajectoryFollowerNativeConfig in fancy/native.py.
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
@@ -111,7 +111,7 @@ struct Shared {
     path: Option<Arc<Path>>,
     /// Arrival, not `msg.ts`: this measures how long since the planner was last heard.
     path_at: Option<Instant>,
-    /// Drained per tick in arrival order, so the latch sees the same `set_goal` sequence the python does.
+    /// Drained per tick in arrival order, so the latch sees every set_goal in sequence.
     goals: Vec<(f64, f64)>,
 }
 
@@ -335,14 +335,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_hold_stub_is_a_stop_to_every_law() {
-        // the refusal is one pose, under the laws' `path.len() < 2` veto
+    fn a_hold_stub_is_a_stop() {
+        // the refusal is one pose, under the law's `path.len() < 2` veto
         let held =
             dimos_local_planner::module::planner::hold_stub((1.5, -2.0, 0.0), "odom", 0.0, 0.0);
         let states = msg::path_states(&held);
         let cfg = emb::hinted_params(&Emb::fixture());
         assert_eq!(
-            crate::laws::hinted::update((1.5, -2.0, 0.0), &states, None, None, &cfg),
+            crate::hinted::update((1.5, -2.0, 0.0), &states, None, None, &cfg),
             (0.0, 0.0, 0.0)
         );
     }
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(p.base.min_speed, fixture().min_speed);
         assert_eq!(p.base.max_speed, fixture().max_speed);
         assert_eq!(p.base.speed_lookahead, 2.0);
-        // python spells it walk_slip_ramp, the law spells it slip_ramp
+        // the embodiment spells it walk_slip_ramp, the law spells it slip_ramp
         assert_eq!(p.slip_ramp, 0.08);
         assert_eq!(p.walk_gain, 0.964);
     }

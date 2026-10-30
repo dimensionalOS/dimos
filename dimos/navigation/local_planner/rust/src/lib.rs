@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! The SE(2) local planner crate. Deterministic (same inputs, bit-identical output,
-//! no threads), budgeted for one core on a shared RK3588, deps limited to pyo3/numpy.
-//! The algorithm is planner.rs; python.rs is the stable python-facing surface.
+//! no threads), budgeted for one core on a shared RK3588.
+//! The algorithm is planner.rs.
 
 pub mod clearance;
 pub mod emb;
@@ -22,9 +22,5 @@ pub mod geom;
 pub mod planner;
 pub mod stamps;
 
-/// Feature-gated so the python extension build never links the module runtime.
 #[cfg(feature = "module")]
 pub mod module;
-
-#[cfg(feature = "python")]
-mod python;

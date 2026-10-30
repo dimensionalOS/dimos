@@ -84,6 +84,7 @@ class TrajectoryExecutionStatus(Enum):
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
     ALREADY_EXECUTING = auto()
+    ESTOPPED = auto()
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,8 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
+        # While set, trajectories are refused. Set and cleared by set_estop.
+        self._estopped = False
 
         configured_limits = config.velocity_limits
         if configured_limits is None:
@@ -406,6 +409,12 @@ class JointTrajectoryTask(BaseControlTask):
                 f"Trajectory task '{self._name}' is in FAULT state",
             )
 
+        if self._estopped:
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.ESTOPPED,
+                f"Trajectory task '{self._name}' is emergency-stopped",
+            )
+
         if trajectory is None:
             logger.warning(f"Invalid trajectory for {self._name}")
             return TrajectoryExecutionResult(
@@ -487,6 +496,20 @@ class JointTrajectoryTask(BaseControlTask):
         self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} cancelled")
         return TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
+
+    def set_estop(self, estopped: bool) -> None:
+        """Emergency-stop the task, or clear it.
+
+        Stopping cancels the trajectory being run and refuses new ones until
+        cleared. Clearing does not resume the cancelled trajectory; the task
+        stays idle until it is given a new one.
+
+        Args:
+            estopped: True to stop, False to clear.
+        """
+        self._estopped = estopped
+        if estopped:
+            self.cancel()
 
     def reset(self) -> bool:
         """Reset to idle state.

@@ -369,6 +369,7 @@ def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
         )
 
 
+@pytest.mark.self_hosted  # Only self-hosted CI installs Drake (the planning extra).
 @pytest.mark.skipif(
     not DRAKE_AVAILABLE, reason="Drake visualization tests require the manipulation extra"
 )
