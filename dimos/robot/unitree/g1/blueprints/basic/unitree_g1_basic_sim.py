@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,19 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 sim stack: base sensors plus sim connection and planner."""
+"""Stock G1 velocity control and navigation in the shared MuJoCo world.
+
+Run with ``dimos --simulation mujoco --viewer none run unitree-g1-basic-sim``.
+The same G1Connection is used by the stock hardware blueprint.
+"""
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
-    unitree_g1_primitive_no_nav,
-)
-from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
+
+
+def _require_simulation() -> str | None:
+    if global_config.simulation != "mujoco":
+        return "Select --simulation mujoco before loading the stock G1 simulation blueprint."
+    return None
+
 
 unitree_g1_basic_sim = autoconnect(
-    unitree_g1_primitive_no_nav,
-    G1SimConnection.blueprint(),
+    unitree_g1_basic,
     ReplanningAStarPlanner.blueprint(),
     MovementManager.blueprint(),
-)
+).requirements(_require_simulation)

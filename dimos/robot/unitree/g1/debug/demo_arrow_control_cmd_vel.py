@@ -25,7 +25,7 @@ import lcm
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.connection import G1Connection
 
 CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs.Twist"
 
@@ -76,8 +76,8 @@ def main(stdscr: Any) -> None:
 
     draw_ui(stdscr, "Initializing...")
 
-    # Set up G1HighLevelDdsSdk with cmd_vel LCM transport so it subscribes
-    conn = G1HighLevelDdsSdk(network_interface="eth0")
+    # Set up G1Connection with cmd_vel LCM transport so it subscribes
+    conn = G1Connection(stock_transport="dds", network_interface="eth0")
     conn.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
     conn.start()
     time.sleep(1)

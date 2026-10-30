@@ -7,12 +7,12 @@ application whose motor device is replaced with a simulated device.
 | Path | Reused from robosuite | Supplied by DimOS |
 |---|---|---|
 | Stock task, such as Panda Lift | Robot, task, controller, observations, reward and reset | Worker lifecycle, action/result streams and snapshots |
-| Existing G1 application | `Task`/`RobotModel` composition and `MujocoEnv` stepping/reset | Existing G1 MJCF, GR00T policy, hardware PD semantics and connection binding |
+| G1 stock or external motor control | Model composition and environment stepping/reset | Stock velocity policy or external controller, shared connection and client |
 | MuJoCo camera or standalone IMU | `Observable` sampling, corruption, filtering and delay | Sensor attachment and typed message conversion |
-| Rolling Mid360 | Shared environment state | Independent capture, ray timing and message workers |
+| Unreal camera and rolling Mid360 | Shared environment state | Independent capture, ray timing and message workers |
 
-MuJoCo computes physics in both entry paths. The G1 composition does
-not use robosuite's stock task controllers or ordinary camera/IMU Observables.
+MuJoCo computes physics in both entry paths. The G1 locomotion policies are separate from robosuite task controllers; Unreal
+and rolling Mid360 acquisition do not use ordinary camera/IMU Observables.
 
 ## Use an existing robosuite task
 
@@ -80,111 +80,109 @@ randomized_lift = SimulationModule.blueprint(environment=randomized_panda_lift)
 
 The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
 `reset()`; robosuite supplies the randomization. Snapshot workers receive new
-models on reset; model changes during an episode are not propagated.
+models on reset; model changes during an episode are not propagated. These
+modders do not control Unreal's native materials or lighting. Camera changes
+can reach Unreal through named model cameras; its fixed observer mount is
+configured separately.
 
-## Run the existing G1 application
+## One G1 connection, two control modes
+
+```python
+from dimos.robot.unitree.g1.connection import G1Connection
+
+stock = G1Connection.blueprint()                        # cmd_vel + vendor RPCs
+stock_dds = G1Connection.blueprint(stock_transport="dds")
+motors = G1Connection.blueprint(control_mode="motors")  # external PD commands
+```
+
+The class is the same on hardware and in simulation. Stock mode uses the Unitree
+WebRTC or DDS locomotion API. Motor mode uses DDS motor IO. GR00T is an external
+controller in the application, not a connection mode or a default robot policy.
+Its blueprint explicitly supplies its initial pose/gains.
 
 ```bash
-# Same application and connection, different motor device.
-dimos --viewer none run unitree-g1-groot-wbc --network-interface=enp2s0
+# Stock firmware interface, hardware:
+dimos --viewer none run unitree-g1-basic --g1connection.stock-transport dds
+
+# Same connection and stock-style velocity interface, shared simulation:
+dimos --simulation mujoco --viewer none run unitree-g1-basic-sim
+
+# External GR00T motor controller, hardware or simulation:
+dimos --viewer none run unitree-g1-groot-wbc
 dimos --simulation mujoco --viewer none run unitree-g1-groot-wbc
 ```
 
 ```text
-ControlCoordinator / existing GR00T policy
-    -> G1WholeBodyConnection
-        -> real mode: G1MotorDevice -> Unitree DDS
-        -> simulation: SimulatedMotorDevice -> MotorScene (robosuite MujocoEnv)
+stock application -> G1Connection(stock) -> hardware WebRTC/DDS
+                                        -> SimRobotClient.set_velocity
+                                             -> shared world + stock velocity policy
 
-MotorScene
-    Task(Arena, G1Model)       # upstream composition
-    MotorController          # exact q/dq/kp/kd/tau motor behavior
-    Observable               # ordinary sensor acquisition
-    -> feedback -> retained connection -> existing GR00T policy
-    -> state snapshots -> rolling Mid360 -> Point-LIO -> mapping/planning
+external controller -> G1Connection(motors) -> hardware motor DDS
+                                          -> SimRobotClient.set_motor_command
+                                               -> shared world
 ```
 
-There is one robot-local simulation file,
-[G1Model](/dimos/robot/unitree/g1/simulation.py). It subclasses robosuite's
-`RobotModel`, loads the existing 29-DOF MJCF and uses upstream placement methods.
-Motor names and the GR00T home pose/gains come from the existing hardware/control
-definitions. The importer preserves the MJCF's physical parameters; robosuite's
-default joint tuning is not allowed to alter the G1 model.
-
-The connection attaches that model to DimOS using this actual binding:
-
-```python
-from functools import partial
-from pathlib import Path
-
-from dimos.robot.unitree.g1.simulation import G1Model, g1_model
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
-from dimos.sim2.spec import SimulatedRobot
-
-
-def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
-    return SimulatedRobot(
-        robot_id="g1",
-        model=partial(g1_model, scene),
-        joint_names=G1Model.public_motor_names,
-        frame_id=config.frame_id,
-        control_imu=G1Model.control_imu,
-        startup_kp=G1Model.startup_kp,
-        startup_kd=G1Model.startup_kd,
-        wait_for_first_command=True,
-    )
-```
-
-`SimulatedRobot` describes the **connection binding**: public motor names, units,
-frames and startup/watchdog behavior. Geometry, joint anatomy and actuator behavior come from the existing MJCF;
-robosuite supplies model composition and placement methods. There is no parallel `Joint`,
-`RobotConfig`, `RobotInstance` or `WorldConfig` simulation model schema.
+Stock simulation reuses the existing G1 ONNX locomotion policy. This is a learned
+surrogate for body-velocity commands, not execution of Unitree firmware. Vendor
+arm gestures, stand/lie transitions and firmware mode requests are unsupported
+in simulation and return an explicit error. They do not report simulated success.
+The stock policy does not load GR00T. Each instance owns its policy state; no
+process-global MuJoCo control callback is used.
 
 ### Where simulation attaches
 
 1. [ModuleCoordinator.build()](/dimos/core/coordination/module_coordinator.py)
-   sees `--simulation mujoco` after configuration is resolved and calls
-   [attach_simulation()](/dimos/sim2/composition.py).
-2. The connection's
-   [simulated_robot()](/dimos/robot/unitree/g1/wholebody_connection.py) hook
-   supplies the model binding. Attachment adds `SimulationModule` with
-   `MotorScene` and injects a `SimulatedDeviceFactory` into that connection's
-   `simulation_device` config.
-3. [ConnectionModule.connect()](/dimos/control/connection/connection_module.py)
-   starts that injected device. Without simulation, it starts the hardware device.
-   The connection keeps the same command validation, halt behavior and public ports.
+   resolves configuration and calls
+   [attach_simulation()](/dimos/sim2/composition.py) for `--simulation mujoco`.
+2. The collector calls `describe_simulated_robot(resolved_config)` on every
+   connection satisfying `RobotConnectionSpec`. The returned `RobotInstanceSpec`
+   describes the asset, instance pose, command interface and optional stock
+   locomotion controller. It contains no robosuite model object.
+3. All instances are assembled into one world. Each retained connection receives
+   a `SimRobotClient` factory for its own command/feedback topics. The client uses
+   the selected transport, Zenoh by default, without becoming another module.
+4. Camera/lidar workers attach to that world. Standalone sensor-driver bindings
+   retain their names/remaps. Explicit simulated sensor workers are collected
+   without duplication. Unreal independently reads snapshots.
 
-Supported standalone sensor drivers are replaced under their existing instance
-names/remaps.
-Automatic attachment currently supports one PD motor connection; explicit
-`MotorScene` composition supports multiple models.
+Source: [G1 connection](/dimos/robot/unitree/g1/connection.py),
+[G1 model declarations](/dimos/robot/unitree/g1/model.py),
+[shared model importer](/dimos/sim2/model.py).
 
-## Add another robot
+### Multiple instances
 
-For a robot already supplied by robosuite, use its existing model/task directly.
-For an existing DimOS hardware application:
+```python
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.g1.connection import G1Connection
 
-1. Supply a robosuite `RobotModel` in the robot package, reusing the physical
-   model asset. Existing upstream models need no new anatomy definition. When
-   importing a raw MJCF, preserve and check its authored physics: robosuite
-   changes some joint defaults unless the model restores them.
-2. Add the connection's `simulated_robot()` binding. Its public motor order must
-   match the model's actuator order; optional scales/offsets express hardware
-   units. Declare native position-only joints so halt preserves their positions.
-3. Reuse the same application blueprint. No robot-specific world class is needed.
 
-This shares the application, connection and control configuration across real
-and sim. It does **not** yet make every robot description a single source:
-G1's URDF and simulation MJCF remain separate existing assets. Adding a robot
-without a suitable MJCF still requires creating and validating that physics
-model; the binding does not generate it from the hardware connection.
+two_g1s = autoconnect(
+    G1Connection.blueprint(sim_position=(0.0, 0.0, 0.0)).namespace("left"),
+    G1Connection.blueprint(sim_position=(2.0, 0.0, 0.0)).namespace("right"),
+).global_config(simulation="mujoco", viewer="none")
+```
 
-`MotorScene` owns its controllers. The runtime configures public motor units on
-those same controllers. `MotorController` derives joint/actuator indices and
-native servo behavior from the compiled model. It preserves full PD plus feedforward commands; it does not
-replace the external locomotion policy with an upstream position or IK controller.
-Startup holds the model's initial configuration. After control begins, G1 halt
-and expired commands damp the motors until a new command or reset.
+Namespaces separate public streams, private client topics and model identities.
+Sensor ownership must be unambiguous; two robots do not implicitly share every
+sensor. The simulator buffers each robot's latest command and applies it on its
+next world tick. Command expiry stops stock velocity commands or damps externally
+controlled effort motors.
+
+### Robot descriptions and adding a robot
+
+A new robot provides its model asset and connection description; the shared
+importer handles robosuite naming, mesh resolution and preservation of authored
+joint/material settings. No robot-specific simulator or robosuite subclass is
+required. A velocity interface additionally needs a locomotion controller; a
+motor interface receives commands from the application's controller.
+
+The G1 description reuses public motor names and existing assets. Its two existing
+policy plants remain explicit: the stock velocity policy uses its position-servo
+MJCF, while external motor control uses the torque-actuated MJCF. Neither is
+regenerated from the planning URDF yet. These models have differing revisions,
+masses and joint offsets; consolidating them requires choosing authoritative
+anatomy and validating both policies. This integration does not claim that the
+physical model has become a single source of truth.
 
 ## Sensors and reset
 

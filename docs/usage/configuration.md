@@ -87,9 +87,9 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 
 | Former global setting | Owner / replacement |
 |---|---|
-| `unitree_aes_128_key` | `aes_128_key` on `GO2Connection`, `Go2FleetConnection`, `G1Connection`, or `G1HighLevelWebRtc`, as applicable |
+| `unitree_aes_128_key` | `aes_128_key` on `GO2Connection`, `Go2FleetConnection`, `G1Connection`, as applicable |
 | `obstacle_avoidance`, `replay_exit` | Go2 connection config (including fleet) |
-| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on `GO2Connection` or `G1SimConnection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
+| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on legacy `GO2Connection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
 | `dimsim_scene`, `dimsim_port`, `dimsim_headless`, `dimsim_ready_timeout` | `go2connection.dimsim.scene`, `.port`, `.headless`, `.ready_timeout` |
 | `mujoco_global_costmap_from_occupancy`, `mujoco_global_map_from_pointcloud` | `map.global_costmap_from_occupancy`, `map.global_map_from_pointcloud` |
 | `nerf_speed` | `replanningastarplanner.nerf_speed` |
