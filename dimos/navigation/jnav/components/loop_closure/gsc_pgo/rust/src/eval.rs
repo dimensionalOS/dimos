@@ -43,7 +43,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 mod memory2;
-use memory2::{for_each_scan, read_odometry, OdomRow};
+use memory2::{for_each_scan, read_odometry, OdomRow, Rigid};
 
 /// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
 /// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
@@ -56,6 +56,8 @@ struct EvalConfig {
     pgo: PgoConfig,
     /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
+    /// Multiplies every stated odom_*_drift_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
+    odom_drift_scale: f64,
 }
 
 impl Default for EvalConfig {
@@ -63,6 +65,7 @@ impl Default for EvalConfig {
         EvalConfig {
             pgo: PgoConfig::default(),
             max_scan_queue: 5,
+            odom_drift_scale: 1.0,
         }
     }
 }
@@ -156,13 +159,6 @@ struct Args {
     config_path: Option<PathBuf>,
     output: PathBuf,
     scan_stride: usize,
-    /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
-    /// points, for lidar streams not already expressed in the odom body frame.
-    lidar_tf: Option<[f64; 7]>,
-    /// new-body pose in the odom body frame as "x,y,z,qx,qy,qz,qw": re-expresses every odom
-    /// pose and scan in that frame, e.g. a level frame for an odometry whose body is a tilted
-    /// sensor (FAST-LIO on a pitched Mid-360), since closure search assumes level clouds.
-    body_tf: Option<[f64; 7]>,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
@@ -281,16 +277,6 @@ fn read_world_positions(
     Ok(fixes)
 }
 
-fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
-    let values: Vec<f64> = text
-        .split(',')
-        .map(|part| part.trim().parse::<f64>().map_err(|e| format!("{e}")))
-        .collect::<Result<_, _>>()?;
-    values
-        .try_into()
-        .map_err(|_| "--lidar-tf needs 7 comma-separated values: x,y,z,qx,qy,qz,qw".to_string())
-}
-
 fn parse_args() -> Result<Args, String> {
     let mut db = None;
     let mut odom_stream = None;
@@ -298,8 +284,6 @@ fn parse_args() -> Result<Args, String> {
     let mut config_path = None;
     let mut output = None;
     let mut scan_stride = 1usize;
-    let mut lidar_tf = None;
-    let mut body_tf = None;
     let mut event_dump = None;
     let mut odom_scale = 1.0;
     let mut live = false;
@@ -317,8 +301,6 @@ fn parse_args() -> Result<Args, String> {
             "--config" => config_path = Some(PathBuf::from(value()?)),
             "--output" => output = Some(PathBuf::from(value()?)),
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
-            "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
             "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
@@ -347,8 +329,6 @@ fn parse_args() -> Result<Args, String> {
         config_path,
         output: output.ok_or("--output is required")?,
         scan_stride: scan_stride.max(1),
-        lidar_tf,
-        body_tf,
         event_dump,
         odom_scale,
         live,
@@ -373,27 +353,87 @@ fn unique_frame(frames: impl Iterator<Item = String>, what: &str) -> Result<Stri
     }
 }
 
-/// GscPgo transforms each keyframe's body cloud by its (body→world) pose, so the
-/// lidar must already be in the odom's body/child frame. We apply no tf, so
-/// verify it here. `PoseStamped` odom carries no child frame — then we can only
-/// warn, since there's nothing to compare against.
-fn check_same_frame(lidar_frame: &str, odom_body_frame: &str) -> Result<(), String> {
-    if odom_body_frame.is_empty() {
-        eprintln!(
-            "pgo-eval: WARNING: odom payload has no child frame (PoseStamped); \
-             cannot verify the lidar frame {lidar_frame:?} matches the odom body frame. \
-             Assuming they match (no tf transform is applied)."
-        );
-        return Ok(());
+/// The level robot body frame GscPgo works in: odometry poses and lidar points are re-expressed in it through the
+/// recording's tf (closure search assumes level clouds, so a pitched sensor's own frame will not do).
+const BODY_FRAME: &str = "base_link";
+
+/// Per odometry (by the odom child frame it moves), its ideal stated drift: [per sqrt m, per sqrt rad] for xy, z, yaw,
+/// tilt. Mid-360 (FAST-LIO / Point-LIO) is the Config default; Go2 L1 leg odometry is its calibrated drift.
+fn stated_drift(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
+    match odom_child_frame {
+        "mid360_link" => {
+            let c = PgoConfig::default();
+            Some([
+                [c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad],
+                [c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad],
+                [c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad],
+                [c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad],
+            ])
+        }
+        // calibrated Go2 L1 drift (Go2 leg odometry, clouds in l1_link)
+        "l1_link" => Some([
+            [2.948197514740707e-4, 4.787993406292453e-3],
+            [2.3613682139832578e-4, 1.419763443298345e-3],
+            [1.1336520957451434e-6, 9.817427149152942e-3],
+            [3.837937416144e-4, 1.8328789396925035e-3],
+        ]),
+        _ => None,
     }
-    if lidar_frame != odom_body_frame {
-        return Err(format!(
-            "lidar frame {lidar_frame:?} != odom body frame {odom_body_frame:?}; \
-             GscPgo needs both in the same frame and no tf transform is applied. \
-             Feed a lidar stream already expressed in {odom_body_frame:?}."
-        ));
+}
+
+const DRIFT_KEYS: [[&str; 2]; 4] = [
+    ["odom_xy_drift_per_sqrt_m", "odom_xy_drift_per_sqrt_rad"],
+    ["odom_z_drift_per_sqrt_m", "odom_z_drift_per_sqrt_rad"],
+    ["odom_yaw_drift_per_sqrt_m", "odom_yaw_drift_per_sqrt_rad"],
+    ["odom_tilt_drift_per_sqrt_m", "odom_tilt_drift_per_sqrt_rad"],
+];
+
+/// The eval config: `--config` JSON over the odometry's stated drift (`stated_drift`) over the defaults, then every
+/// drift term times `odom_drift_scale`.
+fn load_config(
+    path: Option<&std::path::Path>,
+    odom_child_frame: &str,
+) -> Result<EvalConfig, String> {
+    let mut overlay = match path {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{path:?}: {e}"))?;
+            serde_json::from_str(&text).map_err(|e| format!("config {path:?}: {e}"))?
+        }
+        None => serde_json::Value::Object(Default::default()),
+    };
+    let fields = overlay
+        .as_object_mut()
+        .ok_or("--config must be a JSON object")?;
+    match stated_drift(odom_child_frame) {
+        Some(drift) => {
+            for (keys, values) in DRIFT_KEYS.iter().zip(drift) {
+                for (key, value) in keys.iter().zip(values) {
+                    fields.entry(key.to_string()).or_insert(value.into());
+                }
+            }
+        }
+        None => eprintln!(
+            "pgo-eval: WARNING: no stated drift known for odometry child frame {odom_child_frame:?}; \
+             using the Config defaults (Mid-360) unless --config gives them"
+        ),
     }
-    Ok(())
+    let mut config: EvalConfig =
+        serde_json::from_value(overlay).map_err(|e| format!("config: {e}"))?;
+    let k = config.odom_drift_scale;
+    let c = &mut config.pgo;
+    for term in [
+        &mut c.odom_xy_drift_per_sqrt_m,
+        &mut c.odom_xy_drift_per_sqrt_rad,
+        &mut c.odom_z_drift_per_sqrt_m,
+        &mut c.odom_z_drift_per_sqrt_rad,
+        &mut c.odom_yaw_drift_per_sqrt_m,
+        &mut c.odom_yaw_drift_per_sqrt_rad,
+        &mut c.odom_tilt_drift_per_sqrt_m,
+        &mut c.odom_tilt_drift_per_sqrt_rad,
+    ] {
+        *term *= k;
+    }
+    Ok(config)
 }
 
 /// Latest odom sample at or before `ts` (the module pairs each scan with the
@@ -412,45 +452,51 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
 fn run() -> Result<(), String> {
     let args = parse_args()?;
 
-    let config: EvalConfig = match &args.config_path {
-        Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{path:?}: {e}"))?;
-            serde_json::from_str(&text).map_err(|e| format!("config {path:?}: {e}"))?
-        }
-        None => EvalConfig::default(),
-    };
-
     let connection =
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
     let mut odoms = read_odometry(&connection, &args.odom_stream)?;
+    let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
+    let odom_child_frame = unique_frame(
+        odoms.iter().map(|row| row.child_frame_id.clone()),
+        "odom child",
+    )?;
+    let config = load_config(args.config_path.as_deref(), &odom_child_frame)?;
+    let tf_tree = memory2::TfTree::read(&connection)?;
+    // the body's pose in the odom child frame: each odom pose (odom -> child) becomes odom -> child * child -> body. A
+    // PoseStamped odom names no child, so it is taken as the body already (and its clouds as in the body frame).
+    let child_to_body = if odom_child_frame.is_empty() {
+        eprintln!(
+            "pgo-eval: WARNING: odom payload has no child frame (PoseStamped); \
+             taking its poses and the lidar clouds as already in the body frame (no tf applied)"
+        );
+        Rigid::identity()
+    } else {
+        tf_tree
+            .lookup(&odom_child_frame, BODY_FRAME)
+            .map_err(|e| format!("odometry child frame -> {BODY_FRAME}: {e}"))?
+    };
     for row in &mut odoms {
         row.translation = row.translation.map(|v| v * args.odom_scale);
-    }
-    let body_tf = args
-        .body_tf
-        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
-    if let Some((body_rotation, body_translation)) = &body_tf {
-        for row in &mut odoms {
+        if !child_to_body.is_identity() {
             row.translation = mat3::add(
                 &row.translation,
-                &mat3::mat_vec(&row.rotation, body_translation),
+                &mat3::mat_vec(&row.rotation, &child_to_body.translation),
             );
-            row.rotation = mat3::mat_mul(&row.rotation, body_rotation);
+            row.rotation = mat3::mat_mul(&row.rotation, &child_to_body.rotation);
             let [qw, qx, qy, qz] = mat3::quat_from_mat(&row.rotation);
             row.quaternion_xyzw = [qx, qy, qz, qw];
         }
     }
-
-    let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
-    let odom_body_frame = unique_frame(
-        odoms.iter().map(|row| row.child_frame_id.clone()),
-        "odom child",
-    )?;
-    let lidar_tf = args
-        .lidar_tf
-        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
+    let [qw, qx, qy, qz] = mat3::quat_from_mat(&child_to_body.rotation);
+    eprintln!(
+        "pgo-eval: odom {odom_child_frame:?} -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+        child_to_body.translation,
+        [qx, qy, qz, qw]
+    );
+    // points in the lidar's frame -> body, looked up once its frame is known (the first scan)
+    let mut lidar_to_body: Option<Rigid> = None;
 
     let odom_rows: Vec<[f64; 8]> = odoms
         .iter()
@@ -513,9 +559,21 @@ fn run() -> Result<(), String> {
             }
             Some(_) => {}
             None => {
-                if args.lidar_tf.is_none() {
-                    check_same_frame(&scan.frame_id, &odom_body_frame)?;
-                }
+                let to_body = if odom_child_frame.is_empty() {
+                    Rigid::identity()
+                } else {
+                    tf_tree
+                        .lookup(BODY_FRAME, &scan.frame_id)
+                        .map_err(|e| format!("lidar frame -> {BODY_FRAME}: {e}"))?
+                };
+                let [qw, qx, qy, qz] = mat3::quat_from_mat(&to_body.rotation);
+                eprintln!(
+                    "pgo-eval: lidar points {:?} -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+                    scan.frame_id,
+                    to_body.translation,
+                    [qx, qy, qz, qw]
+                );
+                lidar_to_body = Some(to_body);
                 lidar_frame = Some(scan.frame_id.clone());
             }
         }
@@ -529,17 +587,9 @@ fn run() -> Result<(), String> {
         scans_processed += 1;
 
         let mut cloud = scan.points;
-        if let Some((rotation, translation)) = &lidar_tf {
-            cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
-        }
-        if let Some((body_rotation, body_translation)) = &body_tf {
-            let inverse = mat3::transpose(body_rotation);
-            let offset = mat3::mat_vec(&inverse, body_translation);
-            cloud = pointcloud::transform_cloud(
-                &cloud,
-                &inverse,
-                &[-offset[0], -offset[1], -offset[2]],
-            );
+        let to_body = lidar_to_body.as_ref().expect("set with the lidar frame");
+        if !to_body.is_identity() {
+            cloud = pointcloud::transform_cloud(&cloud, &to_body.rotation, &to_body.translation);
         }
 
         let mut pose = PoseWithTime::new(latest.rotation, latest.translation);
