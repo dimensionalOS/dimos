@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import threading
 import time
 from typing import Any
@@ -47,6 +48,13 @@ _SERVO = 1
 _VELOCITY = 4
 _READY = 0
 _STOPPED = 4
+
+# What a motion command returns while the arm is stopped (state 4 or 5).
+_NOT_READY = 9
+# A stopped arm is made ready again at most once per _REARM_INTERVAL_S; while
+# it still cannot move, motion commands are dropped for _NOT_READY_BACKOFF_S.
+_REARM_INTERVAL_S = 1.0
+_NOT_READY_BACKOFF_S = 0.5
 
 #: The oldest firmware that reports joint speeds (``get_joint_states``).
 MIN_FIRMWARE = (1, 9, 0)
@@ -103,7 +111,9 @@ class XArmConnection(ConnectionModule):
     ``velocity_command``, in rad and rad/s; the gripper is its URDF joint
     ``drive_joint`` (0 rad open, 0.85 rad closed). ``joint_state`` goes out
     about 100 times a second, the gripper in a message of its own. Once the
-    arm reports an error it takes no command until ``clear_errors()``.
+    arm reports an error it takes no command until ``clear_errors()``. An arm
+    stopped from outside DimOS (xArm Studio, its stop button) with no error
+    or warning is made ready again by the next motion command.
     """
 
     config: XArmConfig
@@ -122,6 +132,10 @@ class XArmConnection(ConnectionModule):
         self._mode: int | None = None
         # Set when the arm reports an error; only clear_errors() clears it.
         self._fault: str | None = None
+        # time.monotonic() of the last re-arm, and until when motion commands
+        # are dropped because the arm answered not ready.
+        self._rearmed_at = float("-inf")
+        self._drop_until = float("-inf")
         self._gripper_sent: float | None = None
         # The joints' latest measured positions (rad), replaced whole by the
         # reading thread.
@@ -232,9 +246,9 @@ class XArmConnection(ConnectionModule):
 
         if jogging:
             self._use_mode(_VELOCITY)
-            _check(
+            self._send_motion(
                 "vc_set_joint_velocity",
-                self._sdk.vc_set_joint_velocity(
+                lambda: self._sdk.vc_set_joint_velocity(
                     [speed or 0.0 for speed in speeds],
                     is_radian=True,
                     # The arm stops by itself if no newer speed arrives in time.
@@ -243,15 +257,18 @@ class XArmConnection(ConnectionModule):
             )
         elif angles is not None:
             self._use_mode(_SERVO)
-            _check("set_servo_angle_j", self._sdk.set_servo_angle_j(angles, is_radian=True))
+            self._send_motion(
+                "set_servo_angle_j", lambda: self._sdk.set_servo_angle_j(angles, is_radian=True)
+            )
         if gripper is not None and gripper != self._gripper_sent:
             pulses = _GRIPPER_OPEN_SDK * (1.0 - gripper / _GRIPPER_CLOSED_RAD)
             _check("set_gripper_position", self._sdk.set_gripper_position(pulses, wait=False))
             self._gripper_sent = gripper
 
     def halt(self) -> None:
-        # In servo mode the arm already holds its last target.
-        if self._mode == _VELOCITY:
+        # In servo mode the arm already holds its last target, and an arm that
+        # just answered not ready is stopped.
+        if self._mode == _VELOCITY and time.monotonic() >= self._drop_until:
             zeros = [0.0] * len(self._joints)
             _check("vc_set_joint_velocity", self._sdk.vc_set_joint_velocity(zeros, is_radian=True))
 
@@ -279,6 +296,34 @@ class XArmConnection(ConnectionModule):
         _check("set_mode", self._sdk.set_mode(mode))
         _check("set_state", self._sdk.set_state(_READY))
         self._mode = mode
+
+    def _send_motion(self, call: str, send: Callable[[], int]) -> None:
+        """Send one motion command with ``send``, and raise if the arm refuses it.
+
+        If the arm answers not ready and has no error or warning, it was
+        stopped from outside DimOS: it is made ready in its mode again, at most
+        once a second, and the command sent once more. Motors switched off stay
+        off. While it still cannot
+        move, motion commands are dropped for half a second, so slow refused
+        calls do not hold up the commands behind them. Errors and warnings are
+        left for ``clear_errors()``.
+        """
+        now = time.monotonic()
+        if now < self._drop_until:
+            raise XArmError(f"the arm is not ready to move; {call} dropped")
+        code = send()
+        if code == _NOT_READY and not (self._sdk.error_code or self._sdk.warn_code):
+            if now - self._rearmed_at >= _REARM_INTERVAL_S:
+                self._rearmed_at = now
+                logger.warning(
+                    "XArmConnection: the arm was stopped outside DimOS; making it ready again"
+                )
+                _check("set_mode", self._sdk.set_mode(self._mode))
+                _check("set_state", self._sdk.set_state(_READY))
+                code = send()
+        if code == _NOT_READY:
+            self._drop_until = time.monotonic() + _NOT_READY_BACKOFF_S
+        _check(call, code)
 
     def _check_jump(self, angles: list[float], measured: list[float]) -> None:
         """Refuse joint targets (rad) too far from where the joints are now (rad)."""

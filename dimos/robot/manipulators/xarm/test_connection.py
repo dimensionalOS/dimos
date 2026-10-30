@@ -357,15 +357,47 @@ def test_a_target_past_the_jump_guard_is_refused_and_nothing_reaches_the_sdk(
 
 def test_a_refused_sdk_call_halts_the_arm_and_shows_in_status(rig: Callable[..., Rig]) -> None:
     r = rig()
-    r.sdk.fail["vc_set_joint_velocity"] = 9
+    r.sdk.fail["vc_set_joint_velocity"] = 12
     r.jog(joint1=0.5)
-    assert "vc_set_joint_velocity returned code 9" in str(r.module.status().last_error)
+    assert "vc_set_joint_velocity returned code 12" in str(r.module.status().last_error)
     # The halt after the failure tells every joint 0 rad/s.
     assert r.sdk.sent("vc_set_joint_velocity")[-1] == (
         "vc_set_joint_velocity",
         (REST,),
         {"is_radian": True},
     )
+
+
+@pytest.mark.parametrize(
+    ("fault", "rearmed"),
+    [({}, True), ({"error_code": 31}, False), ({"warn_code": 11}, False)],
+)
+def test_an_arm_stopped_outside_dimos_is_made_ready_again_unless_it_has_a_fault(
+    rig: Callable[..., Rig], fault: dict[str, int], rearmed: bool
+) -> None:
+    r = rig()
+    # Set straight on the SDK, as if its error callback has not run yet.
+    for name, code in fault.items():
+        setattr(r.sdk, name, code)
+    before = len(r.sdk.calls)
+    # What the arm answers once xArm Studio or its stop button has stopped it.
+    r.sdk.fail["set_servo_angle_j"] = 9
+    r.move(joint1=0.1)
+    if rearmed:
+        assert [(name, args) for name, args, _ in r.sdk.calls[before:]] == [
+            ("set_servo_angle_j", ([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],)),
+            ("set_mode", (1,)),
+            ("set_state", (0,)),
+            ("set_servo_angle_j", ([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],)),
+        ]
+        assert r.module.status().last_error is None
+    else:
+        assert [call[0] for call in r.sdk.calls[before:]] == ["set_servo_angle_j"]
+        assert "returned code 9" in str(r.module.status().last_error)
+        # Still not ready: the next command is dropped before it reaches the SDK.
+        r.move(joint1=0.1)
+        assert len(r.sdk.sent("set_servo_angle_j")) == 1
+        assert "set_servo_angle_j dropped" in str(r.module.status().last_error)
 
 
 def test_the_deadman_halts_a_jog_with_zero_speeds(rig: Callable[..., Rig]) -> None:
