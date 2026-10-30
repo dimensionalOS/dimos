@@ -22,7 +22,6 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unitree_g1_onboard
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
 from dimos.robot.unitree.g1.config import G1
 
 assert G1.height_clearance is not None and G1.width_clearance is not None
@@ -50,5 +49,4 @@ unitree_g1_nav_simple = autoconnect(
         robot_rotation_diameter=g1_rotation_diameter,
     ),
     MovementManager.blueprint(),
-    unitree_g1_vis,
-).global_config(n_workers=10, robot_model="unitree_g1")
+).global_config(n_workers=10, robot_model="unitree_g1", viewer="none")

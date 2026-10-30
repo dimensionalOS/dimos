@@ -24,10 +24,12 @@ import numpy as np
 
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.robot.unitree.g1.velocity_policy import G1_DRIFT_COMPENSATION, G1_PHYSICS_DT
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.policy import POLICY_ACTION_SCALE, POLICY_CONTROL_DT
 from dimos.utils.data import get_data
 
 
@@ -79,11 +81,11 @@ def load_model(
 
     match robot:
         case "unitree_g1":
-            sim_dt = 0.002
+            sim_dt = G1_PHYSICS_DT
         case _:
             sim_dt = 0.005
 
-    ctrl_dt = 0.02
+    ctrl_dt = POLICY_CONTROL_DT
     n_substeps = round(ctrl_dt / sim_dt)
     model.opt.timestep = sim_dt
 
@@ -91,16 +93,16 @@ def load_model(
         "policy_path": (_get_data_dir() / f"{robot}_policy.onnx").as_posix(),
         "default_angles": np.array(model.keyframe("home").qpos[7:]),
         "n_substeps": n_substeps,
-        "action_scale": 0.5,
+        "action_scale": POLICY_ACTION_SCALE,
         "input_controller": input_device,
         "ctrl_dt": ctrl_dt,
     }
 
     match robot:
         case "unitree_go1":
-            policy: OnnxController = Go1OnnxController(**params)
+            policy: OnnxController | G1OnnxController = Go1OnnxController(**params)
         case "unitree_g1":
-            policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
+            policy = G1OnnxController(**params, drift_compensation=G1_DRIFT_COMPENSATION)
         case _:
             raise ValueError(f"Unknown robot policy: {robot}")
 

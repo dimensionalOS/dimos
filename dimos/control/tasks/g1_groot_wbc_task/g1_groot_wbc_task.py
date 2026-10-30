@@ -45,6 +45,7 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.protocol.service.spec import BaseConfig
+from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -54,110 +55,11 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-# The 29 DDS motor names plus the per-joint kp/kd values used with the
-# GR00T-trained policies. Diverging from these on real hardware risks
-# instability because the ONNX models were trained against this control
-# contract.
+# The 29 DDS motor names in policy order; gains and home pose live in groot_config.
 g1_joints = make_humanoid_joints("g1")
 g1_legs_waist = g1_joints[:15]  # indices 0..14 - legs (12) + waist (3)
 g1_arms = g1_joints[15:]  # indices 15..28 - left arm (7) + right arm (7)
 
-G1_GROOT_KP: list[float] = [
-    150.0,
-    150.0,
-    150.0,
-    200.0,
-    40.0,
-    40.0,  # left leg
-    150.0,
-    150.0,
-    150.0,
-    200.0,
-    40.0,
-    40.0,  # right leg
-    250.0,
-    250.0,
-    250.0,  # waist
-    100.0,
-    100.0,
-    40.0,
-    40.0,
-    20.0,
-    20.0,
-    20.0,  # left arm
-    100.0,
-    100.0,
-    40.0,
-    40.0,
-    20.0,
-    20.0,
-    20.0,  # right arm
-]
-G1_GROOT_KD: list[float] = [
-    2.0,
-    2.0,
-    2.0,
-    4.0,
-    2.0,
-    2.0,  # left leg
-    2.0,
-    2.0,
-    2.0,
-    4.0,
-    2.0,
-    2.0,  # right leg
-    5.0,
-    5.0,
-    5.0,  # waist
-    5.0,
-    5.0,
-    2.0,
-    2.0,
-    2.0,
-    2.0,
-    2.0,  # left arm
-    5.0,
-    5.0,
-    2.0,
-    2.0,
-    2.0,
-    2.0,
-    2.0,  # right arm
-]
-
-# Default joint angles for all 29 G1 joints. The policy treats these as
-# its zero-offset pose.
-_DEFAULT_POSITIONS_29 = [
-    -0.1,
-    0.0,
-    0.0,
-    0.3,
-    -0.2,
-    0.0,  # left leg
-    -0.1,
-    0.0,
-    0.0,
-    0.3,
-    -0.2,
-    0.0,  # right leg
-    0.0,
-    0.0,
-    0.0,  # waist
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,  # left arm (not driven by policy)
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,
-    0.0,  # right arm (not driven by policy)
-]
 
 _SINGLE_OBS_DIM = 86
 _OBS_HISTORY_LEN = 6
@@ -230,7 +132,7 @@ class G1GrootWBCTaskConfig:
     walk_onnx: str | Path
     joint_names: list[str]
     all_joint_names: list[str]
-    default_positions_29: list[float] = field(default_factory=lambda: list(_DEFAULT_POSITIONS_29))
+    default_positions_29: list[float] = field(default_factory=lambda: list(G1_GROOT_HOME))
     priority: int = 50
     decimation: int = 10
     action_scale: float = 0.25

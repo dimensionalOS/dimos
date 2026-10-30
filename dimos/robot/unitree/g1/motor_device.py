@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 low-level DDS Module: rt/lowstate (sub) + rt/lowcmd (pub), unitree_hg IDL.
-
-Streams: motor_states (Out[JointState]), imu (Out[Imu]),
-motor_command (In[MotorCommandArray]). 29 motors, ordering from
-make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right arm).
-"""
+"""G1 DDS device: motor commands and coherent motor/IMU feedback."""
 
 from __future__ import annotations
 
@@ -25,41 +20,30 @@ from dataclasses import dataclass
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pydantic import Field
-from reactivex.disposable import Disposable
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.components import make_humanoid_joints
+from dimos.control.connection.device import Feedback
+from dimos.control.contract.convert import motor_command_from_values
+from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
     from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
     from unitree_sdk2py.utils.crc import CRC
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.components import make_humanoid_joints
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.utils.logging_config import setup_logger
+    from dimos.robot.unitree.g1.connection import G1ConnectionConfig
 
 logger = setup_logger()
 
 _NUM_MOTORS = 29
-_NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used
-# Default mode_machine for the 29-DOF G1 gear variant. Users can override
-# G1WholeBodyConnectionConfig.mode_machine for other firmware/hardware
-# variants.
-_MODE_MACHINE_G1: int = 5
-
-# Joint names sourced from the canonical helper. Order matches the motor index
-# convention above. Single-source-of-truth so any coordinator-side adapter built
-# from make_humanoid_joints("g1") agrees on the wire-level name -> motor-index mapping.
+_NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used.
 G1_JOINT_NAMES: list[str] = make_humanoid_joints("g1")
 assert len(G1_JOINT_NAMES) == _NUM_MOTORS
 
@@ -80,20 +64,6 @@ def _imu_from_unitree_wxyz(
         frame_id=frame_id,
         ts=ts,
     )
-
-
-class G1WholeBodyConnectionConfig(ModuleConfig):
-    network_interface: str = Field(default="")
-    release_sport_mode: bool = True
-    publish_rate_hz: float = 500.0
-    frame_id: str = "g1_pelvis"
-    mode_machine: int = _MODE_MACHINE_G1
-    # Stiffness soft-start on taking low-level control: the first commands go
-    # out with full damping (kd) but kp and tau scaled in over this window,
-    # mirroring the remote's damp -> lock-stand feel. Full commanded stiffness
-    # in the very first frame slams the robot from wherever it hangs to the
-    # commanded pose. 0 disables.
-    soft_start_seconds: float = Field(default=3.0, ge=0.0, allow_inf_nan=False)
 
 
 @dataclass(frozen=True)
@@ -117,17 +87,13 @@ class G1LowStateSnapshot:
     accelerometer: tuple[float, float, float]
 
 
-class G1WholeBodyConnection(Module):
-    """G1 humanoid Module - owns the DDS connection in its own worker."""
+class G1MotorDevice:
+    """Unitree DDS motor IO owned by a retained connection module."""
 
-    config: G1WholeBodyConnectionConfig
-
-    motor_command: In[MotorCommandArray]
-    motor_states: Out[JointState]
-    imu: Out[Imu]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, config: G1ConnectionConfig, feedback: Feedback) -> None:
+        self._config = config
+        self._feedback = feedback
+        self._joint_names = make_humanoid_joints(config.source)
 
         self._publisher: ChannelPublisher | None = None
         self._subscriber: ChannelSubscriber | None = None
@@ -147,10 +113,7 @@ class G1WholeBodyConnection(Module):
         self._soft_start_t0: float | None = None
         self._soft_start_done = False
 
-    @rpc
     def start(self) -> None:
-        super().start()
-
         # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
             ChannelFactoryInitialize,
@@ -161,7 +124,7 @@ class G1WholeBodyConnection(Module):
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
         from unitree_sdk2py.utils.crc import CRC
 
-        nic = self.config.network_interface
+        nic = self._config.network_interface
         logger.info(f"Initializing DDS (G1 wholebody) interface={nic!r}...")
         try:
             if nic:
@@ -186,7 +149,7 @@ class G1WholeBodyConnection(Module):
         self._low_cmd = unitree_hg_msg_dds__LowCmd_()
         self._low_cmd.mode_pr = 0  # PR (pitch/roll) mode
         # mode_machine is a static value for a given robot variant.
-        self._mode_machine = int(self.config.mode_machine)
+        self._mode_machine = int(self._config.mode_machine)
         self._low_cmd.mode_machine = self._mode_machine
         for i in range(_NUM_MOTOR_SLOTS):
             self._low_cmd.motor_cmd[i].mode = 0x01  # enable
@@ -198,26 +161,26 @@ class G1WholeBodyConnection(Module):
 
         self._crc = CRC()
 
-        if self.config.release_sport_mode:
+        if self._config.release_sport_mode:
             logger.info("Releasing sport mode...")
             self._release_sport_mode()
         else:
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
-        logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
+        logger.info("G1 motor device connected", mode_machine=self._mode_machine)
+
+        self._stop_event.clear()
+        self._mode_machine_verified = False
 
         # Fresh soft-start every time control is (re)acquired.
         self._soft_start_t0 = None
         self._soft_start_done = False
-
-        self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
 
         self._publish_thread = Thread(
             target=self._publish_loop, name="g1-wholebody-pump", daemon=True
         )
         self._publish_thread.start()
 
-    @rpc
     def stop(self) -> None:
         self._stop_event.set()
         if self._publish_thread is not None and self._publish_thread.is_alive():
@@ -270,8 +233,7 @@ class G1WholeBodyConnection(Module):
         self._mode_machine = None
         self._crc = None
 
-        logger.info("G1WholeBodyConnection disconnected")
-        super().stop()
+        logger.info("G1 motor device disconnected")
 
     def _drain_low_state(self) -> None:
         """Pull the freshest LowState frame off the subscriber and stash it."""
@@ -339,31 +301,33 @@ class G1WholeBodyConnection(Module):
     def _publish_motor_state_and_imu(
         self, now: float, frame_id: str, sample: G1LowStateSnapshot
     ) -> None:
-        self.motor_states.publish(
+        self._feedback(
+            "motor_states",
             JointState(
                 ts=now,
                 frame_id=frame_id,
-                name=G1_JOINT_NAMES,
+                name=self._joint_names,
                 position=sample.positions,
                 velocity=sample.velocities,
                 effort=sample.efforts,
-            )
+            ),
         )
         # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
-        self.imu.publish(
+        self._feedback(
+            "imu",
             _imu_from_unitree_wxyz(
                 sample.quaternion,
                 sample.gyroscope,
                 sample.accelerometer,
                 frame_id=frame_id,
                 ts=now,
-            )
+            ),
         )
 
     def _publish_loop(self) -> None:
-        period = 1.0 / float(self.config.publish_rate_hz)
+        period = 1.0 / float(self._config.publish_rate_hz)
         next_tick = time.perf_counter()
-        frame_id = self.config.frame_id
+        frame_id = self._config.frame_id
 
         while not self._stop_event.is_set():
             self._drain_low_state()
@@ -380,7 +344,7 @@ class G1WholeBodyConnection(Module):
 
     def _soft_start_scale(self, now: float) -> float:
         """Stiffness scale in [0, 1] for this command frame. Caller holds the lock."""
-        duration = self.config.soft_start_seconds
+        duration = self._config.soft_start_seconds
         if duration <= 0.0:
             return 1.0
         if self._soft_start_t0 is None:
@@ -395,10 +359,9 @@ class G1WholeBodyConnection(Module):
             logger.info("Soft-start complete - full commanded stiffness")
         return scale
 
-    def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
-            return
+    def write(self, values: dict[str, float]) -> None:
+        """Send a checked complete PD command in the G1's fixed motor order."""
+        msg = motor_command_from_values(values, self._joint_names)
 
         with self._lock:
             if (
@@ -427,6 +390,22 @@ class G1WholeBodyConnection(Module):
 
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
+
+    def halt(self) -> None:
+        """Immediately send damping, leaving DDS open for a later command."""
+        with self._lock:
+            if self._publisher is None or self._low_cmd is None or self._crc is None:
+                return
+            for motor in self._low_cmd.motor_cmd[:_NUM_MOTORS]:
+                motor.q = 0.0  # kp is zero, so the position has no stiffness effect.
+                motor.dq = 0.0
+                motor.kp = 0.0
+                motor.kd = self._config.halt_damping
+                motor.tau = 0.0
+            self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+            self._publisher.Write(self._low_cmd)
+            self._soft_start_t0 = None
+            self._soft_start_done = False
 
     def _release_sport_mode(self) -> None:
         """Loop ReleaseMode until MotionSwitcher reports no active controller.

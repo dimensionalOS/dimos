@@ -49,6 +49,10 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 )
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.sim2.sensors.imu.spec import Imu as SimImu
+from dimos.sim2.sensors.lidar.models.mid360.model import Mid360 as SimMid360
+from dimos.sim2.sensors.lidar.spec import Lidar as SimLidar
+from dimos.sim2.sensors.spec import Mount
 from dimos.spec import perception
 
 
@@ -121,11 +125,40 @@ def _resolved_host_ip(config: Mid360Config) -> str | None:
     return resolve_host_ip(config.lidar_ip, config.host_ip, label="Mid360")
 
 
+# The Mid360's IMU sits (11.0, 23.29, -44.12) mm from the laser origin, in the
+# lidar frame (Livox user manual). PointLioConfig.extrinsic_t is this offset seen
+# from the IMU, so a simulated device placed here matches the estimator's default.
+MID360_IMU_OFFSET = (0.011, 0.02329, -0.04412)
+
+
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
+    """Livox Mid360 driver. Under ``--simulation mujoco`` its simulated device replaces it."""
+
     config: Mid360Config
 
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+
+    @staticmethod
+    def simulated_sensor(config: Mid360Config) -> SimLidar:
+        """A rolling Mid360 at ``frame_id`` with its own IMU, publishing ``lidar`` and ``imu``."""
+        imu = (
+            SimImu("imu", Mount(config.frame_id, xyz=MID360_IMU_OFFSET))
+            if config.enable_imu
+            else None
+        )
+        return SimLidar(
+            "mid360",
+            config.frame_id,
+            SimMid360,
+            rate_hz=config.frequency,
+            imu=imu,
+            # The mount site sits inside the robot's own torso mesh; with the robot
+            # visible every ray would end there, below the minimum range. Hiding the
+            # housing per robot (Lidar.excluded_meshes) is the way to turn this on.
+            self_occlusion=False,
+            truth_outputs=False,
+        )
 
     @rpc
     def start(self) -> None:

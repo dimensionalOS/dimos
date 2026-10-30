@@ -38,6 +38,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME
 
 
 class _StubSession:
@@ -209,7 +210,7 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     np.testing.assert_array_equal(obs[10:13], gravity)
     np.testing.assert_allclose(
         obs[13:42],
-        -np.asarray(g1_groot_wbc_task._DEFAULT_POSITIONS_29, dtype=np.float32),
+        -np.asarray(G1_GROOT_HOME, dtype=np.float32),
     )
     np.testing.assert_allclose(obs[42:71], dq * 0.05)
     np.testing.assert_array_equal(obs[71:86], np.zeros(15))
@@ -274,12 +275,12 @@ def test_arm_with_ramp_lerps_from_current_pose_to_policy_default(
 
     out_mid = unarmed_task.compute(_state_at(0.5, joints_29))
     assert out_mid is not None
-    expected_mid = [0.5 * value for value in g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15]]
+    expected_mid = [0.5 * value for value in G1_GROOT_HOME[:15]]
     np.testing.assert_allclose(out_mid.positions, expected_mid, atol=1e-6)
 
     out_end = unarmed_task.compute(_state_at(1.0, joints_29))
     assert out_end is not None
-    np.testing.assert_allclose(out_end.positions, g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15])
+    np.testing.assert_allclose(out_end.positions, G1_GROOT_HOME[:15])
     assert unarmed_task._armed
     assert not unarmed_task._arming
     assert patched_ort == []

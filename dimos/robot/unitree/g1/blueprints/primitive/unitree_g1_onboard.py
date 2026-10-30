@@ -19,8 +19,8 @@ import os
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
 
 # Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_onboard = autoconnect(
@@ -28,6 +28,6 @@ _unitree_g1_onboard = autoconnect(
         host_ip=os.getenv("LIDAR_HOST_IP", "192.168.123.164"),
         lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
     ),
-    G1HighLevelDdsSdk.blueprint(),
-    unitree_g1_vis,
-).global_config(n_workers=12, robot_model="unitree_g1")
+    G1Connection.blueprint(stock_transport="dds"),
+    UnitreeG1SkillContainer.blueprint(),
+).global_config(n_workers=12, robot_model="unitree_g1", viewer="none")
