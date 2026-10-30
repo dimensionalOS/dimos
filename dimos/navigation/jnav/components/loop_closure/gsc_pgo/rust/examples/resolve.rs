@@ -96,15 +96,7 @@ fn main() {
         gnc_variance_scale: config.closure_gnc_var_scale,
         gnc_inlier_probability: config.closure_gnc_inlier_probability,
         huber_k: config.closure_robust_huber_k,
-        pcm_odometry_translation_variance: if pcm {
-            dimos_gsc_pgo::big_picture_fit::motion_variances(
-                &config,
-                config.keyframe_min_distance_meters,
-                config.keyframe_min_rotation_degrees.to_radians(),
-            )[0] * noise
-        } else {
-            0.0
-        },
+        pcm,
         gnc_overtrust_check: config.closure_gnc_overtrust_check,
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),

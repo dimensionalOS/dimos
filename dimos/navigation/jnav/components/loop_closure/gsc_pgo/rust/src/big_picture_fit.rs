@@ -53,8 +53,8 @@ pub struct SolveConfig {
     /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
     /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
-    /// cycles they close with the odometry is held in through GNC (`consistent_closures`); 0 odometry variance = off.
-    pub pcm_odometry_translation_variance: f64,
+    /// cycles they close with the odometry is held in through GNC (`consistent_closures`).
+    pub pcm: bool,
     /// When true, GNC also runs with the Geman-McClure surrogate (Black & Rangarajan 1996; Yang et al. 2020), which
     /// starts at least squares rather than at TLS's odometry-dominated mu near 0, keeping a factor whose whitened
     /// residual at its solution is under the chi-square cutoff. Its verdict replaces TLS's when its solution has the
@@ -275,8 +275,8 @@ pub(crate) fn solve_core(
     };
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut sighting_weights = vec![1.0; sightings.len()];
-    let mut held = if config.pcm_odometry_translation_variance > 0.0 {
-        consistent_closures(&state, &scaled, config)
+    let mut held = if config.pcm {
+        consistent_closures(&state, &scaled, odometry, config)
     } else {
         vec![false; closures.len()]
     };
@@ -644,35 +644,6 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
-    // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
-    // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the odometry edges carry)
-    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
-    let evidence_weights: Vec<f64> = if gm_taken {
-        let kept_closures: Vec<(usize, Edge)> = closures
-            .iter()
-            .zip(&huber)
-            .enumerate()
-            .filter(|(_, (_, &w))| w > 0.0)
-            .map(|(i, (e, _))| (i, *e))
-            .collect();
-        let step_variance =
-            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64;
-        let pcm = SolveConfig {
-            pcm_odometry_translation_variance: step_variance,
-            ..config.clone()
-        };
-        let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
-        let consistent = consistent_closures(&state, &edges, &pcm);
-        let mut weights = vec![0.0; closures.len()];
-        for ((i, _), held) in kept_closures.iter().zip(consistent) {
-            if held {
-                weights[*i] = huber[*i];
-            }
-        }
-        weights
-    } else {
-        huber.clone()
-    };
     // at the stated drift (`evidence_at_stated`), the odometry the evidence reads: each source's variances back over
     // the factor this solve gave them
     let stated_odometry: Option<Vec<Edge>> = config.evidence_at_stated.map(|factor| {
@@ -685,24 +656,34 @@ pub(crate) fn solve_core(
             .collect()
     });
     let odometry = stated_odometry.as_deref().unwrap_or(odometry);
-    // without the gravity factors the evidence reads the odometry and closures' own solve
-    let mut without_gravity = state.clone();
-    if !config.gravity.is_empty() || config.evidence_at_stated.is_some() {
-        levenberg_marquardt(
-            &mut without_gravity,
-            evidence_pattern,
-            odometry,
-            closures,
-            &evidence_weights,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
-            1e-5,
-        );
-    }
-    let odometry_noise_evidence = odometry_noise_evidence(
-        &without_gravity,
+    // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
+    // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the evidence reads the odometry at)
+    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
+    let evidence_weights: Vec<f64> = if gm_taken {
+        let kept_closures: Vec<(usize, Edge)> = closures
+            .iter()
+            .zip(&huber)
+            .enumerate()
+            .filter(|(_, (_, &w))| w > 0.0)
+            .map(|(i, (e, _))| (i, *e))
+            .collect();
+        let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
+        let consistent = consistent_closures(&state, &edges, odometry, config);
+        let mut weights = vec![0.0; closures.len()];
+        for ((i, _), held) in kept_closures.iter().zip(consistent) {
+            if held {
+                weights[*i] = huber[*i];
+            }
+        }
+        weights
+    } else {
+        huber.clone()
+    };
+    // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures, no gravity
+    // factors), and only at that solve's minimum: residuals a solve stopped short of removing are no one's noise
+    let mut evidence_state = state.clone();
+    let converged = levenberg_marquardt(
+        &mut evidence_state,
         evidence_pattern,
         odometry,
         closures,
@@ -711,7 +692,23 @@ pub(crate) fn solve_core(
         &unary_kept,
         sightings,
         &sighting_kept,
+        1e-5,
     );
+    let odometry_noise_evidence = converged
+        .then(|| {
+            odometry_noise_evidence(
+                &evidence_state,
+                evidence_pattern,
+                odometry,
+                closures,
+                &evidence_weights,
+                unary,
+                &unary_kept,
+                sightings,
+                &sighting_kept,
+            )
+        })
+        .flatten();
     Solution {
         odometry_noise_evidence,
         rotations: state.rotation,
@@ -961,12 +958,59 @@ fn odometry_overtrusted(
 
 /// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
 /// through closure A equals its position predicted through B and the odometry between their ends, within the
-/// chi-square cutoff of `gnc_inlier_probability` (3 DOF), the translation variance being both closures' plus the
-/// odometry's over the keyframes between their ends. The set is grown greedily from the best-agreeing closure (an
-/// approximate maximum clique); a set of one is no evidence of agreement, so it holds nothing.
-fn consistent_closures(state: &State, closures: &[Edge], config: &SolveConfig) -> Vec<bool> {
+/// chi-square cutoff of `gnc_inlier_probability` (3 DOF). The disagreement's covariance is the first-order propagation of
+/// every noise on the cycle: both closures' (B's rotation swinging the odometry offset after it) and each odometry step's
+/// between the closures' ends at the variances its edge carries, its translation plus its rotation swinging A.to about
+/// it (a heading error reaches as far as the loop is from where it was made). The set is grown greedily from the
+/// best-agreeing closure (an approximate maximum clique); a set of one is no evidence of agreement, so it holds nothing.
+fn consistent_closures(
+    state: &State,
+    closures: &[Edge],
+    odometry: &[Edge],
+    config: &SolveConfig,
+) -> Vec<bool> {
     let n = closures.len();
     let cutoff = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
+    let world = |rotation: &Mat3, variances: &[f64]| -> Mat3 {
+        let scaled: Mat3 =
+            std::array::from_fn(|i| std::array::from_fn(|j| rotation[i][j] * variances[j]));
+        mat3::mat_mul(&scaled, &mat3::transpose(rotation))
+    };
+    // prefix sums over the odometry steps (step k from keyframe k to k + 1) of, in world axes, the translation
+    // covariance T, the rotation covariance A, A P^T and P A P^T (P = skew of the step's end position), so a segment's
+    // covariance at a point q, sum T + [q - p]x A [q - p]x^T, is Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T
+    let steps = state.position.len().saturating_sub(1);
+    let mut sums = vec![[[[0.0; 3]; 3]; 4]; steps + 1];
+    for e in odometry
+        .iter()
+        .filter(|e| e.to == e.from + 1 && e.to <= steps)
+    {
+        let rotation = &state.rotation[e.from];
+        let a = world(rotation, &e.variances[..3]);
+        let p = mat3::skew(&state.position[e.to]);
+        let ap = mat3::mat_mul(&a, &mat3::transpose(&p));
+        let pap = mat3::mat_mul(&p, &ap);
+        sums[e.to] = [world(rotation, &e.variances[3..]), a, ap, pap];
+    }
+    for k in 1..=steps {
+        for m in 0..4 {
+            sums[k][m] = mat3::add_mat(&sums[k][m], &sums[k - 1][m]);
+        }
+    }
+    let segment = |a: usize, b: usize, q: &Vec3| -> Mat3 {
+        let (low, high) = (a.min(b), a.max(b));
+        let part = |m: usize| mat3::sub_mat(&sums[high][m], &sums[low][m]);
+        let skew_q = mat3::skew(q);
+        let q_ap = mat3::mat_mul(&skew_q, &part(2));
+        let q_a_q = mat3::mat_mul(&mat3::mat_mul(&skew_q, &part(1)), &mat3::transpose(&skew_q));
+        mat3::add_mat(
+            &mat3::add_mat(
+                &mat3::sub_mat(&mat3::sub_mat(&q_a_q, &q_ap), &mat3::transpose(&q_ap)),
+                &part(3),
+            ),
+            &part(0),
+        )
+    };
     let at = |pose: usize, offset: &Vec3| {
         mat3::add(
             &state.position[pose],
@@ -984,12 +1028,31 @@ fn consistent_closures(state: &State, closures: &[Edge], config: &SolveConfig) -
             &mat3::sub(&state.position[a.to], &state.position[b.to]),
         );
         let through_b = mat3::add(&b_to, &mat3::mat_vec(&b_to_rotation, &odometry_offset));
-        // a.from and b.from are tied by the odometry too: shift b's prediction by their odometry offset error
-        let gap = (a.from.abs_diff(b.from) + a.to.abs_diff(b.to)) as f64;
-        let variance =
-            a.variances[3] + b.variances[3] + gap * config.pcm_odometry_translation_variance;
+        let q = state.position[a.to];
+        let lever = mat3::skew(&mat3::sub(&q, &b_to));
+        let b_rotation = mat3::mat_mul(
+            &mat3::mat_mul(&lever, &world(&b_to_rotation, &b.variances[..3])),
+            &mat3::transpose(&lever),
+        );
+        // a.from and b.from are tied by the odometry too, as are b.to and a.to
+        let covariance = [
+            world(&state.rotation[a.from], &a.variances[3..]),
+            world(&state.rotation[b.from], &b.variances[3..]),
+            b_rotation,
+            segment(a.from, b.from, &q),
+            segment(a.to, b.to, &q),
+        ]
+        .iter()
+        .fold([[0.0; 3]; 3], |sum, m| mat3::add_mat(&sum, m));
         let d = mat3::sub(&through_a, &through_b);
-        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / variance.max(f64::EPSILON) < cutoff
+        // inverted at unit trace: the variances are far below mat3::inverse's absolute determinant floor
+        let trace = covariance[0][0] + covariance[1][1] + covariance[2][2];
+        let unit: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| covariance[i][j] / trace));
+        trace > 0.0
+            && mat3::inverse(&unit).is_some_and(|information| {
+                let id = mat3::mat_vec(&information, &d);
+                (d[0] * id[0] + d[1] * id[1] + d[2] * id[2]) / trace < cutoff
+            })
     };
     let pairs: Vec<Vec<bool>> = (0..n)
         .map(|i| {
@@ -1402,7 +1465,7 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
 }
 
 /// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers
-/// the cost by less than `tolerance` of it.
+/// the cost by less than `tolerance` of it, or no step lowers it at all. False if 100 steps did not get there.
 fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
@@ -1414,7 +1477,7 @@ fn levenberg_marquardt(
     sightings: &[Sighting],
     sighting_weights: &[f64],
     tolerance: f64,
-) {
+) -> bool {
     let size = pattern.size;
     let mut damping = 1e-6;
     let mut current = cost(
@@ -1504,9 +1567,10 @@ fn levenberg_marquardt(
             damping *= 10.0;
         }
         if !stepped {
-            break;
+            return true;
         }
     }
+    false
 }
 
 /// The Gauss-Newton normal equations at `state`: J^T W J's entries in `Pattern` fill order (damping
