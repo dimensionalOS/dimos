@@ -1474,8 +1474,9 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
         .filter(|&(_, _, r, c)| r >= c)
 }
 
-/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers
-/// the cost by less than `tolerance` of it, or no step lowers it at all. False if 100 steps did not get there.
+/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
+/// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
+/// zero is done instead of shrinking forever, or no step lowers it at all. False if 100 steps did not get there.
 fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
@@ -1568,7 +1569,7 @@ fn levenberg_marquardt(
                 sighting_weights,
             );
             if trial_cost.is_finite() && trial_cost <= current {
-                stepped = current - trial_cost > tolerance * current;
+                stepped = current - trial_cost > tolerance * (current + 1.0);
                 *state = trial;
                 current = trial_cost;
                 damping = (damping / 10.0).max(1e-9);
