@@ -17,9 +17,61 @@ import { RuntimeClient } from "../dimos/client.ts";
 import { until } from "../../sdk/until.ts";
 import { Status } from "../../shared/protocol/status.ts";
 import { FileRenderer } from "../../shared/render/render.ts";
-import { streamTool } from "./lib/stream.ts";
+import type { ChannelSpec, Session, Slot } from "@dimos/sdk";
+import { readChannel, streamTool } from "./lib/stream.ts";
 
 const dimos = dimosFixture();
+
+/** A session whose store keeps its last slot after the read unsubscribes, like the SDK's. */
+function fakeSession(spec: ChannelSpec) {
+  let slot: Slot | null = null;
+  const listeners = new Set<() => void>();
+  const session = {
+    status: { get: () => ({ manifest: { channels: [spec] } }), subscribe: () => () => {} },
+    store: {
+      get: () => slot,
+      subscribe: (_ch: string, cb: () => void) => {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    },
+    subscribe: () => () => {},
+  } as unknown as Session;
+  const push = (seq: number) => {
+    slot = { value: null, seq, ts: seq, version: seq };
+    for (const cb of listeners) cb();
+  };
+  return { session, push };
+}
+
+const odom = { ch: "odom", dir: "rx", encoding: "pose.json.v1" } as ChannelSpec;
+
+test("latest returns a live frame after an earlier read cached one", async () => {
+  const { session, push } = fakeSession(odom);
+  setTimeout(() => push(1), 50);
+  const first = await readChannel(session, odom, "latest", AbortSignal.timeout(1_000));
+  assert.deepEqual([first.slot.seq, first.fresh], [1, true]);
+  setTimeout(() => push(2), 50);
+  const second = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
+  assert.deepEqual([second.slot.seq, second.fresh], [2, true]);
+});
+
+test("latest falls back to the cached frame on a quiet stream", async () => {
+  const { session, push } = fakeSession(odom);
+  push(1);
+  const quiet = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
+  assert.deepEqual([quiet.slot.seq, quiet.fresh], [1, false]);
+  const short = await readChannel(session, odom, "latest", AbortSignal.timeout(100));
+  assert.deepEqual([short.slot.seq, short.fresh], [1, false], "a caller timeout under 2 s still gets a frame");
+});
+
+test("latest still fails when the caller cancels", async () => {
+  const { session, push } = fakeSession(odom);
+  push(1);
+  const cancel = new AbortController();
+  setTimeout(() => cancel.abort(), 50);
+  await assert.rejects(readChannel(session, odom, "latest", cancel.signal), { name: "AbortError" });
+});
 
 test(
   "the local stream tool reads fresh relay frames and exports an image for the model",
