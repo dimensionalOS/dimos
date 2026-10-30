@@ -26,8 +26,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -92,8 +93,6 @@ _RERUN_VISUAL_OVERRIDE = {"world/color_image": None}
 rerun_config = {
     "blueprint": _px4_rerun_blueprint,
     "pubsubs": [Zenoh()],
-    "rerun_open": global_config.rerun_open,
-    "rerun_web": global_config.rerun_web,
     # A live viewer needs only a small rolling buffer, and every viewer (re)connect
     # replays the whole buffer before going live.
     "memory_limit": "256MB",

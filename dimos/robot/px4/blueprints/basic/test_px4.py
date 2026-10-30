@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.stream import TransportSpec
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry

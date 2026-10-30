@@ -17,7 +17,7 @@ Every module but the connection is optional and binds to its streams by name.
 ## Install
 
 ```bash
-uv sync --extra px4
+uv sync --extra px4 --inexact
 ```
 
 ## Run
@@ -29,10 +29,11 @@ uv sync --extra px4
 | `px4-a8` | `px4` plus the SIYI A8 camera and gimbal |
 
 ```bash
-dimos run px4                                             # router on PX4's companion port
-dimos run px4 --px4droneconnection.link=radio             # router on a telemetry radio
-dimos --record sqlite run px4                             # every stream to recordings/<run-id>/memory.db
-dimos --rerun-open none --rerun-host 0.0.0.0 run px4-a8   # on the aircraft, viewer on a laptop
+dimos run px4                                  # router on PX4's companion port
+dimos run px4 --px4droneconnection.link=radio  # router on a telemetry radio
+dimos --record sqlite run px4                  # every stream to recordings/<run-id>/memory.db
+dimos run px4-a8 --rerunbridgemodule.rerun-open none \
+    --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0  # viewer on a laptop
 ```
 
 With the last form, run the `dimos-viewer --connect ...` line it logs on the laptop.
@@ -82,17 +83,7 @@ Keys are ignored outside `TELEOP`. Speeds are clamped to 1.5 m/s (W+Q together t
 0.8 rad/s. Altitude stays where `TELEOP` began. When keys stop for 0.5 s the vehicle holds
 position.
 
-## Test
-
-Unit tests, no hardware and no simulator:
-
-```bash
-uv sync --extra px4
-uv run pytest dimos/robot/px4 dimos/hardware/gimbal/siyi dimos/hardware/sensors/camera/rtsp \
-    dimos/msgs/px4_msgs
-```
-
-In PX4 SITL:
+## Fly in PX4 SITL
 
 1. In a PX4-Autopilot checkout: `make px4_sitl gz_x500`.
 2. Open QGroundControl. PX4 SITL will not arm without a ground station.
