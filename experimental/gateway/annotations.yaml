@@ -401,6 +401,12 @@ robots:
         px4-a8:
           title: PX4 drone + SIYI A8
           description: The PX4 drone with the SIYI A8's RTSP camera and gimbal.
+        px4-agentic:
+          title: PX4 drone with an agent
+          description: 'Talk to the PX4 drone: takeoff, go-to, land and flight-status skills.'
+        px4-sitl-agentic:
+          title: PX4 agent in SITL
+          description: The same agent against PX4 SITL.
     m20:
       name: DeepRobotics M20
       description: DeepRobotics' wheel-legged quadruped; dimos runs on the robot.
