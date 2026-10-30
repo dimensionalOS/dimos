@@ -157,6 +157,10 @@ class ArmTeleopModule(WebXRTeleopModule):
 
     _manipulation: ManipulationSpec | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._zeroing = threading.Event()
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -168,21 +172,31 @@ class ArmTeleopModule(WebXRTeleopModule):
     def _on_buttons_pressed(self, pressed: Buttons) -> None:
         """Move to the zero joint pose, off the control loop, when zero_button is pressed."""
         button = self.config.zero_button
-        if button is not None and getattr(pressed, BUTTON_ALIASES.get(button, button)):
+        if (
+            button is not None
+            and getattr(pressed, BUTTON_ALIASES.get(button, button))
+            and not self._zeroing.is_set()
+        ):
+            self._zeroing.set()
             threading.Thread(target=self._move_to_zero, daemon=True).start()
 
     def _move_to_zero(self) -> None:
-        if self._manipulation is None:
-            return
-        targets = {
-            group.id: JointState(
-                name=list(group.joint_names), position=[0.0] * len(group.joint_names)
-            )
-            for group in self._manipulation.list_planning_groups()
-        }
-        plan = self._manipulation.plan_to_joints(targets)
-        if plan.plan is not None:
-            self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
+        try:
+            if self._manipulation is None:
+                return
+            targets = {
+                group.id: JointState(
+                    name=list(group.joint_names), position=[0.0] * len(group.joint_names)
+                )
+                for group in self._manipulation.list_planning_groups()
+            }
+            plan = self._manipulation.plan_to_joints(targets)
+            if plan.plan is not None:
+                self.left_gripper_command.publish(Float32(data=1.0))
+                self.right_gripper_command.publish(Float32(data=1.0))
+                self._manipulation.execute(blocking=True, plan_id=plan.plan.plan_id)
+        finally:
+            self._zeroing.clear()
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
         """Return the current absolute controller pose."""
@@ -216,6 +230,8 @@ class ArmTeleopModule(WebXRTeleopModule):
         buttons: Buttons,
     ) -> None:
         """Publish normalized opening while the classified deadman is held."""
+        if self._zeroing.is_set():
+            return
         controllers = {Hand.LEFT: left, Hand.RIGHT: right}
         outputs = {
             Hand.LEFT: self.left_gripper_command,
