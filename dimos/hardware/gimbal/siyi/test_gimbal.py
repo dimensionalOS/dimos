@@ -160,7 +160,7 @@ def test_start_publishes_tf_and_polls_the_zoom_then_stop_ends_the_poll(
 ) -> None:
     camera = _FakeSdkCamera()
     monkeypatch.setattr(gimbal_module, "SiyiSdk", lambda ip: SiyiSdk(ip, camera.port))
-    g = SiyiA8Gimbal(ip="127.0.0.1", tf_hz=50.0, zoom_poll_s=0.05)
+    g = SiyiA8Gimbal(ip="127.0.0.1", tf_hz=50.0, camera_info_hz=50.0, zoom_poll_s=0.05)
     published: dict[str, list[Any]] = {"tf": [], "camera_info": []}
     for name, sink in published.items():
         getattr(g, name).publish = sink.append
@@ -179,6 +179,22 @@ def test_start_publishes_tf_and_polls_the_zoom_then_stop_ends_the_poll(
     assert g._zoom == 2.5
     assert published["camera_info"] == []  # never while the zoom is unknown or 2.5x
     assert not [t for t in threading.enumerate() if t.name.startswith("siyi-")]
+
+
+def test_without_the_sdk_camera_info_goes_out_at_its_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    g = SiyiA8Gimbal(camera_info_hz=50.0)
+    infos: list[Any] = []
+    g.camera_info.publish = infos.append
+    for port in (g.gimbal_attitude, g.target_los):
+        monkeypatch.setattr(port, "subscribe", lambda _cb: lambda: None)
+    try:
+        g.start()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and len(infos) < 3:
+            time.sleep(0.02)
+    finally:
+        g.stop()
+    assert len(infos) >= 3
 
 
 @pytest.mark.parametrize(("mount", "warned"), [((0.0, 0.0, 0.0), True), ((0.0, 0.0, -0.08), False)])
