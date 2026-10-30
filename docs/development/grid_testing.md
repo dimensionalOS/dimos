@@ -40,7 +40,7 @@ testcases = [
         tags={"all", "glob", "regex"},  # LCM supports all pattern types
     ),
     Case(
-        name="zenoh_pickle",
+        name="zenoh_cbor",
         pubsub_context=zenoh_context,
         topic_values=[...],
         tags={"all", "glob"},  # Zenoh supports wildcard key expressions

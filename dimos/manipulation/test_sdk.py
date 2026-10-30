@@ -371,6 +371,15 @@ def test_nonfinite_linear_delta_is_rejected_locally(arm, rpc):
     rpc.move_linear.assert_not_called()
 
 
+def test_refused_reset_raises_with_the_result(arm, rpc):
+    rpc.reset.return_value = CommandResult(CommandStatus.FAILED, "stop not confirmed")
+
+    with pytest.raises(MotionError) as error:
+        arm.reset()
+
+    assert error.value.result is rpc.reset.return_value
+
+
 @pytest.mark.parametrize("method,position", [("open_gripper", 1.0), ("close_gripper", 0.0)])
 def test_gripper_shortcuts_use_normalized_positions(arm, rpc, method, position):
     result = getattr(arm, method)()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-import pickle
+from typing import cast
 
 import numpy as np
 import rerun as rr
@@ -21,11 +21,13 @@ import rerun as rr
 from dimos.mapping.ray_tracing.viz import render_map_region
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
-from dimos.visualization.rerun.bridge import is_keyed_by_seq
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.visualization.rerun.bridge import RerunEntry, is_keyed_by_seq
 
 
 def test_goal_placeholder_is_not_drawn() -> None:
@@ -45,25 +47,47 @@ def test_empty_path_keeps_the_last_one_drawn() -> None:
     )
 
 
-def test_keyed_renderers_keep_their_flag_through_the_pickle_round_trip() -> None:
-    plain = pickle.loads(pickle.dumps(render_map_region))
-    bound = pickle.loads(pickle.dumps(partial(render_map_region, voxel_size=0.1)))
+def test_keyed_renderers_keep_their_flag_through_the_round_trip() -> None:
+    plain = decode(encode(render_map_region))
+    bound = decode(encode(partial(render_map_region, voxel_size=0.1)))
     assert is_keyed_by_seq(plain) and is_keyed_by_seq(bound)
     assert not is_keyed_by_seq(viz.render_path)
-    assert not is_keyed_by_seq(pickle.loads(pickle.dumps(partial(viz.render_path))))
+    assert not is_keyed_by_seq(decode(encode(partial(viz.render_path))))
 
 
-def test_bridge_config_pickles_for_the_workers() -> None:
-    static = pickle.loads(pickle.dumps(viz.nav_static(0.7, 0.3, 0.3, 0.1)))
-    overrides = pickle.loads(pickle.dumps(viz.nav_visual_override(2.0, 0.08, 0.1)))
+def test_bridge_config_crosses_to_the_workers() -> None:
+    static = decode(encode(viz.nav_static(0.7, 0.3, 0.3, 0.1)))
+    overrides = decode(encode(viz.nav_visual_override(2.0, 0.08, 0.1)))
     assert len(static["world/robot_body"](rr)) == 2
 
     surface = overrides["world/surface_map"]
     assert surface.func is render_surface_region and surface.keywords["voxel_size"] == 0.08
     regions = overrides["world/map_regions"]
     assert regions.func is render_map_region
-    assert regions.keywords == {"voxel_size": 0.08, "height_range": viz.HEIGHT_RANGE}
+    assert regions.keywords == {
+        "voxel_size": 0.08,
+        "height_range": viz.HEIGHT_RANGE,
+        "static": True,
+    }
     region = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
     region.seq = (4 << 16) | 7
     (path, _, static_entry) = regions(region)[0]
     assert path == "world/map_regions/4_7" and static_entry
+
+
+def test_map_cells_keep_their_history_when_static_regions_is_off() -> None:
+    overrides = viz.nav_visual_override(2.0, 0.08, 0.1, static_regions=False)
+    cell = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
+    cell.seq = (4 << 16) | 7
+    edges = LineSegments3D(segments=np.zeros((1, 2, 3)), weights=np.zeros(1))
+    edges.seq = cell.seq
+    regions, surface, edge_cells = (
+        overrides[name] for name in ("world/map_regions", "world/surface_map", "world/node_edges")
+    )
+    assert regions is not None and surface is not None and edge_cells is not None
+    entries = [
+        entry
+        for render, msg in ((regions, cell), (surface, cell), (edge_cells, edges))
+        for entry in cast("list[RerunEntry]", render(msg))
+    ]
+    assert [entry.static for entry in entries] == [False, False, False]

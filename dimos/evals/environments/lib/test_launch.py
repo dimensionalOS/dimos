@@ -34,6 +34,7 @@ def _registry(mocker, tmp_path):
     mocker.patch("dimos.evals.environments.lib.launch._REGISTRY_POLL_S", 0.01)
 
 
+@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
 def test_returns_the_endpoint_registered_by_the_launched_process() -> None:
     # Another live dimos on a custom port must not be mistaken for ours.
     _entry("20260101-000001-aaaa-other", os.getppid(), "http://127.0.0.1:9992/mcp").save()

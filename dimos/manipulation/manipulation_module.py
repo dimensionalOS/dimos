@@ -1321,7 +1321,7 @@ class ManipulationModule(Module):
             name=VOXEL_MAP_OBSTACLE_ID,
             obstacle_type=ObstacleType.OCTREE,
             pose=PoseStamped(frame_id=frame),
-            points=tuple(map(tuple, points.tolist())),
+            points=points,
             octree_resolution=self.config.voxel_map_resolution,
         )
         try:

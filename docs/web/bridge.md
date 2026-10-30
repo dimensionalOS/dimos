@@ -19,17 +19,17 @@ Both ways need the `web` extra (`uv sync --extra web --inexact` in a checkout, `
 
 ## Robot-side options
 
-The relay flags are `dimos run` options. Most of the rest are fields of the bridge module's config, so they are set like any blueprint config field, after the blueprint name: `--serve-dir DIR`. The environment form is `<INSTANCE>__SERVE_DIR`, where the instance name is `relaybridgemodule` for the default bridge but a generated name for a blueprint with `cockpit(...)`, so use the flag.
+The relay flags are `dimos run` options. Most of the rest are fields of the bridge module's config, so they are set like any blueprint config field, after the blueprint name: `--serve-dir DIR`. The `--relaybridgemodule.serve-dir` and `RELAYBRIDGEMODULE__SERVE_DIR` forms name the default bridge only: a blueprint with `cockpit(...)` has a generated bridge name (`dimos run <blueprint> --help` prints it), so the short flags below are the ones that work everywhere.
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--local-relay` | off | Spawn a relay on this machine and connect to it. |
 | `--relay-url URL` | none | Connect to a relay started elsewhere, given its HTTP address (`http://localhost:7780`, `https://relay.example.com`). The bridge fetches `/api/info` there on every connect, so a relay restart (new port, new certificate) is transparent. |
-| `--relaybridgemodule.relay-ca PEM` | none | CA bundle that signed the relay's certificate (mkcert, a private CA). Replaces the default trust store for that relay. |
-| `RELAYBRIDGEMODULE__RELAY_KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. Set it in the environment or in `.env`. The `--relaybridgemodule.relay-key` flag exists too, but it shows in the process list. |
+| `--relay-ca PEM` | none | CA bundle that signed the relay's certificate (mkcert, a private CA). Replaces the default trust store for that relay. |
+| `--relay-key KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. It shows in the process list. The default bridge can also take it from `RELAYBRIDGEMODULE__RELAY_KEY` in the environment or `.env`. |
 | `--rtc <bool>` | true | Deliver `jpeg.v1` channels as WebRTC tracks when the relay offers it and aiortc is installed. `--rtc false` keeps JPEG frames through the relay. |
 | `--rtc-file PATH` | none | Cloudflare configuration for the local relay (its `--rtc-file`). A relay started elsewhere carries its own. |
-| `--relaybridgemodule.robot-id ID` | the hostname | How the relay and the cockpit name this robot. Two robots on one relay need different ids. A module option: `dimos run unitree-go2 --local-relay --relaybridgemodule.robot-id go2-lab`. |
+| `--robot-id ID` | the hostname | How the relay and the cockpit name this robot. Two robots on one relay need different ids: `dimos run unitree-go2 --local-relay --robot-id go2-lab`. |
 | `--robot-model NAME` | none | Shown next to the name in the cockpit. Also a global option. |
 | `--robot-name NAME` | the id | Display name in the cockpit. |
 | `--serve-dir DIR` | none | Serve this directory at `/` instead of the cockpit. Local relay only. |
