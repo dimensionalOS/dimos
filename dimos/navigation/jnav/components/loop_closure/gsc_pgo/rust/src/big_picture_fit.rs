@@ -682,6 +682,7 @@ pub(crate) fn solve_core(
         1e-5,
         // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
         1000,
+        true,
     );
     let odometry_noise_evidence = converged
         .then(|| {
@@ -1463,7 +1464,7 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
         .filter(|&(_, _, r, c)| r >= c)
 }
 
-/// `levenberg_marquardt_steps` with at most 100 steps.
+/// `levenberg_marquardt_steps` with at most 100 steps, stopping at the first small drop.
 #[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt(
     state: &mut State,
@@ -1489,13 +1490,17 @@ fn levenberg_marquardt(
         sighting_weights,
         tolerance,
         100,
+        false,
     )
 }
 
 /// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
 /// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
 /// zero is done instead of shrinking forever, or no step lowers it at all where the quadratic model expects no more
-/// than that either. False if `steps` steps did not get there, or it stalled short of a minimum.
+/// than that either. With `to_minimum` a small drop counts only from a step as undamped as the first one tried (a
+/// heavily damped step drops little anywhere): the noise evidence must be read at the minimum, but the solves stop at
+/// the first small drop, as they always have (holding them to the minimum too moved athens' map 2.5 -> 6.2 cm off the
+/// ground truth). False if `steps` steps did not get there, or it stalled short of a minimum.
 #[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt_steps(
     state: &mut State,
@@ -1509,6 +1514,7 @@ fn levenberg_marquardt_steps(
     sighting_weights: &[f64],
     tolerance: f64,
     steps: usize,
+    to_minimum: bool,
 ) -> bool {
     let size = pattern.size;
     let mut damping = 1e-6;
@@ -1593,8 +1599,8 @@ fn levenberg_marquardt_steps(
                 sighting_weights,
             );
             if trial_cost.is_finite() && trial_cost <= current {
-                // a small drop says the minimum is near only from a step as undamped as the first one tried
-                stepped = current - trial_cost > tolerance * (current + 1.0) || damping > 1e-6;
+                stepped = current - trial_cost > tolerance * (current + 1.0)
+                    || (to_minimum && damping > 1e-6);
                 accepted = true;
                 *state = trial;
                 current = trial_cost;
