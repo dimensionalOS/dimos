@@ -237,7 +237,8 @@ def test_an_unreachable_camera_is_not_logged_on_every_retry(
         SimpleNamespace(warning=lambda event, **_kw: warnings.append(event)),
     )
     monkeypatch.setattr(camera_module, "_RECONNECT_WAIT_S", 0.0)
-    # Five refused connections, a stream that plays and ends, five more refusals.
+    # Five refused connections, a stream that plays and ends, five more refusals: each
+    # warning once in the 30 s.
     outcomes: list[int | OSError] = [OSError("refused")] * 5 + [100] + [OSError("refused")] * 5
 
     def relay_once() -> int:
@@ -253,11 +254,7 @@ def test_an_unreachable_camera_is_not_logged_on_every_retry(
         cam._relay_loop()
     finally:
         cam.stop()
-    assert warnings == [
-        "camera stream unavailable",
-        "camera stream ended",
-        "camera stream unavailable",  # the stream played in between: warned at once
-    ]
+    assert warnings == ["camera stream unavailable", "camera stream ended"]
 
 
 @pytest.mark.parametrize("password", ["s3cret", "p]w[", "p\\w", "a@b", "a:b%40c"])

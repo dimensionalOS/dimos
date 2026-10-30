@@ -181,8 +181,6 @@ class RtspCamera(Module, perception.Image):
                 self._warn("camera stream unavailable", error=_redact(str(exc), self.config.url))
                 self._stop_event.wait(_RECONNECT_WAIT_S)
                 continue
-            if packets:
-                self._last_warned.clear()  # the camera answered: warn of its next failure at once
             if self._stop_event.is_set() or (self._is_file() and not self.config.replay_loop):
                 return
             if not self._is_file() or packets == 0:
