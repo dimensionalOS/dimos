@@ -73,7 +73,45 @@ The camera publishes ordinary `color_image`, `depth_image`, `camera_info`,
 source episode, physics tick and simulation time. `renderer_status()` reports
 capture time, round-trip time, acquisition age and any error.
 
-## Run G1 with GR00T and Point-LIO
+## Run with DimOS Desktop
+
+Use the registered `unitree-g1-groot-wbc-unreal` blueprint. It reuses the G1
+GR00T, Mid360 and Point-LIO stack and adds one Unreal observer camera. It has no
+Rerun modules. The simulation flag is required; an omitted flag is rejected
+before any robot modules start.
+
+Point Desktop at this checkout. Its Controller app displays the ordinary
+`color_image` and `depth_image` topics. Start the registered blueprint from the
+CLI, with Desktop and the CLI using the same state directory:
+
+```bash
+.venv/bin/dimos --simulation mujoco --viewer none --transport zenoh \
+  run unitree-g1-groot-wbc-unreal \
+  --unrealcameramodule.executable \
+  "$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
+```
+
+The executable can also be supplied through `UNREALCAMERAMODULE__EXECUTABLE`.
+Desktop discovers its state and camera topics on the standard Zenoh domain.
+Use Desktop's Stop control, or `dimos stop` from the same state directory, to
+stop the run. A separately configured Desktop home can use a different run
+registry: match its state directory to keep status and lifecycle controls
+together.
+
+Locally verified with Desktop 0.2.248, Controller 0.4.3 and Desktop's pinned
+gateway 8.3.3: live RGB, metric depth, run discovery and Desktop's Stop control.
+The Launcher's Customize form currently fails against this checkout because
+the pinned gateway's config introspection imports `dimos.utils.shared_config`,
+which this branch does not provide. Use the CLI command above until that
+gateway compatibility issue is resolved.
+
+For a Desktop started with `--home "$HOME/.local/state/dimos/unreal/desktop-home"`,
+prefix the CLI command with
+`XDG_STATE_HOME="$HOME/.local/state/dimos/unreal/desktop-home/state"` so Desktop
+can discover and stop it. In Controller, add two Camera panels and select
+`color_image` and `depth_image` respectively.
+
+## Headless validation
 
 After building the renderer, run the existing robot application with one camera
 module added:
@@ -81,21 +119,18 @@ module added:
 ```bash
 renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
 .venv/bin/python -m dimos.sim2.unreal.demo_g1 \
-  --executable "$renderer" --viewer rerun --seconds 0 --walk --reset \
+  --executable "$renderer" --walk --reset \
   --output /tmp/dimos-g1-unreal
 ```
 
-This opens a live Rerun browser view: Unreal RGB and depth beside the existing
-G1/Point-LIO view. Unreal produces the camera images; Rerun displays them.
-`--seconds 0` keeps running until Ctrl-C, which saves the report and shuts down
-the renderer and robot stack. Use `--viewer-open native` for a native Rerun
-window. For the original 30-second headless check, omit `--viewer rerun` and
-`--seconds 0`.
+This is a 30-second headless validation, not an interactive viewer. Ctrl-C saves
+the report and shuts down the renderer and robot stack. `--seconds 0` keeps the
+headless validation running until stopped.
 
-This demo is **not integrated with DimOS Desktop**. It runs on an isolated
-transport domain and bypasses the normal CLI run registry. Desktop needs a
-compatible gateway, a registered runnable composition and matching discovery;
-starting the gateway alone does not connect this demo.
+The validation script uses an isolated transport domain and bypasses the normal
+CLI run registry. Use the registered blueprint above for Desktop; starting the
+gateway alone does not attach this validation script. There is no viewer option
+in the script.
 
 The default camera observes the robot. Add `--camera front` to use the existing
 G1 `front_camera`, including its authored mount and calibration. Both use the
@@ -158,15 +193,63 @@ a floor's wood grain becomes a plain surface. Partially transparent geometry,
 including glass, is rejected explicitly.
 
 For a textured environment, provide its editable Unreal project and referenced
-`Content` assets, including the map, meshes, materials and textures. Keep movable
-parts separate and named, with correct scale and pivots; retain the robot's
-existing joint/physics definition and collision geometry. A UV-mapped GLB with
-PBR textures is a portable alternative handoff.
+`Content` assets, including the map, meshes, materials, textures and simple
+collision shapes. Keep movable parts separate and named, with correct scale and
+pivots. Retain the robot's existing joint/physics definition and collision
+geometry.
 
-**Neither an Unreal map nor GLB is loaded by the current helper.** Adding the
-normal Unreal asset import/cook path and matching visual actors to physics
-bodies is still required. Supplying better assets alone will not fix the current
-importer's material limitations.
+**An authored Unreal map is not loaded by the current helper.** Supplying better
+assets alone will not fix the current importer's material limitations.
+
+## Authoring one scene for Unreal and MuJoCo
+
+This is the intended workflow; the scene exporter and authored-asset bindings
+below still need implementation. The current bridge works in the opposite
+direction: it copies an existing MuJoCo world into Unreal.
+
+Unreal already separates a visible mesh from its collision shapes. Those shapes
+normally feed Unreal's physics engine, Chaos. Using MuJoCo requires translating
+them into MuJoCo geometry; packaging an Unreal project does not perform that
+translation. See Epic's [simple and complex collision documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/simple-versus-complex-collision-in-unreal-engine?application_version=5.7).
+
+1. **Prepare each asset once.** Keep its detailed mesh, materials and textures in
+   Unreal. Add or review simple collision shapes: boxes, spheres, capsules or
+   convex pieces. Reuse those collision shapes for every instance of that asset.
+2. **Place the scene once in Unreal Editor.** Place shelves, floors and props;
+   identify fixed objects, movable objects and the robot spawn. Movable objects
+   also need mass and contact settings, with inertia supplied or derived from
+   validated colliders. A door
+   needs a joint and limits, not just a mesh marked movable.
+3. **Export the simulation scene.** A DimOS editor exporter must generate the
+   MJCF environment, collision meshes and stable actor/component-to-body
+   bindings from those placements. It must convert units, axes, component
+   transforms and scaling, and reject unsupported collision or joint
+   definitions. These are generated outputs, not a second
+   scene to edit by hand.
+4. **Reuse the robot definition.** Add the existing G1 model at its spawn pose.
+   Its joints, limits, inertias, collision geometry and controller remain in the
+   robot package. Unreal's robot visuals follow those link poses.
+5. **Run through DimOS Desktop.** MuJoCo computes motion and contact. Unreal
+   loads the authored map and updates bound visual objects from MuJoCo's poses,
+   with Chaos simulation disabled for those objects. Camera images and robot
+   state flow through the normal DimOS streams and gateway to Desktop.
+
+| Scene object | What you author in Unreal | What the exporter must generate for MuJoCo |
+|---|---|---|
+| Fixed shelf | Textured mesh, boxes for each shelf and upright, one placement | Fixed collision geometry at that placement; open shelf spaces remain open |
+| Movable crate | Textured mesh, one box collider, mass/friction, initial placement | Free body with that collider, inertia and initial pose |
+| G1 robot | Spawn placement referencing the existing robot | Existing G1 model at that pose; no second joint or controller definition |
+
+Do not export an entire room or shelf as one ordinary collision mesh: MuJoCo's
+standard mesh collision uses its convex hull, which can fill doorways and shelf
+openings. Export separate primitives or convex pieces instead. A scene that uses
+Unreal's triangle-mesh collision alone needs suitable collision shapes before it
+can use this workflow. See [MuJoCo mesh collision behavior](https://mujoco.readthedocs.io/en/stable/XMLreference.html#asset-mesh).
+
+The Unreal project supplies the environment's authored visuals and collision
+shapes. The robot package supplies the robot. The exporter connects them; the
+user should not maintain matching object placements in an Unreal map and a
+handwritten MJCF file.
 
 `MotorScene` removes robosuite's extra editor target gizmos. Unmodified upstream
 tasks may still contain translucent gizmos and require their visibility to be

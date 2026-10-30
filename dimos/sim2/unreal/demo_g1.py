@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run the existing G1/GR00T/Point-LIO application with a native Unreal camera.
+"""Validate G1/GR00T/Point-LIO and native Unreal RGB-D in a headless run.
+
+Writes camera captures and a validation report to the output directory.
 
 Example:
     python -m dimos.sim2.unreal.demo_g1 --executable /path/to/DimosRenderer --walk --reset
@@ -38,7 +40,6 @@ from uuid import uuid4
 
 import numpy as np
 from PIL import Image as PillowImage
-import rerun.blueprint as rrb
 from scipy.spatial.transform import Rotation
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -57,23 +58,6 @@ from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.unreal.module import UnrealCameraModule
-from dimos.visualization.vis_module import vis_module
-
-
-def live_layout() -> rrb.Blueprint:
-    """Show the actual Unreal sensor images beside the retained G1/LIO view."""
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(origin="world", name="G1 / Point-LIO"),
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/color_image", name="Unreal RGB"),
-                rrb.Spatial2DView(origin="world/depth_image", name="Unreal depth (metres)"),
-            ),
-            column_shares=[1, 1],
-        ),
-        rrb.TimePanel(state="collapsed"),
-        collapse_panels=True,
-    )
 
 
 def observer_camera() -> Camera:
@@ -100,18 +84,15 @@ def main() -> None:
     parser.add_argument("--project", type=Path, help="Only needed when using UnrealEditor -game")
     parser.add_argument("--output", type=Path, default=Path("/tmp/dimos-g1-unreal"))
     parser.add_argument(
-        "--seconds", type=float, default=30, help="Run duration; 0 watches until Ctrl-C"
-    )
-    parser.add_argument("--viewer", choices=("none", "rerun"), default="none")
-    parser.add_argument(
-        "--viewer-open",
-        choices=("web", "native"),
-        default="web",
-        help="Where to open --viewer rerun",
+        "--seconds", type=float, default=30, help="Headless run duration; 0 runs until Ctrl-C"
     )
     parser.add_argument("--camera", choices=("observer", "front"), default="observer")
     parser.add_argument("--walk", action="store_true", help="Walk forward briefly in simulation")
-    parser.add_argument("--reset", action="store_true", help="Reset world and controller halfway")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset world and controller halfway, or after 15 s with --seconds 0",
+    )
     args = parser.parse_args()
     if args.seconds != 0 and args.seconds < 10:
         parser.error("--seconds must be 0 (until Ctrl-C) or at least 10")
@@ -146,22 +127,13 @@ def main() -> None:
             log_path=output / "renderer.log",
             rpc_timeouts={"start": 210.0},
         ),
-        vis_module(
-            args.viewer,
-            rerun_config={
-                **g1._rerun_config,
-                "blueprint": live_layout,
-                "rerun_open": args.viewer_open,
-                "memory_limit": "1GB",
-            },
-        ),
     )
     parsed = BlueprintConfigParser(blueprint).parse(
         [],
         environ={},
         global_overrides={
             "simulation": "mujoco",
-            "viewer": args.viewer,
+            "viewer": "none",
             "transport": "zenoh",
             "zenoh_domain": domain,
             "zenoh_scout_addr": global_config.zenoh_scout_addr,
@@ -233,10 +205,6 @@ def main() -> None:
         for stop_signal in (signal.SIGINT, signal.SIGTERM):
             previous_handler = signal.signal(stop_signal, request_stop)
             resources.callback(signal.signal, stop_signal, previous_handler)
-        if args.viewer == "rerun":
-            print(
-                "Rerun shows Unreal RGB, depth and G1/Point-LIO. Press Ctrl-C to stop.", flush=True
-            )
         start = time.monotonic()
         baseline = world.status()
         first_frame = camera.renderer_status()["frames"]

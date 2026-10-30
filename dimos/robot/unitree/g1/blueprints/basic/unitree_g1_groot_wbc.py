@@ -49,7 +49,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
@@ -340,3 +340,21 @@ _unitree_g1_groot_wbc_core = (
 )
 
 unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _navigation, _viewer())
+
+
+def _require_simulation_profile() -> str | None:
+    if global_config.simulation != "mujoco" or not _SIM:
+        return "This G1 simulation requires --simulation mujoco before loading the blueprint."
+    return None
+
+
+def simulated_g1_groot_wbc() -> Blueprint:
+    """Reuse the G1 control and navigation stack, requiring its simulation profile.
+
+    Set ``--simulation mujoco`` before importing this module. The requirement
+    rejects a missing or subsequently changed mode before deploying modules.
+    Viewers are composed separately by the caller.
+    """
+    return autoconnect(_unitree_g1_groot_wbc_core, _navigation).requirements(
+        _require_simulation_profile
+    )
