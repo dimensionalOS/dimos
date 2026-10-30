@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import functools
 from pathlib import Path
+import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -398,6 +399,22 @@ def test_an_arm_stopped_outside_dimos_is_made_ready_again_unless_it_has_a_fault(
         r.move(joint1=0.1)
         assert len(r.sdk.sent("set_servo_angle_j")) == 1
         assert "set_servo_angle_j dropped" in str(r.module.status().last_error)
+
+
+def test_joint_targets_are_refused_once_the_joint_reading_is_old(
+    rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r = rig()
+    monkeypatch.setattr(r.sdk, "get_joint_states", lambda is_radian: (3, None))
+    wait_until(lambda: "reading failed" in str(r.module.status().last_error), timeout=2.0)
+    real = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real() + 1.0)
+    with pytest.raises(XArmError, match="the joints were last read .* s ago"):
+        r.module.write({"arm/joint1/position": 0.1})
+    # Speeds do not depend on where the joints are, so they still go out.
+    r.jog(joint1=0.5)
+    assert r.sdk.sent("set_servo_angle_j") == []
+    assert len(r.sdk.sent("vc_set_joint_velocity")) == 1
 
 
 def test_the_deadman_halts_a_jog_with_zero_speeds(rig: Callable[..., Rig]) -> None:

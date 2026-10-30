@@ -65,6 +65,9 @@ _GRIPPER_CLOSED_RAD = 0.85
 _GRIPPER_OPEN_SDK = 850.0
 
 _READ_HZ = 100.0
+# Joint targets are refused once the latest joint reading is older than this,
+# in seconds: ten missed readings.
+_READING_MAX_AGE_S = 10 / _READ_HZ
 # The gripper is read on every 10th reading of the joints.
 _GRIPPER_READ_EVERY = 10
 
@@ -111,7 +114,8 @@ class XArmConnection(ConnectionModule):
     ``velocity_command``, in rad and rad/s; the gripper is its URDF joint
     ``drive_joint`` (0 rad open, 0.85 rad closed). ``joint_state`` goes out
     about 100 times a second, the gripper in a message of its own. Once the
-    arm reports an error it takes no command until ``clear_errors()``. An arm
+    arm reports an error it takes no command until ``clear_errors()``. Joint
+    targets are refused while the latest joint reading is over 0.1 s old. An arm
     stopped from outside DimOS (xArm Studio, its stop button) with no error
     or warning is made ready again by the next motion command.
     """
@@ -140,6 +144,8 @@ class XArmConnection(ConnectionModule):
         # The joints' latest measured positions (rad), replaced whole by the
         # reading thread.
         self._measured: list[float] = []
+        # time.monotonic() when _measured was read.
+        self._measured_at = float("-inf")
         # How far each joint's target may be from where it is, in rad.
         self._reach: list[float] = []
         self._stop_reading = threading.Event()
@@ -213,6 +219,7 @@ class XArmConnection(ConnectionModule):
                 )
             self._sdk = sdk
             self._measured = self._read_joints()[0]
+            self._measured_at = time.monotonic()
             sdk.register_error_warn_changed_callback(self._on_error_warn)
             if sdk.error_code:
                 self._on_error_warn({"error_code": sdk.error_code, "warn_code": sdk.warn_code})
@@ -239,6 +246,13 @@ class XArmConnection(ConnectionModule):
         if any(target is not None for target in targets):
             if jogging:
                 raise XArmError("a command gives the arm positions or speeds, not both")
+            # Joints left out, and the jump guard, go by where the joints were last read.
+            age = time.monotonic() - self._measured_at
+            if age > _READING_MAX_AGE_S:
+                raise XArmError(
+                    f"the joints were last read {age:.2f} s ago; joint targets need a "
+                    f"reading at most {_READING_MAX_AGE_S} s old"
+                )
             # A joint left out stays where it is.
             measured = self._measured
             angles = [m if t is None else t for t, m in zip(targets, measured, strict=True)]
@@ -362,6 +376,7 @@ class XArmConnection(ConnectionModule):
             try:
                 positions, speeds, efforts = self._read_joints()
                 self._measured = positions
+                self._measured_at = time.monotonic()
                 self.joint_state.publish(
                     JointState(
                         ts=time.time(),
