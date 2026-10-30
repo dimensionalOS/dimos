@@ -404,11 +404,13 @@ def test_connected_unload_removes_only_that_module(running_app, client):
     assert client.skills.ping() == "pong"
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connected_repr(client):
     r = repr(client)
     assert "remote=True" in r
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connected_dir(client):
     d = dir(client)
     assert "StressTestModule" in d

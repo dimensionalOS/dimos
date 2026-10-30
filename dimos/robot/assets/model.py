@@ -336,7 +336,11 @@ class RobotModel:
         return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:
-        """Exclude materialized XML when configurations cross worker processes."""
+        """Drop the memoized model when copy.deepcopy clones a blueprint config value.
+
+        Worker transfer goes through the CBOR codec, which sends dataclass fields only,
+        so the cache never crosses that way either.
+        """
         state = dict(self.__dict__)
         state.pop("_loaded", None)
         return state

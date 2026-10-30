@@ -13,22 +13,30 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from functools import cached_property, reduce
 import operator
 import re
 import sys
 import types as types_mod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
-
-from pydantic import BaseModel
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.module import ModuleBase, is_module_type
-from dimos.core.stream import IO, In, Out, Transport
+from dimos.core.stream import IO, In, Out, Transport, TransportSpec
+from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -57,8 +65,12 @@ class DisabledModuleProxy:
 
         return _noop
 
-    def __reduce__(self) -> tuple[type, tuple[str]]:
-        return (DisabledModuleProxy, (self._spec_name,))
+    def cbor_encode(self) -> str:
+        return cast("str", object.__getattribute__(self, "_spec_name"))
+
+    @classmethod
+    def cbor_decode(cls, spec_name: str) -> "DisabledModuleProxy":
+        return cls(spec_name)
 
     def __repr__(self) -> str:
         return f"<DisabledModuleProxy spec={self._spec_name}>"
@@ -176,30 +188,7 @@ class BlueprintAtom:
         )
 
 
-@dataclass(frozen=True)
-class TransportSpec:
-    """Deferred transport construction: a transport class plus its ctor args.
-
-    Blueprint authors declare transports via ``Cls.spec(...)`` so nothing is
-    constructed at blueprint-definition time. The coordinator materializes
-    specs at build time, once CLI/env/config overrides have resolved.
-    """
-
-    cls: type[Transport[Any]]
-    args: tuple[Any, ...] = ()
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
-
-    @property
-    def config_cls(self) -> type[BaseModel] | None:
-        # Set by transports that expose a pydantic config override surface
-        return self.cls._config_cls
-
-    def build(self, config: BaseModel | None = None) -> Transport[Any]:
-        extra = {"config": config} if config is not None else {}
-        return self.cls(*self.args, **self.kwargs, **extra)
-
-
-# These fields cannot be pickled.
+# MappingProxyType fields: sent as plain dicts, rebuilt on decode.
 _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
 
@@ -234,17 +223,17 @@ class Blueprint:
         if unknown:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
 
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        state.pop("active_blueprints", None)  # recomputable cached_property
+    def cbor_encode(self) -> dict[str, Any]:
+        state = {f.name: getattr(self, f.name) for f in fields(self)}
         for name in _PROXY_FIELDS:
             state[name] = dict(state[name])
         return state
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> "Blueprint":
         for name in _PROXY_FIELDS:
-            state[name] = MappingProxyType(state[name])
-        self.__dict__.update(state)
+            data[name] = MappingProxyType(data[name])
+        return cls(**data)
 
     @classmethod
     def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":
@@ -522,16 +511,21 @@ def _reprefix_transport(
 ) -> TransportSpec | Transport[Any]:
     """Clone a pinned transport with its topic moved under the namespace prefix."""
     if isinstance(transport, TransportSpec):
-        cls, args = transport.cls, transport.args
-    else:
-        cls, args = transport.__reduce__()  # type: ignore[misc]
-    if not (isinstance(args, tuple) and args and isinstance(args[0], str)):
-        raise ValueError(
-            f"Cannot namespace pinned transport {transport!r}; pin it on the "
-            f"namespaced blueprint with an explicit topic instead."
-        )
-    topic = args[0]
-    new_topic = f"/{prefix}{topic}" if topic.startswith("/") else f"{prefix}/{topic}"
-    if isinstance(transport, TransportSpec):
-        return replace(transport, args=(new_topic, *args[1:]))
-    return cls(new_topic, *args[1:])  # type: ignore[no-any-return, call-arg]
+        args = transport.args
+        if not (args and isinstance(args[0], str)):
+            raise ValueError(
+                f"Cannot namespace pinned transport {transport!r}; pin it on the "
+                f"namespaced blueprint with an explicit topic instead."
+            )
+        return replace(transport, args=(_prefixed_topic(args[0], prefix), *args[1:]))
+    if isinstance(transport, PubSubTransport):
+        topic = transport.cbor_encode()["topic"]
+        return transport.with_topic(_prefixed_topic(topic, prefix))
+    raise ValueError(
+        f"Cannot namespace pinned transport {transport!r}; pin it on the "
+        f"namespaced blueprint with an explicit topic instead."
+    )
+
+
+def _prefixed_topic(topic: str, prefix: str) -> str:
+    return f"/{prefix}{topic}" if topic.startswith("/") else f"{prefix}/{topic}"

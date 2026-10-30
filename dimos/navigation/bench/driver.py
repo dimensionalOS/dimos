@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 import json
+import os
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -39,10 +41,11 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.navigation.bench.ground_truth import GroundTruth
-from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, stalled, stuck
+from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
 from dimos.simulation.go2_sim.world_spec import SimWorldSpec
+from dimos.simulation.scenes.procedural import Scene
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,6 +54,11 @@ TERMINAL_FILE = "terminal.json"
 HARNESS_REASONS = ("driver_error", "no_ground_truth", "no_reference_route", "goal_lost", "stopped")
 WATCH_DT = 0.05
 FIRST_POSE_WAIT_S = 60.0
+
+
+def without_objects(scene: Scene) -> Scene:
+    """The scene with only its floor and walls."""
+    return replace(scene, boxes=[box for box in scene.boxes if box.kind != "clutter"])
 
 
 class EpisodeDriverConfig(ModuleConfig):
@@ -138,6 +146,12 @@ class EpisodeDriver(Module):
             logger.exception("Episode driver failed")
             self._write({"reason": "driver_error"})
 
+    def _mapped(self) -> GroundTruth:
+        """The world the premap shows: the scene, or only its floor and walls."""
+        if self._case.premap_objects:
+            return self._truth
+        return GroundTruth(without_objects(self._case.scene()))
+
     def _episode(self) -> dict[str, object]:
         case, rules = self._case, self._rules
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
@@ -151,7 +165,7 @@ class EpisodeDriver(Module):
             return {**record, "reason": "no_reference_route"}
         self.reference_path.publish(_path(route.points))
         self.phase.publish(String("premap"))
-        cloud = self._truth.premap_cloud(route.points)
+        cloud = self._mapped().premap_cloud(route.points)
         self.loaded_map.publish(
             PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
         )
@@ -201,7 +215,7 @@ class EpisodeDriver(Module):
         return "stopped"
 
     def _stuck_or_stalled(self, t0: float, now: float) -> str | None:
-        """The scorer's stuck and stalled rules over the windows the callbacks keep."""
+        """The scorer's stuck, dithering and stalled rules over the windows the callbacks keep."""
         recent, commands = list(self._recent), list(self._commands)
         poses = Poses(
             np.array([t for t, _, _ in recent]),
@@ -211,8 +225,8 @@ class EpisodeDriver(Module):
         twists = Commands(
             np.array([t for t, _ in commands]), np.array([v for _, v in commands]).reshape(-1, 3)
         )
-        if stuck(poses, twists, self._rules, now):
-            return "stuck"
+        if nowhere := no_progress(poses, twists, self._rules, now):
+            return nowhere
         if stalled(twists, self._rules, t0, now):
             return "stalled"
         return None
@@ -228,7 +242,9 @@ class EpisodeDriver(Module):
     def _write(self, record: dict[str, object]) -> None:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.config.out_dir / TERMINAL_FILE
-        path.write_text(json.dumps(record, indent=2) + "\n")
+        partial = path.with_name(path.name + ".partial")
+        partial.write_text(json.dumps(record, indent=2) + "\n")
+        os.replace(partial, path)
         logger.info("Episode terminal", **{k: v for k, v in record.items() if k != "t0"})
 
 

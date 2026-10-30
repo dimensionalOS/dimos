@@ -42,6 +42,7 @@ class VoxelRayMapper:
         min_health: int = -1,
         max_health: int = 5,
         graze_cos: float = 0.7,
+        graze_recent_frames: int = 4294967295,
         support_min: int = 4,
         region_percentile: float = 95.0,
         worker_threads: int = 4,

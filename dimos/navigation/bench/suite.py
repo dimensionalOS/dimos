@@ -41,7 +41,18 @@ from dimos.navigation.bench.ground_truth import (
     boxes_near,
 )
 from dimos.simulation.scenes.procedural import (
+    BAR_SPAN,
+    BARRIER_DEPTH,
+    BLOCK_SIZE,
+    OVERHANG_SIZE,
+    PLACEMENT_TRIES,
+    POLE_WIDTH,
+    SMALL_OBJECT_ASPECT,
+    SMALL_OBJECT_LENGTH,
+    START_CLEARANCE,
+    TABLE_SIZE,
     TABLE_TOP_THICKNESS,
+    WALL_THICKNESS,
     Box,
     Family,
     Params,
@@ -62,13 +73,17 @@ CLEARANCE_BINS = (0.35, 0.6)
 STRADDLE_M = (1.2, 1.5, 2.0)
 OBSTRUCTED = 1.05
 DEAD_END_DETOUR = 1.4
+SIDE_WALL_M = 1.5
+PAST_M = (2.3, 3.0)
+APPROACH_M = 1.5
+UNDER_SLAB_RAD = math.pi / 6
 
 
 @dataclass(frozen=True)
 class Rules:
     """How an episode is scored. Changing any value is a new version."""
 
-    version: int = 1
+    version: int = 3
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
     stand_height_m: float = GO2.stand
@@ -79,6 +94,7 @@ class Rules:
     stuck_s: float = 10.0
     stuck_progress_m: float = 0.3
     stuck_moving_fraction: float = 0.8
+    dither_path_m: float = 0.7
     stalled_s: float = 10.0
     moving_cmd: float = 0.05
     reroute_m: float = 0.5
@@ -104,12 +120,24 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class Level:
+    """Where a probe case sits on the variable its probe sweeps. A control case has the feature removed."""
+
+    variable: str
+    value: float
+    control: bool = False
+
+
+@dataclass(frozen=True)
 class Case(Candidate):
     id: str
     split: Split
     difficulty: Difficulty
     route_length: float
     scene_digest: str
+    level: Level | None = None
+    feature: tuple[float, float] | None = None
+    premap_objects: bool = True
 
 
 @dataclass
@@ -442,6 +470,458 @@ def _validate(
         route_length=route.length,
         scene_digest=gt.scene.digest(),
     )
+
+
+@dataclass(frozen=True)
+class Placed:
+    """A probe case's start and goal, and the feature the robot could pass without meeting."""
+
+    start: Pose
+    goal: Point
+    feature: tuple[float, float] | None = None
+
+
+Placement = Callable[[GroundTruth, float, np.random.Generator], Placed]
+
+
+@dataclass(frozen=True)
+class Probe:
+    """One feature in an otherwise empty scene, swept over fixed levels with one case per level and seed.
+
+    The level is handed to the placement, and to the scene as scene_param when that is named.
+    A seed's placement draws are the same at every level, so only the level differs between its cases.
+    control is the level that removes the feature, run once per seed to see whether the robot's own
+    line crosses it. premap_objects False leaves the clutter out of every case's premap.
+    unit is the variable's unit, empty for a count. description says in one sentence what it tests.
+    """
+
+    name: str
+    family: Family
+    variable: str
+    levels: tuple[float, ...]
+    place: Placement
+    description: str
+    scene_param: str | None = None
+    control: float | None = None
+    seeds: tuple[int, ...] = tuple(range(1, 11))
+    premap_objects: bool = True
+    unit: str = "m"
+
+
+def _start_before(scene: Scene, x: float, rng: np.random.Generator) -> Pose:
+    """A drawn pose short of the given x and clear of the walls."""
+    length = scene.params["length"]
+    sx = START_CLEARANCE + (x - START_CLEARANCE) * float(rng.random())
+    sy = START_CLEARANCE + (length - 2 * START_CLEARANCE) * float(rng.random())
+    return sx, sy, _yaw(rng)
+
+
+def goal_by_wall(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the far wall, and a goal this far from it and well clear of the side walls."""
+    width, length = gt.scene.params["width"], gt.scene.params["length"]
+    start = _start_before(gt.scene, width - APPROACH_M, rng)
+    across = SIDE_WALL_M + (length - 2 * SIDE_WALL_M) * float(rng.random())
+    return Placed(start, (width - clearance, across, gt.scene.start[2]))
+
+
+GOAL_CLEARANCE = Probe(
+    "goal_clearance",
+    "room",
+    "goal_clearance",
+    (0.20, 0.23, 0.26, 0.29, 0.32, 0.35, 0.40, 0.50, 0.60),
+    goal_by_wall,
+    description="A goal near a wall, set closer to it at each level.",
+)
+
+
+def past_the_door(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the door's wall, and a goal in the far room well clear of the door and every wall."""
+    (door,) = gt.scene.doors
+    start = _start_before(gt.scene, door.at - APPROACH_M, rng)
+    near = door.at + WALL_THICKNESS + SIDE_WALL_M
+    x = near + (gt.scene.params["width"] - SIDE_WALL_M - near) * float(rng.random())
+    y = SIDE_WALL_M + (gt.scene.params["length"] - 2 * SIDE_WALL_M) * float(rng.random())
+    return Placed(start, (x, y, gt.scene.start[2]))
+
+
+DOORWAY = Probe(
+    "door_width",
+    "doorway",
+    "door_width",
+    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90),
+    past_the_door,
+    description="A doorway between two rooms, with the door getting narrower.",
+    scene_param="door_width",
+)
+
+
+def table_leg(scene: Scene, leg_width: float, corner: int) -> tuple[float, float]:
+    """The center of one of the table's legs, counted from the corner nearest the origin."""
+    lx, ly = TABLE_SIZE
+    x = scene.params["table_x"] + (leg_width / 2 if corner % 2 == 0 else lx - leg_width / 2)
+    y = scene.params["table_y"] + (leg_width / 2 if corner < 2 else ly - leg_width / 2)
+    return x, y
+
+
+def _start_facing(
+    scene: Scene,
+    before: float,
+    x: float,
+    y: float,
+    rng: np.random.Generator,
+    spread: float = math.pi / 2,
+) -> Pose:
+    """A drawn start clear of the walls and of an object that begins at the given x.
+
+    Its line through the point slants no more than the spread and ends well clear of the walls.
+    """
+    width, length = scene.params["width"], scene.params["length"]
+    for _ in range(PLACEMENT_TRIES):
+        reach = APPROACH_M + (x - START_CLEARANCE - APPROACH_M) * float(rng.random())
+        slant = spread * (2 * float(rng.random()) - 1)
+        yaw = _yaw(rng)
+        sx, sy = x - reach * math.cos(slant), y - reach * math.sin(slant)
+        far_x, far_y = x + PAST_M[1] * math.cos(slant), y + PAST_M[1] * math.sin(slant)
+        if (
+            sx <= before - START_CLEARANCE
+            and START_CLEARANCE <= sy <= length - START_CLEARANCE
+            and far_x <= width - SIDE_WALL_M
+            and SIDE_WALL_M <= far_y <= length - SIDE_WALL_M
+        ):
+            return sx, sy, yaw
+    raise ValueError(f"{scene.name} has no start facing ({x}, {y})")
+
+
+def _straight_past(
+    scene: Scene, start: Pose, x: float, y: float, half_width: float, rng: np.random.Generator
+) -> Placed:
+    """A goal along a line that passes the point closely enough for the body to meet an object this wide.
+
+    The feature is where that line comes nearest the point.
+    """
+    sx, sy, _ = start
+    reach = math.hypot(x - sx, y - sy)
+    offset = (half_width + GO2.radius) * (2 * float(rng.random()) - 1)
+    heading = math.atan2(y - sy, x - sx) + math.asin(offset / reach)
+    meet = math.sqrt(reach**2 - offset**2)
+    low, high = PAST_M
+    past = meet + low + (high - low) * float(rng.random())
+    goal = (sx + past * math.cos(heading), sy + past * math.sin(heading), scene.start[2])
+    return Placed(start, goal, (sx + meet * math.cos(heading), sy + meet * math.sin(heading)))
+
+
+def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past one table leg, so the body walking the direct line meets it."""
+    corner = int(rng.integers(4))
+    start = _start_facing(
+        gt.scene, gt.scene.params["table_x"], *table_leg(gt.scene, 0.0, corner), rng
+    )
+    x, y = table_leg(gt.scene, leg_width, corner)
+    return _straight_past(gt.scene, start, x, y, leg_width / 2, rng)
+
+
+def through_the_block(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the block, so the body walking the direct line meets it."""
+    x, y = gt.scene.params["block_x"], gt.scene.params["block_y"]
+    start = _start_facing(gt.scene, x - BLOCK_SIZE / 2, x, y, rng)
+    return _straight_past(gt.scene, start, x, y, BLOCK_SIZE / 2, rng)
+
+
+LEG_WIDTH = Probe(
+    "leg_width",
+    "table",
+    "leg_width",
+    (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20),
+    through_a_leg,
+    description="A table leg in the path, with the leg getting thinner.",
+    scene_param="leg_width",
+    control=0.0,
+)
+
+
+def under_the_slab(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the slab, so the direct line runs under it between the posts."""
+    x, y = gt.scene.params["slab_x"], gt.scene.params["slab_y"]
+    across = min(OVERHANG_SIZE) / 2
+    start = _start_facing(gt.scene, x - across, x, y, rng, UNDER_SLAB_RAD)
+    return _straight_past(gt.scene, start, x, y, across - GO2.radius, rng)
+
+
+OVERHANG = Probe(
+    "overhang_clearance",
+    "overhang",
+    "overhang_clearance",
+    (0.30, 0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.64, 0.80),
+    under_the_slab,
+    description="A slab on posts in the path, with the gap under it shrinking.",
+    scene_param="clearance",
+    control=0.0,
+)
+BLOCK_HEIGHT = Probe(
+    "block_height",
+    "block",
+    "block_height",
+    (0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.40),
+    through_the_block,
+    description="A block in the path, with its height going from a low step to a tall box.",
+    scene_param="block_height",
+    control=0.0,
+)
+
+
+def over_the_small_object(gt: GroundTruth, length: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the object, so the body walking the direct line meets even the smallest."""
+    x, y = gt.scene.params["object_x"], gt.scene.params["object_y"]
+    start = _start_facing(gt.scene, x - SMALL_OBJECT_LENGTH[1] / 2, x, y, rng)
+    least = SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2
+    return _straight_past(gt.scene, start, x, y, least, rng)
+
+
+SMALL_OBJECT = Probe(
+    "small_object",
+    "small_object",
+    "object_length",
+    (0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.34, 0.42, 0.50),
+    over_the_small_object,
+    description="A small object on the floor in the path, with the object getting smaller.",
+    scene_param="object_length",
+    control=0.0,
+)
+
+
+def past_the_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the corridor, and a goal in the far room well clear of every wall."""
+    params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
+    near_x, near_y = params["room_x"] + SIDE_WALL_M, params["room_y"] + SIDE_WALL_M
+    x = near_x + (params["width"] - SIDE_WALL_M - near_x) * float(rng.random())
+    y = near_y + (params["length"] - SIDE_WALL_M - near_y) * float(rng.random())
+    return Placed(start, (x, y, gt.scene.start[2]))
+
+
+def past_the_winding_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the corridor, and a goal in the turned far room well clear of its walls."""
+    params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
+    ahead = WALL_THICKNESS + SIDE_WALL_M
+    ahead += (params["room_depth"] - 2 * SIDE_WALL_M) * float(rng.random())
+    span = params["room_left"] + params["room_right"] - 2 * SIDE_WALL_M
+    across = SIDE_WALL_M - params["room_right"] + span * float(rng.random())
+    c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+    x, y = params["room_x"] + ahead * c - across * s, params["room_y"] + ahead * s + across * c
+    return Placed(start, (x, y, gt.scene.start[2]))
+
+
+def past_the_hidden_object(gt: GroundTruth, length: float, rng: np.random.Generator) -> Placed:
+    """Through the winding corridor to the far room, with the object on the way as the feature."""
+    placed = past_the_winding_corridor(gt, length, rng)
+    return Placed(
+        placed.start, placed.goal, (gt.scene.params["object_x"], gt.scene.params["object_y"])
+    )
+
+
+def past_the_hidden_pole(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """Through the winding corridor to the far room, with the pole on the way as the feature."""
+    placed = past_the_winding_corridor(gt, width, rng)
+    return Placed(placed.start, placed.goal, (gt.scene.params["pole_x"], gt.scene.params["pole_y"]))
+
+
+CORRIDOR = Probe(
+    "corridor_width",
+    "corridor",
+    "corridor_width",
+    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90, 1.00, 1.20),
+    past_the_corridor,
+    description="A straight corridor to the far room, with the corridor getting narrower.",
+    scene_param="corridor_width",
+)
+CORRIDOR_TURN = Probe(
+    "corridor_turn",
+    "corridor_turn",
+    "corridor_width",
+    CORRIDOR.levels,
+    past_the_winding_corridor,
+    description="A corridor with a turn to the far room, with the corridor getting narrower.",
+    scene_param="corridor_width",
+)
+
+
+def across_the_boxes(gt: GroundTruth, count: float, rng: np.random.Generator) -> Placed:
+    """The scene's start at a drawn yaw, and the goal the scene keeps clear across the room."""
+    sx, sy, z = gt.scene.start
+    return Placed((sx, sy, _yaw(rng)), (gt.scene.params["goal_x"], gt.scene.params["goal_y"], z))
+
+
+CLUTTER = Probe(
+    "clutter_count",
+    "scattered",
+    "clutter_count",
+    (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0),
+    across_the_boxes,
+    description="Boxes scattered across a room, with more boxes at each level.",
+    scene_param="clutter_count",
+    unit="",
+)
+
+
+def into_the_hidden_clutter(gt: GroundTruth, count: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the corridor, and the goal the far room keeps clear."""
+    params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
+    return Placed(start, (params["goal_x"], params["goal_y"], gt.scene.start[2]))
+
+
+HIDDEN_CLUTTER = Probe(
+    "hidden_clutter",
+    "hidden_clutter",
+    "clutter_count",
+    (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0),
+    into_the_hidden_clutter,
+    description="Boxes on the way to the far room that the premap does not show, with more boxes at each level.",
+    scene_param="clutter_count",
+    premap_objects=False,
+    unit="",
+)
+HIDDEN_OBJECT = Probe(
+    "hidden_object",
+    "hidden_object",
+    "object_length",
+    SMALL_OBJECT.levels,
+    past_the_hidden_object,
+    description="A small object in a winding corridor that the premap does not show, with the object getting smaller.",
+    scene_param="object_length",
+    control=0.0,
+    premap_objects=False,
+)
+
+
+def over_the_barrier(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
+    """A drawn start short of the barrier, and a goal in the far half well clear of its walls.
+
+    The feature is where the straight line between them crosses the barrier.
+    """
+    params = gt.scene.params
+    x, width, length = params["barrier_x"], params["width"], params["length"]
+    start = _start_before(gt.scene, x - APPROACH_M, rng)
+    near_x = x + BARRIER_DEPTH + START_CLEARANCE
+    gx = near_x + (width - START_CLEARANCE - near_x) * float(rng.random())
+    gy = START_CLEARANCE + (length - 2 * START_CLEARANCE) * float(rng.random())
+    mid = x + BARRIER_DEPTH / 2
+    cross = start[1] + (gy - start[1]) * (mid - start[0]) / (gx - start[0])
+    return Placed(start, (gx, gy, gt.scene.start[2]), (mid, cross))
+
+
+BARRIER_HEIGHT = Probe(
+    "barrier_height",
+    "low_barrier",
+    "barrier_height",
+    (0.04, 0.08, 0.10, 0.12, 0.14),
+    over_the_barrier,
+    description="A low strip splitting the room wall to wall, with the strip getting taller.",
+    scene_param="barrier_height",
+    control=0.0,
+)
+
+
+def past_the_pole(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the pole, so the body walking the direct line meets even the thinnest."""
+    x, y = gt.scene.params["pole_x"], gt.scene.params["pole_y"]
+    start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng)
+    return _straight_past(gt.scene, start, x, y, POLE_WIDTH[0] / 2, rng)
+
+
+def under_the_bar(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the bar near its middle, so the body walking the direct line clears both posts."""
+    x, y = gt.scene.params["bar_x"], gt.scene.params["bar_y"]
+    start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng, UNDER_SLAB_RAD)
+    return _straight_past(gt.scene, start, x, y, BAR_SPAN / 4 - GO2.radius, rng)
+
+
+BAR = Probe(
+    "bar_width",
+    "bar",
+    "bar_width",
+    (0.01, 0.02, 0.04, 0.08),
+    under_the_bar,
+    description="A bar at trunk height in the path that the premap does not show, with the bar getting thinner.",
+    scene_param="bar_width",
+    control=0.0,
+    premap_objects=False,
+)
+HIDDEN_POLE = Probe(
+    "hidden_pole",
+    "hidden_pole",
+    "pole_width",
+    (0.01, 0.02, 0.04, 0.08),
+    past_the_hidden_pole,
+    description="A pole in a winding corridor that the premap does not show, with the pole getting thinner.",
+    scene_param="pole_width",
+    control=0.0,
+    premap_objects=False,
+)
+POLE = Probe(
+    "pole_width",
+    "pole",
+    "pole_width",
+    (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10),
+    past_the_pole,
+    description="A pole in the path that the premap does not show, with the pole getting thinner.",
+    scene_param="pole_width",
+    control=0.0,
+    premap_objects=False,
+)
+PROBES = {
+    probe.name: probe
+    for probe in (
+        GOAL_CLEARANCE,
+        DOORWAY,
+        LEG_WIDTH,
+        BLOCK_HEIGHT,
+        OVERHANG,
+        CORRIDOR,
+        CORRIDOR_TURN,
+        CLUTTER,
+        SMALL_OBJECT,
+        HIDDEN_OBJECT,
+        HIDDEN_CLUTTER,
+        BARRIER_HEIGHT,
+        POLE,
+        BAR,
+        HIDDEN_POLE,
+    )
+}
+
+
+def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:
+    """The probe's cases, every level in every seed's scene. Deterministic in its arguments."""
+    cases = []
+    for seed in probe.seeds:
+        gt = None
+        levels = probe.levels if probe.control is None else (probe.control, *probe.levels)
+        for value in levels:
+            rng = np.random.default_rng([sampling_seed, seed])
+            params: Params = {} if probe.scene_param is None else {probe.scene_param: value}
+            if gt is None or params:
+                gt = GroundTruth(generate(probe.family, seed, **params))
+            placed = probe.place(gt, value, rng)
+            candidate = Candidate(probe.family, seed, params, placed.start, placed.goal, probe.name)
+            route = gt.route(placed.start, placed.goal)
+            if route is None:
+                raise ValueError(f"{probe.name} at {value} has no route in seed {seed}")
+            cases.append(
+                Case(
+                    **vars(candidate),
+                    id=_case_id(candidate),
+                    split="dev",
+                    difficulty=gt.difficulty(route),
+                    route_length=route.length,
+                    scene_digest=gt.scene.digest(),
+                    level=Level(probe.variable, value, control=value == probe.control),
+                    feature=placed.feature,
+                    premap_objects=probe.premap_objects,
+                )
+            )
+    return Manifest(suite=probe.name, rules=rules, sampling_seed=sampling_seed, cases=cases)
 
 
 def _case_id(candidate: Candidate) -> str:

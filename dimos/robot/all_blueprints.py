@@ -273,6 +273,7 @@ all_modules = {
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "habitat-connection": "dimos.simulation.habitat.connection.HabitatConnection",
     "hand-teleop-module": "dimos.teleop.webxr.extensions.HandTeleopModule",
+    "harness-runtime": "dimos.agents.harness.runtime.harness_runtime.HarnessRuntime",
     "head-camera-info": "dimos.robot.galaxea.r1pro.head_cameras.HeadCameraInfo",
     "head-left-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadLeftCamera",
     "head-right-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadRightCamera",

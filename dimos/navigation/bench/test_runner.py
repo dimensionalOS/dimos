@@ -14,14 +14,18 @@
 
 from __future__ import annotations
 
-import _thread
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 import pytest
@@ -33,20 +37,26 @@ from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
+    REPLAY_FILE,
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
+    SUITE_FILE,
+    LowDiskError,
     Progress,
     RunConfig,
+    _provenance,
     _require_whole,
+    _snapshot,
     _until_verdict,
     rescore,
     run,
 )
 from dimos.navigation.bench.scorer import Commands, Poses, Recording, score
-from dimos.navigation.bench.suite import Case, Manifest, Rules, Split
+from dimos.navigation.bench.snapshot import BACKGROUND, SNAPSHOT_PX, snapshot_path
+from dimos.navigation.bench.suite import Case, Level, Manifest, Rules, Split
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.scenes.procedural import Params, office
+from dimos.simulation.scenes.procedural import Params, block, office
 
 T0 = 1000.0
 
@@ -65,6 +75,9 @@ manifest = json.loads(Path(args["--episodedriver.manifest"]).read_text())
 case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
 if case["tag"] == "hangs":
+    signal.pause()
+if case["tag"] == "empty_terminal":
+    (out / "terminal.json").write_text("")
     signal.pause()
 if case["tag"] == "no_terminal":
     child = subprocess.Popen(["sleep", "300"])
@@ -134,7 +147,39 @@ def _alive(pid: int) -> bool:
     return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
 
 
-def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: Path) -> None:
+def _git(root: Path, *args: str) -> str:
+    identity = ("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false")
+    done = subprocess.run(
+        ["git", "-C", str(root), *identity, *args], capture_output=True, text=True, check=True
+    )
+    return done.stdout.strip()
+
+
+@pytest.fixture
+def checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "commit", "-q", "--allow-empty", "--no-verify", "-m", "first")
+    monkeypatch.setattr("dimos.navigation.bench.runner.DIMOS_PROJECT_ROOT", root)
+    return root
+
+
+def test_provenance_names_the_commit_and_notices_uncommitted_changes(
+    checkout: Path, tmp_path: Path
+) -> None:
+    commit = _git(checkout, "rev-parse", "HEAD")
+    assert _provenance(checkout) == {"commit": commit, "dirty": False}
+    (checkout / "changed").write_text("x")
+    assert _provenance(checkout) == {"commit": commit, "dirty": True}
+    assert _provenance(tmp_path) == {"commit": None, "dirty": None}
+    (tmp_path / ".git").mkdir()
+    assert _provenance(tmp_path) == {"commit": None, "dirty": None}
+
+
+def test_run_scores_every_episode_and_rescores_the_same(
+    suite: Path, checkout: Path, tmp_path: Path
+) -> None:
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
     reports: list[Progress] = []
     run_dir = run(
@@ -160,11 +205,45 @@ def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: P
     assert (episode / "rerun.rrd").read_bytes() == b"rrd"
     assert 'scene {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
-    assert json.loads((run_dir / RUN_FILE).read_text())["finished"] is True
+    meta = json.loads((run_dir / RUN_FILE).read_text())
+    assert meta["finished"] is True
+    assert (meta["commit"], meta["dirty"]) == (_git(checkout, "rev-parse", "HEAD"), False)
+    assert (meta["procs"], meta["machine"]) == (3, socket.gethostname())
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
     suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
     assert find_episode("narrow_door") == episode
+
+
+def test_keeping_failures_drops_the_recordings_of_successes_and_rescores_the_same(
+    suite: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
+    run_dir = run(
+        RunConfig(
+            suite=suite,
+            blueprint="fake",
+            procs=3,
+            out_dir=tmp_path / "run",
+            overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+            keep="failures",
+            command=(sys.executable, str(tmp_path / "fake.py")),
+        )
+    )
+    results = (run_dir / RESULTS_FILE).read_text()
+    rows = {r["case_id"]: r for r in map(json.loads, results.splitlines())}
+    assert rows["mined-s1-aaaaaa"]["outcome"] == "success"
+    assert rows["stay_put-s1-cccccc"]["outcome"] == "timeout"
+    success, failure = run_dir / "mined-s1-aaaaaa", run_dir / "stay_put-s1-cccccc"
+    assert {f.name for f in success.iterdir()} == {"terminal.json", SCORE_FILE, "run.log"}
+    assert (failure / RECORDING_FILE).exists()
+    assert (failure / REPLAY_FILE).read_bytes() == b"rrd"
+    assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
+    (success / SCORE_FILE).unlink()
+    rescored = {r["case_id"]: r for r in map(json.loads, rescore(run_dir).read_text().splitlines())}
+    lost = rescored["mined-s1-aaaaaa"]
+    assert (lost["outcome"], lost["error"]) == (None, "no recording")
+    assert rescored["stay_put-s1-cccccc"] == rows["stay_put-s1-cccccc"]
 
 
 def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path: Path) -> None:
@@ -180,7 +259,7 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     def interrupt_once_both_hang(progress: Progress) -> None:
         if len(progress.running) == 2 and not interrupted:
             interrupted.append(True)
-            _thread.interrupt_main()
+            signal.pthread_kill(threading.main_thread().ident or 0, signal.SIGINT)
 
     config = RunConfig(
         suite=tmp_path / "suite.json",
@@ -203,11 +282,22 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     assert results.read_text() == written
 
 
+def test_a_run_starts_no_episode_once_free_disk_is_under_the_floor(
+    suite: Path, tmp_path: Path
+) -> None:
+    config = RunConfig(suite=suite, out_dir=tmp_path / "run", min_free_gb=1e12)
+    with pytest.raises(LowDiskError):
+        run(config)
+    assert not [d for d in (tmp_path / "run").iterdir() if d.is_dir()]
+    assert json.loads((tmp_path / "run" / RUN_FILE).read_text())["finished"] is False
+
+
 def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> None:
     cases = [
         _case("mined-s1-aaaaaa", "mined", "dev", {}),
         _case("driver_error-s1-bbbbbb", "driver_error", "dev", {}),
         _case("no_terminal-s1-cccccc", "no_terminal", "dev", {}),
+        _case("empty_terminal-s1-dddddd", "empty_terminal", "dev", {}),
     ]
     Manifest("test", Rules(), 0, cases).save(tmp_path / "suite.json")
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
@@ -228,6 +318,8 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
     assert (failed["outcome"], failed["error"]) == (None, "driver_error")
     lost = rows["no_terminal-s1-cccccc"]
     assert (lost["outcome"], lost["error"]) == (None, "no terminal record")
+    cut = rows["empty_terminal-s1-dddddd"]
+    assert (cut["outcome"], cut["error"]) == (None, "no terminal record")
     orphan = int((run_dir / "no_terminal-s1-cccccc" / "child.pid").read_text())
     deadline = time.monotonic() + 5.0
     while _alive(orphan) and time.monotonic() < deadline:
@@ -303,3 +395,42 @@ def test_the_dimos_entry_point_imports_without_mujoco(tmp_path: Path) -> None:
         [sys.executable, "-c", "import dimos.cli.dimos"], env=env, capture_output=True, text=True
     )
     assert probe.returncode == 0, probe.stderr[-2000:]
+
+
+def _block_run(tmp_path: Path) -> tuple[Path, Case]:
+    case = replace(
+        _case("block-s1-aaaaaa", "block", "dev", {}),
+        family="block",
+        params={"block_height": 0.2},
+        level=Level("block_height", 0.2),
+    )
+    Manifest("test", Rules(), 0, [case]).save(tmp_path / SUITE_FILE)
+    return tmp_path, case
+
+
+def test_no_snapshot_is_saved_and_nothing_raised_when_no_backend_renders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_dir, case = _block_run(tmp_path)
+    monkeypatch.setattr("dimos.navigation.bench.runner.GL_BACKENDS", ("missing",))
+    _snapshot(run_dir, [case])
+    assert not snapshot_path(run_dir, case).exists()
+    _snapshot(run_dir, [replace(case, level=None)])
+    assert sorted(p.name for p in run_dir.iterdir()) == [SUITE_FILE]
+
+
+@pytest.mark.self_hosted
+def test_the_snapshot_shows_the_goal_and_the_feature_on_a_plain_background(tmp_path: Path) -> None:
+    run_dir, case = _block_run(tmp_path)
+    scene = block(1, block_height=0.2)
+    case = replace(case, feature=(scene.params["block_x"], scene.params["block_y"]))
+    Manifest("test", Rules(), 0, [case]).save(run_dir / SUITE_FILE)
+    _snapshot(run_dir, [case])
+    if not snapshot_path(run_dir, case).exists():
+        pytest.skip("no GL backend renders here")
+    image = cv2.imread(str(snapshot_path(run_dir, case))).astype(int)
+    assert image.shape[:2] == SNAPSHOT_PX[::-1]
+    blue, green, red = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+    assert (green > 2 * np.maximum(red, blue)).sum() > 20
+    assert (red > 2 * np.maximum(green, blue)).sum() > 10
+    assert (image[0, 0] == BACKGROUND).all() and (image[-1, -1] == BACKGROUND).all()

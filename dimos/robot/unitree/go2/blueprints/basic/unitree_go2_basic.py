@@ -166,7 +166,7 @@ rerun_config: dict[str, Any] = {
         "world/navigation_costmap": _convert_navigation_costmap,
         "world/pgo_keyframes": _convert_pgo_keyframes,
         "world/pgo_loops": _convert_pgo_loops,
-        # partial, not a closure: this config is pickled to the viewer's worker
+        # partial, not a closure: this config is sent by reference to the viewer's worker
         "world/mapper_frame_ms": partial(_plot_telemetry, "mapper_frame_ms"),
         "world/pgo_loop_ms": partial(_plot_telemetry, "pgo_loop_ms"),
         "world/pgo_rebuild_ms": partial(_plot_telemetry, "pgo_rebuild_ms"),

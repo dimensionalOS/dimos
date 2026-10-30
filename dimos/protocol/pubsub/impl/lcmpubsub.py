@@ -21,10 +21,7 @@ import threading
 from typing import Any
 
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.encoders import (
-    LCMEncoderMixin,
-    PickleEncoderMixin,
-)
+from dimos.protocol.pubsub.encoders import CborEncoderMixin, LCMEncoderMixin
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.lcmservice import LCMService
@@ -154,7 +151,7 @@ class LCM(  # type: ignore[misc]
 ): ...
 
 
-class PickleLCM(
-    PickleEncoderMixin,  # type: ignore[type-arg]
+class CborLCM(
+    CborEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...

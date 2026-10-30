@@ -28,6 +28,8 @@ include = ["dimos*", "experimental.gateway*"]
 # .py modules out of the wheel too).
 exclude = [
     "experimental.gateway.tests*",
+    "dimos.agents.node_modules*",
+    "dimos.agents.dist*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -56,9 +58,16 @@ exclude = [
 "experimental.gateway" = ["annotations.yaml"]
 
 [tool.setuptools.exclude-package-data]
-# Trims data the recursive globs above would otherwise pull in: test fixtures
-# and the native (C++/nix) build tree, which is built separately.
+# Trims data the recursive globs above would otherwise pull in: test fixtures,
+# the on-robot agent's Node package (it runs from a checkout) and the native
+# (C++/nix) build tree, which is built separately.
 "dimos" = [
+    "agents/node_modules/**",
+    "agents/dist/**",
+    "agents/package.json",
+    "agents/package-lock.json",
+    "agents/tsconfig.json",
+    "agents/.prettierrc.json",
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",
@@ -122,6 +131,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
+    "cbor2>=6.1.5,<7", # RPC and worker-pipe serialization (protocol/encode/cbor.py)
     "python-dotenv",
     "packaging>=24.0",
     "requests>=2.32",
@@ -481,8 +491,8 @@ tests = [
 ]
 
 # Drives the cockpit browser e2e (-m web_browser). Kept out of `tests`: only
-# the CI jobs that run it (`web`, macOS `self-hosted-tests`) need the
-# platform-specific Playwright package.
+# the browser jobs of the daily `e2e` workflow need the platform-specific
+# Playwright package.
 browser-tests = [
     "playwright>=1.55",
 ]

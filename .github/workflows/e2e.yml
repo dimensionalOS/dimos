@@ -1,0 +1,300 @@
+name: e2e
+# End-to-end tests: the whole stack in DimSim and in real browsers. Too slow
+# and too flaky for every PR, so they run once a day on main. Run them on a
+# branch with workflow_dispatch before merging a change to the cockpit, the
+# web SDK, DimSim or the e2e tests themselves.
+on:
+  schedule:
+    # 03:00 in San Francisco. GitHub cron is UTC only, so this is 03:00 PDT
+    # and 02:00 PST in winter.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  # Disable default package installs. Each job should explicitly install a group.
+  UV_NO_SYNC: "1"
+
+jobs:
+  self-hosted-large-tests:
+    # DimSim navigation e2e, the self_hosted e2e under dimos/e2e_tests and the
+    # memory-hungry replay tests: everything marked self_hosted_large.
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      TYPESAFENAVIGATIONAGENT__API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      DIMSIM_RENDER: gpu
+      # Arm faulthandler from interpreter start — before conftest is even
+      # imported — so import-time crashes are covered too. dimos/conftest.py
+      # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash.
+      PYTHONFAULTHANDLER: "1"
+    timeout-minutes: 45
+    runs-on: [self-hosted, Linux, large]
+    permissions:
+      contents: read  # For checkout
+      id-token: write  # For codecov-action's OIDC upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          clean: false
+          # If we ever allow external PRs on custom runner, persisting credentials
+          # could be abused by attackers.
+          persist-credentials: false
+      - name: Fix permissions
+        run: |
+          sudo git config --global --add safe.directory '*'
+          sudo git clean -ffdx
+      - name: Fetch DimSim LFS assets only
+        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
+        # glbs are pointer stubs and the browser sim fails to load them. Pull
+        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
+        # multi-GB data/.lfs/* objects (some missing on the server → 404).
+        # persist-credentials is false above, so supply the token for this pull.
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
+          git lfs pull --include="misc/DimSim/**"
+          git config --local --unset-all http.https://github.com/.extraheader
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
+      - name: Install codecov CLI
+        # Self-hosted runners have no `pip` on PATH, so codecov-action's
+        # use_pypi can't work here; pre-install the pinned CLI with uv and
+        # point the action at it via `binary`. See codecov/codecov-action#1955
+        # and #2398.
+        run: |
+          uv venv .codecov-venv
+          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
+            build-essential \
+            `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
+            libgl1 \
+            `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
+            libturbojpeg \
+            `# Dev package for PyAudio (built from source against PortAudio).` \
+            portaudio19-dev \
+            `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
+            libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
+            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
+            `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
+            libxkbcommon-x11-0
+      - name: Install dependencies
+        run: uv sync --group tests-self-hosted --frozen
+      - name: Build C++ extensions in-place
+        run: uv run python setup.py build_ext --inplace
+      - name: Build DimSim and install its headless Chromium
+        # Without this, it gets built in the test, creating race conditions.
+        run: ./bin/dimsim-prepare
+      - name: Run tests
+        # The runner must have an Xorg server with NVIDIA GPU access running
+        # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
+        # heavier scenes (`apt`). Software X via xvfb is not enough.
+        env:
+          DISPLAY: ":0"
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+      - name: Re-run the failing tests with maximum verbosity
+        if: failure()
+        env:
+          COLOR: yes
+          DISPLAY: ":0"
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
+        shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: Turn coverage into xml
+        run: uv run python -m coverage xml
+      - name: Upload coverage
+        uses: codecov/codecov-action@v7
+        with:
+          disable_search: true
+          fail_ci_if_error: true
+          files: ./coverage.xml
+          flags: SelfHosted-Large
+          use_oidc: true
+          # Use the pinned CLI from the "Install codecov CLI" step (no pip
+          # on self-hosted runners, and the default cli.codecov.io download
+          # has a broken GPG key fetch). See codecov/codecov-action#1955.
+          binary: .codecov-venv/bin/codecovcli
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          report_type: test_results
+          use_oidc: true
+          # See the "Upload coverage" step above.
+          binary: .codecov-venv/bin/codecovcli
+      - name: Check disk space
+        if: failure()
+        run: |
+          df -h
+      - name: Prune the persistent uv cache
+        # See the ci.yml self-hosted-tests job; UV_CACHE_DIR isn't set here,
+        # so resolve the default with `uv cache dir`.
+        if: ${{ !cancelled() }}
+        run: |
+          uv cache prune
+          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
+          echo "uv cache size: ${size_mb} MB"
+          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
+
+  # The cockpit and web SDK Playwright e2e (-m web_browser), in Chromium and
+  # Firefox, on a hosted Linux runner and on the self-hosted macOS runner: the
+  # two WebTransport stacks differ.
+  browser-tests-linux:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      # See self-hosted-large-tests above.
+      PYTHONFAULTHANDLER: "1"
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Extract Deno version
+        id: deno-version
+        run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
+      # and nothing creates it until the builds below first run deno.
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ steps.deno-version.outputs.version }}
+      # Build the dists up front: the bridge would otherwise build them inside
+      # the first test's timeout.
+      - name: Deno install (validates deno.lock)
+        working-directory: web
+        run: deno install --frozen
+      - name: SDK bundle build
+        working-directory: web/sdk
+        run: deno task build
+      - name: Cockpit build
+        working-directory: web/cockpit
+        run: deno task build
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies (pyaudio build, JPEG encoding)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      - name: Fetch the go2_short replay dataset
+        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Install dependencies
+        run: uv sync --group tests --group browser-tests --frozen
+      - name: Install Playwright browsers  # the e2e runs in both engines
+        run: uv run playwright install --with-deps chromium firefox
+      - name: Cockpit + SDK browser e2e
+        run: uv run pytest -m web_browser dimos/e2e_tests --no-cov
+      - name: Re-run the failing tests with maximum verbosity
+        if: failure()
+        env:
+          COLOR: yes
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          uv run pytest --no-cov -vvvvv --lf -m web_browser dimos/e2e_tests && exit 1
+        shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+
+  browser-tests-macos:
+    timeout-minutes: 45
+    runs-on: [self-hosted, macOS, base]
+    env:
+      # See self-hosted-large-tests above.
+      PYTHONFAULTHANDLER: "1"
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          clean: false
+          # If we ever allow external PRs on custom runner, persisting credentials
+          # could be abused by attackers.
+          persist-credentials: false
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # We persist on disk, cache would clean some of this up.
+          enable-cache: false
+      - name: Install dependencies
+        run: uv sync --group tests --group browser-tests --frozen
+      - name: Install Playwright browsers  # the e2e runs in both engines
+        run: uv run playwright install chromium firefox
+      - name: Configure LCM networking
+        # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
+        run: |
+          raise() {
+            if [ "$(sysctl -n "$1")" -lt "$2" ]; then
+              sudo -n sysctl -w "$1=$2" || { echo "::error::$1 is below $2 on $RUNNER_NAME and sudo needs a password; set it in /etc/sysctl.conf on the host"; exit 1; }
+            fi
+          }
+          raise kern.ipc.maxsockbuf 6291456
+          raise net.inet.udp.recvspace 2097152
+          raise net.inet.udp.maxdgram 65535
+      - name: Kill processes left over from earlier jobs
+        # The runner is shared and never recreated between runs.
+        run: |
+          pgrep -fl "$GITHUB_WORKSPACE/" || exit 0
+          pkill -f "$GITHUB_WORKSPACE/" || true
+          for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
+          pkill -KILL -f "$GITHUB_WORKSPACE/" || true
+      - name: Cockpit + SDK browser e2e
+        run: uv run pytest -m web_browser dimos/e2e_tests --no-cov
+      - name: Re-run the failing tests with maximum verbosity
+        if: failure()
+        env:
+          COLOR: yes
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          uv run pytest --no-cov -vvvvv --lf -m web_browser dimos/e2e_tests && exit 1
+        shell: bash
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done

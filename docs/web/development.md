@@ -66,7 +66,9 @@ Two overrides: `--no-web-build` skips the staleness check and the build, and `DI
 - `uv run pytest dimos/web` covers the Python side: the authoring API, the codecs, the manifest and protocol mirrors against the golden fixtures, the bridge module with fakes, and relay tests that spawn a real relay.
 - The browser tests, `uv run pytest -m web_browser dimos/e2e_tests`, drive the whole stack against the Go2 replay dataset in Playwright Chromium and Firefox (their WebTransport stacks differ). [`test_cockpit_browser.py`](/dimos/e2e_tests/test_cockpit_browser.py) covers the cockpit (live data, a stable session, a kill and restart of dimos), [`test_sdk_browser.py`](/dimos/e2e_tests/test_sdk_browser.py#L24) the zero-build, cross-origin and `file:` SDK pages, and the other files custom channels, LCM channels, publishing, voice, stats, the robot picker, map clicks and auth. The pinned browsers install on first run. The default pytest suite excludes the marker.
 
-The CI `web` job runs deno fmt, lint, check and test, the SDK and cockpit vitest suites and builds, the browser tests, and a build of the relay Docker image.
+The browser tests do not run on pull requests. The `e2e` workflow runs them once a day on `main`, on a hosted Linux runner and on the self-hosted macOS runner. Start it by hand on a branch (`workflow_dispatch`) to check a cockpit or SDK change before merging.
+
+The CI `web` job runs deno fmt, lint, check and test, the SDK and cockpit vitest suites and builds, and a build of the relay Docker image.
 
 ## Golden fixtures
 

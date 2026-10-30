@@ -15,9 +15,9 @@
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.hosted.fragment import RemoteModuleReference
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments

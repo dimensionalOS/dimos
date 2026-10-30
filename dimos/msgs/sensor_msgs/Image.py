@@ -114,6 +114,15 @@ class Image(Timestamped):
         self.frame_id = state.get("frame_id", "")
         self.ts = state.get("ts", time.time())
 
+    def cbor_encode(self) -> dict[str, Any]:
+        # Not the LCM form: that fixes the dtype per format (a float RGB image would come
+        # back as uint8) and decodes into read-only arrays.
+        return self.__getstate__()
+
+    @classmethod
+    def cbor_decode(cls, state: dict[str, Any]) -> Image:
+        return cls(**state)
+
     @property
     def height(self) -> int:
         return int(self.data.shape[0])

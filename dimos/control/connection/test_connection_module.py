@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import math
-import pickle
 import threading
 import time
 from typing import Any
@@ -33,6 +32,7 @@ from dimos.control._control_test_helpers import FakeArm
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.contract.limits import Limits
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.testing.cbor import roundtrip
 
 JOINT1 = "mock/joint1/position"
 DEADMAN_S = 0.05
@@ -300,7 +300,7 @@ def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> Non
     r = rig()
     status = r.module.status()
     assert isinstance(status, ConnectionStatus)
-    assert pickle.loads(pickle.dumps(status)) == status
+    assert roundtrip(status) == status
     assert len(status.session_id) == 32
     assert status.connected
     assert status.last_command_time is None
