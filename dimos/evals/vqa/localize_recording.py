@@ -1,0 +1,557 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Optional localize evidence for VQA generation from a Memory recording.
+
+Default path (no preset queries):
+
+1. QualityWindow frames → VLM names (open phrases, optional attributes).
+2. Meanwhile warm the Dan detector (OWL) on GPU.
+3. SigLIP embed + retrieve, then release SigLIP; OWL detect → EdgeTAM → lift.
+4. Attach per-frame :class:`LocalizeSceneEvidence` from ``base_link`` pose.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+import threading
+from typing import Any
+
+import numpy as np
+
+from dimos.evals.vqa.contracts import QuestionProposal
+from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+from dimos.evals.vqa.primitives.localize_scene import (
+    LocalizeSceneEvidence,
+    format_referent,
+    instances_by_category,
+    next_to_referents,
+    scene_from_named_hits,
+)
+from dimos.memory.cli.dataset import open_dataset
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
+from dimos.perception.localize.types import Localization, LocalizeParams
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+BASE_FRAME = "base_link"
+_DISCOVERY_MAX_FRAMES = 12
+_DISCOVERY_MAX_QUERIES = 12
+# Room-scale Go2 defaults used by the aa5f offline bench (not xArm desktop defaults).
+# min_views=1 so short VQA windows can accept single-sighting hits.
+_ROOM_LOCALIZE_PARAMS = LocalizeParams(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    min_views=1,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=13,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+    release_embedder_after_retrieve=True,
+)
+
+_DISCOVERY_VLM_PROMPT = (
+    "List distinct physical objects clearly visible in this image. "
+    "Prefer short noun phrases with distinguishing attributes when obvious "
+    '(color, material, size), e.g. "green backpack", "blue ceramic mug". '
+    "Do not invent objects that are not visible. "
+    'Avoid generic words like "object", "thing", "item", or "stuff". '
+    'Return JSON only: {"objects": ["name", ...]} with at most 12 names.'
+)
+_DISCOVERY_VLM_BAN = frozenset(
+    {"object", "objects", "thing", "things", "item", "items", "stuff", "image", "background"}
+)
+
+
+@dataclass(frozen=True)
+class LocalizeWindowResult:
+    """Verified hits plus a rig whose tf covers the localize window.
+
+    Built once per ``--with-localize`` run and shared by ego + cross-view families:
+    coordinates / instance ids on ``named_hits``, first-sighting times, dense
+    ``color_frames``, and per-query multi-view sightings for identity pairs.
+    """
+
+    named_hits: tuple[tuple[str, Localization], ...]
+    rig: Rig
+    queries: tuple[str, ...]
+    # Earliest Detection3DPC.ts per Localization.instance_id in this window.
+    first_seen_by_instance: dict[str, float] = field(default_factory=dict)
+    # color_image frames in the window for ego / cross-view memory clips.
+    # Primary camera (first optical frame) — ego clips and single-stream callers.
+    color_frames: tuple[tuple[float, Image], ...] = ()
+    # Optical-frame → frames; cross-view clips must use the sighting's camera.
+    color_frames_by_camera: dict[str, tuple[tuple[float, Image], ...]] = field(default_factory=dict)
+    # query → instance_id → framing sightings (from localize traces; no second pass).
+    views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = field(default_factory=dict)
+
+
+def robot_pose_xyz_yaw(
+    rig: Rig, timestamp: float
+) -> tuple[tuple[float, float, float], float] | None:
+    """World ``(xyz, yaw_rad)`` of ``base_link`` at ``timestamp``, if tf resolves."""
+    transform = rig.tf.get(BASE_FRAME, rig.world_frame, timestamp, TF_TOLERANCE)
+    if transform is None:
+        return None
+    pose = (-transform).to_pose()
+    return (pose.x, pose.y, pose.z), float(pose.yaw)
+
+
+def color_frames_by_camera_from_rig(
+    rig: Rig, after: float, before: float
+) -> dict[str, tuple[tuple[float, Image], ...]]:
+    """Optical-frame → sorted ``(ts, Image)`` color frames in ``[after, before]``."""
+    by_camera: dict[str, tuple[tuple[float, Image], ...]] = {}
+    for frame_id, camera in rig.cameras.items():
+        frames: list[tuple[float, Image]] = []
+        for observation in camera.color.after(after).before(before):
+            image = observation.data
+            if not isinstance(image, Image):
+                continue
+            frames.append((float(observation.ts), image))
+        frames.sort(key=lambda row: row[0])
+        if frames:
+            by_camera[frame_id] = tuple(frames)
+    return by_camera
+
+
+def color_frames_from_rig(rig: Rig, after: float, before: float) -> tuple[tuple[float, Image], ...]:
+    """Sorted ``(ts, Image)`` frames when the window has exactly one color camera.
+
+    Multi-camera windows must use ``color_frames_by_camera_from_rig`` and cut
+    clips per sighting ``camera_frame``. Returning the first camera here would
+    publish the wrong RGB for sightings from other optical frames.
+    """
+    by_camera = color_frames_by_camera_from_rig(rig, after, before)
+    if len(by_camera) == 1:
+        return next(iter(by_camera.values()))
+    return ()
+
+
+def scene_at_timestamp(
+    named_hits: Sequence[tuple[str, Localization]],
+    rig: Rig,
+    timestamp: float,
+    *,
+    first_seen_by_instance: Mapping[str, float] | None = None,
+) -> LocalizeSceneEvidence | None:
+    """Attach robot pose at ``timestamp`` to verified hits; ``None`` without base_link."""
+    pose = robot_pose_xyz_yaw(rig, timestamp)
+    if pose is None:
+        return None
+    robot_xyz, robot_yaw = pose
+    return scene_from_named_hits(
+        robot_xyz,
+        robot_yaw,
+        named_hits,
+        first_seen_by_instance=dict(first_seen_by_instance or {}),
+    )
+
+
+# Cap multi-instance categories so full-episode scenes do not explode case counts.
+_MAX_MULTI_CATEGORIES = 6
+_MAX_HEIGHT_PAIRS = 12
+_MAX_NEXT_TO_PAIRS = 6
+
+
+def proposals_from_localize_scene(scene: LocalizeSceneEvidence) -> tuple[QuestionProposal, ...]:
+    """Deterministic localize proposals: unique, nearest, next-to, existential."""
+    by_category, display_name = instances_by_category(scene)
+
+    singles = sorted(
+        (display_name[key] for key, hits in by_category.items() if len(hits) == 1),
+        key=str.casefold,
+    )
+    multi = sorted(
+        (
+            (
+                display_name[key],
+                len(hits),
+                max(hit.semantic_score for hit in hits),
+            )
+            for key, hits in by_category.items()
+            if len(hits) >= 2
+        ),
+        key=lambda row: (-row[2], row[1], row[0].casefold()),
+    )
+    multi_names = [name for name, _, _ in multi[:_MAX_MULTI_CATEGORIES]]
+
+    proposals: list[QuestionProposal] = []
+    # 1) Rare / unique categories (bare name).
+    for name in singles:
+        proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(name,)))
+        proposals.append(QuestionProposal(family="ego_turn", object_names=(name,)))
+        proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
+
+    # 2) Multi-instance: nearest + existential (no left/right — unnatural in question text).
+    for name in multi_names:
+        nearest = format_referent("nearest", name)
+        proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(nearest,)))
+        proposals.append(QuestionProposal(family="ego_turn", object_names=(nearest,)))
+        proposals.append(QuestionProposal(family="ego_any_fore_aft", object_names=(name,)))
+
+    # 3) Relational referents: "<anchor> next to <landmark>" (no leaked turn answer).
+    for referent in next_to_referents(scene, max_pairs=_MAX_NEXT_TO_PAIRS):
+        proposals.append(QuestionProposal(family="ego_fore_aft", object_names=(referent,)))
+        proposals.append(QuestionProposal(family="ego_turn", object_names=(referent,)))
+
+    # Height order among unique categories only (stable GT without selector prefixes).
+    height_pairs = 0
+    for index, left in enumerate(singles):
+        for right in singles[index + 1 :]:
+            proposals.append(QuestionProposal(family="height_order", object_names=(left, right)))
+            height_pairs += 1
+            if height_pairs >= _MAX_HEIGHT_PAIRS:
+                return tuple(proposals)
+    return tuple(proposals)
+
+
+@lru_cache(maxsize=1)
+def lvis_discovery_vocab() -> tuple[str, ...]:
+    """Primary LVIS class names (before ``/`` aliases) for open-vocab discovery prompts."""
+    import ultralytics
+    import yaml
+
+    path = Path(ultralytics.__file__).resolve().parent / "cfg" / "datasets" / "lvis.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))["names"]
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in raw.values():
+        primary = str(value).split("/", 1)[0].strip()
+        if primary and primary not in seen:
+            seen.add(primary)
+            names.append(primary)
+    return tuple(names)
+
+
+def _build_dan_detector(name: str) -> Any:
+    from dimos.perception.localize import dandetect
+
+    return dandetect._build(dandetect._option(dandetect.DETECTORS, name))
+
+
+def _discovery_frames(
+    rig: Rig,
+    after: float,
+    before: float,
+    *,
+    max_frames: int,
+) -> list[Any]:
+    from dimos.memory.transform import QualityWindow
+
+    camera = next(iter(rig.cameras.values()))
+    span = max(before - after, 1e-3)
+    window = max(span / max_frames, 0.5)
+    return list(
+        camera.color.after(after)
+        .before(before)
+        .transform(QualityWindow(lambda image: image.sharpness, window=window))
+    )[:max_frames]
+
+
+def warmup_detector(detector: Any) -> None:
+    """Load detector weights and run one cheap forward (hides OWL cold start)."""
+    import time
+
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    t0 = time.perf_counter()
+    start = getattr(detector, "start", None)
+    if callable(start):
+        start()
+    query_score_rows = getattr(detector, "query_score_rows", None)
+    if callable(query_score_rows):
+        blank = Image(data=np.zeros((64, 64, 3), dtype=np.uint8), format=ImageFormat.RGB)
+        query_score_rows(blank, ["warmup object"], threshold=0.99)
+    logger.info(
+        f"localize detector warmup done: {type(detector).__name__} "
+        f"in {time.perf_counter() - t0:.1f}s"
+    )
+
+
+def discover_object_names_vlm(
+    rig: Rig,
+    after: float,
+    before: float,
+    *,
+    max_frames: int = _DISCOVERY_MAX_FRAMES,
+    max_queries: int = _DISCOVERY_MAX_QUERIES,
+    vl_model: Any | None = None,
+) -> tuple[str, ...]:
+    """VLM open-vocab naming over QualityWindow frames → localize queries."""
+    from dimos.models.vl.openai import OpenAIVlModel
+
+    if max_frames < 1:
+        raise ValueError("max_frames must be at least 1")
+    if before <= after:
+        raise ValueError("discovery window before must be greater than after")
+
+    frames = _discovery_frames(rig, after, before, max_frames=max_frames)
+    if not frames:
+        logger.warning("localize VLM discovery found no frames in window")
+        return ()
+
+    owns = vl_model is None
+    if vl_model is None:
+        vl_model = OpenAIVlModel()
+
+    counts: Counter[str] = Counter()
+    try:
+        for observation in frames:
+            image = observation.data
+            image.ts = observation.ts
+            payload = vl_model.query_json(image, _DISCOVERY_VLM_PROMPT)
+            names: list[Any]
+            if isinstance(payload, dict):
+                raw = payload.get("objects", payload.get("names", []))
+                names = list(raw) if isinstance(raw, list) else []
+            elif isinstance(payload, list):
+                names = payload
+            else:
+                names = []
+            for item in names:
+                if isinstance(item, dict):
+                    name = str(item.get("name", "") or "").strip()
+                else:
+                    name = str(item or "").strip()
+                if not name or name.lower() in _DISCOVERY_VLM_BAN:
+                    continue
+                counts[name] += 1
+    finally:
+        if owns:
+            stop = getattr(vl_model, "stop", None)
+            if callable(stop):
+                stop()
+
+    queries = tuple(name for name, _ in counts.most_common(max_queries))
+    logger.info(
+        f"localize VLM discovery: {len(frames)} frames → {len(queries)} queries {list(queries)}"
+    )
+    return queries
+
+
+def discover_object_names(
+    rig: Rig,
+    after: float,
+    before: float,
+    *,
+    max_frames: int = _DISCOVERY_MAX_FRAMES,
+    max_queries: int = _DISCOVERY_MAX_QUERIES,
+    detector: Any | None = None,
+    discovery_vocab: Sequence[str] | None = None,
+    score_threshold: float | None = None,
+) -> tuple[str, ...]:
+    """Detector ``query_score_rows`` scan (e.g. LVIS) → localize queries.
+
+    Prefer :func:`discover_object_names_vlm` for attribute-rich open phrases.
+    """
+    if max_frames < 1:
+        raise ValueError("max_frames must be at least 1")
+    if before <= after:
+        raise ValueError("discovery window before must be greater than after")
+
+    frames = _discovery_frames(rig, after, before, max_frames=max_frames)
+    if not frames:
+        logger.warning("localize discovery found no frames in window")
+        return ()
+
+    owns_detector = detector is None
+    if detector is None:
+        detector = _build_dan_detector("owlv2")
+
+    query_score_rows = getattr(detector, "query_score_rows", None)
+    if not callable(query_score_rows):
+        raise ValueError("discovery detector must implement query_score_rows")
+
+    vocab = [
+        str(name).strip()
+        for name in (discovery_vocab if discovery_vocab is not None else lvis_discovery_vocab())
+        if str(name).strip()
+    ]
+    if not vocab:
+        raise ValueError("discovery_vocab must contain at least one non-empty name")
+
+    floor = (
+        float(score_threshold)
+        if score_threshold is not None
+        else float(_ROOM_LOCALIZE_PARAMS.candidate_floor)
+    )
+    logger.info(
+        f"localize discovery via query_score_rows "
+        f"detector={type(detector).__name__} vocab={len(vocab)} floor={floor}"
+    )
+
+    counts: Counter[str] = Counter()
+    try:
+        for observation in frames:
+            image = observation.data
+            image.ts = observation.ts
+            _boxes, rows = query_score_rows(image, vocab, threshold=floor)
+            if rows.size == 0:
+                continue
+            for j, name in enumerate(vocab):
+                if float(rows[:, j].max()) >= floor:
+                    counts[name] += 1
+    finally:
+        if owns_detector:
+            detector.stop()
+
+    queries = tuple(name for name, _ in counts.most_common(max_queries))
+    logger.info(
+        f"localize discovery: {len(frames)} frames → {len(queries)} queries {list(queries)}"
+    )
+    return queries
+
+
+@contextmanager
+def localize_window(
+    dataset: str | Path,
+    queries: Sequence[str],
+    after: float,
+    before: float,
+    *,
+    embedder: str = "siglip",
+    detector: str = "owlv2",
+    segmenter: str = "edgetam",
+    discover: str = "vlm",
+) -> Iterator[LocalizeWindowResult]:
+    """Discover (if needed), localize, and yield verified hits + rig over ``[after, before]``.
+
+    Default ``discover='vlm'``: API VLM names frames while the Dan detector
+    warms on GPU; SigLIP is released after retrieve before OWL detect.
+    ``discover='lvis'`` keeps detector-vocab discovery instead.
+    """
+    if before <= after:
+        raise ValueError("localize window before must be greater than after")
+    if discover not in {"vlm", "lvis"}:
+        raise ValueError("discover must be 'vlm' or 'lvis'")
+
+    # Heavy stack stays inside the optional path.
+    from dimos.perception.localize.dandetect import DanDetector
+    from dimos.perception.localize.localize import embed_index
+
+    store = open_dataset(dataset)
+    store.start()
+    shared_detector: Any | None = None
+    try:
+        rig = Rig.from_store(store)
+        rig.tf = window_tf(store, after, before)
+        if rig.lidar is not None:
+            rig.lidar = rig.lidar.after(after).before(before)
+
+        query_list = [query.strip() for query in queries if query.strip()]
+        shared_detector = _build_dan_detector(detector)
+        warm_error: list[BaseException] = []
+
+        def _warm() -> None:
+            try:
+                warmup_detector(shared_detector)
+            except BaseException as exc:
+                warm_error.append(exc)
+                logger.exception("localize detector warmup failed")
+
+        if not query_list and discover == "vlm":
+            # API VLM leaves the GPU free — warm OWL in parallel.
+            warm_thread = threading.Thread(
+                target=_warm, name="localize-detector-warmup", daemon=True
+            )
+            warm_thread.start()
+            query_list = list(discover_object_names_vlm(rig, after, before))
+            warm_thread.join()
+            if warm_error:
+                raise RuntimeError("localize detector warmup failed") from warm_error[0]
+        elif not query_list:
+            # LVIS scan uses the detector; first forward is the warmup.
+            query_list = list(
+                discover_object_names(
+                    rig,
+                    after,
+                    before,
+                    detector=shared_detector,
+                    discovery_vocab=lvis_discovery_vocab(),
+                    score_threshold=_ROOM_LOCALIZE_PARAMS.candidate_floor,
+                )
+            )
+        else:
+            warmup_detector(shared_detector)
+
+        if not query_list:
+            logger.warning("localize window has no discovered or provided queries")
+            yield LocalizeWindowResult(named_hits=(), rig=rig, queries=())
+            return
+
+        from dimos.evals.vqa.primitives.cross_view_identity import collect_query_instances
+        from dimos.perception.localize.localize import LocalizeTrace
+
+        logger.info(
+            f"localize_window shared {type(shared_detector).__name__} "
+            f"detect prompts={query_list!r} discover={discover}"
+        )
+
+        named: list[tuple[str, Localization]] = []
+        first_seen_by_instance: dict[str, float] = {}
+        views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = {}
+        traces = [LocalizeTrace() for _ in query_list]
+        with DanDetector(embedder, shared_detector, segmenter) as dan:
+            # Enter succeeded: DanDetector.stop() owns embedder/detector/segmenter.
+            shared_detector = None
+            index = embed_index(rig, dan.embedder, after, before)
+            results = dan.localize(
+                query_list,
+                index=index,
+                rig=rig,
+                params=_ROOM_LOCALIZE_PARAMS,
+                traces=traces,
+            )
+            for query, hits, trace in zip(query_list, results, traces, strict=True):
+                logger.info(f"localize verification {query!r}: {len(hits)} hit(s)")
+                by_id = collect_query_instances(query, hits, list(trace.answers))
+                views_by_query[query] = by_id
+                for hit, sightings in zip(hits, trace.answers, strict=True):
+                    named.append((query, hit))
+                    times = [float(s.ts) for s in sightings]
+                    if times:
+                        prev = first_seen_by_instance.get(hit.instance_id)
+                        earliest = min(times)
+                        if prev is None or earliest < prev:
+                            first_seen_by_instance[hit.instance_id] = earliest
+
+        by_camera = color_frames_by_camera_from_rig(rig, after, before)
+        # Single-cam convenience only; multi-cam clips must use by_camera + sighting camera.
+        color_frames = next(iter(by_camera.values())) if len(by_camera) == 1 else ()
+
+        yield LocalizeWindowResult(
+            named_hits=tuple(named),
+            rig=rig,
+            queries=tuple(query_list),
+            first_seen_by_instance=first_seen_by_instance,
+            color_frames=tuple(color_frames),
+            color_frames_by_camera=dict(by_camera),
+            views_by_query=views_by_query,
+        )
+    finally:
+        if shared_detector is not None:
+            shared_detector.stop()
+        store.stop()

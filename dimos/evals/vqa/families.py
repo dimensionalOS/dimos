@@ -29,6 +29,18 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
+from dimos.evals.vqa.primitives.localize_scene import (
+    LocalizeInstanceEvidence,
+    LocalizeSceneEvidence,
+    ego_turn_to,
+    fore_aft_of,
+    higher_object,
+    instances_in_ahead_cone,
+    instances_named,
+    parse_referent,
+    resolve_referent,
+    robot_relative_xy,
+)
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
@@ -86,6 +98,57 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
     requires_pointcloud=True,
     object_order_matters=False,
 )
+EGO_FORE_AFT_FAMILY = FamilySpec(
+    name="ego_fore_aft",
+    description=(
+        "Ask whether one localized referent is ahead of or behind the robot body "
+        "(ahead/behind cones: |bearing| <= 45 deg / >= 135 deg, range 0.5-5 m; sides rejected). "
+        "Prefer bare names for unique objects, 'nearest <object>', or "
+        "'<object> next to <landmark>'. Do not use left/right <object> referents. "
+        "Do not infer fore/aft from the image."
+    ),
+    requires_localize=True,
+)
+HEIGHT_ORDER_FAMILY = FamilySpec(
+    name="height_order",
+    description=(
+        "Choose which of two distinct, clearly localized object references is higher in the "
+        "world. Do not infer height from the image alone."
+    ),
+    min_objects=2,
+    max_objects=2,
+    distinct_objects=True,
+    requires_localize=True,
+    object_order_matters=False,
+)
+EGO_TURN_FAMILY = FamilySpec(
+    name="ego_turn",
+    description=(
+        "Ask whether the robot should turn left, turn right, turn around, or is already facing "
+        "one localized referent: bare unique name, nearest <object>, or "
+        "'<object> next to <landmark>'. Ahead means |bearing| <= 45 deg in the robot yaw frame; "
+        "behind is turn around. Do not use left/right <object> referents - that leaks the turn "
+        "answer. Do not infer bearing from the image alone."
+    ),
+    requires_localize=True,
+)
+EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
+    name="ego_any_fore_aft",
+    description=(
+        "Ask whether any verified instance of a category lies in the ahead cone "
+        "(|bearing| <= 45 deg, 0.5-5 m). Use a bare category name. Do not infer from the image alone."
+    ),
+    requires_localize=True,
+)
+CROSS_VIEW_SAME_OBJECT_FAMILY = FamilySpec(
+    name="cross_view_same_object",
+    description=(
+        "Ask whether the named category in two short dense memory clips (first_clip / "
+        "second_clip) is the same physical instance. Each clip states its relative "
+        "t=0..duration span; generated from Dan localize multi-view traces. Both "
+        "sightings must pass center/size framing gates on the original full frames."
+    ),
+)
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
@@ -94,6 +157,11 @@ AVAILABLE_FAMILIES = (
     LARGEST_VISIBLE_AREA_FAMILY,
     OBJECT_DISTANCE_FAMILY,
     CLOSEST_OBJECT_FAMILY,
+    EGO_FORE_AFT_FAMILY,
+    HEIGHT_ORDER_FAMILY,
+    EGO_TURN_FAMILY,
+    EGO_ANY_FORE_AFT_FAMILY,
+    CROSS_VIEW_SAME_OBJECT_FAMILY,
 )
 
 _FAMILIES_BY_NAME = {family.name: family for family in AVAILABLE_FAMILIES}
@@ -110,6 +178,7 @@ def answer_question(
     pointcloud_frame: PointCloudFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
+    localize_scene: LocalizeSceneEvidence | None = None,
 ) -> FamilyAnswer:
     """Dispatch one constrained proposal to its deterministic family."""
     _family_spec(proposal.family).validate(proposal)
@@ -141,6 +210,27 @@ def answer_question(
                 "closest object requires image-aligned point-cloud evidence"
             )
         return _answer_closest_object(proposal, pointcloud_frame, range_estimator)
+    if proposal.family == "ego_fore_aft":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego fore/aft requires localize scene evidence")
+        return _answer_ego_fore_aft(proposal, localize_scene)
+    if proposal.family == "height_order":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("height order requires localize scene evidence")
+        return _answer_height_order(proposal, localize_scene)
+    if proposal.family == "ego_turn":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego turn requires localize scene evidence")
+        return _answer_ego_turn(proposal, localize_scene)
+    if proposal.family == "ego_any_fore_aft":
+        if localize_scene is None:
+            raise InsufficientEvidenceError("ego any fore/aft requires localize scene evidence")
+        return _answer_ego_any_fore_aft(proposal, localize_scene)
+    if proposal.family == "cross_view_same_object":
+        raise InsufficientEvidenceError(
+            "cross_view_same_object is produced by generate_dataset with --with-localize, "
+            "not the per-frame image author path"
+        )
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -402,3 +492,173 @@ def _distance_bucket(distance_m: float) -> int:
     if distance_m < 3:
         return 2
     return 3
+
+
+def _localize_referent_evidence(
+    localize_scene: LocalizeSceneEvidence,
+    referent: str,
+    *,
+    answer_rule: str,
+) -> tuple[LocalizeInstanceEvidence, dict[str, JsonValue]]:
+    """Parse + resolve once; shared geometry fields for ego family audits."""
+    parsed = parse_referent(referent)
+    instance = resolve_referent(localize_scene, referent, parsed=parsed)
+    forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "object_name": referent,
+        "selector": parsed.selector,
+        "category": parsed.category,
+        "position_world_xyz": cast("JsonValue", list(instance.position_world_xyz)),
+        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+        "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        "robot_relative_forward_m": forward,
+        "robot_relative_left_m": left,
+        "answer_rule": answer_rule,
+    }
+    if parsed.landmark is not None:
+        evidence["landmark"] = parsed.landmark
+    if instance.instance_id is not None:
+        evidence["instance_id"] = instance.instance_id
+    if instance.first_seen_timestamp is not None:
+        evidence["first_seen_timestamp"] = instance.first_seen_timestamp
+    if instance.last_seen_timestamp is not None:
+        evidence["last_seen_timestamp"] = instance.last_seen_timestamp
+    return instance, evidence
+
+
+def _answer_ego_fore_aft(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    referent = proposal.object_names[0]
+    instance, evidence = _localize_referent_evidence(
+        localize_scene,
+        referent,
+        answer_rule="ahead_behind_cones_45_135",
+    )
+    answer = fore_aft_of(localize_scene, referent, instance=instance)
+    return FamilyAnswer(
+        question=f"Is the {referent} ahead of the robot or behind it?",
+        choices=("ahead", "behind"),
+        answer=answer,
+        evidence=evidence,
+    )
+
+
+def _answer_height_order(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    object_a, object_b = proposal.object_names
+    answer = higher_object(localize_scene, object_a, object_b)
+    instances = (
+        resolve_referent(localize_scene, object_a),
+        resolve_referent(localize_scene, object_b),
+    )
+    # Ego clips must include both first sightings; reject if either is unknown.
+    missing = [
+        name
+        for name, inst in zip(proposal.object_names, instances, strict=True)
+        if inst.first_seen_timestamp is None
+    ]
+    if missing:
+        raise InsufficientEvidenceError(
+            "height_order requires first_seen_timestamp on both compared instances "
+            f"(missing: {', '.join(missing)})"
+        )
+    first_seen = min(
+        float(inst.first_seen_timestamp)
+        for inst in instances
+        if inst.first_seen_timestamp is not None
+    )
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "comparison_rule": "world_z_with_height_margin",
+        "objects": cast(
+            "JsonValue",
+            [
+                {
+                    "choice": object_name,
+                    "position_world_xyz": list(instance.position_world_xyz),
+                    "first_seen_timestamp": instance.first_seen_timestamp,
+                }
+                for object_name, instance in zip(proposal.object_names, instances, strict=True)
+            ],
+        ),
+        # Ego clip materialization starts at this timestamp so both referents appear.
+        "first_seen_timestamp": first_seen,
+    }
+    return FamilyAnswer(
+        question=f"Which is higher, the {object_a} or the {object_b}?",
+        choices=proposal.object_names,
+        answer=answer,
+        evidence=evidence,
+    )
+
+
+def _answer_ego_turn(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    referent = proposal.object_names[0]
+    instance, evidence = _localize_referent_evidence(
+        localize_scene,
+        referent,
+        answer_rule="bearing_cones_45_with_turn_around",
+    )
+    answer = ego_turn_to(localize_scene, referent, instance=instance)
+    return FamilyAnswer(
+        question=(
+            f"To face the {referent}, should the robot turn left, turn right, "
+            "turn around, or is it already ahead?"
+        ),
+        choices=("left", "right", "turn around", "ahead"),
+        answer=answer,
+        evidence=evidence,
+    )
+
+
+def _answer_ego_any_fore_aft(
+    proposal: QuestionProposal, localize_scene: LocalizeSceneEvidence
+) -> FamilyAnswer:
+    category = proposal.object_names[0]
+    parsed = parse_referent(category)
+    if parsed.selector != "unique":
+        raise InsufficientEvidenceError(
+            "ego_any_fore_aft requires a bare category name, not a nearest/next-to referent"
+        )
+    bare = parsed.category
+    hits = instances_named(localize_scene, bare)
+    ahead = instances_in_ahead_cone(localize_scene, bare, hits=hits)
+    ahead_xyz = {inst.position_world_xyz for inst in ahead}
+    answer = "yes" if ahead else "no"
+    first_seen = min(
+        (inst.first_seen_timestamp for inst in hits if inst.first_seen_timestamp is not None),
+        default=None,
+    )
+    evidence: dict[str, JsonValue] = {
+        "primitive": "localize_scene",
+        "object_name": bare,
+        "selector": "unique",
+        "answer_rule": "exists_instance_in_ahead_cone_45",
+        "coverage_mode": "existential",
+        "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
+        "robot_yaw_rad": localize_scene.robot_yaw_rad,
+        "instances": cast(
+            "JsonValue",
+            [
+                {
+                    "position_world_xyz": list(inst.position_world_xyz),
+                    "in_ahead_cone": inst.position_world_xyz in ahead_xyz,
+                    "first_seen_timestamp": inst.first_seen_timestamp,
+                }
+                for inst in hits
+            ],
+        ),
+    }
+    if first_seen is not None:
+        evidence["first_seen_timestamp"] = first_seen
+    return FamilyAnswer(
+        question=f"Is there any verified {bare} ahead of the robot?",
+        choices=("yes", "no"),
+        answer=answer,
+        evidence=evidence,
+    )

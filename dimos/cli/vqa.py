@@ -50,8 +50,78 @@ def generate(
         None,
         help="Destination directory; must be absent or empty",
     ),
+    with_localize: bool = typer.Option(
+        False,
+        "--with-localize/--no-with-localize",
+        help=(
+            "Run Dan localize once over a padded window: ego memory clips + "
+            "cross_view_same_object pairs from the same hits / first-sighting "
+            "timestamps / color frames (off by default)"
+        ),
+    ),
+    localize_query: list[str] = typer.Option(
+        [],
+        "--localize-query",
+        help=(
+            "Optional override object queries for localize (repeatable). "
+            "When omitted with --with-localize, names are discovered from the recording"
+        ),
+    ),
+    localize_pad: float = typer.Option(
+        10.0,
+        "--localize-pad",
+        # Match GenerationRequest.localize_pad_s (gt=0); zero collapses single-frame windows.
+        min=1e-9,
+        help="Seconds to pad before/after selected frame timestamps for the localize window",
+    ),
+    localize_coverage_k: int | None = typer.Option(
+        None,
+        "--localize-coverage-k",
+        min=0,
+        help=(
+            "With --with-localize, keep at most K published localize cases per frame "
+            "(default 5), round-robining ego question types across frames. "
+            "Use 0 to publish every answered localize case"
+        ),
+    ),
+    min_views: int = typer.Option(
+        3,
+        min=1,
+        help="With --with-localize: minimum distinct camera poses per cross-view identity instance",
+    ),
+    localize_evidence: Path | None = typer.Option(
+        None,
+        "--localize-evidence",
+        help=(
+            "Reuse a prior audit/localize_evidence.json (lightweight instance ids, "
+            "names, coords, first_seen, sighting timestamps+bbox). Skips Dan when "
+            "dataset/window match; still reads color frames from the recording"
+        ),
+    ),
+    localize_detector: str = typer.Option(
+        "owlv2",
+        "--localize-detector",
+        help=(
+            "With --with-localize: Dan detector (owlv2, omdet, gdino, yoloe). "
+            "OWL warms on GPU during VLM naming when discover=vlm"
+        ),
+    ),
+    localize_discover: str = typer.Option(
+        "vlm",
+        "--localize-discover",
+        help=(
+            "With --with-localize and no --localize-query: how to name objects. "
+            "vlm = OpenAI JSON names on QualityWindow frames (default); "
+            "lvis = detector score scan over LVIS labels"
+        ),
+    ),
 ) -> None:
-    """Generate questions for one image or an indexed image range."""
+    """Generate a standalone VQA dataset from selected color_image frames.
+
+    ``--with-localize`` runs Dan localize once and adds ego + cross-view cases from
+    that shared evidence (no separate cross-view-only pass). Pass
+    ``--localize-evidence`` to skip Dan on a later run.
+    """
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
         GenerationRequest,
@@ -68,6 +138,14 @@ def generate(
             stride=stride,
             quality_window=quality_window,
             min_brightness=min_brightness,
+            with_localize=with_localize,
+            localize_queries=tuple(localize_query),
+            localize_pad_s=localize_pad,
+            localize_coverage_k=localize_coverage_k,
+            min_views=min_views,
+            localize_evidence=localize_evidence,
+            localize_detector=localize_detector,
+            localize_discover=localize_discover,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:
@@ -83,26 +161,31 @@ def run(
 ) -> None:
     """Evaluate a generated standalone VQA dataset."""
     # Keep evaluation implementation imports out of global CLI startup.
-    from dimos.evals.cli import agent_kwargs, load_agent, run_provenance
+    from dimos.evals.cli import agent_class, agent_kwargs, run_provenance
     from dimos.evals.runner import EvalRunner, summarize
     from dimos.evals.vqa.suite import load_suite, source_record
 
-    runner = EvalRunner()
-    overrides = [f"model={model}"] if model else []
     try:
-        results = runner.run(
-            load_suite(dataset),
-            load_agent(agent, overrides),
-            provenance=run_provenance(source_record(dataset), agent, agent_kwargs(overrides)),
-        )
+        suite = load_suite(dataset)
     except (ValueError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+    overrides = [f"model={model}"] if model else []
+    kwargs = agent_kwargs(overrides)
+    runner = EvalRunner()
+    results = runner.run(
+        suite,
+        agent_class(agent)(**kwargs),
+        provenance=run_provenance(source_record(dataset), agent, kwargs),
+    )
     for result in results:
         status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
-        detail = result.error or f"answer={result.final_answer[:60]!r}"
-        typer.echo(f"{status:5} {result.case_id:30} {detail}")
+        detail = result.error or (
+            f"score={result.score:.2f} steps={result.steps} answer={result.final_answer[:60]!r}"
+        )
+        typer.echo(f"{status:5} {result.case_id:30} {detail} ({result.duration_s:.1f}s)")
     summary = summarize(results)
     typer.echo(
-        f"\n{summary.n} cases | mean {summary.mean_score:.2f} | "
-        f"pass {summary.pass_rate:.0%} | errors {summary.errors} | {runner.run_dir}"
+        f"\n{summary.n} cases | mean {summary.mean_score:.2f} | pass {summary.pass_rate:.0%} "
+        f"| errors {summary.errors} | {summary.duration_s:.0f}s | {runner.run_dir}"
     )

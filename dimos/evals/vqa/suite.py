@@ -14,9 +14,9 @@
 
 """Standalone VQA dataset adapter for the shared evaluation runner.
 
-A new kind of input is a new environment (:class:`ImageFile`), not a new case
-class: each row becomes a plain :class:`EvalCase` graded on the choice the
-model names."""
+Visual input is an environment (:class:`ImageFile` or :class:`ImageClip`), not a
+new case class: each row becomes a plain :class:`EvalCase` graded on the choice
+the model names."""
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ from typing import Any
 
 import jsonlines
 
+from dimos.evals.environments.base import Environment
+from dimos.evals.environments.image_clip import ImageClip
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.scorers import choice, exact
 from dimos.evals.types import EvalCase, Outcome, Suite
@@ -64,7 +66,7 @@ def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], flo
 
 
 def load_suite(dataset: Path) -> Suite:
-    """Load public cases, private labels, and images from a generated dataset."""
+    """Load public cases, private labels, and visual environments from a dataset."""
     root = dataset.resolve()
     case_ids: set[str] = set()
     duplicate_cases = False
@@ -106,12 +108,21 @@ def load_suite(dataset: Path) -> Suite:
                 id=case.id,
                 inputs=f"{case.question}\nChoices: {json.dumps(case.choices)}\n"
                 "Answer with exactly one choice.",
-                environment=ImageFile(_resolve_image(root, case.image)),
+                environment=_case_environment(root, case),
                 grade=grade_choice(case.choices, label.answer),
                 tags=frozenset({"vqa"}),
             )
         )
     return suite
+
+
+def _case_environment(root: Path, case: PublicCase) -> Environment:
+    if case.image is not None:
+        return ImageFile(_resolve_file(root, case.image))
+    if case.clip is not None:
+        return ImageClip(_resolve_dir(root, case.clip))
+    assert case.clips is not None
+    return ImageClip(tuple(_resolve_dir(root, relative) for relative in case.clips))
 
 
 def _read_jsonl(path: Path) -> Iterator[Any]:
@@ -122,13 +133,25 @@ def _read_jsonl(path: Path) -> Iterator[Any]:
         raise ValueError(f"invalid VQA dataset file: {path}") from exc
 
 
-def _resolve_image(root: Path, relative: str) -> Path:
+def _resolve_relative(root: Path, relative: str) -> Path:
     path = PurePosixPath(relative)
     if path.is_absolute() or not path.parts or ".." in path.parts:
-        raise ValueError(f"VQA image path must be dataset-relative: {relative!r}")
+        raise ValueError(f"VQA path must be dataset-relative: {relative!r}")
     resolved = root.joinpath(*path.parts).resolve()
     if not resolved.is_relative_to(root):
-        raise ValueError(f"VQA image path escapes the dataset: {relative!r}")
+        raise ValueError(f"VQA path escapes the dataset: {relative!r}")
+    return resolved
+
+
+def _resolve_file(root: Path, relative: str) -> Path:
+    resolved = _resolve_relative(root, relative)
     if not resolved.is_file():
         raise FileNotFoundError(f"VQA image does not exist: {resolved}")
+    return resolved
+
+
+def _resolve_dir(root: Path, relative: str) -> Path:
+    resolved = _resolve_relative(root, relative)
+    if not resolved.is_dir():
+        raise FileNotFoundError(f"VQA clip directory does not exist: {resolved}")
     return resolved
