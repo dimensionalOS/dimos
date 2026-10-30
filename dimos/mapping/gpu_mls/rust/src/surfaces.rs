@@ -58,16 +58,19 @@ pub struct SurfaceConfig {
 }
 
 impl SurfaceConfig {
-    /// The MLS planner module's defaults. 30 degrees is about the steepest
-    /// slope a Go2 or G1 walks reliably; stairs are unaffected since their
-    /// treads are flat. Lidar noise is 1 to 2 cm, so planes 3 cm apart on two
-    /// stacked voxels are one floor straddling a grid line.
+    /// The MLS planner module's defaults. A Go2 or G1 walks about 30 degree
+    /// slopes, but a 5 cm plane fit on grass reads well steeper than the
+    /// ground under it (a 27 degree grassy hill cut off most of grassy_field
+    /// at 30), so the gate sits at 45 and still turns down walls and
+    /// railings; stairs are unaffected since their treads are flat. Lidar
+    /// noise is 1 to 2 cm, so planes 3 cm apart on two stacked voxels are one
+    /// floor straddling a grid line.
     pub fn mls_defaults() -> Self {
         Self {
             robot_height_m: 0.3,
             closing_radius_m: 0.3,
             step_threshold_m: 0.16,
-            max_slope_deg: 30.0,
+            max_slope_deg: 45.0,
             plane_merge_m: 0.03,
             plane_merge_deg: 15.0,
         }
