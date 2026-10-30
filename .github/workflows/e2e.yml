@@ -5,7 +5,9 @@ name: e2e
 # web SDK, DimSim or the e2e tests themselves.
 on:
   schedule:
-    - cron: '0 6 * * *'  # daily, 06:00 UTC
+    # 03:00 in San Francisco. GitHub cron is UTC only, so this is 03:00 PDT
+    # and 02:00 PST in winter.
+    - cron: '0 10 * * *'
   workflow_dispatch:
 
 permissions: {}
