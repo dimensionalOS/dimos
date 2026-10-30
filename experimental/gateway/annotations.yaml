@@ -381,6 +381,26 @@ robots:
           title: Drone with an agent
           description: 'An autonomous drone you can talk to: maps, places and object tracking skills.'
           starter: 16
+    px4:
+      name: PX4 drone
+      description: 'A PX4 multirotor over MAVLink: Offboard flight supervisor and the SIYI A8 gimbal camera.'
+      type: drone
+      manufacturer: null
+      dirs: [dimos/robot/px4]
+      blueprints:
+        px4:
+          title: PX4 drone
+          description: 'Connection, flight supervisor, viewer and its keyboard: any PX4 vehicle behind mavlink-router.'
+          recommended_config:
+          - module: px4droneconnection
+            field: link
+            label: Link to PX4
+        px4-sitl:
+          title: PX4 in SITL
+          description: The same against PX4 SITL (make px4_sitl gz_x500), with the RC enable switch faked.
+        px4-a8:
+          title: PX4 drone + SIYI A8
+          description: The PX4 drone with the SIYI A8's RTSP camera and gimbal.
     m20:
       name: DeepRobotics M20
       description: DeepRobotics' wheel-legged quadruped; dimos runs on the robot.
