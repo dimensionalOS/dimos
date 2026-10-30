@@ -1528,3 +1528,41 @@ def test_cleared_plan_cannot_be_executed_by_operator(state_module):
     assert module.clear_planned_path().succeeded
     assert not module._execute_generated_plan(plan)
     assert module.get_operation_status() is OperationStatus.IDLE
+
+
+def test_restart_preserves_unconfirmed_motion_until_cancel_confirms(state_module, mocker):
+    module = state_module
+    coordinator = module._control_coordinator
+    reported = {"stopped": False}
+    dispatches = []
+
+    def invoke(task, method, args=None):
+        if method == "execute":
+            dispatches.append(args)
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        if method == "cancel":
+            return TrajectoryCancellationResult(
+                TrajectoryCancellationStatus.ALREADY_STOPPED
+                if reported["stopped"]
+                else TrajectoryCancellationStatus.UNCERTAIN
+            )
+        return TrajectoryStatus(
+            state=TrajectoryState.ABORTED if reported["stopped"] else TrajectoryState.EXECUTING
+        )
+
+    mocker.patch.object(coordinator, "task_invoke", side_effect=invoke)
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+    module.stop()
+    assert module.get_operation_status() is OperationStatus.EXECUTING
+    module.start()
+    assert module.get_state().operation_status is OperationStatus.EXECUTING
+    assert not module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert not module.execute(blocking=False).succeeded
+    assert len(dispatches) == 1
+
+    reported["stopped"] = True
+    assert module.cancel().status is ExecutionStatus.ABORTED
+    assert module.get_operation_status() is OperationStatus.IDLE
+    assert module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+    assert len(dispatches) == 2

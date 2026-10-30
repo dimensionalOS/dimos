@@ -255,7 +255,15 @@ class ManipulationModule(Module):
             super().start()
 
             # Observers may query execution state as planning and visualization start.
-            self._initialize_execution()
+            with self._command_lock:
+                # A stopped module may still own motion whose stop was not confirmed.
+                # Keep its manager and diagnostic until cancellation confirms an outcome.
+                with self._lock:
+                    recovering = self._state is OperationStatus.EXECUTING
+                if recovering:
+                    self.cancel()
+                else:
+                    self._initialize_execution()
             self._initialize_planning()
 
             if self.coordinator_joint_state is not None:
@@ -1479,17 +1487,23 @@ class ManipulationModule(Module):
         with self._command_lock:
             with self._lock:
                 self._started = False
-            epoch, _ = self._invalidate()
-            self._finish(epoch, self.get_error(), expected=None)
             execution_manager = getattr(self, "_execution_manager", None)
             if execution_manager is not None:
-                cancellation = execution_manager.cancel()
-                if cancellation.status is ExecutionStatus.UNCERTAIN:
+                cancellation = self.cancel()
+                if cancellation.status in {
+                    ExecutionStatus.UNCERTAIN,
+                    ExecutionStatus.FAULT,
+                    ExecutionStatus.TIMED_OUT,
+                    ExecutionStatus.EXECUTING,
+                }:
                     logger.error(
                         "Shutdown could not confirm coordinator trajectory safety: %s",
                         cancellation.message,
                     )
                 execution_manager.close()
+            else:
+                epoch, _ = self._invalidate()
+                self._finish(epoch, self.get_error(), expected=None)
 
         # Stop TF thread
         if self._tf_thread is not None:
