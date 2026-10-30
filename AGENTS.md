@@ -381,7 +381,7 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 
 ## Git Workflow
 
-- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this, locally and in CI.
+- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this locally and in CI; CI skips this hook for PRs from forks.
 - **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.

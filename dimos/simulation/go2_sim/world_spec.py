@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
+from __future__ import annotations
+
+from typing import Protocol
+
+from dimos.spec.utils import Spec
 
 
-def keepalive() -> None:
-    try:
-        # Keep the program running
-        print("Press Ctrl+C to exit")
-        print("-" * 60)
-        while True:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nStopping pipeline")
+class SimWorldSpec(Spec, Protocol):
+    def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None: ...

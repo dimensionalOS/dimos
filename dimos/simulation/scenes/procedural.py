@@ -34,7 +34,7 @@ Family = Literal["office"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
-CEILING_HEIGHT = 2.6
+WALL_HEIGHT = 2.6
 DOOR_HEIGHT = 2.0
 DOOR_WIDTH = (0.8, 1.2)
 TABLE_TOP_THICKNESS = 0.04
@@ -42,6 +42,7 @@ TABLE_LEG = 0.04
 START_CLEARANCE = 1.0
 DOOR_CLEARANCE = 0.8
 DOOR_SIDE_MARGIN = 0.3
+DOOR_CLUTTER_SIZE = (0.3, 0.3, 0.5)
 MIN_ROOM_WIDTH = 3.0
 PLACEMENT_TRIES = 50
 
@@ -53,11 +54,22 @@ class Box:
     kind: Kind
 
 
+@dataclass(frozen=True)
+class Door:
+    """A doorway in a wall across the given axis, with the opening along the other axis."""
+
+    axis: int
+    at: float
+    start: float
+    width: float
+
+
 @dataclass
 class Scene:
     name: str
     params: dict[str, float] = field(default_factory=dict)
     boxes: list[Box] = field(default_factory=list)
+    doors: list[Door] = field(default_factory=list)
     start: Vec3 = (0.0, 0.0, 0.0)
 
     def add(self, lo: ArrayLike, hi: ArrayLike, kind: Kind) -> None:
@@ -92,17 +104,17 @@ def _uniform(rng: np.random.Generator, low: float, high: float) -> float:
     return low + (high - low) * float(rng.random())
 
 
+def _given(drawn: float, given: float | None) -> float:
+    """The given value over the drawn one. The draw still happens, so the seed's later draws do not shift."""
+    return drawn if given is None else given
+
+
 def _walls(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float, top: float) -> None:
     t = WALL_THICKNESS
     scene.add((x0 - t, y0 - t, z), (x0, y1 + t, top), "wall")
     scene.add((x1, y0 - t, z), (x1 + t, y1 + t, top), "wall")
     scene.add((x0, y0 - t, z), (x1, y0, top), "wall")
     scene.add((x0, y1, z), (x1, y1 + t, top), "wall")
-
-
-def _ceiling(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float) -> None:
-    t = WALL_THICKNESS
-    scene.add((x0 - t, y0 - t, z), (x1 + t, y1 + t, z + SLAB_THICKNESS), "ceiling")
 
 
 def _wall_with_doors(
@@ -113,13 +125,13 @@ def _wall_with_doors(
     hi: float,
     z: float,
     top: float,
-    doors: list[tuple[float, float]],
+    doors: list[Door],
 ) -> None:
     """A wall across the given axis with door gaps and lintels."""
     t = WALL_THICKNESS
     edges = [lo]
-    for door_start, door_width in sorted(doors):
-        edges += [door_start, door_start + door_width]
+    for door in sorted(doors, key=lambda d: d.start):
+        edges += [door.start, door.start + door.width]
     edges.append(hi)
     for i in range(0, len(edges), 2):
         a, b = edges[i], edges[i + 1]
@@ -127,19 +139,20 @@ def _wall_with_doors(
             scene.add((at, a, z), (at + t, b, top), "wall")
         else:
             scene.add((a, at, z), (b, at + t, top), "wall")
-    for door_start, door_width in doors:
+    for door in doors:
         lintel = z + DOOR_HEIGHT
         if axis == 0:
-            scene.add((at, door_start, lintel), (at + t, door_start + door_width, top), "wall")
+            scene.add((at, door.start, lintel), (at + t, door.start + door.width, top), "wall")
         else:
-            scene.add((door_start, at, lintel), (door_start + door_width, at + t, top), "wall")
+            scene.add((door.start, at, lintel), (door.start + door.width, at + t, top), "wall")
+    scene.doors += doors
 
 
-def _door_zone(axis: int, at: float, start: float, width: float) -> Rect:
+def _door_zone(door: Door) -> Rect:
     """The passage through a door: the opening plus DOOR_CLEARANCE on both sides of the wall."""
-    lo, hi = start - DOOR_SIDE_MARGIN, start + width + DOOR_SIDE_MARGIN
-    near, far = at - DOOR_CLEARANCE, at + WALL_THICKNESS + DOOR_CLEARANCE
-    return (near, lo, far, hi) if axis == 0 else (lo, near, hi, far)
+    lo, hi = door.start - DOOR_SIDE_MARGIN, door.start + door.width + DOOR_SIDE_MARGIN
+    near, far = door.at - DOOR_CLEARANCE, door.at + WALL_THICKNESS + DOOR_CLEARANCE
+    return (near, lo, far, hi) if door.axis == 0 else (lo, near, hi, far)
 
 
 def _clear(x0: float, y0: float, x1: float, y1: float, keep_clear: list[Rect]) -> bool:
@@ -159,15 +172,18 @@ def _clutter(
     z: float,
     n: int,
     keep_clear: list[Rect],
+    scale: float = 1.0,
+    height: float = 1.0,
 ) -> None:
     for _ in range(n):
         for _ in range(PLACEMENT_TRIES):
-            hx, hy = _uniform(rng, 0.15, 0.5), _uniform(rng, 0.15, 0.5)
+            hx, hy = scale * _uniform(rng, 0.15, 0.5), scale * _uniform(rng, 0.15, 0.5)
             cx, cy = _uniform(rng, x0 + hx, x1 - hx), _uniform(rng, y0 + hy, y1 - hy)
-            if _clear(cx - hx, cy - hy, cx + hx, cy + hy, keep_clear):
+            fits = 2 * hx < x1 - x0 and 2 * hy < y1 - y0
+            if fits and _clear(cx - hx, cy - hy, cx + hx, cy + hy, keep_clear):
                 scene.add(
                     (cx - hx, cy - hy, z),
-                    (cx + hx, cy + hy, z + _uniform(rng, 0.2, 1.0)),
+                    (cx + hx, cy + hy, z + height * _uniform(rng, 0.2, 1.0)),
                     "clutter",
                 )
                 break
@@ -200,16 +216,22 @@ def _table(
             )
 
 
-def office(seed: int) -> Scene:
+def office(
+    seed: int,
+    door_width: float | None = None,
+    door_clutter: bool = False,
+    size: float = 1.0,
+    clutter_scale: float = 1.0,
+    clutter_height: float = 1.0,
+) -> Scene:
     """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways."""
     rng = np.random.default_rng(seed)
-    width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
+    width, length = size * float(_uniform(rng, 12, 18)), size * float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
     scene = Scene(f"office_{seed}", {"width": width, "length": length, "z0": z0})
-    top = z0 + CEILING_HEIGHT
+    top = z0 + WALL_HEIGHT
     scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
     _walls(scene, 0, 0, width, length, z0, top)
-    _ceiling(scene, 0, 0, width, length, top)
     wy = _uniform(rng, 0.4, 0.6) * length
     splits = int(rng.integers(1, 3))
     for _ in range(PLACEMENT_TRIES):
@@ -223,28 +245,54 @@ def office(seed: int) -> Scene:
     ]
     doors_mid = []
     for a, b in zip([0.0, *xs], [*xs, width], strict=True):
-        door_width = _uniform(rng, *DOOR_WIDTH)
-        if b - a > door_width + 1.0:
-            doors_mid.append((_uniform(rng, a + 0.4, b - door_width - 0.4), door_width))
+        w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
+        if b - a > w + 1.0:
+            doors_mid.append(Door(1, wy, _uniform(rng, a + 0.4, b - w - 0.4), w))
     _wall_with_doors(scene, 1, wy, 0, width, z0, top, doors_mid)
-    keep_clear += [_door_zone(1, wy, *door) for door in doors_mid]
     for x in xs:
         for a, b in ((0.0, wy), (wy + WALL_THICKNESS, length)):
-            door_width = _uniform(rng, *DOOR_WIDTH)
-            door = (_uniform(rng, a + 0.3, b - door_width - 0.3), door_width)
+            w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
+            door = Door(0, x, _uniform(rng, a + 0.3, b - w - 0.3), w)
             _wall_with_doors(scene, 0, x, a, b, z0, top, [door])
-            keep_clear.append(_door_zone(0, x, *door))
+    keep_clear += [_door_zone(door) for door in scene.doors]
     clutter = int(rng.integers(8, 16))
-    _clutter(scene, rng, 0.2, 0.2, width - 0.2, length - 0.2, z0, clutter, keep_clear)
+    _clutter(
+        scene,
+        rng,
+        0.2,
+        0.2,
+        width - 0.2,
+        length - 0.2,
+        z0,
+        clutter,
+        keep_clear,
+        clutter_scale,
+        clutter_height,
+    )
     tables = int(rng.integers(1, 4))
     for _ in range(tables):
         _table(scene, rng, 0.3, 0.3, width - 0.3, length - 0.3, z0, keep_clear)
+    if door_clutter:
+        for door in scene.doors:
+            _door_clutter(scene, door, z0)
     scene.params.update({"rooms": 2 * (len(xs) + 1), "clutter": clutter, "tables": tables})
     return scene
 
 
-FAMILIES: dict[Family, Callable[[int], Scene]] = {"office": office}
+def _door_clutter(scene: Scene, door: Door, z: float) -> None:
+    sx, sy, sz = DOOR_CLUTTER_SIZE
+    along = door.at + WALL_THICKNESS + 0.1
+    across = door.start
+    if door.axis == 0:
+        scene.add((along, across, z), (along + sx, across + sy, z + sz), "clutter")
+    else:
+        scene.add((across, along, z), (across + sx, along + sy, z + sz), "clutter")
 
 
-def generate(family: Family, seed: int) -> Scene:
-    return FAMILIES[family](seed)
+Params = dict[str, bool | int | float]
+FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office}
+
+
+def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:
+    """The family's scene for the seed, with any of its named parameters overridden."""
+    return FAMILIES[family](seed, **params)

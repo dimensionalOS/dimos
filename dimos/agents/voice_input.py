@@ -16,7 +16,7 @@
 
 `audio_in` carries one utterance per button hold as ordered AudioChunk
 slices (dimos/web/relay_bridge/audio_codec.py pins the wire contract). The
-reassembled container bytes go through the owned local STT chain - ffmpeg
+reassembled container bytes go through the owned local STT chain - PyAV
 decode to PCM, AudioNormalizer, WhisperNode (the exact pipeline behind the
 legacy WebInput upload) - and the transcript is published on `human_input`,
 entering the agent conversation exactly like a typed chat message. A
@@ -38,7 +38,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.stream.audio.base import AudioEvent
-from dimos.stream.audio.decode import decode_audio_bytes, ffmpeg_requirement
+from dimos.stream.audio.decode import decode_audio_bytes
 from dimos.stream.audio.pipeline import whisper_pipeline
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import run_in_thread
@@ -97,9 +97,6 @@ class VoiceInput(Module):
 
     @rpc
     def start(self) -> None:
-        requirement_error = ffmpeg_requirement()
-        if requirement_error is not None:
-            raise RuntimeError(requirement_error)
         super().start()
         self._audio_subject, transcripts = self._pipeline.result()
         self.register_disposable(
