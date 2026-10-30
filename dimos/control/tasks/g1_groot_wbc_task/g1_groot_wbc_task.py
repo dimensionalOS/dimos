@@ -147,6 +147,7 @@ class G1GrootWBCTaskConfig:
     cmd_norm_threshold: float = 0.05
     height_cmd: float = 0.74
     timeout: float = 1.0
+    velocity_limits: tuple[float, float, float] | None = None
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
@@ -200,6 +201,10 @@ class G1GrootWBCTask(BaseControlTask):
                 f"G1GrootWBCTask '{name}' requires exactly {_NUM_MOTORS} "
                 f"default_positions_29, got {len(config.default_positions_29)}"
             )
+        if config.velocity_limits is not None and any(
+            not np.isfinite(v) or v <= 0 for v in config.velocity_limits
+        ):
+            raise ValueError("velocity limits must be positive and finite")
         if config.decimation < 1:
             raise ValueError(f"G1GrootWBCTask '{name}' requires decimation >= 1")
 
@@ -494,6 +499,13 @@ class G1GrootWBCTask(BaseControlTask):
         Called by the coordinator's twist_command dispatcher and by
         external Python callers.  Thread-safe.
         """
+        if self._config.velocity_limits is not None:
+            vx, vy, yaw_rate = (
+                max(-limit, min(limit, value))
+                for value, limit in zip(
+                    (vx, vy, yaw_rate), self._config.velocity_limits, strict=True
+                )
+            )
         with self._cmd_lock:
             self._cmd[:] = [vx, vy, yaw_rate]
             self._last_cmd_time = t_now
@@ -711,6 +723,7 @@ class G1GrootWBCTaskParams(BaseConfig):
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
     decimation: int | None = None
+    velocity_limits: tuple[float, float, float] | None = None
 
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
@@ -744,6 +757,7 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
+        velocity_limits=params.velocity_limits,
     )
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation

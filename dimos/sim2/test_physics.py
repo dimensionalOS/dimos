@@ -237,3 +237,23 @@ def test_bad_motor_batch_does_not_partially_change_actuators(world, fields):
     assert backend.data.ctrl == pytest.approx(before_ctrl)
     assert backend.model.actuator_gainprm == pytest.approx(before_gain)
     assert backend.model.actuator_biasprm == pytest.approx(before_bias)
+
+
+def test_robot_feedback_uses_source_clock_without_requiring_an_imu(world):
+    runtime = Runtime(MujocoBackend(world), control_steps=20)
+    client = SimRobotClient(("left/slide_x", "left/slide_y"), runtime.submit)
+    client.bind(runtime.backend.layout)
+    first = client.feedback(runtime.capture())
+    assert first.dt == pytest.approx(0.04)
+    assert first.imu is None
+    runtime.advance(20)
+    second = client.feedback(runtime.capture())
+    assert second.dt == pytest.approx(0.04)
+    runtime.advance(5)
+    third = client.feedback(runtime.capture())
+    assert third.dt == pytest.approx(0.01)
+    assert client.feedback(runtime.capture()) is third
+    runtime.reset()
+    reset = client.feedback(runtime.capture())
+    assert reset.dt == pytest.approx(0.04)
+    assert reset.epoch != second.epoch

@@ -22,8 +22,9 @@ preserve the reply's identity instead of attaching its newest sample to old work
 from dataclasses import dataclass
 from typing import Protocol
 
-from dimos.control.task import CoordinatorState
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.spec.utils import Spec
 
@@ -32,7 +33,10 @@ from dimos.spec.utils import Spec
 class ControlFeedback:
     epoch: str
     tick: int
-    state: CoordinatorState
+    time: float  # source clock, simulation seconds or monotonic hardware time
+    dt: float
+    joints: JointState
+    imu: Imu | None = None
 
 
 @dataclass(frozen=True)

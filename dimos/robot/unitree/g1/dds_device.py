@@ -26,6 +26,7 @@ import threading
 from threading import Thread
 import time
 from typing import TYPE_CHECKING
+import uuid
 
 from pydantic import Field
 
@@ -35,9 +36,15 @@ if TYPE_CHECKING:
     from unitree_sdk2py.utils.crc import CRC
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.feedback import ControlFeedback, MotorControl
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.protocol.service.spec import BaseConfig
+from dimos.robot.unitree.g1.model import G1_MOTOR_JOINTS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -89,10 +96,16 @@ class G1DDSDevice:
     """Low-level Unitree I/O owned by G1Connection; no policy or module transport."""
 
     def __init__(
-        self, config: G1DDSConfig, publish: Callable[[float, G1LowStateSnapshot], None]
+        self, config: G1DDSConfig, publish: Callable[[ControlFeedback], None], *, prefix: str = "g1"
     ) -> None:
         self.config = config
         self._publish = publish
+        self.joints = tuple(prefix + "/" + name for name in G1_MOTOR_JOINTS)
+        self._feedback_lock = threading.Lock()
+        self._epoch = uuid.uuid4().hex
+        self._tick = -1
+        self._command_tick = -1
+        self._sample_time: float | None = None
 
         self._publisher: ChannelPublisher | None = None
         self._subscriber: ChannelSubscriber | None = None
@@ -114,6 +127,10 @@ class G1DDSDevice:
 
     def start(self) -> None:
         self._stop_event.clear()
+        with self._feedback_lock:
+            self._epoch = uuid.uuid4().hex
+            self._tick = self._command_tick = -1
+            self._sample_time = None
 
         # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
@@ -296,6 +313,52 @@ class G1DDSDevice:
                 ),
             )
 
+    def feedback(self, timestamp: float, sample: G1LowStateSnapshot) -> ControlFeedback:
+        """Expose one hardware sample with canonical robot names and a monotonic clock."""
+        now = time.monotonic()
+        with self._feedback_lock:
+            dt = (
+                1 / self.config.publish_rate_hz
+                if self._sample_time is None
+                else now - self._sample_time
+            )
+            self._sample_time = now
+            self._tick += 1
+            epoch, tick = self._epoch, self._tick
+        w, x, y, z = sample.quaternion
+        return ControlFeedback(
+            epoch,
+            tick,
+            now,
+            dt,
+            JointState(
+                ts=timestamp,
+                frame_id=self.config.frame_id,
+                name=list(self.joints),
+                position=sample.positions,
+                velocity=sample.velocities,
+                effort=sample.efforts,
+            ),
+            Imu(
+                ts=timestamp,
+                frame_id=self.config.frame_id,
+                orientation=Quaternion(x, y, z, w),
+                angular_velocity=Vector3(*sample.gyroscope),
+                linear_acceleration=Vector3(*sample.accelerometer),
+            ),
+        )
+
+    def write_motors(self, command: MotorControl) -> bool:
+        """Accept ordered replies; hardware keeps sampling while control computes."""
+        if command.joints != self.joints or command.motors.num_joints != len(self.joints):
+            raise ValueError("motor command must follow the robot's motor order")
+        with self._feedback_lock:
+            if command.epoch != self._epoch or not self._command_tick < command.tick <= self._tick:
+                return False
+            self.write(command.motors)
+            self._command_tick = command.tick
+            return True
+
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
         next_tick = time.perf_counter()
@@ -304,7 +367,7 @@ class G1DDSDevice:
             self._drain_low_state()
             sample = self._snapshot_motor_imu()
             if sample is not None:
-                self._publish(time.time(), sample)
+                self._publish(self.feedback(time.time(), sample))
 
             next_tick += period
             sleep_for = next_tick - time.perf_counter()

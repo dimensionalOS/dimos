@@ -95,12 +95,13 @@ class SimModule(Module):
 
     def _run(self) -> None:
         try:
-            runtime = Runtime(self.config.backend(self.config.world), self.config.control_joints)
+            backend = self.config.backend(self.config.world)
+            every = max(1, round(1 / (self.config.publish_hz * backend.dt)))
+            runtime = Runtime(backend, self.config.control_joints, control_steps=every)
             if not set(self.config.control_joints) <= set(runtime.backend.layout.drives):
                 raise ValueError("control barrier addresses undriven joints")
             self._latest = runtime.snapshot()
             self._ready.set_result(runtime)
-            every = max(1, round(1 / (self.config.publish_hz * runtime.backend.dt)))
             last_frame: tuple[str, int] | None = None
             last_publish = 0.0
             deadline = time.monotonic()

@@ -111,8 +111,13 @@ wires streams and manages lifecycle. Physics, control, connection and sensor
 acquisition have separate dedicated workers. Four UrdfManagers serve scene models.
 
 The control configuration adds `feedback_robot="g1"` and a named `motor_gains`
-map in motor order. It runs once per coherent `ControlFeedback(epoch, tick, state)`
-using `CoordinatorState.t_now/dt` from simulation. `MotorControl` carries that same
+map in motor order. `ControlFeedback` carries epoch/tick, source time/dt, a standard
+`JointState` and optional `Imu`. `ConnectionSource` converts those measurements to
+`CoordinatorState` inside control; the simulation client has no task-state dependency.
+`FeedbackSession` owns duplicate replies, epoch changes and stop/resume bookkeeping;
+`TickLoop.step()` remains the single task/arbitration path. Simulation supplies
+`Frame.dt` from the actual publication cadence, including the first sample after
+reset; subsequent intervals come from source timestamps. There is no G1 control-rate setting. `MotorControl` carries that same
 epoch/tick, joint names and the existing `MotorCommandArray`; a late response is
 never relabelled with newer feedback. Duplicate samples resend the same reply,
 without another inference. Reset clears policy history, trajectories, holds and
@@ -132,13 +137,16 @@ every integration step and clamps resulting effort at the URDF actuator limits.
 | connection_type | Motor authority / interface |
 |---|---|
 | `webrtc` | Stock Unitree firmware; `move` and vendor RPCs work as before |
-| `dds` | External hardware controller via `motor_command`; existing DDS driver, soft start and sport-mode handoff |
-| `sim2` | External controller via `motor_control`; `move` forwards to the injected velocity controller |
+| `dds` | `control_feedback` / `motor_control`; DDS sampling, soft start and sport-mode handoff |
+| `sim2` | The same `control_feedback` / `motor_control` contract; simulation supplies the clock |
 
 The old second `G1WholeBodyConnection` module is removed; its existing DDS logic
 is now `G1DDSDevice`, owned by G1Connection. Existing hardware blueprints select
-`connection_type="dds"`; SDK settings are nested under `dds`. DDS mode does not
-also subscribe to firmware velocity requests. Physical hardware is **not tested**
+`connection_type="dds", legacy_motor_streams=True` to retain their existing LCM
+adapter wiring; SDK settings are nested under `dds`. That explicit compatibility
+mode uses the old `motor_states`/`imu`/`motor_command` ports instead of the coherent
+pair. With the coherent interface, `move()` forwards to the injected controller
+for both DDS and sim. Stock firmware is selected only with WebRTC. Physical hardware is **not tested**
 by this change. GR00T is not an emulation of Unitree's stock firmware.
 The legacy `G1SimConnection` belongs to the earlier simulator and remains outside
 this minimal blueprint; this change does not migrate those older simulation stacks.
@@ -156,7 +164,8 @@ unitree_g1_sim2 = autoconnect(
         feedback_robot="g1", model=g1_model, motor_gains=g1_gains,
         tasks=[groot_task, arm_trajectory_task],
     ),
-    SimSensorModule.blueprint(world=G1_DESK_WORLD, reader=MujocoSensors, prefix="g1"),
+    SimSensorModule.blueprint(world=G1_DESK_WORLD, reader=MujocoSensors,
+                              camera="g1/camera", lidar="g1/lidar", imu="g1/imu"),
     # Existing UrdfManager for each instance's exact same model.
     ...,
 )
@@ -168,6 +177,9 @@ There is no hidden blueprint replacement or automatic coordinator discovery.
 Sensor mounts are shared `RobotModel.with_fixed_frame()` additions. The same
 materialized URDF feeds physics and UrdfManager; no parallel robot MJCF is loaded.
 
+The robot model owns canonical motor names/order, independently of a policy.
+The blueprint combines that identity with GR00T's gains and initial pose; the
+GR00T task configuration owns velocity limits. G1Connection does no policy clipping.
 The walking drive profile adds gains, rotor inertia, friction and initial angles;
 it does not duplicate geometry, kinematics, inertia tensors or joint limits.
 Gains and initial angles come from the task's shared `profile.py`; URDF limits
@@ -177,6 +189,11 @@ Torso IMU feedback is not interchangeable: the waist moves relative to the base.
 The URDF's mass, contact geometry and some effort limits differ from the GR00T
 reference MJCF. The tests establish prototype usability with this model, not
 training-model equivalence or sim-to-real transfer.
+
+Each sensor binding is optional and names an actual frame in `World.sensors`.
+A camera-only stack can set `camera="robot/front_optical"` without lidar or IMU.
+One module has one output bundle per sensor type; additional bundles use separate
+module instances and normal blueprint remappings. No naming-prefix convention is required.
 
 ## Core ownership and data
 
@@ -188,13 +205,14 @@ training-model equivalence or sim-to-real transfer.
 | `sim2/module.py` | Normal module lifecycle, pacing and stream publication |
 | `sim2/sensors.py` | Read-only MuJoCo query/render replica; no dynamics stepping |
 | `sim2/sensor_module.py` | Camera/lidar acquisition worker, standard DimOS outputs |
-| `control/feedback.py` | Coherent feedback/reply envelopes around existing control state and MotorCommandArray |
-| `control/coordinator.py`, `tick_loop.py`, `connection_source.py` | Feedback clock, existing arbitration, holds and motor output |
+| `control/feedback.py` | Standard JointState/optional Imu, source clock and named MotorCommandArray replies |
+| `control/coordinator.py`, `tick_loop.py`, `connection_source.py` | Convert robot measurements, execute existing tasks/arbitration, holds and motor output |
+| `control/feedback_session.py` | Feedback ordering, retransmission, discontinuities and stop/resume |
 | `sim2/client.py` | Map simulator arrays and forward motor commands with their original epoch/tick |
 | `robot/unitree/g1/connection.py` | One public robot connection; select WebRTC, DDS or sim I/O |
 | `robot/unitree/g1/dds_device.py` | Existing low-level Unitree driver, extracted without policy logic |
 | Existing `control/tasks/g1_groot_wbc_task/` | GR00T observation/action convention, history, balance/walk inference and shared motor profile |
-| `robot/unitree/g1/model.py` | Canonical G1 description, shared mounts and walking drive profile |
+| `robot/unitree/g1/model.py` | Canonical G1 description, shared mounts and hardware motor order |
 | Existing `robot/urdf_manager.py` | Internal TF edges and model/mesh serving |
 
 `WorldState` contains epoch, tick, sim/wall time, model revision, world link poses
@@ -226,18 +244,20 @@ native interactive viewer process; the previous stack's viewer remains intact.
 
 ## Verification (2026-10-30)
 
-Passed: **203 control/connection regression tests** and **29 simulation tests**,
-including ten simulated minutes standing, every walking direction, concurrent arm
-motion, stop/resume, reset and real worker transport/sensors. Tests use the actual G1 URDF and
-GR00T weights; the worker blueprint runs on an isolated Zenoh bus. Generic checks cover coherent clock/duplicates, delayed
-inference, stale replies after reset, servo field preservation and atomic invalid
-batch rejection. Stock WebRTC routing and DDS soft-start behavior use mocked I/O;
-there is no physical-hardware, low-power-mode or Desktop UI acceptance claim.
+Passed: **246 distinct tests/checks** across control/connection regressions,
+simulation acceptance and the generated blueprint registry. Coverage includes ten
+simulated minutes standing, every walking direction, concurrent arm motion,
+stop/resume, reset and real worker camera/lidar transport. Added cases exercise
+source-clock changes without an IMU, single-sensor configurations with arbitrary
+frame names, ordered DDS replies, controller-owned velocity limits and rejected
+motor output. Targeted mypy and commit hooks pass.
 
-The worker test measured **14.34 camera FPS per simulated second**, **0.83× real
-time** and **0.84 ms maximum coordinator computation** over roughly five simulated
+The worker sample measured **14.48 camera FPS per simulated second**, **0.86× real
+time** and **0.89 ms maximum coordinator computation** over roughly five simulated
 seconds while driving and moving an arm. Camera scheduling remains 15 Hz. These
-short samples are not a low-power or cross-platform performance guarantee.
+short samples do not establish a performance improvement or low-power stability.
+Stock WebRTC routing and DDS behavior used mocked I/O; physical hardware and
+Desktop UI acceptance remain unverified. The user's running session was not restarted.
 
 The integration adds one control worker and a small feedback/reply round trip per
 control sample. It adds no physics/render model copy and does not run duplicate

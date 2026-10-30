@@ -14,26 +14,35 @@
 
 """Drivable G1, existing office desk assets and loose objects, through one shared world."""
 
-from dataclasses import replace
 import math
 from pathlib import Path
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.g1_groot_wbc_task.profile import (
+    G1_GROOT_DEFAULT_POSITIONS,
+    G1_GROOT_KD,
+    G1_GROOT_KP,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.connection import G1Connection
-from dimos.robot.unitree.g1.model import G1_SENSOR_MODEL, WALKING_DRIVES
+from dimos.robot.unitree.g1.model import G1_MOTOR_JOINTS, G1_SENSOR_MODEL
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.sensor_module import SimSensorModule
 from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import Camera, Imu, Instance, Lidar, World
+from dimos.sim2.types import Camera, Drive, Imu, Instance, Lidar, World
 from dimos.utils.data import LfsPath
 
 _ASSETS = Path(__file__).resolve().parents[6] / "assets"
-_drives = tuple(replace(d, joint="g1/" + d.joint) for d in WALKING_DRIVES)
+_drives = tuple(
+    Drive("g1/" + name, kp, kd, home, armature=0.01, friction=0.1)
+    for name, kp, kd, home in zip(
+        G1_MOTOR_JOINTS, G1_GROOT_KP, G1_GROOT_KD, G1_GROOT_DEFAULT_POSITIONS, strict=True
+    )
+)
 _desk = RobotModel.from_file(
     _ASSETS / "g1_desk/desk.urdf", package_paths={"g1_desk": LfsPath("g1_desk")}
 )
@@ -78,14 +87,19 @@ unitree_g1_sim2 = autoconnect(
                     "auto_arm": True,
                     "default_ramp_seconds": 0.0,
                     "decimation": 1,
+                    "velocity_limits": (0.5, 0.3, 0.6),
                 },
             ),
             joint_trajectory_task([d.joint for d in _drives[15:]], priority=20),
         ],
     ),
-    SimSensorModule.blueprint(world=G1_DESK_WORLD, reader=MujocoSensors, prefix="g1").remappings(
-        [("simsensormodule", "lidar", "lidar_raw")]
-    ),
+    SimSensorModule.blueprint(
+        world=G1_DESK_WORLD,
+        reader=MujocoSensors,
+        camera="g1/camera",
+        lidar="g1/lidar",
+        imu="g1/imu",
+    ).remappings([("simsensormodule", "lidar", "lidar_raw")]),
     *(
         UrdfManager.blueprint(instance_name=i.id + "_urdf", model=i.model).remappings(
             [

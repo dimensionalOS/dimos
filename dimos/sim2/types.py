@@ -143,6 +143,7 @@ class WorldState:
 
 @dataclass(frozen=True)
 class Frame:
+    dt: float  # interval of the source feedback clock, in simulation seconds
     state: WorldState
     imu: Array  # (layout.imu_frames, 6): local specific force, then angular velocity
 

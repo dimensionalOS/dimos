@@ -47,7 +47,8 @@ from dimos.control.contract.convert import (
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, model_limit, movable_joints
 from dimos.control.contract.sequence import Freshness
-from dimos.control.task import JointStateSnapshot
+from dimos.control.feedback import ControlFeedback
+from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -357,6 +358,30 @@ class ConnectionSource:
             self._latest, self._reported = latest, reported
             self._received_at = time.time()
             self._freshness.mark(now)
+
+    def on_feedback(self, sample: ControlFeedback) -> CoordinatorState:
+        """Translate the public robot measurement to control's internal task state once."""
+        if len(set(sample.joints.name)) != len(sample.joints.name) or set(
+            sample.joints.name
+        ) != set(self.joint_names):
+            raise ValueError("control feedback must contain this robot's complete joint state")
+        # Validate before on_message's asynchronous drop/log behavior can retain an older reading.
+        joint_state_to_values(sample.joints, JOINT_STATE_FIELDS)
+        if len(sample.joints.position) != len(sample.joints.name):
+            raise ValueError("feedback must include all joint positions")
+        self.on_message(JOINT_STATE, sample.joints)
+        imu = sample.imu
+        measurements = {}
+        if imu is not None:
+            q, g, a = imu.orientation, imu.angular_velocity, imu.linear_acceleration
+            measurements[self._robot] = IMUState(
+                quaternion=(q.w, q.x, q.y, q.z),
+                gyroscope=(g.x, g.y, g.z),
+                accelerometer=(a.x, a.y, a.z),
+            )
+        joints = self.read_joints()
+        joints.timestamp = sample.joints.ts
+        return CoordinatorState(joints=joints, imu=measurements, t_now=sample.time, dt=sample.dt)
 
     def drop_holds(self) -> None:
         """Send nothing until the robot reports again, then hold each joint

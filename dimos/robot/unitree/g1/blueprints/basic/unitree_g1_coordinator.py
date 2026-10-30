@@ -46,6 +46,7 @@ unitree_g1_coordinator = (
     autoconnect(
         G1Connection.blueprint(
             connection_type="dds",
+            legacy_motor_streams=True,
             dds=G1DDSConfig(network_interface=os.getenv("ROBOT_INTERFACE", "")),
         ),
         _G1Coordinator.blueprint(

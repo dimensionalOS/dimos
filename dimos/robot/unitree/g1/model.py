@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One G1 description for TF, visuals, planning and physics; walking drive profile.
+"""One G1 description and motor ordering for TF, visuals, planning and physics.
 
-The GR00T policy's home pose, gains and rotor inertias are a controller
-profile, not another robot geometry/kinematic description. URDF limits prevail.
 Mounts: pelvis IMU from the GR00T model; head camera/lidar are prototype sensors.
 """
 
@@ -23,13 +21,7 @@ import math
 from pathlib import Path
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.tasks.g1_groot_wbc_task.profile import (
-    G1_GROOT_DEFAULT_POSITIONS,
-    G1_GROOT_KD,
-    G1_GROOT_KP,
-)
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.types import Drive
 from dimos.utils.data import LfsPath
 
 G1_MODEL = RobotModel.from_file(
@@ -45,15 +37,5 @@ G1_SENSOR_MODEL = (
     .with_fixed_frame("lidar", "torso_link", xyz=(0.07, 0, 0.42))
 )
 
-# GR00T DDS order, gains and zero-offset pose; the existing task owns these facts.
-# Reflected inertia/friction follow the existing GR00T simulation motor profile.
-WALKING_DRIVES = tuple(
-    Drive(name.partition("/")[2] + "_joint", kp, kd, home, 0.01, 0.1)
-    for name, kp, kd, home in zip(
-        make_humanoid_joints("g1"),
-        G1_GROOT_KP,
-        G1_GROOT_KD,
-        G1_GROOT_DEFAULT_POSITIONS,
-        strict=True,
-    )
-)
+# URDF joint names in the hardware's motor order. Policy choice does not change identity.
+G1_MOTOR_JOINTS = tuple(name.partition("/")[2] + "_joint" for name in make_humanoid_joints("g1"))

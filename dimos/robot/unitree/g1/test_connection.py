@@ -62,22 +62,22 @@ def test_simulation_needs_no_policy_or_velocity_controller_to_connect(connection
         connection.publish_request("test", {})
 
 
-def test_sim_velocity_delegates_to_configured_controller(connection_factory, mocker):
-    connection = connection_factory(connection_type="sim2")
+@pytest.mark.parametrize("mode", ["sim2", "dds"])
+def test_motor_velocity_delegates_without_policy_limits(connection_factory, mocker, mode):
+    mocker.patch.object(connection_module, "G1DDSDevice")
+    connection = connection_factory(connection_type=mode)
     controller = mocker.patch.object(connection, "_velocity_controller")
     connection.start()
     connection.move(Twist(linear=Vector3(2, -2, 0)), duration=1.0)
     args = controller.set_velocity_command.call_args.args
-    assert (args[0].linear.x, args[0].linear.y, args[1]) == (0.5, -0.3, 1.0)
-    with pytest.raises(ValueError, match="finite"):
-        connection.move(Twist(linear=Vector3(float("nan"), 0, 0)))
+    assert (args[0].linear.x, args[0].linear.y, args[1]) == (2, -2, 1.0)
 
 
 def test_dds_selection_uses_existing_driver_and_rejects_firmware_motion(connection_factory, mocker):
     driver = mocker.patch.object(connection_module, "G1DDSDevice").return_value
-    connection = connection_factory(connection_type="dds")
+    connection = connection_factory(connection_type="dds", legacy_motor_streams=True)
     connection.start()
     driver.start.assert_called_once_with()
-    with pytest.raises(ValueError, match="motor control owns"):
+    with pytest.raises(ValueError, match="velocity control is not configured"):
         connection.move(Twist())
     connection.cmd_vel.subscribe.assert_not_called()

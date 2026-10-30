@@ -18,6 +18,7 @@ Only the owner calls advance/reset/place. Producers enqueue; no sensor or networ
 callback ever locks native dynamics. The module publishes copied snapshots later.
 """
 
+from dataclasses import replace
 import math
 from queue import Empty, Queue
 from typing import TypeAlias
@@ -29,8 +30,17 @@ Command: TypeAlias = JointTargets | JointEfforts | Wrench
 
 
 class Runtime:
-    def __init__(self, backend: PhysicsBackend, control_joints: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        backend: PhysicsBackend,
+        control_joints: tuple[str, ...] = (),
+        *,
+        control_steps: int = 1,
+    ) -> None:
+        if control_steps < 1:
+            raise ValueError("control_steps must be positive")
         self.backend = backend
+        self.control_steps = control_steps
         self._control_joints = frozenset(control_joints)
         self.epoch = uuid.uuid4().hex
         self.tick = 0
@@ -101,7 +111,9 @@ class Runtime:
         return self.capture().state
 
     def capture(self) -> Frame:
-        return self.backend.snapshot(self.epoch, self.tick)
+        return replace(
+            self.backend.snapshot(self.epoch, self.tick), dt=self.control_steps * self.backend.dt
+        )
 
     def reset(self) -> WorldState:
         self.backend.reset()

@@ -15,23 +15,26 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from types import SimpleNamespace
 
 from pydantic import ValidationError
 import pytest
 
+from dimos.control.feedback import MotorControl
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.dds_device import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
     G1DDSConfig,
     G1DDSDevice,
+    G1LowStateSnapshot,
 )
 
 
 @pytest.fixture
 def connection() -> Iterator[G1DDSDevice]:
-    connection = G1DDSDevice(G1DDSConfig(), lambda _ts, _sample: None)
+    connection = G1DDSDevice(G1DDSConfig(), lambda _sample: None)
     try:
         yield connection
     finally:
@@ -130,3 +133,25 @@ def test_non_finite_soft_start_is_rejected(value):
     # and no way back to the commanded gains.
     with pytest.raises(ValidationError):
         G1DDSConfig(soft_start_seconds=value)
+
+
+def test_dds_uses_coherent_feedback_and_rejects_reordered_replies(connection, mocker):
+    now = [10.0]
+    mocker.patch("dimos.robot.unitree.g1.dds_device.time.monotonic", side_effect=lambda: now[0])
+    write = mocker.patch.object(connection, "write")
+    sample = G1LowStateSnapshot(
+        [0.1] * 29, [0.2] * 29, [0.3] * 29, (1.0, 0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (0.0, 0.0, 9.81)
+    )
+    first = connection.feedback(100.0, sample)
+    assert first.joints.name[0] == "g1/left_hip_pitch_joint"
+    assert first.joints.position == [0.1] * 29
+    assert first.imu.orientation.w == 1.0
+    now[0] += 0.02
+    second = connection.feedback(100.02, sample)
+    assert second.dt == pytest.approx(0.02)
+    command = MotorControl(first.epoch, first.tick, connection.joints, _command())
+    assert connection.write_motors(command)  # hardware samples continue during inference
+    assert not connection.write_motors(command)
+    assert not connection.write_motors(replace(command, epoch="previous-start", tick=second.tick))
+    assert connection.write_motors(replace(command, tick=second.tick))
+    assert write.call_count == 2

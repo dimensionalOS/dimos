@@ -239,7 +239,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(hw_commands)
+        self._write_all_connections(hw_commands, raise_errors=external_clock)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -531,6 +531,8 @@ class TickLoop:
     def _write_all_connections(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        *,
+        raise_errors: bool = False,
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -554,6 +556,8 @@ class TickLoop:
                 try:
                     publish(name, source.command(winners, mode))
                 except Exception as e:
+                    if raise_errors:
+                        raise
                     logger.error(f"Failed to send a command to {name}: {e}")
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:

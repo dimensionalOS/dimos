@@ -49,10 +49,10 @@ pytestmark = pytest.mark.native_e2e
 def walking_robot(mocker):
     world = replace(G1_DESK_WORLD, instances=G1_DESK_WORLD.instances[:1])
     backend = MujocoBackend(world)
-    runtime = Runtime(backend, backend.layout.drives)
+    runtime = Runtime(backend, backend.layout.drives, control_steps=10)
     atom = next(a for a in unitree_g1_sim2.blueprints if a.module is ControlCoordinator)
     control = ControlCoordinator(**atom.kwargs)
-    client = SimRobotClient(tuple(control.config.motor_gains), runtime.submit)
+    client = SimRobotClient(tuple(control.config.motor_gains), runtime.submit, imu_frame="g1/imu")
     client.bind(backend.layout)
     mocker.patch.object(Module, "start")  # no transports; worker acceptance below uses real modules
     mocker.patch.object(control.motor_control, "publish", side_effect=client.write_motors)
@@ -68,7 +68,7 @@ def cycle(runtime, control, client, count, velocity=None):
     for _ in range(count):
         if velocity is not None:
             control.set_velocity_command(velocity)
-        control.receive_feedback(client.feedback(runtime.capture(), "g1", "g1/imu", 0.02))
+        control.receive_feedback(client.feedback(runtime.capture()))
         runtime.advance(10)
         minimum_height = min(minimum_height, runtime.snapshot().poses[0, 2])
     assert minimum_height > 0.68
@@ -124,9 +124,9 @@ def test_g1_duplicate_feedback_deadman_and_reset(walking_robot, monkeypatch):
     cycle(runtime, control, client, 100)
     cycle(runtime, control, client, 50, Twist(linear=Vector3(0.2, 0, 0)))
     frame = runtime.capture()
-    assert control.receive_feedback(client.feedback(frame, "g1", "g1/imu", 0.02))
+    assert control.receive_feedback(client.feedback(frame))
     count = control.get_tick_count()
-    assert not control.receive_feedback(client.feedback(frame, "g1", "g1/imu", 0.02))
+    assert not control.receive_feedback(client.feedback(frame))
     assert control.get_tick_count() == count
     runtime.prepare()
     assert runtime.controlled(client.joints)  # retransmission still releases the gate
@@ -149,7 +149,7 @@ def test_control_barrier_requires_current_epoch_tick_and_valid_targets(walking_r
     runtime.submit(JointTargets(runtime.epoch, client.joints, (0.0,) * 29))
     runtime.prepare()
     assert runtime.last_error == "paced joints require a feedback tick"
-    control.receive_feedback(client.feedback(runtime.capture(), "g1", "g1/imu", 0.02))
+    control.receive_feedback(client.feedback(runtime.capture()))
     runtime.prepare()
     assert runtime.controlled(client.joints)
     runtime.advance(10)
@@ -229,7 +229,7 @@ def test_g1_blueprint_drives_with_sensors_then_resets(deployed_g1, record_proper
     record_property("max_compute_ms", control.control_status()["max_compute_ms"])
     assert not sim.timing()["error"]
     assert sim.timing()["rejected_commands"] == 0
-    assert connection.control_status()["controller"] == "ControlCoordinator"
+    assert connection.control_status()["controller"] == "external motor controller"
     assert control.control_status()["computations"] > 100
     reset = sim.reset()
     assert reset.epoch != state.epoch
@@ -291,13 +291,13 @@ def test_g1_arm_trajectory_while_walking_and_reset(walking_robot):
 def test_old_motor_reply_cannot_be_relabelled_after_reset(walking_robot, mocker):
     runtime, control, client = walking_robot
     cycle(runtime, control, client, 1)
-    feedback = client.feedback(runtime.capture(), "g1", "g1/imu", 0.02)
+    feedback = client.feedback(runtime.capture())
     assert feedback is not None
     sent = mocker.patch.object(control.motor_control, "publish")
     control.receive_feedback(feedback)
     old = sent.call_args.args[0]
     runtime.reset()
-    client.feedback(runtime.capture(), "g1", "g1/imu", 0.02)
+    client.feedback(runtime.capture())
     assert not client.write_motors(old)
     runtime.prepare()
     assert not runtime.controlled(client.joints)
@@ -308,7 +308,7 @@ def test_g1_resumes_after_estop_without_resetting_physics(walking_robot):
     runtime, control, client = walking_robot
     stopped = cycle(runtime, control, client, 100)
     control.set_estop(True)
-    feedback = client.feedback(runtime.capture(), "g1", "g1/imu", 0.02)
+    feedback = client.feedback(runtime.capture())
     assert feedback is not None
     assert not control.receive_feedback(feedback)
     runtime.prepare()

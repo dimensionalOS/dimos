@@ -24,15 +24,14 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.feedback import ControlFeedback
 from dimos.control.task import (
     ControlTask,
-    CoordinatorState,
     JointCommandOutput,
-    JointStateSnapshot,
     ResourceClaim,
 )
 from dimos.core.module import Module
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.testing.cbor import roundtrip
 
 
@@ -58,13 +57,19 @@ def controller(mocker):
     )
     control.add_task(task)
     control.start()
-    state = CoordinatorState(
-        joints=JointStateSnapshot(joint_positions=dict.fromkeys(names, 0.1), timestamp=100.0),
-        t_now=7.0,
-        dt=0.02,
+    sample = ControlFeedback(
+        "episode-a",
+        350,
+        7.0,
+        0.02,
+        JointState(
+            ts=100.0,
+            name=list(names),
+            position=[0.1] * len(names),
+        ),
     )
     try:
-        yield control, task, sent, ControlFeedback("episode-a", 350, state)
+        yield control, task, sent, sample
     finally:
         control.stop()
 
@@ -75,7 +80,11 @@ def test_duplicate_feedback_retransmits_without_advancing_tasks(controller):
     reply = sent.call_args.args[0]
     assert not control.receive_feedback(sample)
     assert control.get_tick_count() == 1
-    task.compute.assert_called_once_with(sample.state)
+    task.compute.assert_called_once()
+    state = task.compute.call_args.args[0]
+    assert state.t_now == sample.time and state.dt == sample.dt
+    assert state.joints.joint_positions == dict.fromkeys(sample.joints.name, 0.1)
+    assert state.joints.timestamp == sample.joints.ts
     assert sent.call_args.args[0] is reply
     decoded = roundtrip(reply)
     assert (decoded.epoch, decoded.tick) == ("episode-a", 350)
@@ -110,14 +119,8 @@ def test_reset_retires_old_feedback_and_releases_previous_holds(controller):
         sample,
         epoch="episode-b",
         tick=0,
-        state=replace(
-            sample.state,
-            t_now=0.0,
-            joints=replace(
-                sample.state.joints,
-                joint_positions=dict.fromkeys(sample.state.joints.joint_positions, -0.2),
-            ),
-        ),
+        time=0.0,
+        joints=JointState(ts=101.0, name=sample.joints.name, position=[-0.2] * 7),
     )
     assert control.receive_feedback(reset)
     assert sent.call_args.args[0].motors.q == [-0.2] * 7
@@ -143,13 +146,11 @@ def test_velocity_deadman_uses_wall_time(controller, mocker):
     mocker.patch.object(coordinator_module.time, "monotonic", side_effect=lambda: now[0])
     dispatch = mocker.spy(control, "_dispatch")
     control.set_velocity_command(Twist(linear=Vector3(0.2, 0, 0)))
-    next_sample = replace(sample, tick=351, state=replace(sample.state, t_now=7.02))
+    next_sample = replace(sample, tick=351, time=7.02)
     control.receive_feedback(next_sample)
     assert dispatch.call_args.args[1].linear.x == 0.2
     now[0] = 100.31
-    control.receive_feedback(
-        replace(next_sample, tick=352, state=replace(sample.state, t_now=7.04))
-    )
+    control.receive_feedback(replace(next_sample, tick=352, time=7.04))
     assert dispatch.call_args.args[1].linear.x == 0.0
 
 
@@ -157,7 +158,7 @@ def test_estop_clear_recomputes_the_frozen_sample_once(controller):
     control, task, sent, sample = controller
     control.receive_feedback(sample)
     control.set_estop(True)
-    waiting = replace(sample, tick=351, state=replace(sample.state, t_now=7.02))
+    waiting = replace(sample, tick=351, time=7.02)
     assert not control.receive_feedback(waiting)
     assert sent.call_count == 1
     assert control.get_tick_count() == 1
@@ -175,10 +176,24 @@ def test_reset_while_stopped_retires_the_previous_epoch(controller):
     control, task, sent, sample = controller
     control.receive_feedback(sample)
     control.set_estop(True)
-    reset = replace(sample, epoch="episode-b", tick=0, state=replace(sample.state, t_now=0.0))
+    reset = replace(sample, epoch="episode-b", tick=0, time=0.0)
     assert not control.receive_feedback(reset)
     control.set_estop(False)
     assert control.receive_feedback(reset)
     assert not control.receive_feedback(sample)
     assert control.get_tick_count() == 2
     assert sent.call_args.args[0].epoch == "episode-b"
+
+
+def test_rejected_motor_output_is_reported_without_replaying_a_command(controller):
+    control, task, sent, sample = controller
+    task.compute.return_value = JointCommandOutput(
+        [sample.joints.name[0]],
+        positions=[float("nan")],
+        mode=ControlMode.SERVO_POSITION,
+    )
+    with pytest.raises(ValueError, match="nonfinite"):
+        control.receive_feedback(sample)
+    assert "nonfinite" in control.control_status()["error"]
+    assert not control.receive_feedback(sample)
+    sent.assert_not_called()

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-import math
 from typing import Any, ClassVar
 
 from pydantic import Field
@@ -24,18 +23,15 @@ from dimos.control.feedback import ControlFeedback, MotorControl, VelocityContro
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.g1.dds_device import G1DDSConfig, G1DDSDevice, G1LowStateSnapshot
-from dimos.robot.unitree.g1.model import WALKING_DRIVES
+from dimos.robot.unitree.g1.dds_device import G1DDSConfig, G1DDSDevice
+from dimos.robot.unitree.g1.model import G1_MOTOR_JOINTS
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.types import Frame, JointTargets, Layout
 from dimos.utils.logging_config import setup_logger
@@ -52,8 +48,8 @@ class G1Config(ModuleConfig):
     )
     # Per-device AES-128 key (G1 fw >=1.5.1).
     aes_128_key: str | None = Field(default=None, repr=False)
-    sim_prefix: str = "g1"
-    control_hz: float = Field(default=50.0, gt=0, allow_inf_nan=False)
+    robot_name: str = "g1"
+    legacy_motor_streams: bool = False  # older hardware blueprints using the LCM adapter
     dds: G1DDSConfig = Field(default_factory=G1DDSConfig)
 
 
@@ -103,10 +99,12 @@ class G1Connection(G1ConnectionBase):
     _velocity_controller: VelocityControllerSpec | None = None
     connection: UnitreeWebRTCConnection | None = None
     _sim_client: SimRobotClient | None = None
-    _sim_root: int = 0
+    _motor_device: SimRobotClient | G1DDSDevice | None = None
 
     @rpc
     def start(self) -> None:
+        if self.config.legacy_motor_streams and self.config.connection_type != "dds":
+            raise ValueError("legacy motor streams require DDS")
         super().start()
 
         match self.config.connection_type:
@@ -115,11 +113,20 @@ class G1Connection(G1ConnectionBase):
                     self.config.ip, aes_128_key=self.config.aes_128_key
                 )
             case "dds":
-                self._dds_device = G1DDSDevice(self.config.dds, self._publish_dds_feedback)
+                self._dds_device = G1DDSDevice(
+                    self.config.dds, self._publish_feedback, prefix=self.config.robot_name
+                )
+                self._motor_device = self._dds_device
                 self._dds_device.start()
             case "sim2":
-                names = tuple(self.config.sim_prefix + "/" + d.joint for d in WALKING_DRIVES)
-                self._sim_client = SimRobotClient(names, self.targets.publish)
+                names = tuple(self.config.robot_name + "/" + name for name in G1_MOTOR_JOINTS)
+                self._sim_client = SimRobotClient(
+                    names,
+                    self.targets.publish,
+                    imu_frame=self.config.robot_name + "/imu",
+                    root_frame=self.config.robot_name + "/pelvis",
+                )
+                self._motor_device = self._sim_client
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
             case "mujoco":
@@ -131,7 +138,7 @@ class G1Connection(G1ConnectionBase):
 
         if self.connection is not None:
             self.connection.start()
-        if self._dds_device is None:
+        if not self.config.legacy_motor_streams:
             self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
     @rpc
@@ -144,29 +151,12 @@ class G1Connection(G1ConnectionBase):
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
-        if self._sim_client is not None:
-            if (
-                not all(
-                    math.isfinite(v)
-                    for v in (twist.linear.x, twist.linear.y, twist.angular.z, duration)
-                )
-                or duration < 0
-            ):
-                raise ValueError("velocity/duration must be finite; duration must be nonnegative")
+        if self._motor_device is not None:
             if self._velocity_controller is None:
                 raise ValueError(
                     "velocity control is not configured; attach a controller or send motor_control"
                 )
-            # Preserve the existing velocity RPC; the coordinator owns its latch/deadman.
-            command = Twist(
-                linear=Vector3(
-                    max(-0.5, min(0.5, twist.linear.x)), max(-0.3, min(0.3, twist.linear.y)), 0
-                ),
-                angular=Vector3(0, 0, max(-0.6, min(0.6, twist.angular.z))),
-            )
-            self._velocity_controller.set_velocity_command(command, duration)
-        elif self._dds_device is not None:
-            raise ValueError("DDS motor control owns the robot; send velocity to its controller")
+            self._velocity_controller.set_velocity_command(twist, duration)
         else:
             assert self.connection is not None
             self.connection.move(twist, duration)
@@ -182,72 +172,48 @@ class G1Connection(G1ConnectionBase):
     async def handle_world_layout(self, layout: Layout) -> None:
         if self._sim_client is not None:
             self._sim_client.bind(layout)
-            self._sim_root = layout.bodies.index(self.config.sim_prefix + "/pelvis")
 
     async def handle_world_frame(self, frame: Frame) -> None:
         if self._sim_client is not None:
-            feedback = self._sim_client.feedback(
-                frame,
-                self.config.sim_prefix,
-                self.config.sim_prefix + "/imu",
-                1 / self.config.control_hz,
-            )
-            if feedback is None:
-                return
-            self.control_feedback.publish(feedback)
-            state = frame.state
-            pose = state.poses[self._sim_root]
-            inverse = Quaternion(*pose[3:]).conjugate()
-            velocity = state.twists[self._sim_root]
-            self.odom.publish(
-                Odometry(
-                    ts=state.wall_time,
-                    frame_id="world",
-                    child_frame_id=self.config.sim_prefix + "/pelvis",
-                    pose=Pose(position=Vector3(*pose[:3]), orientation=Quaternion(*pose[3:])),
-                    twist=Twist(
-                        linear=inverse.rotate_vector(Vector3(*velocity[:3])),
-                        angular=inverse.rotate_vector(Vector3(*velocity[3:])),
-                    ),
-                )
-            )
+            feedback = self._sim_client.feedback(frame)
+            if feedback is not None:
+                self._publish_feedback(feedback)
+                odom = self._sim_client.odometry()
+                if odom is not None:
+                    self.odom.publish(odom)
 
     async def handle_motor_control(self, command: MotorControl) -> None:
-        if self._sim_client is not None:
-            self._sim_client.write_motors(command)
+        if self._motor_device is not None and not self.config.legacy_motor_streams:
+            self._motor_device.write_motors(command)
 
     async def handle_motor_command(self, command: MotorCommandArray) -> None:
-        if self._dds_device is None:
-            raise ValueError("raw motor_command requires DDS; sim2 requires an epoch/tick reply")
+        if self._dds_device is None or not self.config.legacy_motor_streams:
+            raise ValueError("raw motor_command requires the legacy DDS stream configuration")
         self._dds_device.write(command)
 
-    def _publish_dds_feedback(self, ts: float, sample: G1LowStateSnapshot) -> None:
-        # Retain the established DDS wire order and names for existing hardware blueprints.
-        self.motor_states.publish(
-            JointState(
-                ts=ts,
-                frame_id=self.config.dds.frame_id,
-                name=make_humanoid_joints(self.config.sim_prefix),
-                position=sample.positions,
-                velocity=sample.velocities,
-                effort=sample.efforts,
+    def _publish_feedback(self, sample: ControlFeedback) -> None:
+        if self.config.legacy_motor_streams:
+            # Preserve the old adapter's names only at its compatibility boundary.
+            joints = sample.joints
+            self.motor_states.publish(
+                JointState(
+                    ts=joints.ts,
+                    frame_id=joints.frame_id,
+                    name=make_humanoid_joints(self.config.robot_name),
+                    position=joints.position,
+                    velocity=joints.velocity,
+                    effort=joints.effort,
+                )
             )
-        )
-        w, x, y, z = sample.quaternion
-        self.imu.publish(
-            Imu(
-                ts=ts,
-                frame_id=self.config.dds.frame_id,
-                orientation=Quaternion(x, y, z, w),
-                angular_velocity=Vector3(*sample.gyroscope),
-                linear_acceleration=Vector3(*sample.accelerometer),
-            )
-        )
+            if sample.imu is not None:
+                self.imu.publish(sample.imu)
+        else:
+            self.control_feedback.publish(sample)
 
     @rpc
     def control_status(self) -> dict[str, Any]:
         return {
-            "controller": "ControlCoordinator"
+            "controller": "external motor controller"
             if self._sim_client or self._dds_device
             else "Unitree firmware"
         }

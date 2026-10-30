@@ -366,3 +366,21 @@ def test_projected_gravity_matches_reference_quaternion_order() -> None:
         np.array([0.0, -1.0, 0.0]),
         atol=1e-6,
     )
+
+
+def test_velocity_limits_are_a_controller_configuration(patched_ort, joints_29):
+    task = G1GrootWBCTask(
+        "limited",
+        G1GrootWBCTaskConfig(
+            balance_onnx="/fake/balance.onnx",
+            walk_onnx="/fake/walk.onnx",
+            joint_names=joints_29[:15],
+            all_joint_names=joints_29,
+            velocity_limits=(0.5, 0.3, 0.6),
+        ),
+    )
+    try:
+        task.on_twist_command(Twist(linear=[2.0, -2.0, 0.0], angular=[0.0, 0.0, 2.0]), t_now=1.0)
+        assert task._cmd == pytest.approx([0.5, -0.3, 0.6])
+    finally:
+        task.stop()
