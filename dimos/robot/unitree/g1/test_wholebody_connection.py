@@ -15,26 +15,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import replace
 from types import SimpleNamespace
 
 from pydantic import ValidationError
 import pytest
 
-from dimos.control.feedback import MotorControl
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.unitree.g1.dds_device import (
+from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
-    G1DDSConfig,
-    G1DDSDevice,
-    G1LowStateSnapshot,
+    G1WholeBodyConnection,
+    G1WholeBodyConnectionConfig,
 )
 
 
 @pytest.fixture
-def connection() -> Iterator[G1DDSDevice]:
-    connection = G1DDSDevice(G1DDSConfig(), lambda _sample: None)
+def connection() -> Iterator[G1WholeBodyConnection]:
+    connection = G1WholeBodyConnection()
     try:
         yield connection
     finally:
@@ -80,10 +77,10 @@ def _command():
     )
 
 
-def test_soft_start_is_damping_first(connection: G1DDSDevice):
+def test_soft_start_is_damping_first(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=1000.0)
 
-    connection.write(_command())
+    connection._on_motor_command(_command())
 
     q, dq, kp, kd, tau = publisher.frames[0][0]
     # First frame: target and damping pass through, stiffness and tau do not —
@@ -94,13 +91,13 @@ def test_soft_start_is_damping_first(connection: G1DDSDevice):
     assert abs(tau) < 0.1
 
 
-def test_stiffness_ramps_to_full(connection: G1DDSDevice):
+def test_stiffness_ramps_to_full(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.05)
 
-    connection.write(_command())
+    connection._on_motor_command(_command())
     # Rewind the clock instead of sleeping through the window.
     connection._soft_start_t0 -= 1.0
-    connection.write(_command())
+    connection._on_motor_command(_command())
 
     _q, _dq, kp, kd, tau = publisher.frames[-1][0]
     assert kp == 100.0
@@ -108,20 +105,20 @@ def test_stiffness_ramps_to_full(connection: G1DDSDevice):
     assert tau == 8.0
 
 
-def test_soft_start_disabled_passes_through(connection: G1DDSDevice):
+def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection.write(_command())
+    connection._on_motor_command(_command())
 
     _q, _dq, kp, _kd, tau = publisher.frames[0][0]
     assert kp == 100.0
     assert tau == 8.0
 
 
-def test_wrong_joint_count_is_dropped(connection: G1DDSDevice):
+def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection.write(MotorCommandArray(q=[0.0] * 5))
+    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
 
     assert publisher.frames == []
 
@@ -132,26 +129,4 @@ def test_non_finite_soft_start_is_rejected(value):
     # zero, so the scale would pin at 0 forever: full damping, no stiffness,
     # and no way back to the commanded gains.
     with pytest.raises(ValidationError):
-        G1DDSConfig(soft_start_seconds=value)
-
-
-def test_dds_uses_coherent_feedback_and_rejects_reordered_replies(connection, mocker):
-    now = [10.0]
-    mocker.patch("dimos.robot.unitree.g1.dds_device.time.monotonic", side_effect=lambda: now[0])
-    write = mocker.patch.object(connection, "write")
-    sample = G1LowStateSnapshot(
-        [0.1] * 29, [0.2] * 29, [0.3] * 29, (1.0, 0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (0.0, 0.0, 9.81)
-    )
-    first = connection.feedback(100.0, sample)
-    assert first.joints.name[0] == "g1/left_hip_pitch_joint"
-    assert first.joints.position == [0.1] * 29
-    assert first.imu.orientation.w == 1.0
-    now[0] += 0.02
-    second = connection.feedback(100.02, sample)
-    assert second.dt == pytest.approx(0.02)
-    command = MotorControl(first.epoch, first.tick, connection.joints, _command())
-    assert connection.write_motors(command)  # hardware samples continue during inference
-    assert not connection.write_motors(command)
-    assert not connection.write_motors(replace(command, epoch="previous-start", tick=second.tick))
-    assert connection.write_motors(replace(command, tick=second.tick))
-    assert write.call_count == 2
+        G1WholeBodyConnectionConfig(soft_start_seconds=value)

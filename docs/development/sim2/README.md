@@ -1,265 +1,166 @@
-# sim2: G1 at a desk
+# sim2 core
 
-Prototype branch `pim/feat/sim2-minimal`, built from `main@64b2d8aa6b`.
-The main example is a **drivable G1, a desk/computer/chair from the existing office
-assets, and two loose boxes**. Small synthetic worlds exist only in pytest fixtures.
-The previous sim2 PR stack and running deployments are unchanged.
+This PR contains world descriptions, sampled world state, joint/body actions,
+a physics backend interface, and sensor acquisition. G1, walking policies,
+robot connections and ControlCoordinator integration are outside this PR.
+The previous integrated prototype is preserved at `b91c563637`.
 
-## Run
+## What lives where
+
+| File | Responsibility / public interface |
+|---|---|
+| `types.py` | `World`, `Instance`, `Drive`, sensor profiles; `Layout`, `WorldState`, `Frame`; `JointTargets`, `JointEfforts`, `Wrench`; `PhysicsBackend`, `SensorReader` protocols. |
+| `runtime.py` | `Runtime(backend)`: `submit`, `advance`, `prepare`, `snapshot`, `capture`, `reset`, `place`. Serializes commands, expires them in simulation time and rejects stale epochs. No modules or transport. |
+| `mujoco.py` | `MujocoBackend(world)` implements `PhysicsBackend`. Imports the shared URDF models and owns native physics data. Only implemented physics backend. |
+| `module.py` | `SimModule`: DimOS lifecycle, physics pacing, stream inputs/outputs and scene RPCs. |
+| `sensors.py` | `MujocoSensors(world, layout)` implements `SensorReader`. Reads copied state for RGB/depth and lidar; never advances dynamics. |
+| `sensor_module.py` | `SimSensorModule`: schedules acquisition and publishes ordinary DimOS sensor messages. |
+
+`robot/assets/model.py` adds model prefixing and fixed-mount resolution. The same
+`RobotModel` can be supplied to existing `UrdfManager`; sim2 does not create a
+second robot description or change UrdfManager's implementation.
+
+## Description → array names → sampled values
+
+```python
+# World: what exists, its initial placement, drives and sensors.
+world = World(instances=(...), sensors=(...), dt=0.002)
+backend = MujocoBackend(world)
+sim = Runtime(backend)
+
+layout = backend.layout                 # stable names / array order
+state = sim.snapshot()                  # values at one simulation instant
+index = layout.bodies.index("box")
+box_pose = state.poses[index]           # x,y,z,qx,qy,qz,qw, in world
+joint_index = layout.joints.index("arm/elbow")
+elbow_angle = state.position[joint_index]
+```
+
+`Instance` places a `RobotModel` in the world. Robots, furniture and loose objects
+use the same representation: a box has one link; a door has links and a hinge;
+a robot has links and driven joints. `floating=True` gives the root six free
+degrees of freedom. `Drive` enables servo/effort control on a scalar joint.
+
+`Layout` supplies `bodies`, `joints`, `drives`, `roots`, `imu_frames` and `revision`.
+`WorldState` supplies:
+
+```python
+epoch, tick, sim_time, wall_time, revision
+poses       # (bodies, 7): world-from-link xyz + quaternion xyzw
+twists      # (bodies, 6): world-axis linear + angular velocity at link origin
+position    # (joints,): m or rad
+velocity    # (joints,): m/s or rad/s
+effort      # (joints,): actuator N or Nm; not contact/constraint reaction
+```
+
+`Frame(state, imu)` carries one coherent sample plus mounted IMU specific force
+and angular velocity. It is a data packet; a sensor's named coordinate frame is
+a link/fixed mount in `RobotModel`. Neither is another scene description.
+`WorldState` is observable truth, not a restorable native solver checkpoint.
+
+## Apply actions and edit the scene
+
+With `world` containing the named objects/joints:
+
+```python
+from dimos.sim2.mujoco import MujocoBackend
+from dimos.sim2.runtime import Runtime
+from dimos.sim2.types import JointEfforts, JointTargets, Wrench
+
+sim = Runtime(MujocoBackend(world))
+sim.submit(JointTargets(sim.epoch, ("arm/elbow",), (0.5,)))
+sim.advance(100)                        # 100 fixed physics steps
+sim.submit(JointEfforts(sim.epoch, ("arm/elbow",), (1.0,)))
+sim.submit(Wrench(sim.epoch, "box", force=(5.0, 0.0, 0.0), duration=0.1))
+sim.advance(50)
+state = sim.snapshot()
+
+# Privileged scene operations, not robot actions:
+sim.place("box", (1.0, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0))
+sim.reset()
+```
+
+Joint commands drive a degree of freedom; a wrench applies world-axis force and
+torque to a link, optionally at a world point. The physics engine resolves both
+through constraints and contacts. Targets support position, velocity, kp, kd
+and feedforward effort. Direct effort replaces the position servo until another
+command or expiration. Expiration holds measured position. Reset/place change
+the epoch, invalidate pending actions and sensor history, and restart sim time.
+`place` accepts only a floating root and clears that root's velocity.
+
+The backend interface is deliberately synchronous and in-process:
+
+```python
+layout: Layout
+dt: float
+targets(command: JointTargets) -> None
+efforts(command: JointEfforts) -> None
+hold(joints: tuple[str, ...]) -> None
+validate_wrench(wrench: Wrench) -> None
+step(wrenches: tuple[Wrench, ...]) -> None
+snapshot(epoch: str, tick: int) -> Frame
+reset() -> None
+place(body: str, pose: tuple[float, ...]) -> None
+```
+
+## DimOS modules and sensors
+
+Use the ordinary blueprint system; supply your `World` and sensor mount names:
+
+```python
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.sim2.module import SimModule
+from dimos.sim2.sensor_module import SimSensorModule
+from dimos.sim2.sensors import MujocoSensors
+
+blueprint = autoconnect(
+    SimModule.blueprint(world=world, backend=MujocoBackend, publish_hz=50),
+    SimSensorModule.blueprint(
+        world=world, reader=MujocoSensors,
+        camera="arm/camera", lidar="arm/lidar", imu="arm/imu",
+    ),
+)
+# blueprint.build().loop() in your application's entry point.
+```
+
+| Module | Inputs | Outputs | RPCs |
+|---|---|---|---|
+| `SimModule` | `targets: JointTargets`, `efforts: JointEfforts`, `wrench: Wrench` | `world_frame: Frame`, `world_layout: Layout`, `joint_state: JointState`, world→root TF | `describe()`, `state()`, `reset()`, `place(body, pose)`, `apply_wrench(wrench)`, `timing()` |
+| `SimSensorModule` | `world_frame: Frame`; injected `SimulationSpec` for layout | `color_image`, `depth_image`, `camera_info`, `lidar`, `imu` | `statistics()` |
+
+Sensor selection is explicit and optional: a lidar-only module needs only
+`lidar="arm/lidar"`. Profiles in `World.sensors` configure rate/range/resolution;
+the shared model defines each mount. One module publishes one bundle per type;
+use ordinary module instances/remappings for additional bundles.
+
+`SensorReader` exposes `observe(state)`, `camera(frame, state)`,
+`lidar(frame, duration)`, `close()` and a `gaps` counter. IMU values come from the
+physics sample. Lidar uses timed ray packets and state history, rejecting scans
+with missing history. Its current `PointCloud2` output is in **world coordinates**.
+Automatic real/sim sensor replacement and raw MID360/PointLIO parity are **not
+implemented** by this PR.
+
+Physics and sensors run in separate workers. MuJoCo sensors use a second native
+model/data copy for queries, not another dynamics simulation. State arrays are
+copied and transported; these interfaces are not zero-copy. Physics never waits
+for rendering or a controller. Under load sim time slows rather than skipping
+steps/resetting. Publication can drop old snapshots; acquisition reports gaps.
+
+## Verification and limits
 
 ```bash
-cd /Users/pimvandenbosch/Desktop/dimos-sim2-minimal
-source .venv/bin/activate
-# Fresh checkout: uv sync --all-groups --extra cpu
-
-dimos run unitree-g1-sim2
+uv run pytest dimos/sim2 dimos/robot/assets/test_model.py
+uv run pytest dimos/sim2/test_module.py -m native_e2e
 ```
 
-Use the normal lifecycle (`--daemon`, `dimos status`, `dimos shell`, `dimos stop`).
-No run.sh. If another blueprint already owns the default bus, stop it yourself
-before starting this one. This change did not stop the existing G1 run.
-The `g1_urdf` and `g1_desk` LFS packs provide meshes/textures;
-`groot/balance.onnx` and `groot/walk.onnx` provide the GR00T WBC weights.
-They resolve through `LfsPath` on a fresh checkout.
+Fixtures are temporary URDFs: two independent pushers, a loose box and a hinged
+door. Checks cover joint servos/efforts, force-at-point, contacts, expiry/reset,
+shared URDF mounts, sensor acquisition, existing EvalRunner scoring, and real
+DimOS workers progressing with sensors through force application and reset.
+No downloaded robot assets or new demo/lab framework.
 
-Scene content is one `data/.lfs/g1_desk.tar.gz` archive (three derived meshes and
-three unchanged office textures). Small `desk.urdf` and `box.urdf` descriptions
-stay reviewable under `assets/g1_desk/`, beside their preparation sources.
-The G1 runtime has no dependency on test fixtures or the full office asset pack.
-
-Open **Controller in DimOS Desktop** on the same bus. Use **world** as fixed frame,
-**g1/pelvis** as robot/follow frame, and the **humanoid** drive profile. WASD/arrows
-use `/cmd_vel`; Q/E strafe. Release the key or press Space to stop the requested
-velocity; the balancing policy continues. Velocity commands expire after .3 s.
-Prototype limits are .5 m/s forward/backward, .3 m/s lateral and .6 rad/s yaw.
-There is no navigation planner or collision avoidance in this example: driving
-into furniture can still make the robot fall.
-
-Camera, depth, lidar and IMU are on `/color_image`, `/depth_image`, `/lidar_raw`
-and `/imu`. RGB/depth are scheduled at **15 FPS**, 320×240, in simulation time;
-Desktop's wall-time FPS also depends on simulation speed. `/camera_info` supplies
-calibration. The camera and lidar are mounted
-on the torso/head; the policy IMU is mounted on the pelvis. All frames share the
-**world** root. There is no separate `odom` TF tree; `/odom` is expressed in world.
-The G1 model uses the existing `/render_file_request` → `/file_info` protocol.
-Furniture has separate URDF request channels; the current Controller's single
-robot-model loader does not automatically draw those meshes. Camera and lidar see it.
-
-Desktop's existing session remains pointed at the previous checkout. Its gateway
-can consume normal streams, but choose this checkout in Desktop's DimOS settings
-if launching the blueprint from Desktop rather than the terminal. Desktop UI
-acceptance is **not claimed**: tests used a private domain/discovery bus, which
-this installed Controller does not support. Do not use those test isolation flags
-for the ordinary Desktop run. Native camera renders and real stream/control
-integration have been verified.
-
-In `dimos shell`:
-
-```python
-app.ControlCoordinator.control_status()  # feedback clock, computations, timing/error
-app.ControlCoordinator.task_invoke("groot_wbc", "state_snapshot")  # balance/walk, arming
-app.SimModule.timing()
-app.SimSensorModule.statistics()
-app.SimModule.reset()  # restore G1 and objects; reset policy history via a fresh epoch
-
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-app.G1Connection.move(Twist(linear=Vector3(.15, 0, 0)), duration=2)
-
-# Move an arm while GR00T keeps balancing/walking. Trajectory motion is rate limited.
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-app.ControlCoordinator.execute_trajectory(JointTrajectory(
-    joint_names=["g1/left_elbow_joint"],
-    points=[TrajectoryPoint(positions=[0.8])],
-))
-
-from dimos.sim2.types import Wrench
-state = app.SimModule.state()
-app.SimModule.apply_wrench(Wrench(state.epoch, "parcel/box", (1, 0, 0), duration=.1))
-```
-
-## What the coordinator does
-
-```text
-Desktop /cmd_vel → G1Connection.move → ControlCoordinator.set_velocity_command
-                                             │
-                            GR00T legs/waist + arm trajectory task
-                            existing per-joint arbitration + holds
-                                             │ MotorControl
-                                             ▼
-                                       G1Connection
-                                       SimRobotClient
-                                             │ JointTargets (q/dq/kp/kd/tau)
-                                             ▼
-                                          SimModule
-                                          PhysicsBackend
-                                          (MuJoCo today)
-                                             │ Frame + Layout
-                         G1Connection ◀───────┘
-                              │ ControlFeedback (joint state + pelvis IMU)
-                              └──────────► ControlCoordinator
-```
-
-**ControlCoordinator runs the existing GR00T task and arm trajectory task.**
-GR00T claims the 15 leg/waist joints; the arm task can claim the other 14.
-Unclaimed joints hold their last commanded or initial measured position.
-There is no G1SimDevice and no policy inside the connection or physics.
-
-**ModuleCoordinator** is the existing deployment machinery: it builds workers,
-wires streams and manages lifecycle. Physics, control, connection and sensor
-acquisition have separate dedicated workers. Four UrdfManagers serve scene models.
-
-The control configuration adds `feedback_robot="g1"` and a named `motor_gains`
-map in motor order. `ControlFeedback` carries epoch/tick, source time/dt, a standard
-`JointState` and optional `Imu`. `ConnectionSource` converts those measurements to
-`CoordinatorState` inside control; the simulation client has no task-state dependency.
-`FeedbackSession` owns duplicate replies, epoch changes and stop/resume bookkeeping;
-`TickLoop.step()` remains the single task/arbitration path. Simulation supplies
-`Frame.dt` from the actual publication cadence, including the first sample after
-reset; subsequent intervals come from source timestamps. There is no G1 control-rate setting. `MotorControl` carries that same
-epoch/tick, joint names and the existing `MotorCommandArray`; a late response is
-never relabelled with newer feedback. Duplicate samples resend the same reply,
-without another inference. Reset clears policy history, trajectories, holds and
-latched velocity. Velocity expiry uses **wall time**, including while sim is slow.
-A control-task failure stops producing replies and is visible in `control_status()`.
-
-One feedback-clock coordinator currently controls one robot; multiple robot
-coordinators can share the same world's control barrier. This is an explicit
-prototype limit. The existing wall-clock/adaptor/per-robot-port mode still works.
-Motor ports now accept configured position servos and hold unclaimed joints;
-unsupported task control modes are rejected. A separately authored controller can
-send all five motor fields through MotorControl; physics evaluates the PD law
-every integration step and clamps resulting effort at the URDF actuator limits.
-
-`G1Connection` selects I/O independently of GR00T:
-
-| connection_type | Motor authority / interface |
-|---|---|
-| `webrtc` | Stock Unitree firmware; `move` and vendor RPCs work as before |
-| `dds` | `control_feedback` / `motor_control`; DDS sampling, soft start and sport-mode handoff |
-| `sim2` | The same `control_feedback` / `motor_control` contract; simulation supplies the clock |
-
-The old second `G1WholeBodyConnection` module is removed; its existing DDS logic
-is now `G1DDSDevice`, owned by G1Connection. Existing hardware blueprints select
-`connection_type="dds", legacy_motor_streams=True` to retain their existing LCM
-adapter wiring; SDK settings are nested under `dds`. That explicit compatibility
-mode uses the old `motor_states`/`imu`/`motor_command` ports instead of the coherent
-pair. With the coherent interface, `move()` forwards to the injected controller
-for both DDS and sim. Stock firmware is selected only with WebRTC. Physical hardware is **not tested**
-by this change. GR00T is not an emulation of Unitree's stock firmware.
-The legacy `G1SimConnection` belongs to the earlier simulator and remains outside
-this minimal blueprint; this change does not migrate those older simulation stacks.
-
-## Where simulation attaches
-
-Read [the blueprint](/dimos/robot/unitree/g1/blueprints/basic/unitree_g1_sim2.py):
-
-```python
-unitree_g1_sim2 = autoconnect(
-    SimModule.blueprint(world=G1_DESK_WORLD, backend=MujocoBackend,
-                        control_joints=all_g1_motor_names),
-    G1Connection.blueprint(connection_type="sim2"),
-    ControlCoordinator.blueprint(
-        feedback_robot="g1", model=g1_model, motor_gains=g1_gains,
-        tasks=[groot_task, arm_trajectory_task],
-    ),
-    SimSensorModule.blueprint(world=G1_DESK_WORLD, reader=MujocoSensors,
-                              camera="g1/camera", lidar="g1/lidar", imu="g1/imu"),
-    # Existing UrdfManager for each instance's exact same model.
-    ...,
-)
-```
-
-`G1_DESK_WORLD` explicitly places one `G1_SENSOR_MODEL`, the desk and two boxes.
-There is no hidden blueprint replacement or automatic coordinator discovery.
-`G1_MODEL` wraps the existing **g1.urdf** and is also used by the planning model.
-Sensor mounts are shared `RobotModel.with_fixed_frame()` additions. The same
-materialized URDF feeds physics and UrdfManager; no parallel robot MJCF is loaded.
-
-The robot model owns canonical motor names/order, independently of a policy.
-The blueprint combines that identity with GR00T's gains and initial pose; the
-GR00T task configuration owns velocity limits. G1Connection does no policy clipping.
-The walking drive profile adds gains, rotor inertia, friction and initial angles;
-it does not duplicate geometry, kinematics, inertia tensors or joint limits.
-Gains and initial angles come from the task's shared `profile.py`; URDF limits
-prevail. The policy observes the pelvis, as in the
-[upstream GR00T deployment](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/main/decoupled_wbc/sim2mujoco/scripts/run_mujoco_gear_wbc.py).
-Torso IMU feedback is not interchangeable: the waist moves relative to the base.
-The URDF's mass, contact geometry and some effort limits differ from the GR00T
-reference MJCF. The tests establish prototype usability with this model, not
-training-model equivalence or sim-to-real transfer.
-
-Each sensor binding is optional and names an actual frame in `World.sensors`.
-A camera-only stack can set `camera="robot/front_optical"` without lidar or IMU.
-One module has one output bundle per sensor type; additional bundles use separate
-module instances and normal blueprint remappings. No naming-prefix convention is required.
-
-## Core ownership and data
-
-| File | Owns |
-|---|---|
-| `sim2/types.py` | Portable world/instance configuration, named layout, sampled physical state and commands |
-| `sim2/runtime.py` | Single physics owner, queued actions, expiry, reset/epoch rejection |
-| `sim2/mujoco.py` | URDF compilation and MuJoCo dynamics only |
-| `sim2/module.py` | Normal module lifecycle, pacing and stream publication |
-| `sim2/sensors.py` | Read-only MuJoCo query/render replica; no dynamics stepping |
-| `sim2/sensor_module.py` | Camera/lidar acquisition worker, standard DimOS outputs |
-| `control/feedback.py` | Standard JointState/optional Imu, source clock and named MotorCommandArray replies |
-| `control/coordinator.py`, `tick_loop.py`, `connection_source.py` | Convert robot measurements, execute existing tasks/arbitration, holds and motor output |
-| `control/feedback_session.py` | Feedback ordering, retransmission, discontinuities and stop/resume |
-| `sim2/client.py` | Map simulator arrays and forward motor commands with their original epoch/tick |
-| `robot/unitree/g1/connection.py` | One public robot connection; select WebRTC, DDS or sim I/O |
-| `robot/unitree/g1/dds_device.py` | Existing low-level Unitree driver, extracted without policy logic |
-| Existing `control/tasks/g1_groot_wbc_task/` | GR00T observation/action convention, history, balance/walk inference and shared motor profile |
-| `robot/unitree/g1/model.py` | Canonical G1 description, shared mounts and hardware motor order |
-| Existing `robot/urdf_manager.py` | Internal TF edges and model/mesh serving |
-
-`WorldState` contains epoch, tick, sim/wall time, model revision, world link poses
-(xyz/xyzw), world twists at link origins, scalar joint position/velocity and applied
-actuator effort. `Layout` names the array order. IMU measurements accompany it in
-`Frame`; images and scans remain separate sensor messages.
-
-JointTargets includes optional desired velocity, kp/kd and feedforward effort.
-Its servo law is `kp*(target_position-q) + kd*(target_velocity-dq) + feedforward`.
-Omitted fields use zero velocity/feedforward and World Drive gains.
-Joint position targets/efforts actuate joints; `Wrench` applies a force/torque to a
-body for a finite interval. A point is in world coordinates; omitting it uses the
-link origin. `place()` is a privileged free-root teleport, not a force command.
-Reset/place invalidate queued commands and sensor histories using a new epoch.
-
-For this G1 blueprint, physics advances ten 2 ms steps per policy response. At
-the next boundary it waits for targets bearing that exact epoch and tick. This
-also gates startup until the policy is ready. Missing/slow inference **pauses sim
-time**, rather than stepping indefinitely with old actions or resetting the robot.
-The gate is joint-generic and optional; it contains no policy callback. It costs
-latency and synchronizes the whole world, so it is not a real-time hardware loop
-or a claimed batched training API. Wall-time scheduling is best effort.
-
-Only MuJoCo is implemented. Changing engine means implementing `PhysicsBackend`
-and an acquisition provider, including identical frame/action/reset semantics;
-changing an import is insufficient evidence of portability. Sensors have one
-read-only native copy of the world. This prototype does not include Unreal or a
-native interactive viewer process; the previous stack's viewer remains intact.
-
-## Verification (2026-10-30)
-
-Passed: **246 distinct tests/checks** across control/connection regressions,
-simulation acceptance and the generated blueprint registry. Coverage includes ten
-simulated minutes standing, every walking direction, concurrent arm motion,
-stop/resume, reset and real worker camera/lidar transport. Added cases exercise
-source-clock changes without an IMU, single-sensor configurations with arbitrary
-frame names, ordered DDS replies, controller-owned velocity limits and rejected
-motor output. Targeted mypy and commit hooks pass.
-
-The worker sample measured **14.48 camera FPS per simulated second**, **0.86× real
-time** and **0.89 ms maximum coordinator computation** over roughly five simulated
-seconds while driving and moving an arm. Camera scheduling remains 15 Hz. These
-short samples do not establish a performance improvement or low-power stability.
-Stock WebRTC routing and DDS behavior used mocked I/O; physical hardware and
-Desktop UI acceptance remain unverified. The user's running session was not restarted.
-
-The integration adds one control worker and a small feedback/reply round trip per
-control sample. It adds no physics/render model copy and does not run duplicate
-inference on repeated feedback. The ten-minute standing test retains
-its 30 cm drift threshold; contact with furniture is not a recovery guarantee.
+Only fixed and independent scalar URDF joints are supported (no mimic joints).
+A replacement physics backend must meet the same behavioral contract; no second
+backend or cross-engine equivalence is verified. Sensor realism, controller
+scheduling, physical hardware interchange and Desktop acceptance remain separate
+work. This core is not a runnable G1 stack.

@@ -26,7 +26,6 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.robot.assets.model import RobotModel
 from dimos.sim2.types import Camera, Drive, Imu, Instance, Lidar, World
 
@@ -96,9 +95,15 @@ def _door_urdf() -> ET.Element:
 
 @pytest.fixture
 def world(tmp_path: Path) -> World:
-    pusher_path, door_path = tmp_path / "pusher.urdf", tmp_path / "door.urdf"
+    pusher_path, door_path, box_path = (
+        tmp_path / name for name in ("pusher.urdf", "door.urdf", "box.urdf")
+    )
     ET.ElementTree(_pusher_urdf()).write(pusher_path, encoding="unicode")
     ET.ElementTree(_door_urdf()).write(door_path, encoding="unicode")
+    # 10 cm, 200 g solid box, at its COM; same fixture geometry as the former demo asset.
+    box = ET.Element("robot", name="box")
+    _box_link(box, "box", (0.1, 0.1, 0.1), 0.2, ".9 .45 .12 1")
+    ET.ElementTree(box).write(box_path, encoding="unicode")
     pusher = (
         RobotModel.from_file(pusher_path)
         .with_fixed_frame(
@@ -122,7 +127,7 @@ def world(tmp_path: Path) -> World:
             *robots,
             Instance(
                 "box",
-                RobotModel.from_file(DIMOS_PROJECT_ROOT / "assets/g1_desk/box.urdf"),
+                RobotModel.from_file(box_path),
                 xyz=(0, 0, 0.055),
                 floating=True,
             ),

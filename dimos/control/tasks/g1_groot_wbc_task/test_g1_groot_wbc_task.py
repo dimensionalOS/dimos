@@ -22,7 +22,6 @@ on the actual GR00T weights.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import replace
 import math
 from typing import Any
 from unittest.mock import MagicMock
@@ -77,7 +76,7 @@ class _StubSession:
 def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     call_log: list[str] = []
 
-    def _factory(path: str, providers: Any = None, sess_options: Any = None) -> _StubSession:
+    def _factory(path: str, providers: Any = None) -> _StubSession:
         label = "balance" if "balance" in str(path) else "walk"
         return _StubSession(
             str(path),
@@ -159,31 +158,6 @@ def unarmed_task(
         task.stop()
 
 
-@pytest.fixture
-def state_only_task(task):
-    controller = G1GrootWBCTask("state_only", replace(task._config, decimation=1))
-    controller.start()
-    try:
-        yield controller
-    finally:
-        controller.stop()
-
-
-def test_task_accepts_complete_feedback_without_an_adapter(state_only_task, joints_29, patched_ort):
-    state = _state_at(10.0, joints_29)
-    state.imu = {"g1": IMUState(quaternion=(1, 0, 0, 0), gyroscope=(0, 0, 0))}
-    output = state_only_task.compute(state)
-    assert output is not None
-    assert output.joint_names == joints_29[:15]
-    assert patched_ort == ["balance"]
-    assert state_only_task.state_snapshot()["model"] == "balance"
-
-
-def test_task_requires_imu_when_no_adapter_is_attached(state_only_task, joints_29):
-    with pytest.raises(ValueError, match="requires an IMU sample"):
-        state_only_task.compute(_state_at(10.0, joints_29))
-
-
 def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
     return CoordinatorState(
         joints=JointStateSnapshot(
@@ -235,7 +209,7 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     np.testing.assert_array_equal(obs[10:13], gravity)
     np.testing.assert_allclose(
         obs[13:42],
-        -np.asarray(g1_groot_wbc_task.G1_GROOT_DEFAULT_POSITIONS, dtype=np.float32),
+        -np.asarray(g1_groot_wbc_task._DEFAULT_POSITIONS_29, dtype=np.float32),
     )
     np.testing.assert_allclose(obs[42:71], dq * 0.05)
     np.testing.assert_array_equal(obs[71:86], np.zeros(15))
@@ -300,12 +274,12 @@ def test_arm_with_ramp_lerps_from_current_pose_to_policy_default(
 
     out_mid = unarmed_task.compute(_state_at(0.5, joints_29))
     assert out_mid is not None
-    expected_mid = [0.5 * value for value in g1_groot_wbc_task.G1_GROOT_DEFAULT_POSITIONS[:15]]
+    expected_mid = [0.5 * value for value in g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15]]
     np.testing.assert_allclose(out_mid.positions, expected_mid, atol=1e-6)
 
     out_end = unarmed_task.compute(_state_at(1.0, joints_29))
     assert out_end is not None
-    np.testing.assert_allclose(out_end.positions, g1_groot_wbc_task.G1_GROOT_DEFAULT_POSITIONS[:15])
+    np.testing.assert_allclose(out_end.positions, g1_groot_wbc_task._DEFAULT_POSITIONS_29[:15])
     assert unarmed_task._armed
     assert not unarmed_task._arming
     assert patched_ort == []
@@ -366,21 +340,3 @@ def test_projected_gravity_matches_reference_quaternion_order() -> None:
         np.array([0.0, -1.0, 0.0]),
         atol=1e-6,
     )
-
-
-def test_velocity_limits_are_a_controller_configuration(patched_ort, joints_29):
-    task = G1GrootWBCTask(
-        "limited",
-        G1GrootWBCTaskConfig(
-            balance_onnx="/fake/balance.onnx",
-            walk_onnx="/fake/walk.onnx",
-            joint_names=joints_29[:15],
-            all_joint_names=joints_29,
-            velocity_limits=(0.5, 0.3, 0.6),
-        ),
-    )
-    try:
-        task.on_twist_command(Twist(linear=[2.0, -2.0, 0.0], angular=[0.0, 0.0, 2.0]), t_now=1.0)
-        assert task._cmd == pytest.approx([0.5, -0.3, 0.6])
-    finally:
-        task.stop()

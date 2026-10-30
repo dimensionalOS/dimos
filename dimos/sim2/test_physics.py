@@ -16,11 +16,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.control.feedback import MotorControl
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.client import SimRobotClient
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.runtime import Runtime
 from dimos.sim2.sensors import MujocoSensors
@@ -186,22 +183,7 @@ def test_motor_servo_preserves_velocity_gains_and_feedforward(world):
         kd=(3.0, 2.0),
         feedforward=(1.5, -1.0),
     )
-    client = SimRobotClient(command.joints, runtime.submit)
-    client.observe(runtime.snapshot())
-    assert client.write_motors(
-        MotorControl(
-            runtime.epoch,
-            0,
-            command.joints,
-            MotorCommandArray(
-                q=list(command.positions),
-                dq=list(command.velocities),
-                kp=list(command.kp),
-                kd=list(command.kd),
-                tau=list(command.feedforward),
-            ),
-        )
-    )
+    runtime.submit(command)
     runtime.advance()
     state = runtime.snapshot()
     indices = [runtime.backend.layout.joints.index(n) for n in command.joints]
@@ -224,36 +206,15 @@ def test_motor_servo_preserves_velocity_gains_and_feedforward(world):
 )
 def test_bad_motor_batch_does_not_partially_change_actuators(world, fields):
     backend = MujocoBackend(world)
-    runtime = Runtime(backend, ("left/slide_x", "left/slide_y"))
+    runtime = Runtime(backend)
     before_ctrl = backend.data.ctrl.copy()
     before_gain = backend.model.actuator_gainprm.copy()
     before_bias = backend.model.actuator_biasprm.copy()
     runtime.submit(
-        JointTargets(runtime.epoch, ("left/slide_x", "left/slide_y"), (0.2, 0.1), tick=0, **fields)
+        JointTargets(runtime.epoch, ("left/slide_x", "left/slide_y"), (0.2, 0.1), **fields)
     )
     runtime.prepare()
     assert runtime.rejected == 1
-    assert not runtime.controlled(("left/slide_x", "left/slide_y"))
     assert backend.data.ctrl == pytest.approx(before_ctrl)
     assert backend.model.actuator_gainprm == pytest.approx(before_gain)
     assert backend.model.actuator_biasprm == pytest.approx(before_bias)
-
-
-def test_robot_feedback_uses_source_clock_without_requiring_an_imu(world):
-    runtime = Runtime(MujocoBackend(world), control_steps=20)
-    client = SimRobotClient(("left/slide_x", "left/slide_y"), runtime.submit)
-    client.bind(runtime.backend.layout)
-    first = client.feedback(runtime.capture())
-    assert first.dt == pytest.approx(0.04)
-    assert first.imu is None
-    runtime.advance(20)
-    second = client.feedback(runtime.capture())
-    assert second.dt == pytest.approx(0.04)
-    runtime.advance(5)
-    third = client.feedback(runtime.capture())
-    assert third.dt == pytest.approx(0.01)
-    assert client.feedback(runtime.capture()) is third
-    runtime.reset()
-    reset = client.feedback(runtime.capture())
-    assert reset.dt == pytest.approx(0.04)
-    assert reset.epoch != second.epoch

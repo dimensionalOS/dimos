@@ -329,7 +329,7 @@ class TestDescribeTask:
         desc = coordinator.describe_task("traj_arm")
 
         assert desc["task"] == "traj_arm"
-        assert set(desc["commands"]) == {"execute", "cancel", "get_state", "reset_runtime_state"}
+        assert set(desc["commands"]) == {"execute", "cancel", "get_state"}
         execute = desc["commands"]["execute"]
         assert execute["params"] == ["trajectory"]
         assert "trajectory" in execute["signature"]

@@ -205,31 +205,22 @@ class TickLoop:
 
     def _tick(self) -> None:
         """Single tick: read → compute → arbitrate → route → write."""
-        self.step()
-
-    def step(self, state: CoordinatorState | None = None) -> None:
-        """Run arbitration and output once, optionally on a supplied coherent sample.
-
-        External callers serialize calls and do not start the wall-clock thread.
-        """
-        external_clock = state is not None
+        t_now = time.perf_counter()
+        dt = t_now - self._last_tick_time
+        self._last_tick_time = t_now
         self._tick_count += 1
-        per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
-        if state is None:
-            t_now = time.perf_counter()
-            dt = t_now - self._last_tick_time
-            self._last_tick_time = t_now
-            joint_states, per_hardware = self._read_all_hardware()
-            state = CoordinatorState(
-                joints=joint_states,
-                imu=self._read_all_imu(),
-                t_now=t_now,
-                dt=dt,
-                sensors=self._read_all_sensors(),
-            )
-        joint_states, t_now, dt = state.joints, state.t_now, state.dt
 
-        commands = self._compute_all_tasks(state, raise_errors=external_clock)
+        joint_states, per_hardware = self._read_all_hardware()
+        imu_states = self._read_all_imu()
+        state = CoordinatorState(
+            joints=joint_states,
+            imu=imu_states,
+            t_now=t_now,
+            dt=dt,
+            sensors=self._read_all_sensors(),
+        )
+
+        commands = self._compute_all_tasks(state)
 
         joint_commands, preemptions = self._arbitrate(commands)
 
@@ -239,7 +230,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(hw_commands, raise_errors=external_clock)
+        self._write_all_connections(hw_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -325,11 +316,6 @@ class TickLoop:
                     out[hw_id] = read_imu()
                 except Exception as e:
                     logger.error(f"Failed to read IMU from {hw_id}: {e}")
-            for name, source in self._connections.items():
-                if source.ready_for_control():
-                    imu = source.read_imu()
-                    if imu is not None:
-                        out[name] = imu
         return out
 
     def _read_all_sensors(self) -> SensorStateSnapshot:
@@ -341,7 +327,7 @@ class TickLoop:
         return SensorStateSnapshot(readings=readings)
 
     def _compute_all_tasks(
-        self, state: CoordinatorState, *, raise_errors: bool = False
+        self, state: CoordinatorState
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
         """Compute outputs from all active tasks."""
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
@@ -356,8 +342,6 @@ class TickLoop:
                     output = task.compute(state)
                     results.append((task, claim, output))
                 except Exception as e:
-                    if raise_errors:
-                        raise
                     logger.error(f"Task {task.name} compute error: {e}")
 
         return results
@@ -531,8 +515,6 @@ class TickLoop:
     def _write_all_connections(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
-        *,
-        raise_errors: bool = False,
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -556,8 +538,6 @@ class TickLoop:
                 try:
                     publish(name, source.command(winners, mode))
                 except Exception as e:
-                    if raise_errors:
-                        raise
                     logger.error(f"Failed to send a command to {name}: {e}")
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:

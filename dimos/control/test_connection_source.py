@@ -112,8 +112,6 @@ def test_joints_and_sensors_come_from_readings() -> None:
     assert list(sensors) == ["arm/imu"]
     assert sensors["arm/imu"]["qw"] == 1.0
     assert len(sensors["arm/imu"]) == 10
-    assert source.read_imu().quaternion == (1.0, 0.0, 0.0, 0.0)
-    assert source.read_imu().gyroscope == (0.0, 0.0, 0.0)
 
 
 def test_every_joint_state_message_counts() -> None:
@@ -290,7 +288,7 @@ def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
 def test_a_robot_it_cannot_drive_is_refused() -> None:
     with pytest.raises(ValueError, match="reports nothing"):
         arm(readings=())
-    with pytest.raises(ValueError, match="motor_command needs explicit motor_gains"):
+    with pytest.raises(ValueError, match="arm_motor_command needs stiffness"):
         arm(commands=("motor_command",))
     with pytest.raises(ValueError, match="cannot be held"):
         arm(commands=("position_command",), readings=("odom",))
@@ -315,26 +313,3 @@ def test_a_reading_in_another_robots_frame_is_dropped() -> None:
     source.on_message("odom", PoseStamped(frame_id="go2/odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="base"))
     assert source.ready_for_control()
-
-
-def test_motor_port_uses_explicit_order_gains_and_holds():
-    source = ConnectionSource(
-        "arm",
-        ["motor_command"],
-        ["joint_state"],
-        ARM_MODEL,
-        TIMEOUT,
-        motor_gains={J2: (50.0, 4.0), J1: (20.0, 2.0)},
-    )
-    source.on_message("joint_state", reading(0.3, -0.2))
-    values = source.command({J1: 5.0}, ControlMode.SERVO_POSITION)
-    packet = source.command_messages(values, 123.0)[0]
-    assert packet.port == "motor_command"
-    assert source.joint_names == [J2, J1]
-    assert packet.message.q == [-0.2, 1.0]  # preserve hold, saturate at URDF limit
-    assert packet.message.kp == [50.0, 20.0]
-    assert packet.message.kd == [4.0, 2.0]
-    assert packet.message.dq == [0.0, 0.0]
-    assert packet.message.tau == [0.0, 0.0]
-    with pytest.raises(ValueError, match="cannot be told"):
-        source.command({J1: 1.0}, ControlMode.TORQUE)

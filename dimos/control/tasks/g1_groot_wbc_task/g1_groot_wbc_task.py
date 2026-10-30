@@ -44,11 +44,6 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.control.tasks.g1_groot_wbc_task.profile import (
-    G1_GROOT_DEFAULT_POSITIONS,
-    G1_GROOT_KD as G1_GROOT_KD,
-    G1_GROOT_KP as G1_GROOT_KP,
-)
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -59,9 +54,110 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+# The 29 DDS motor names plus the per-joint kp/kd values used with the
+# GR00T-trained policies. Diverging from these on real hardware risks
+# instability because the ONNX models were trained against this control
+# contract.
 g1_joints = make_humanoid_joints("g1")
 g1_legs_waist = g1_joints[:15]  # indices 0..14 - legs (12) + waist (3)
 g1_arms = g1_joints[15:]  # indices 15..28 - left arm (7) + right arm (7)
+
+G1_GROOT_KP: list[float] = [
+    150.0,
+    150.0,
+    150.0,
+    200.0,
+    40.0,
+    40.0,  # left leg
+    150.0,
+    150.0,
+    150.0,
+    200.0,
+    40.0,
+    40.0,  # right leg
+    250.0,
+    250.0,
+    250.0,  # waist
+    100.0,
+    100.0,
+    40.0,
+    40.0,
+    20.0,
+    20.0,
+    20.0,  # left arm
+    100.0,
+    100.0,
+    40.0,
+    40.0,
+    20.0,
+    20.0,
+    20.0,  # right arm
+]
+G1_GROOT_KD: list[float] = [
+    2.0,
+    2.0,
+    2.0,
+    4.0,
+    2.0,
+    2.0,  # left leg
+    2.0,
+    2.0,
+    2.0,
+    4.0,
+    2.0,
+    2.0,  # right leg
+    5.0,
+    5.0,
+    5.0,  # waist
+    5.0,
+    5.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0,  # left arm
+    5.0,
+    5.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0,  # right arm
+]
+
+# Default joint angles for all 29 G1 joints. The policy treats these as
+# its zero-offset pose.
+_DEFAULT_POSITIONS_29 = [
+    -0.1,
+    0.0,
+    0.0,
+    0.3,
+    -0.2,
+    0.0,  # left leg
+    -0.1,
+    0.0,
+    0.0,
+    0.3,
+    -0.2,
+    0.0,  # right leg
+    0.0,
+    0.0,
+    0.0,  # waist
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,  # left arm (not driven by policy)
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,  # right arm (not driven by policy)
+]
 
 _SINGLE_OBS_DIM = 86
 _OBS_HISTORY_LEN = 6
@@ -134,9 +230,7 @@ class G1GrootWBCTaskConfig:
     walk_onnx: str | Path
     joint_names: list[str]
     all_joint_names: list[str]
-    default_positions_29: list[float] = field(
-        default_factory=lambda: list(G1_GROOT_DEFAULT_POSITIONS)
-    )
+    default_positions_29: list[float] = field(default_factory=lambda: list(_DEFAULT_POSITIONS_29))
     priority: int = 50
     decimation: int = 10
     action_scale: float = 0.25
@@ -147,11 +241,9 @@ class G1GrootWBCTaskConfig:
     cmd_norm_threshold: float = 0.05
     height_cmd: float = 0.74
     timeout: float = 1.0
-    velocity_limits: tuple[float, float, float] | None = None
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
-    inference_threads: int = 1  # these small MLPs do not need a spinning per-core pool
 
 
 class G1GrootWBCTask(BaseControlTask):
@@ -184,7 +276,7 @@ class G1GrootWBCTask(BaseControlTask):
         self,
         name: str,
         config: G1GrootWBCTaskConfig,
-        adapter: WholeBodyAdapter | None = None,
+        adapter: WholeBodyAdapter,
     ) -> None:
         if len(config.joint_names) != _NUM_ACTIONS:
             raise ValueError(
@@ -201,10 +293,6 @@ class G1GrootWBCTask(BaseControlTask):
                 f"G1GrootWBCTask '{name}' requires exactly {_NUM_MOTORS} "
                 f"default_positions_29, got {len(config.default_positions_29)}"
             )
-        if config.velocity_limits is not None and any(
-            not np.isfinite(v) or v <= 0 for v in config.velocity_limits
-        ):
-            raise ValueError("velocity limits must be positive and finite")
         if config.decimation < 1:
             raise ValueError(f"G1GrootWBCTask '{name}' requires decimation >= 1")
 
@@ -215,17 +303,9 @@ class G1GrootWBCTask(BaseControlTask):
         self._joint_names_set = frozenset(config.joint_names)
         self._all_joint_names = list(config.all_joint_names)
 
-        if config.inference_threads < 1:
-            raise ValueError("inference_threads must be positive")
-        options = ort.SessionOptions()
-        options.intra_op_num_threads = config.inference_threads
         providers = _preferred_onnx_providers()
-        self._balance_session = ort.InferenceSession(
-            str(config.balance_onnx), sess_options=options, providers=providers
-        )
-        self._walk_session = ort.InferenceSession(
-            str(config.walk_onnx), sess_options=options, providers=providers
-        )
+        self._balance_session = ort.InferenceSession(str(config.balance_onnx), providers=providers)
+        self._walk_session = ort.InferenceSession(str(config.walk_onnx), providers=providers)
         self._balance_input = self._balance_session.get_inputs()[0].name
         self._walk_input = self._walk_session.get_inputs()[0].name
         logger.info(
@@ -246,7 +326,6 @@ class G1GrootWBCTask(BaseControlTask):
         self._last_action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
         self._obs_buf = np.zeros((1, _SINGLE_OBS_DIM * _OBS_HISTORY_LEN), dtype=np.float32)
         self._first_inference = True
-        self._last_model: str | None = None
         self._tick_count = 0
         self._last_targets: list[float] | None = None
 
@@ -419,10 +498,8 @@ class G1GrootWBCTask(BaseControlTask):
         if state.imu:
             # Single whole-body adapter is the common case - take any.
             imu = next(iter(state.imu.values()))
-        elif self._adapter is not None:
-            imu = self._adapter.read_imu()
         else:
-            raise ValueError("GR00T requires an IMU sample in CoordinatorState")
+            imu = self._adapter.read_imu()
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(imu.quaternion)
 
@@ -453,7 +530,6 @@ class G1GrootWBCTask(BaseControlTask):
 
         # Model selection: balance when near-stationary, walk otherwise.
         cmd_norm = float(np.linalg.norm(cmd))
-        self._last_model = "balance" if cmd_norm <= self._config.cmd_norm_threshold else "walk"
         if cmd_norm <= self._config.cmd_norm_threshold:
             raw = self._balance_session.run(None, {self._balance_input: self._obs_buf})[0]
         else:
@@ -499,13 +575,6 @@ class G1GrootWBCTask(BaseControlTask):
         Called by the coordinator's twist_command dispatcher and by
         external Python callers.  Thread-safe.
         """
-        if self._config.velocity_limits is not None:
-            vx, vy, yaw_rate = (
-                max(-limit, min(limit, value))
-                for value, limit in zip(
-                    (vx, vy, yaw_rate), self._config.velocity_limits, strict=True
-                )
-            )
         with self._cmd_lock:
             self._cmd[:] = [vx, vy, yaw_rate]
             self._last_cmd_time = t_now
@@ -659,7 +728,6 @@ class G1GrootWBCTask(BaseControlTask):
     def state_snapshot(self) -> dict[str, Any]:
         """Return the current state-machine flags for UI / telemetry."""
         return {
-            "model": self._last_model,
             "active": self._active,
             "armed": self._armed,
             "arming": self._arming,
@@ -675,7 +743,6 @@ class G1GrootWBCTask(BaseControlTask):
         self._last_action[:] = 0.0
         self._obs_buf[:] = 0.0
         self._first_inference = True
-        self._last_model = None
         self._tick_count = 0
 
     def _build_obs(
@@ -715,54 +782,45 @@ class G1GrootWBCTask(BaseControlTask):
 
 
 class G1GrootWBCTaskParams(BaseConfig):
-    # Explicit DDS order when feedback comes from a connection module.
-    all_joint_names: list[str] | None = None
     model_path: str | Path
     hardware_id: str
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
     decimation: int | None = None
-    velocity_limits: tuple[float, float, float] | None = None
 
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
     hw = hardware.get(params.hardware_id) if hardware else None
-    if hw is None and params.all_joint_names is None:
+    if hw is None:
         raise ValueError(
             f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
             f"{params.hardware_id!r}. Declare the hardware before the task "
             f"in the blueprint config."
         )
-    if hw is not None and not isinstance(hw, ConnectedWholeBody):
+    if not isinstance(hw, ConnectedWholeBody):
         raise TypeError(
             f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
             f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
             f"Set hardware_type=HardwareType.WHOLE_BODY."
         )
 
-    if params.all_joint_names is not None:
-        all_joint_names = params.all_joint_names
-    else:
-        assert hw is not None
-        all_joint_names = hw.joint_names
     model_dir = Path(params.model_path)
     kwargs: dict[str, Any] = dict(
         balance_onnx=model_dir / "balance.onnx",
         walk_onnx=model_dir / "walk.onnx",
         joint_names=cfg.joint_names,
-        all_joint_names=all_joint_names,
+        all_joint_names=hw.joint_names,
         priority=cfg.priority,
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
-        velocity_limits=params.velocity_limits,
     )
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation
     return G1GrootWBCTask(
         cfg.name,
         G1GrootWBCTaskConfig(**kwargs),
-        adapter=hw.adapter if hw is not None else None,
+        adapter=hw.adapter,
     )

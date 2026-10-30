@@ -25,10 +25,9 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment, Trajectory
-from dimos.sim2.client import SimRobotClient
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.runtime import Runtime
-from dimos.sim2.types import World
+from dimos.sim2.types import JointTargets, World
 
 
 class PushEvalConfig(EnvironmentConfig):
@@ -50,7 +49,6 @@ class PushEnvironment(Environment):
                 "offline fixture evaluation accepts a scripted subject, no added modules"
             )
         self._runtime = Runtime(MujocoBackend(self._world))
-        self._client = SimRobotClient(("left/slide_x",), self._runtime.submit)
         self._box = self._runtime.backend.layout.bodies.index("box")
         self._rows.clear()
         self._last_x = 0.0
@@ -64,8 +62,7 @@ class PushEnvironment(Environment):
         if self._runtime is None:
             raise RuntimeError("environment not started")
         self._last_x = x
-        self._client.observe(self._runtime.snapshot())
-        self._client.write({"left/slide_x": x})
+        self._runtime.submit(JointTargets(self._runtime.epoch, ("left/slide_x",), (x,)))
         self._runtime.advance(50)
         state = self._runtime.snapshot()
         self._rows.append([state.sim_time, *state.poses[self._box, :3]])

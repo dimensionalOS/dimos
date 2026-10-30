@@ -48,13 +48,14 @@ class SimulationSpec(Spec, Protocol):
     def state(self) -> WorldState: ...
     def reset(self) -> WorldState: ...
     def place(self, body: str, pose: tuple[float, ...]) -> WorldState: ...
+    def apply_wrench(self, wrench: Wrench) -> None: ...
+    def timing(self) -> dict[str, Any]: ...
 
 
 class SimConfig(ModuleConfig):
     world: World
     backend: Callable[[World], PhysicsBackend]
     publish_hz: float = 50.0
-    control_joints: tuple[str, ...] = ()  # when set, wait for all at each publication tick
 
 
 class SimModule(Module):
@@ -77,7 +78,6 @@ class SimModule(Module):
         self._latest: WorldState | None = None
         self._error = ""
         self._late_steps = 0
-        self._control_wait_seconds = 0.0
         self._dropped_publications = 0
         self._owner: threading.Thread | None = None
         self._publisher: threading.Thread | None = None
@@ -97,13 +97,9 @@ class SimModule(Module):
         try:
             backend = self.config.backend(self.config.world)
             every = max(1, round(1 / (self.config.publish_hz * backend.dt)))
-            runtime = Runtime(backend, self.config.control_joints, control_steps=every)
-            if not set(self.config.control_joints) <= set(runtime.backend.layout.drives):
-                raise ValueError("control barrier addresses undriven joints")
+            runtime = Runtime(backend)
             self._latest = runtime.snapshot()
             self._ready.set_result(runtime)
-            last_frame: tuple[str, int] | None = None
-            last_publish = 0.0
             deadline = time.monotonic()
             while not self._done.is_set():
                 try:
@@ -117,21 +113,10 @@ class SimModule(Module):
                         deadline = time.monotonic()
                     except Exception as error:
                         future.set_exception(error)
-                runtime.prepare()
-                boundary = runtime.tick % every == 0
-                identity = (runtime.epoch, runtime.tick)
-                # Repeat a waiting sample: startup may precede the controller subscription.
-                now = time.monotonic()
-                if boundary and (identity != last_frame or now - last_publish >= 0.1):
+                if runtime.tick % every == 0:
                     frame = runtime.capture()
                     self._latest = frame.state
                     self._queue_frame(frame)
-                    last_frame, last_publish = identity, now
-                if boundary and not runtime.controlled(self.config.control_joints):
-                    self._done.wait(runtime.backend.dt)
-                    self._control_wait_seconds += time.monotonic() - now
-                    deadline = time.monotonic()
-                    continue
                 runtime.advance()
                 deadline += runtime.backend.dt
                 delay = deadline - time.monotonic()
@@ -245,7 +230,6 @@ class SimModule(Module):
         runtime = self._ready.result(timeout=30)
         return {
             "late_steps": self._late_steps,
-            "control_wait_seconds": self._control_wait_seconds,
             "dropped_publications": self._dropped_publications,
             "rejected_commands": runtime.rejected,
             "last_rejection": runtime.last_error,

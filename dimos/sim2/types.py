@@ -143,7 +143,6 @@ class WorldState:
 
 @dataclass(frozen=True)
 class Frame:
-    dt: float  # interval of the source feedback clock, in simulation seconds
     state: WorldState
     imu: Array  # (layout.imu_frames, 6): local specific force, then angular velocity
 
@@ -154,7 +153,6 @@ class JointEfforts:
     joints: tuple[str, ...]
     efforts: tuple[float, ...]
     ttl: float = 0.25
-    tick: int | None = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +161,6 @@ class JointTargets:
     joints: tuple[str, ...]
     positions: tuple[float, ...]
     ttl: float = 0.25  # simulation seconds; expiration holds measured position
-    tick: int | None = None  # response to this exact feedback tick, for paced control
     # Empty fields use zero velocity/feedforward and the world's Drive gains.
     # effort = kp*(position-q) + kd*(velocity-dq) + feedforward, at each physics step.
     velocities: tuple[float, ...] = ()

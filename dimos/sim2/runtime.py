@@ -18,7 +18,6 @@ Only the owner calls advance/reset/place. Producers enqueue; no sensor or networ
 callback ever locks native dynamics. The module publishes copied snapshots later.
 """
 
-from dataclasses import replace
 import math
 from queue import Empty, Queue
 from typing import TypeAlias
@@ -30,18 +29,8 @@ Command: TypeAlias = JointTargets | JointEfforts | Wrench
 
 
 class Runtime:
-    def __init__(
-        self,
-        backend: PhysicsBackend,
-        control_joints: tuple[str, ...] = (),
-        *,
-        control_steps: int = 1,
-    ) -> None:
-        if control_steps < 1:
-            raise ValueError("control_steps must be positive")
+    def __init__(self, backend: PhysicsBackend) -> None:
         self.backend = backend
-        self.control_steps = control_steps
-        self._control_joints = frozenset(control_joints)
         self.epoch = uuid.uuid4().hex
         self.tick = 0
         self._inbox: Queue[Command] = Queue(maxsize=256)
@@ -49,7 +38,6 @@ class Runtime:
         self._wrenches: list[tuple[float, Wrench]] = []
         self.rejected = 0
         self.last_error = ""
-        self._command_ticks: dict[str, int] = {}
 
     def submit(self, command: Command) -> None:
         """Nonblocking ingress. Full queue is explicit backpressure, not silent loss."""
@@ -69,7 +57,7 @@ class Runtime:
             self.tick += 1
 
     def prepare(self) -> None:
-        """Apply queued commands without advancing time; used at control barriers."""
+        """Apply queued commands without advancing time."""
         now = self.tick * self.backend.dt
         for _ in range(256):
             try:
@@ -82,16 +70,10 @@ class Runtime:
                 if isinstance(command, JointTargets | JointEfforts):
                     if not math.isfinite(command.ttl) or not 0 < command.ttl <= 10:
                         raise ValueError("target ttl must be in (0, 10] seconds")
-                    if command.tick is None and self._control_joints.intersection(command.joints):
-                        raise ValueError("paced joints require a feedback tick")
-                    if command.tick is not None and command.tick != self.tick:
-                        raise ValueError("stale control tick")
                     if isinstance(command, JointTargets):
                         self.backend.targets(command)
                     else:
                         self.backend.efforts(command)
-                    if command.tick is not None:
-                        self._command_ticks.update((n, self.tick) for n in command.joints)
                     self._expires.update((name, now + command.ttl) for name in command.joints)
                 else:
                     if not math.isfinite(command.duration) or not 0 < command.duration <= 10:
@@ -104,16 +86,11 @@ class Runtime:
                 self.rejected += 1
                 self.last_error = str(error)
 
-    def controlled(self, joints: tuple[str, ...]) -> bool:
-        return all(self._command_ticks.get(name) == self.tick for name in joints)
-
     def snapshot(self) -> WorldState:
         return self.capture().state
 
     def capture(self) -> Frame:
-        return replace(
-            self.backend.snapshot(self.epoch, self.tick), dt=self.control_steps * self.backend.dt
-        )
+        return self.backend.snapshot(self.epoch, self.tick)
 
     def reset(self) -> WorldState:
         self.backend.reset()
@@ -128,7 +105,6 @@ class Runtime:
     def _invalidate(self) -> None:
         self.epoch = uuid.uuid4().hex
         self.tick = 0
-        self._command_ticks.clear()
         self._expires.clear()
         self._wrenches.clear()
         self.backend.hold(self.backend.layout.drives)

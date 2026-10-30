@@ -339,7 +339,6 @@ class MujocoBackend:
         for array in arrays:
             array.flags.writeable = False
         return Frame(
-            self.dt,
             WorldState(
                 epoch, tick, tick * self.dt, time.time(), *arrays[:-1], self.layout.revision
             ),

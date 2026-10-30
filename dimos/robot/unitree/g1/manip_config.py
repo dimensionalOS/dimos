@@ -25,7 +25,8 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.unitree.g1.model import G1_MODEL
+from dimos.robot.assets.model import RobotModel
+from dimos.utils.data import LfsPath
 
 G1_URDF_PATH = Path(__file__).resolve().parent / "g1.urdf"
 G1_WAIST_JOINTS = tuple(g1_legs_waist[-3:])
@@ -39,7 +40,10 @@ def _urdf_joint_name(coordinator_name: str) -> str:
 
 G1_MANIPULATION_JOINTS = tuple(g1_joints)
 _G1_TELEOP_MODEL_JOINTS = (*G1_WAIST_JOINTS, *g1_arms)
-_G1_PELVIS_MODEL = G1_MODEL
+_G1_PELVIS_MODEL = RobotModel.from_file(
+    G1_URDF_PATH,
+    package_paths={"g1_description": LfsPath("g1_urdf")},
+).with_subtree_rooted_at("pelvis")
 G1_MANIPULATION_MODEL = _G1_PELVIS_MODEL.with_renamed_joints(
     {_urdf_joint_name(joint_name): joint_name for joint_name in G1_MANIPULATION_JOINTS}
 )
