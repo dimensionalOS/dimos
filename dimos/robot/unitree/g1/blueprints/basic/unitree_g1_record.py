@@ -15,91 +15,24 @@
 
 """Drive-and-record blueprint for the G1.
 
-Rerun viewer keyboard teleop walks the robot while Point-LIO odom+lidar, the
+Desktop teleop walks the robot while Point-LIO odom+lidar, the
 RealSense color+depth streams, and tf are recorded into a timestamped folder
 under recordings/.
 """
 
-from typing import Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.memory.module import default_recording_dir
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_recorder import G1Recorder
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
 from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
-from dimos.visualization.vis_module import vis_module
 
 _RECORDING_DIR = default_recording_dir()
-
-
-def _g1_record_rerun_blueprint() -> Any:
-    """Split layout: camera feed + 3D world view side by side."""
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-                rrb.Spatial2DView(origin="world/realsense_depth_image", name="Depth"),
-            ),
-            rrb.Spatial3DView(
-                origin="world",
-                name="3D",
-                line_grid=rrb.LineGrid3D(visible=False),
-            ),
-            column_shares=[1, 2],
-        ),
-    )
-
-
-def _static_robot_body(rr: Any) -> list[Any]:
-    return [
-        rr.Boxes3D(
-            half_sizes=[0.25, 0.20, 0.7],
-            colors=[(0, 255, 127)],
-            fill_mode="MajorWireframe",
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
-
-
-def _convert_camera_info(camera_info: CameraInfo) -> Any:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame="d435_color_optical_frame",
-    )
-
-
-def _convert_depth_camera_info(camera_info: CameraInfo) -> Any:
-    # Depth is aligned to color, so it shares the color optical frame.
-    return camera_info.to_rerun(
-        image_topic="/world/realsense_depth_image",
-        optical_frame="d435_color_optical_frame",
-    )
-
-
-_record_vis = vis_module(
-    viewer_backend=global_config.viewer,
-    rerun_config={
-        "blueprint": _g1_record_rerun_blueprint,
-        "visual_override": {
-            "world/realsense_camera_info": _convert_camera_info,
-            "world/realsense_depth_camera_info": _convert_depth_camera_info,
-        },
-        # G1-sized wireframe on the live base_link frame.
-        "static": {"world/robot_body": _static_robot_body},
-        "tf_axes": 0.5,
-        "memory_limit": "1GB",
-    },
-)
 
 
 unitree_g1_record = autoconnect(
@@ -123,9 +56,7 @@ unitree_g1_record = autoconnect(
     G1Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
     # Mount frames onto tf, base_link edge live from the waist joints.
     G1TfPublisher.blueprint(),
-    # Viewer keyboard teleop feeds MovementManager via tele_cmd_vel.
-    _record_vis,
-).global_config(n_workers=13, robot_model="unitree_g1")
+).global_config(n_workers=13, robot_model="unitree_g1", viewer="none")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,6 @@ import os
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
 
@@ -31,5 +30,4 @@ _unitree_g1_onboard = autoconnect(
     ),
     G1Connection.blueprint(stock_transport="dds"),
     UnitreeG1SkillContainer.blueprint(),
-    unitree_g1_vis,
-).global_config(n_workers=12, robot_model="unitree_g1")
+).global_config(n_workers=12, robot_model="unitree_g1", viewer="none")
