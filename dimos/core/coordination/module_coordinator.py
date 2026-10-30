@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
@@ -318,6 +318,24 @@ class ModuleCoordinator(Resource):
         self._send_on_system_modules()
         return durations
 
+    def _share_configs(self, receiver_names: Iterable[str]) -> None:
+        """Hand each SharedConfigModule among receiver_names every deployed @shared_config value aimed at it."""
+        from dimos.core.shared_config import SharedConfigModule, shared_config_methods
+
+        for receiver_name in receiver_names:
+            receiver_class = self._instance_classes[receiver_name]
+            if not issubclass(receiver_class, SharedConfigModule):
+                continue
+            senders = tuple(
+                (name, getattr(self._deployed_modules[name], method)())
+                for name, cls in self._instance_classes.items()
+                for method, target in shared_config_methods(cls)
+                if issubclass(receiver_class, target)
+            )
+            cast("SharedConfigModule", self._deployed_modules[receiver_name]).deliver_shared_config(
+                senders
+            )
+
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
 
@@ -466,6 +484,7 @@ class ModuleCoordinator(Resource):
                 coordinator,
                 remote_module_refs=remote_ref_proxies,
             )
+            coordinator._share_configs(coordinator._deployed_modules)
             t2 = time.perf_counter()
             coordinator.build_all_modules()
             t3 = time.perf_counter()
@@ -575,6 +594,8 @@ class ModuleCoordinator(Resource):
         new_modules = [
             proxy for name, proxy in self._deployed_modules.items() if name not in before
         ]
+
+        self._share_configs([name for name in self._deployed_modules if name not in before])
 
         if new_modules:
             safe_thread_map(new_modules, lambda m: m.build())
