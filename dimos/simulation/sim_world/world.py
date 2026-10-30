@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""The simulated world: a generated scene, a robot and its Mid-360s.
+"""The simulated world: a generated scene, a robot and its lidars.
 
 Stands in for the robot's driver and PointLio, publishing PointLio's output contract from
 ground truth.
@@ -56,7 +56,6 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.simulation.sim_world.body import Body, BodyShape, Rig, Sensor
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
@@ -201,7 +200,7 @@ def load_display_spec(path: Path) -> mujoco.MjSpec:
 
 
 def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
-    """The scene's boxes, the robot and each Mid-360 housing as a contact box, in one model."""
+    """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
     spec = _with_scene(rig.spec(), scene)
     for sensor in rig.sensors:
         housing = spec.body(rig.base_body).add_geom()
@@ -241,7 +240,7 @@ def open_viewer(
 
 
 class Sim:
-    """The compiled scene with a robot and its Mid-360s, ticked from a velocity command."""
+    """The compiled scene with a robot and its lidars, ticked from a velocity command."""
 
     def __init__(
         self,
@@ -263,7 +262,9 @@ class Sim:
         self.ticks_per_frame = round(FRAME_DT / self.robot.dt)
         self.t = 0.0
         self._tick = 0
-        self._points_per_step = int(POINT_RATE * self.model.opt.timestep)
+        self._points_per_step = [
+            int(lidar.pattern.point_rate * self.model.opt.timestep) for lidar in self.lidars
+        ]
         geom = mujoco.mjtObj.mjOBJ_GEOM
         self._kind = {
             mujoco.mj_name2id(self.model, geom, geom_name(i, box)): box.kind
@@ -320,9 +321,11 @@ class Sim:
         """Advance one control tick. Returns the lidar frame that completed on this tick, if any."""
 
         def cast() -> None:
-            for sensor, lidar in zip(self.rig.sensors, self.lidars, strict=True):
+            for sensor, lidar, n in zip(
+                self.rig.sensors, self.lidars, self._points_per_step, strict=True
+            ):
                 position, rotation = self.sensor_pose(sensor)
-                points = lidar.cast(position, rotation, self._points_per_step)
+                points = lidar.cast(position, rotation, n)
                 kept = points[np.linalg.norm(points, axis=1) >= sensor.lio_blind_range]
                 self.lio.add(kept, position, rotation)
 
@@ -364,7 +367,7 @@ class SimWorldConfig(ModuleConfig):
 
 
 class SimWorld(Module, ABC):
-    """A generated scene with a simulated robot and its Mid-360s, paced to the wall clock."""
+    """A generated scene with a simulated robot and its lidars, paced to the wall clock."""
 
     config: SimWorldConfig
     rig: ClassVar[Rig]
@@ -426,7 +429,7 @@ class SimWorld(Module, ABC):
 
     @rpc
     def publish_premap(self, route: NDArray[np.float64], objects: bool) -> int:
-        """Publish the Mid-360 returns walking the route on loaded_map, and count them."""
+        """Publish the lidar returns walking the route on loaded_map, and count them."""
         sim = self._sim
         scene = sim.scene if objects else without_objects(sim.scene)
         cloud = premap_cloud(scene, sim.rig, np.asarray(route, dtype=np.float64))
