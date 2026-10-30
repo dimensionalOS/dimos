@@ -19,7 +19,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.self_hosted_serial
 
 
 @pytest.fixture(params=["bbox_detector", "person_detector", "yoloe_detector"], scope="session")

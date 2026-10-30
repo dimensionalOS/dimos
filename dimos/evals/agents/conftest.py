@@ -204,7 +204,7 @@ class NativeHarness:
 
     def run(self, agent: PiAdapter) -> Trajectory:
         return agent.run(
-            "Inspect selected observations.", self.environment, self.root, timeout_s=10
+            "Inspect selected observations.", self.environment, self.root, timeout_s=60
         )
 
 

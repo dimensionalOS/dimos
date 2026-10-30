@@ -26,7 +26,7 @@ from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.utils.data import get_data
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 class TestSpatialMemory:
     @pytest.fixture(scope="class")
     def temp_dir(self):

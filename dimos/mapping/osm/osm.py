@@ -23,6 +23,9 @@ import requests
 
 from dimos.mapping.models import ImageCoord, LatLon
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,8 @@ def _download_tile(
         response.raise_for_status()
         tile_img = PILImage.open(io.BytesIO(response.content))
         return row, col, tile_img
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to download tile {url}: {e!r}")
         return row, col, None
 
 

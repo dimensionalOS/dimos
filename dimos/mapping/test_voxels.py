@@ -25,7 +25,7 @@ from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.self_hosted_serial
 
 
 @pytest.fixture
