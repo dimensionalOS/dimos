@@ -103,7 +103,11 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
     pick = _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs
     assert pick["planning_frame"] == "world"
     assert pick["pregrasp_offset"] == 0.05
-    assert pick["grasp_verification"].empty_epsilon == pytest.approx(0.035)
+    verification = pick["grasp_verification"]
+    assert verification.empty_epsilon == pytest.approx(0.035)
+    # A close must hold still longer than an object takes to slip out (1.05 s seen).
+    assert verification.settle_samples * verification.poll_interval >= 1.2
+    assert verification.timeout > 1.7 + verification.settle_samples * verification.poll_interval
     overhead = next(
         atom
         for atom in dual_openyam_grasp.active_blueprints

@@ -300,7 +300,13 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             pregrasp_offset=0.05,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
-            grasp_verification=GraspVerificationConfig(empty_epsilon=0.035),
+            # A close that stops on an object which then rolls out pauses for up to 1.05 s
+            # before finishing (power drill, run 9b53); real holds sit still for seconds.
+            # The default 3 samples called the pause a grasp, so a close must hold still
+            # for 1.5 s, and the timeout covers the travel plus that wait.
+            grasp_verification=GraspVerificationConfig(
+                empty_epsilon=0.035, settle_samples=30, timeout=5.0
+            ),
         ),
         grasp_provider or HeuristicGraspModule.blueprint(**DUAL_OPENYAM_HEURISTIC_AIM),
         # The D405 has no 848x480 at 15 fps mode.
