@@ -252,6 +252,7 @@ all_modules = {
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
     "eval-module": "dimos.evals.module.EvalModule",
     "fake-a8": "dimos.robot.px4.sitl.FakeA8",
+    "fake-a8-camera": "dimos.robot.px4.sitl.FakeA8Camera",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",
     "fast-lio2-recorder": "dimos.hardware.sensors.lidar.fastlio2.recorder.FastLio2Recorder",
     "front-camera": "dimos.teleop.hosted.blueprints.cloudflare.FrontCamera",

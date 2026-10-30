@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What PX4 SITL lacks: the A8 gimbal. ``FakeA8`` stands in for it in ``px4-sitl-follow``.
+"""What PX4 SITL lacks: the A8. ``FakeA8`` and ``FakeA8Camera`` stand in for it in
+``px4-sitl-follow``.
 
-It consumes ``gimbal_target`` and reports ``gimbal_attitude`` the way the connection does
-from the real A8 (10 Hz, radians, follow-mode flags), slewing toward the target at the
+``FakeA8`` consumes ``gimbal_target`` and reports ``gimbal_attitude`` the way the connection
+does from the real A8 (10 Hz, radians, follow-mode flags), slewing toward the target at the
 A8's rate. On the aircraft the same two ports are the connection's, so SiyiA8Gimbal and
-the perception bridge cannot tell the difference. The camera has its own stand-in
-(``RtspCamera`` with ``url="synthetic"``), and ``BrightBlobDetector`` finds the square it
-draws, so ``px4-sitl-follow`` needs no model.
+the perception bridge cannot tell the difference. ``FakeA8Camera`` publishes
+``color_image`` in place of ``RtspCamera``: a white square in the middle of a grey frame,
+which ``BrightBlobDetector`` finds, so ``px4-sitl-follow`` needs no model.
 """
 
 from __future__ import annotations
@@ -30,10 +31,11 @@ import time
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field
+import reactivex as rx
 from reactivex.disposable import Disposable
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -48,6 +50,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.spec import perception
 
 # The real A8: attitude at 10 Hz, slewing about 90 deg/s, in follow mode.
 _RATE_HZ = 10.0
@@ -56,6 +59,16 @@ _A8_FLAGS = GimbalDeviceFlags.YAW_LOCK | GimbalDeviceFlags.YAW_IN_VEHICLE_FRAME
 # BrightBlobDetector: a pixel brighter than this, and at least this many of them.
 _BLOB_THRESHOLD = 200
 _BLOB_MIN_PIXELS = 16
+# FakeA8Camera's target: a white square this many pixels wide on grey.
+_TARGET_PX = 24
+
+
+def target_frame(width: int, height: int) -> NDArray[np.uint8]:
+    """FakeA8Camera's picture: a white square in the middle of a grey RGB frame."""
+    frame = np.full((height, width, 3), 96, dtype=np.uint8)
+    x, y = (width - _TARGET_PX) // 2, (height - _TARGET_PX) // 2
+    frame[y : y + _TARGET_PX, x : x + _TARGET_PX] = 255
+    return frame
 
 
 class FakeA8Config(ModuleConfig):
@@ -76,24 +89,12 @@ class FakeA8(Module):
         self._pitch = self.config.initial_pitch_deg
         self._yaw = self.config.initial_yaw_deg
         self._target = (self._pitch, self._yaw)
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.gimbal_target.subscribe(self._on_target)))
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, name="fake-a8", daemon=True)
-        self._thread.start()
-
-    @rpc
-    def stop(self) -> None:
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            self._thread = None
-        super().stop()
+        self.register_disposable(rx.interval(1.0 / _RATE_HZ).subscribe(lambda _: self._step()))
 
     def _on_target(self, msg: JointState) -> None:
         angles = joints(msg, GIMBAL_TARGET_JOINTS)
@@ -101,22 +102,49 @@ class FakeA8(Module):
             with self._lock:
                 self._target = (math.degrees(angles[0]), math.degrees(angles[1]))
 
-    def _run(self) -> None:
-        period = 1.0 / _RATE_HZ
-        step = _SLEW_DPS * period
-        while not self._stop_event.wait(period):
-            with self._lock:
-                tp, ty = self._target
-                self._pitch += max(-step, min(step, tp - self._pitch))
-                self._yaw += max(-step, min(step, ty - self._yaw))
-                pitch, yaw = math.radians(self._pitch), math.radians(self._yaw)
-            self.gimbal_attitude.publish(attitude_msg(time.time(), 0.0, pitch, yaw, _A8_FLAGS))
+    def _step(self) -> None:
+        step = _SLEW_DPS / _RATE_HZ
+        with self._lock:
+            tp, ty = self._target
+            self._pitch += max(-step, min(step, tp - self._pitch))
+            self._yaw += max(-step, min(step, ty - self._yaw))
+            pitch, yaw = math.radians(self._pitch), math.radians(self._yaw)
+        self.gimbal_attitude.publish(attitude_msg(time.time(), 0.0, pitch, yaw, _A8_FLAGS))
+
+
+class FakeA8CameraConfig(ModuleConfig):
+    frame_id: str = Field(default="a8_optical")
+    # The follow blueprint pins the CameraInfo of this size.
+    image_size: tuple[int, int] = Field(default=(320, 180))
+    # RtspCamera's color_hz.
+    fps: float = Field(default=10.0, gt=0)
+
+
+class FakeA8Camera(Module, perception.Image):
+    config: FakeA8CameraConfig
+
+    color_image: Out[Image]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._frame = target_frame(*self.config.image_size)
 
     @rpc
-    def attitude(self) -> dict[str, float]:
-        """Current fake pitch and yaw in degrees."""
-        with self._lock:
-            return {"pitch": self._pitch, "yaw": self._yaw}
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            rx.interval(1.0 / self.config.fps).subscribe(lambda _: self._publish())
+        )
+
+    def _publish(self) -> None:
+        self.color_image.publish(
+            Image(
+                data=self._frame,
+                format=ImageFormat.RGB,
+                frame_id=self.config.frame_id,
+                ts=time.time(),
+            )
+        )
 
 
 class BrightBlobDetector(Detector):

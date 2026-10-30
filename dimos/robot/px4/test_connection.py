@@ -415,7 +415,7 @@ def test_gimbal_target_is_dropped_unless_commands_are_enabled() -> None:
     try:
         m._on_gimbal_target(_target(-10.0, 30.0))
         io.send_gimbal_pitchyaw.assert_not_called()
-        assert m.sensor_stats()["gimbal_target"] == {"sent": 0, "dropped": 1}
+        assert m.get_sensor_stats()["gimbal_target"] == {"sent": 0, "dropped": 1}
     finally:
         m._io = None
         m.stop()

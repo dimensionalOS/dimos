@@ -11,13 +11,14 @@ Every module but the connection is optional and binds to its streams by name.
 | Module | Does | Reads | Writes | In |
 |---|---|---|---|---|
 | `Px4DroneConnection` | MAVLink bridge, flight supervisor | cmd_vel | odometry (twist: linear in `odom`, angular in `base_link`), odom, tf, imu, gps, battery, gimbal_attitude, vehicle_status, statustext, supervisor_state | all |
-| `RtspCamera` | H.264/H.265 stream in; passthrough video, decoded frames, small JPEG out | none (video and JPEG rate are RPCs) | video, color_image, color_jpeg | `px4-a8`, `px4-sitl-follow` (generated clip) |
+| `RtspCamera` | H.264/H.265 stream in; passthrough video, decoded frames, small JPEG out | none (video and JPEG rate are RPCs) | video, color_image, color_jpeg | `px4-a8` |
 | `SiyiA8Gimbal` | Gimbal tf chain, camera intrinsics, aim requests | gimbal_attitude, target_los | tf, camera_info, gimbal_target | `px4-a8`, `px4-sitl-follow` |
 | `Px4SkillContainer` | The flight commands as agent skills | none (calls the connection's RPCs) | none | `px4-agentic`, `px4-sitl-agentic` |
 | `Detection2DModule` | Upstream (`dimos/perception/detection`): boxes with track ids | color_image | detections | `px4-a8-follow`, `px4-sitl-follow` |
 | `PerceptionBridge` | Selected detection to line of sight to target position | detections, odometry, gimbal_attitude, global_pose | target_state, target_valid, target_los | `px4-a8-follow`, `px4-sitl-follow` |
 | `Px4DroneConnection`, follow ports | The target in, gimbal aim to the A8 over MAVLink, altitude above home out | target_state, target_valid, target_los, gimbal_target | global_pose | all |
 | `FakeA8` | SITL only: answers as the gimbal | gimbal_target | gimbal_attitude | `px4-sitl-follow` |
+| `FakeA8Camera` | SITL only: a white square on grey in place of the A8's frames | none | color_image | `px4-sitl-follow` |
 
 ## Install
 
@@ -36,7 +37,7 @@ uv sync --extra px4 --extra perception --inexact  # for px4-a8-follow; px4-sitl-
 | `px4-a8` | `px4` plus the SIYI A8 camera and gimbal |
 | `px4-agentic`, `px4-sitl-agentic` | `px4` and `px4-sitl` with the skills, the MCP server and the LLM agent |
 | `px4-a8-follow` | `px4-a8` with `Detection2DModule` (YOLO) and `PerceptionBridge` |
-| `px4-sitl-follow` | `px4-sitl` with a generated camera clip, `FakeA8` as the gimbal, `BrightBlobDetector` (no model, no GPU) and `PerceptionBridge` |
+| `px4-sitl-follow` | `px4-sitl` with `FakeA8Camera` and `FakeA8` as the A8, `BrightBlobDetector` (no model, no GPU) and `PerceptionBridge` |
 
 ```bash
 dimos run px4                                  # router on PX4's companion port
@@ -147,7 +148,7 @@ refuses the RPC.
    `drone.go_to(north_m=-2, altitude_m=3)`, then `drone.land()`. The keyboard as above.
 5. Follow: `dimos run px4-sitl-follow` instead. `drone.sitl_enable(True)`,
    `drone.takeoff(3.0)`, and once it hovers `app.PerceptionBridge.select_track(1)` and
-   `drone.set_guidance_mode("FOLLOW")`. The generated clip's square is the target. It never
+   `drone.set_guidance_mode("FOLLOW")`. `FakeA8Camera`'s square is the target. It never
    moves in the image, so this checks the wiring, not the tracking: `FOLLOW` keeps flying
    along the gimbal's bearing and `YAW_TRACK` keeps turning. `clear_selection()` holds,
    then `HOVER` after 5 s.

@@ -34,7 +34,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.robot.px4.perception_bridge import PerceptionBridge, followable
-from dimos.robot.px4.sitl import BrightBlobDetector
+from dimos.robot.px4.sitl import BrightBlobDetector, target_frame
 
 T0 = 1_700_000_000.0
 W, H = 320, 180
@@ -74,10 +74,8 @@ def bridge() -> Iterator[Bridge]:
 
 
 def _detections(i: int, square: bool = True, wire: bool = True) -> Detection2DArray:
-    """What Detection2DModule publishes for one synthetic frame, by default after the wire."""
-    data = np.full((H, W, 3), 96, dtype=np.uint8)
-    if square:
-        data[H // 2 - 12 : H // 2 + 12, W // 2 - 12 : W // 2 + 12] = 255
+    """What Detection2DModule publishes for one FakeA8Camera frame, by default after the wire."""
+    data = target_frame(W, H) if square else np.full((H, W, 3), 96, dtype=np.uint8)
     image = Image(data=data, format=ImageFormat.RGB, frame_id="a8_optical", ts=T0 + i / 25)
     msg: Detection2DArray = BLOB.process_image(image).filter(followable).to_ros_detection2d_array()
     if wire:
