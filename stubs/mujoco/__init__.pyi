@@ -167,6 +167,7 @@ class mjtObj:
     mjOBJ_MESH: int
     mjOBJ_SITE: int
     mjOBJ_TENDON: int
+    mjOBJ_TEXT: int
 
 class mjtCamera:
     mjCAMERA_FIXED: int
@@ -199,6 +200,7 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_BALL: int
     mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
@@ -234,3 +236,6 @@ class mjtSensor:
     mjSENS_GYRO: int
     mjSENS_ACCELEROMETER: int
     mjSENS_FRAMEQUAT: int
+
+class mjtCamLight:
+    mjCAMLIGHT_FIXED: int

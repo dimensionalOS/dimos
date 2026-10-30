@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dimos.control.components import make_humanoid_joints
-from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
+from dimos.sim2.spec import ModelAsset, RobotInstanceSpec
 from dimos.utils.data import LfsPath
 
 if TYPE_CHECKING:
@@ -39,8 +39,8 @@ def describe_simulated_robot(config: G1ConnectionConfig) -> RobotInstanceSpec:
     velocity_controller = None
     timestep = 0.005
     if stock:
-        # ONNX and MuJoCo are optional; hardware descriptions never load them.
-        from dimos.simulation.mujoco.policy import G1_PHYSICS_DT, G1VelocityController
+        # ONNX is optional; hardware descriptions never load the simulation policy.
+        from dimos.robot.unitree.g1.velocity_policy import G1_PHYSICS_DT, G1VelocityController
 
         timestep = G1_PHYSICS_DT
 
@@ -48,7 +48,7 @@ def describe_simulated_robot(config: G1ConnectionConfig) -> RobotInstanceSpec:
             G1VelocityController,
             policy_path=str(LfsPath("mujoco_sim/unitree_g1_policy.onnx")),
         )
-    model = MujocoModelSpec(
+    model = ModelAsset(
         path=(
             LfsPath("mujoco_sim/unitree_g1.xml")
             if stock

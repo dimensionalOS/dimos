@@ -20,6 +20,14 @@ from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav imp
     unitree_g1_primitive_no_nav,
 )
 from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
+
+# The same stock connection accepts Desktop velocity commands on hardware or
+# either physics backend. Camera/lidar navigation is an additional composition.
+unitree_g1_control = autoconnect(
+    G1Connection.blueprint(),
+    UnitreeG1SkillContainer.blueprint(),
+).global_config(robot_model="unitree_g1", n_workers=2, viewer="none")
 
 unitree_g1_basic = autoconnect(
     unitree_g1_primitive_no_nav,

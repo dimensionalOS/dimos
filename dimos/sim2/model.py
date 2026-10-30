@@ -29,7 +29,7 @@ from numpy.typing import NDArray
 from robosuite.models.robots.robot_model import RobotModel
 from robosuite.utils.mjcf_utils import MUJOCO_NAMED_ATTRIBUTES
 
-from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
+from dimos.sim2.spec import ModelAsset, RobotInstanceSpec
 from dimos.sim2.world.scene import scene_spawn
 
 Defaults = dict[str, dict[str, dict[str, str]]]
@@ -74,7 +74,7 @@ class ImportedRobotModel(RobotModel):
     motor mappings and controller settings; they do not subclass robosuite.
     """
 
-    def __init__(self, model: MujocoModelSpec, idn: str | int) -> None:
+    def __init__(self, model: ModelAsset, idn: str | int) -> None:
         source = model.path.resolve()
         root = ET.parse(source).getroot()
         if root.find("include") is not None:
@@ -206,6 +206,8 @@ class ImportedRobotModel(RobotModel):
 
 
 def create_model(instance: RobotInstanceSpec, scene: Path) -> ImportedRobotModel:
+    if instance.model.format != "mjcf":
+        raise NotImplementedError("the current asset compiler supports MJCF sources only")
     # Hex encoding is injective, unlike replacing slashes with underscores.
     identifier = "i" + instance.robot_id.encode().hex()
     model = ImportedRobotModel(instance.model, idn=identifier)

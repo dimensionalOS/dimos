@@ -32,6 +32,7 @@ Usage:
     dimos --simulation mujoco run unitree-g1-groot-wbc               # logistics scene
     dimos --simulation mujoco --scene-package workbench run unitree-g1-groot-wbc
     dimos run unitree-g1-groot-wbc --network-interface=enp2s0
+    dimos --simulation genesis run unitree-g1-groot-control         # control only
 """
 
 from __future__ import annotations
@@ -70,11 +71,11 @@ from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.utils.data import LfsPath
 
-if global_config.simulation and global_config.simulation != "mujoco":
-    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
+if global_config.simulation and global_config.simulation not in ("mujoco", "genesis"):
+    raise ValueError("G1 control supports --simulation mujoco or --simulation genesis")
 
 # The operating profile is the only thing the simulation flag changes here.
-_SIM = global_config.simulation == "mujoco"
+_SIM = global_config.simulation in ("mujoco", "genesis")
 
 # Lazy data handle: LfsPath pulls on first use, not at import.
 _GROOT_MODEL_DIR = LfsPath("groot")
@@ -234,24 +235,43 @@ _unitree_g1_groot_wbc_core = (
     .global_config(robot_model="unitree_g1", n_workers=2 if _SIM else 11, viewer="none")
 )
 
-unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _navigation)
+unitree_g1_groot_control = autoconnect(_unitree_g1_groot_wbc_core)
 
 
-def _require_simulation_profile() -> str | None:
-    if global_config.simulation != "mujoco" or not _SIM:
-        return "This G1 simulation requires --simulation mujoco before loading the blueprint."
+def _require_navigation_backend() -> str | None:
+    if global_config.simulation == "genesis":
+        return (
+            "Genesis does not yet simulate Mid360/Point-LIO sensors; "
+            "run unitree-g1-groot-control, or use --simulation mujoco for navigation."
+        )
     return None
 
 
-def g1_groot_wbc_simulation_profile() -> Blueprint:
-    """Return control and navigation, requiring the simulation profile.
+unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _navigation).requirements(
+    _require_navigation_backend
+)
 
-    Set ``--simulation mujoco`` before importing this module. The requirement
-    rejects a missing or subsequently changed mode before deploying modules.
+
+def _require_simulation_profile() -> str | None:
+    if global_config.simulation not in ("mujoco", "genesis") or not _SIM:
+        return (
+            "This G1 simulation requires --simulation mujoco or --simulation genesis "
+            "before loading the blueprint."
+        )
+    return None
+
+
+def g1_groot_wbc_simulation_profile(*, navigation: bool = True) -> Blueprint:
+    """Return control and optional navigation, requiring the simulation profile.
+
+    Set ``--simulation mujoco`` or ``--simulation genesis`` before importing.
+    Navigation requires MuJoCo's lidar workers. The requirement rejects a
+    missing or subsequently changed mode before deploying modules.
     This helper does not attach physics: ModuleCoordinator.build resolves the
     connection's describe_simulated_robot binding after CLI overrides. Cameras are
     composed separately by the caller; Desktop consumes the published streams.
     """
-    return autoconnect(_unitree_g1_groot_wbc_core, _navigation).requirements(
-        _require_simulation_profile
-    )
+    control = unitree_g1_groot_control.requirements(_require_simulation_profile)
+    if navigation:
+        return autoconnect(control, _navigation).requirements(_require_navigation_backend)
+    return control

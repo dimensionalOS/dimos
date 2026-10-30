@@ -15,26 +15,24 @@
 # limitations under the License.
 
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import mujoco
 import numpy as np
 from numpy.typing import NDArray
-import onnxruntime as ort  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.unitree.g1.velocity_policy import G1VelocityController
+from dimos.sim2.physics import BodyState, InertialState, RobotState
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.utils.logging_config import setup_logger
+from dimos.simulation.policy import OnnxPolicy
 
-logger = setup_logger()
-
-POLICY_CONTROL_DT = 0.02
-POLICY_ACTION_SCALE = 0.5
-G1_PHYSICS_DT = 0.002
-G1_DRIFT_COMPENSATION = (-0.18, 0.0, -0.09)
+if TYPE_CHECKING:
+    import mujoco
 
 
 class OnnxController(ABC):
@@ -48,17 +46,7 @@ class OnnxController(ABC):
         ctrl_dt: float | None = None,
         drift_compensation: Sequence[float] | None = None,
     ) -> None:
-        self._output_names = ["continuous_actions"]
-        # The policy is a small MLP: CPU inference beats CUDA, TensorRT and CoreML
-        # for it, and the GPU providers spend seconds building a session. One
-        # thread, because the default pool spins every core between inferences.
-        options = ort.SessionOptions()  # type: ignore[attr-defined]
-        options.intra_op_num_threads = 1
-        self._policy = ort.InferenceSession(
-            policy_path, sess_options=options, providers=["CPUExecutionProvider"]
-        )
-        logger.info(f"Loaded policy: {policy_path} with providers: {self._policy.get_providers()}")
-
+        self._policy = OnnxPolicy(policy_path)
         self._action_scale = action_scale
         self._default_angles = default_angles
         self._last_action = np.zeros_like(default_angles, dtype=np.float32)
@@ -84,8 +72,7 @@ class OnnxController(ABC):
         self._counter += 1
         if self._counter % self._n_substeps == 0:
             obs = self.get_obs(model, data)
-            onnx_input = {"obs": obs.reshape(1, -1)}
-            onnx_pred = self._policy.run(self._output_names, onnx_input)[0][0]
+            onnx_pred = self._policy.predict(obs)
             self._last_action = onnx_pred.copy()
             self._targets = onnx_pred * self._action_scale + self._default_angles
             self._post_control_update()
@@ -121,7 +108,9 @@ class Go1OnnxController(OnnxController):
         return obs.astype(np.float32)
 
 
-class G1OnnxController(OnnxController):
+class G1OnnxController:
+    """Legacy MuJoCo observations adapted to the same neutral G1 policy."""
+
     def __init__(
         self,
         policy_path: str,
@@ -136,123 +125,65 @@ class G1OnnxController(OnnxController):
         qpos_indices: NDArray[np.int64] | None = None,
         dof_indices: NDArray[np.int64] | None = None,
     ) -> None:
-        super().__init__(
-            policy_path,
-            default_angles,
-            n_substeps,
-            action_scale,
-            input_controller,
-            ctrl_dt,
-            drift_compensation,
-        )
-
-        self._naming_prefix = naming_prefix
-        self._qpos_indices = qpos_indices
-        self._dof_indices = dof_indices
-        self._phase = np.array([0.0, np.pi])
-        self._gait_freq = 1.5
-        self._phase_dt = 2 * np.pi * self._gait_freq * ctrl_dt
-
-    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
-        linvel = data.sensor(self._naming_prefix + "local_linvel_pelvis").data
-        gyro = data.sensor(self._naming_prefix + "gyro_pelvis").data
-        imu_xmat = data.site_xmat[model.site(self._naming_prefix + "imu_in_pelvis").id].reshape(
-            3, 3
-        )
-        gravity = imu_xmat.T @ np.array([0, 0, -1])
-        joint_angles = (
-            data.qpos[7:] if self._qpos_indices is None else data.qpos[self._qpos_indices]
-        )
-        joint_angles = joint_angles - self._default_angles
-        joint_velocities = (
-            data.qvel[6:] if self._dof_indices is None else data.qvel[self._dof_indices]
-        )
-        phase = np.concatenate([np.cos(self._phase), np.sin(self._phase)])
-        command = self._input_controller.get_command().copy()
-        command[0] = command[0] * 2
-        command[1] = command[1] * 2
-        command[0] += self._drift_compensation[0]
-        command[1] += self._drift_compensation[1]
-        command[2] += self._drift_compensation[2]
-        obs = np.hstack(
-            [
-                linvel,
-                gyro,
-                gravity,
-                command,
-                joint_angles,
-                joint_velocities,
-                self._last_action,
-                phase,
-            ]
-        )
-        return obs.astype(np.float32)
-
-    def reset(self) -> None:
-        super().reset()
-        self._phase = np.array([0.0, np.pi])
-
-    def _post_control_update(self) -> None:
-        phase_tp1 = self._phase + self._phase_dt
-        self._phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
-
-
-class G1VelocityController:
-    """The existing G1 velocity-policy surrogate, bound to one robot in a world.
-
-    This emulates a velocity interface; it does not execute Unitree firmware or
-    the GR00T policy. All actuator writes remain with the shared simulator.
-    """
-
-    def __init__(
-        self,
-        model: mujoco.MjModel,
-        data: mujoco.MjData,
-        prefix: str,
-        joint_names: tuple[str, ...],
-        dt: float,
-        *,
-        policy_path: str,
-    ) -> None:
-        self._model, self._data = model, data
-        self._command = np.zeros(3, dtype=np.float32)
-        actuators = np.asarray(
-            [index for index in range(model.nu) if model.actuator(index).name.startswith(prefix)],
-            dtype=np.int64,
-        )
-        if len(actuators) != len(joint_names):
-            raise ValueError("velocity policy motor mapping must match its robot's actuators")
-        joints = model.actuator_trnid[actuators, 0]
-        qpos = np.asarray(model.jnt_qposadr[joints], dtype=np.int64)
-        dofs = np.asarray(model.jnt_dofadr[joints], dtype=np.int64)
-        ctrl_dt = POLICY_CONTROL_DT
-        n_substeps = round(ctrl_dt / dt)
-        if n_substeps < 1 or not np.isclose(n_substeps * dt, ctrl_dt):
-            raise ValueError("G1 velocity policy requires a physics timestep dividing 0.02 seconds")
-        self._policy = G1OnnxController(
+        self._input_controller = input_controller
+        self._prefix = naming_prefix
+        self._qpos = qpos_indices
+        self._dofs = dof_indices
+        self._controller = G1VelocityController(
+            ctrl_dt / n_substeps,
             policy_path=policy_path,
-            default_angles=np.asarray(data.qpos[qpos]).copy(),
-            ctrl_dt=ctrl_dt,
-            n_substeps=n_substeps,
-            action_scale=POLICY_ACTION_SCALE,
-            input_controller=self,
-            drift_compensation=G1_DRIFT_COMPENSATION,
-            naming_prefix=prefix,
-            qpos_indices=qpos,
-            dof_indices=dofs,
+            default_angles=default_angles.tolist(),
+            control_dt=ctrl_dt,
+            action_scale=action_scale,
+            drift_compensation=drift_compensation or (0.0, 0.0, 0.0),
         )
 
-    def get_command(self) -> NDArray[np.float32]:
-        return self._command.copy()
+    def _state(self, model: mujoco.MjModel, data: mujoco.MjData) -> RobotState:
+        qpos = np.arange(7, model.nq) if self._qpos is None else self._qpos
+        dofs = np.arange(6, model.nv) if self._dofs is None else self._dofs
+        site = model.site(self._prefix + "imu_in_pelvis").id
+        rotation = data.site_xmat[site].reshape(3, 3)
+        orientation = tuple(Rotation.from_matrix(rotation).as_quat())
+        local_velocity = data.sensor(self._prefix + "local_linvel_pelvis").data
+        local_gyro = data.sensor(self._prefix + "gyro_pelvis").data
+        local_accel = data.sensor(self._prefix + "accelerometer_pelvis").data
+        body = data.body(self._prefix + "pelvis")
+        world_gyro = rotation @ local_gyro
+        world_velocity = rotation @ local_velocity - np.cross(
+            world_gyro, data.site_xpos[site] - body.xpos
+        )
+        return RobotState(
+            joint_names=tuple(model.joint(int(model.dof_jntid[i])).name for i in dofs),
+            position=tuple(data.qpos[qpos]),
+            velocity=tuple(data.qvel[dofs]),
+            effort=tuple(data.qfrc_actuator[dofs]),
+            base=BodyState(
+                position=tuple(body.xpos),
+                orientation=tuple(np.roll(body.xquat, -1)),
+                linear_velocity=tuple(world_velocity),
+                angular_velocity=tuple(world_gyro),
+            ),
+            imu=InertialState(
+                orientation=orientation,
+                angular_velocity=tuple(local_gyro),
+                linear_velocity=tuple(local_velocity),
+                linear_acceleration=tuple(local_accel),
+            ),
+        )
 
-    def stop(self) -> None:
-        self.reset()
+    def _command(self) -> Twist:
+        x, y, yaw = self._input_controller.get_command()
+        return Twist(linear=(x, y, 0.0), angular=(0.0, 0.0, yaw))
+
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> NDArray[np.float32]:
+        return self._controller.observation(self._state(model, data), self._command())
+
+    def get_action(self, model: mujoco.MjModel, data: mujoco.MjData) -> NDArray[np.float64]:
+        command = self._controller.step(self._state(model, data), self._command())
+        return np.asarray(command.q, dtype=np.float64)
+
+    def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        data.ctrl[:] = self.get_action(model, data)
 
     def reset(self) -> None:
-        self._command.fill(0)
-        self._policy.reset()
-
-    def step(self, command: Twist) -> MotorCommandArray:
-        self._command[:] = command.linear.x, command.linear.y, command.angular.z
-        targets = self._policy.get_action(self._model, self._data)
-        return MotorCommandArray(q=targets.tolist())
+        self._controller.reset()

@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.sim2.backends.mujoco import STATE
 from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.sensors.lidar.device import LidarDevice
 from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
@@ -29,7 +30,6 @@ from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
-from dimos.sim2.world.runtime import STATE
 
 
 @pytest.fixture

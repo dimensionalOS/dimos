@@ -28,6 +28,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.sim2.physics import RobotState
 from dimos.spec.utils import Spec
 
 
@@ -36,17 +37,18 @@ class VelocityController(Protocol):
 
     def reset(self) -> None: ...
 
-    def step(self, command: Twist) -> MotorCommandArray: ...
+    def step(self, state: RobotState, command: Twist) -> MotorCommandArray: ...
 
 
-VelocityFactory = Callable[[Any, Any, str, tuple[str, ...], float], VelocityController]
+VelocityFactory = Callable[[float], VelocityController]
 
 
 @dataclass(frozen=True)
-class MujocoModelSpec:
-    """Authored physical model and its assets, loaded by the MuJoCo backend."""
+class ModelAsset:
+    """Source asset compiled by a backend; its file format is explicit."""
 
     path: Path
+    format: Literal["mjcf", "urdf"] = "mjcf"
     meshdir: Path | None = None
     initial_qpos: tuple[float, ...] = ()
     control_imu: str | None = None
@@ -56,7 +58,7 @@ class MujocoModelSpec:
 @dataclass(frozen=True)
 class RobotInstanceSpec:
     robot_id: str
-    model: MujocoModelSpec
+    model: ModelAsset
     joint_names: tuple[str, ...]
     frame_id: str
     command_kind: Literal["motor", "velocity"] = "motor"

@@ -15,12 +15,11 @@
 """Compose one world and its sensor workers into a Blueprint."""
 
 from collections.abc import Callable, Mapping
-
-from robosuite.environments.base import MujocoEnv
-from robosuite.wrappers.wrapper import Wrapper
+from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.sim2.module import SimulationModule
+from dimos.sim2.physics import PhysicsBackend
 from dimos.sim2.sensors.camera.module import SimCameraModule, SimRGBDCameraModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.composition import Sensor
@@ -33,7 +32,8 @@ from dimos.sim2.spec import RobotInstanceSpec
 
 def simulation(
     *,
-    environment: Callable[[], MujocoEnv | Wrapper],
+    environment: Callable[[], Any] | None = None,
+    backend: Callable[[], PhysicsBackend] | None = None,
     robots: dict[str, RobotInstanceSpec] | None = None,
     sensors: tuple[tuple[str | None, Sensor], ...] = (),
     snapshot_hz: float = 60.0,
@@ -48,6 +48,7 @@ def simulation(
     modules = [
         module.blueprint(
             environment=environment,
+            backend=backend,
             robots=robots,
             sensors=sensors,
             snapshot_hz=snapshot_hz,

@@ -199,7 +199,7 @@ def test_stop_fails_queued_requests_before_waiting_for_the_busy_owner(owner_modu
     queued = threading.Event()
     pending_finished = threading.Event()
     errors = []
-    original_reset = runtime.environment.reset
+    original_reset = runtime.backend.environment.reset
     original_put = module._requests.put
 
     def blocked_reset():
@@ -220,7 +220,7 @@ def test_stop_fails_queued_requests_before_waiting_for_the_busy_owner(owner_modu
         finally:
             pending_finished.set()
 
-    mocker.patch.object(runtime.environment, "reset", side_effect=blocked_reset)
+    mocker.patch.object(runtime.backend.environment, "reset", side_effect=blocked_reset)
     mocker.patch.object(module._requests, "put", side_effect=record_queue)
     active = threading.Thread(target=module.reset)
     pending = threading.Thread(target=pending_reset)
@@ -269,7 +269,7 @@ def test_close_failure_is_reported_and_does_not_leave_a_stale_runtime(owner_modu
     assert closed_on == [owner_ident]
     assert module.status() == {
         "running": False,
-        "error": "environment close failed: ValueError: renderer teardown failed",
+        "error": "backend close failed: ValueError: renderer teardown failed",
     }
     with pytest.raises(RuntimeError, match="renderer teardown failed"):
         module.reset()
@@ -279,9 +279,9 @@ def test_close_failure_is_reported_and_does_not_leave_a_stale_runtime(owner_modu
 
 def test_owner_request_failure_reaches_the_caller_and_allows_a_later_reset(owner_module, mocker):
     runtime = owner_module._require_runtime()
-    original_reset = runtime.environment.reset
+    original_reset = runtime.backend.environment.reset
     fail = mocker.patch.object(
-        runtime.environment, "reset", side_effect=ValueError("invalid randomized scene")
+        runtime.backend.environment, "reset", side_effect=ValueError("invalid randomized scene")
     )
     with pytest.raises(ValueError, match="invalid randomized scene"):
         owner_module.reset()

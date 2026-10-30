@@ -25,7 +25,7 @@ from dimos.sim2.environment import MotorScene
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
+from dimos.sim2.spec import ModelAsset, RobotInstanceSpec
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
 
@@ -118,7 +118,7 @@ def world_config(scene_path, robot_factory, robot_path):
     )
     robot = RobotInstanceSpec(
         robot_id="left",
-        model=MujocoModelSpec(robot_path, initial_qpos=(0.1, 0.0), control_imu="imu"),
+        model=ModelAsset(robot_path, initial_qpos=(0.1, 0.0), control_imu="imu"),
         joint_names=("shoulder", "gripper"),
         frame_id="left/base",
         startup_kp=(10.0, 0.0),

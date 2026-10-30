@@ -184,15 +184,13 @@ class ConnectionModule(Module, ABC):
     def connect(self) -> None:
         """Select and start the configured device without commanding motion."""
         mode = self.config.g.simulation
-        if mode == "mujoco":
+        if mode:
             factory = self.config.simulation_device
             if factory is None:
                 raise ValueError(
                     f"{self._label} has no simulation device; build its simulated world"
                 )
             device = factory(self.publish_feedback)
-        elif mode:
-            raise ValueError(f"{self._label} does not support simulation backend {mode!r}")
         else:
             device = self.create_hardware_device()
         self._device = device

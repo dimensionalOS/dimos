@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run a robosuite environment in a DimOS worker and expose its streams/RPCs.
+"""Run a physics backend in a DimOS worker and expose its streams/RPCs.
 
 Construction, stepping, reset and destruction all happen on the same thread,
 including any upstream renderer's OpenGL context. Existing tasks keep their
@@ -27,11 +27,9 @@ import functools
 import queue
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
 from reactivex.disposable import Disposable
-from robosuite.environments.base import MujocoEnv
-from robosuite.wrappers.wrapper import Wrapper
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -46,14 +44,23 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.messages import EnvironmentStep, StateFrame
+from dimos.sim2.physics import (
+    CommandBatch,
+    CommandReport,
+    PhysicsBackend,
+    WorldDescription,
+    WorldState,
+)
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.observations import ObservationFrame
 from dimos.sim2.spec import RobotInstanceSpec
+from dimos.sim2.visuals import VisualScene
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+OwnerResult = TypeVar("OwnerResult")
 
 COMMAND_PORT = "motor_command"
 COMMAND_PORTS = (COMMAND_PORT, "cmd_vel")
@@ -94,7 +101,9 @@ def robot_ports(module: type[Module], robots: Iterable[str]) -> dict[str, dict[s
 
 
 class SimulationModuleConfig(ModuleConfig):
-    environment: Callable[[], MujocoEnv | Wrapper] | None = None
+    environment: Callable[[], Any] | None = None
+    backend: Callable[[], PhysicsBackend] | None = None
+    build_timeout_s: float = 180.0
     robots: dict[str, RobotInstanceSpec] = {}
     sensors: tuple[tuple[str | None, Sensor], ...] = ()
     snapshot_hz: float = 60.0
@@ -104,6 +113,9 @@ class SimulationModuleConfig(ModuleConfig):
 class SimulationModule(Module):
     config: SimulationModuleConfig
     dedicated_worker = True
+    world_state: Out[WorldState]
+    commands: In[CommandBatch]
+    command_reports: Out[CommandReport]
     snapshots: Out[StateFrame]
     observations: Out[ObservationFrame]
     environment_result: Out[EnvironmentStep]
@@ -131,23 +143,21 @@ class SimulationModule(Module):
                 self._stop.clear()
                 self._ready.clear()
                 self._failure = None
-                self._thread = threading.Thread(
-                    target=self._run, name="robosuite-owner", daemon=True
-                )
+                self._thread = threading.Thread(target=self._run, name="physics-owner", daemon=True)
                 self._thread.start()
-        if not self._ready.wait(timeout=60):
+        if not self._ready.wait(timeout=self.config.build_timeout_s):
             self._stop.set()
-            raise TimeoutError("robosuite environment did not initialize within 60 seconds")
+            raise TimeoutError("physics backend did not initialize within build_timeout_s")
         self._require_runtime()
 
-    def _on_owner(self, fn: Callable[[SimulationRuntime], Any]) -> Any:
-        future: Future[Any] = Future()
+    def _on_owner(self, fn: Callable[[SimulationRuntime], OwnerResult]) -> OwnerResult:
+        future: Future[OwnerResult] = Future()
         # Admission and owner shutdown share this lock: a request cannot arrive
         # after the owner's final queue drain.
         with self._lifecycle_lock:
             self._require_runtime()
             self._requests.put((fn, future))
-        return future.result(timeout=60)
+        return future.result(timeout=self.config.build_timeout_s)
 
     @rpc
     def describe(self) -> dict[str, Any]:
@@ -173,7 +183,7 @@ class SimulationModule(Module):
                 "running": self._running.is_set()
                 and not self._stop.is_set()
                 and self._failure is None,
-                "sim_time": float(runtime.data.time),
+                "sim_time": runtime.sim_time,
                 "steps": runtime.tick,
                 "episode": runtime.episode,
                 "paused": runtime.paused,
@@ -181,10 +191,32 @@ class SimulationModule(Module):
                 "rejected_commands": dict(self._rejected),
                 "error": self._failure,
                 "robots": {
-                    name: runtime.data.xpos[b.root].tolist() for name, b in runtime.robots.items()
+                    name: [float(value) for value in state.base.position]
+                    for name, state in runtime.last_state.robots.items()
                 },
-                "done": bool(runtime.environment.done),
+                "done": runtime.backend.done,
+                "backend": runtime.backend.name,
             }
+
+    @rpc
+    def describe_world(self) -> WorldDescription:
+        runtime = self._require_runtime()
+        with runtime.lock:
+            return runtime.backend.description
+
+    @rpc
+    def describe_visuals(self) -> VisualScene:
+        return self._on_owner(lambda runtime: runtime.backend.describe_visuals())
+
+    @rpc
+    def read_state(self) -> WorldState:
+        runtime = self._require_runtime()
+        with runtime.lock:
+            return runtime.last_state
+
+    @rpc
+    def submit(self, batch: CommandBatch) -> CommandReport:
+        return self._require_runtime().submit(batch)
 
     @rpc
     def reset(self) -> None:
@@ -242,6 +274,9 @@ class SimulationModule(Module):
                     self._outputs[robot_id][kind] = transport
         runtime.publish_feedback = self._publish_feedback
         runtime.publish_snapshot = self.snapshots.publish
+        runtime.publish_state = self.world_state.publish
+        runtime.publish_report = self.command_reports.publish
+        self.register_disposable(Disposable(self.commands.subscribe(self.submit)))
         runtime.publish_observation = self.observations.publish
         runtime.publish_environment = self.environment_result.publish
         self.register_disposable(Disposable(self.actions.subscribe(self.set_action)))
@@ -294,14 +329,16 @@ class SimulationModule(Module):
     def _run(self) -> None:
         runtime: SimulationRuntime | None = None
         try:
-            if self.config.environment is None:
-                raise ValueError("simulation needs an environment or collected robot descriptions")
+            if self.config.environment is None and self.config.backend is None:
+                raise ValueError("simulation needs a backend or a native task factory")
             runtime = SimulationRuntime(
                 self.config.environment,
                 self.config.robots,
                 self.config.sensors,
                 self.config.snapshot_hz,
+                backend=self.config.backend() if self.config.backend is not None else None,
             )
+            runtime.build()
             with self._lifecycle_lock:
                 self._runtime = runtime
                 self._ready.set()
@@ -328,7 +365,7 @@ class SimulationModule(Module):
                     deadline = time.monotonic()
         except Exception as error:
             self._failure = str(error)
-            logger.exception("robosuite environment stopped")
+            logger.exception("physics backend stopped")
         finally:
             with self._lifecycle_lock:
                 self._runtime = None
@@ -339,11 +376,11 @@ class SimulationModule(Module):
                     with runtime.lock:
                         runtime.close()
             except Exception as error:
-                cleanup_error = f"environment close failed: {type(error).__name__}: {error}"
+                cleanup_error = f"backend close failed: {type(error).__name__}: {error}"
                 self._failure = (
                     f"{self._failure}; {cleanup_error}" if self._failure else cleanup_error
                 )
-                logger.exception("robosuite environment cleanup failed")
+                logger.exception("physics backend cleanup failed")
             finally:
                 self._ready.set()
 
@@ -359,7 +396,7 @@ class SimulationModule(Module):
 
     def _require_runtime(self) -> SimulationRuntime:
         if self._failure is not None:
-            raise RuntimeError(f"robosuite environment failed: {self._failure}")
+            raise RuntimeError(f"physics backend failed: {self._failure}")
         if self._stop.is_set():
             raise RuntimeError("simulation stopped")
         if self._runtime is None:
