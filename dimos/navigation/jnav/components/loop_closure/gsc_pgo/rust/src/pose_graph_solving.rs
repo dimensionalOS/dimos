@@ -295,6 +295,7 @@ impl GscPgo {
             evidence_at_stated: config
                 .odometry_noise_evidence_at_stated
                 .then_some(solve_noise),
+            evidence_core: config.odometry_noise_evidence_core,
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()

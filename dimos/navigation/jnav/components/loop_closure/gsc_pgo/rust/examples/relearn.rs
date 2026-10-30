@@ -16,7 +16,8 @@
 //! committed closures (`a.json`) committed at their source keyframe, with a solve adopted every `every` keyframes, so the
 //! odometry-noise learner and the solve's gates run as they would live on the same closures (the search is not re-run).
 //! Writes the final keyframes as a.kf and prints the kept count and the learned noise.
-//! usage: relearn <run dir> <out a.kf> <config overlay json> [every keyframes, 20]
+//! With a start keyframe, solves are skipped before it (one solve there carries everything up to it), to screen a late
+//! stretch fast. usage: relearn <run dir> <out a.kf> <config overlay json> [every keyframes, 20] [start keyframe, 0]
 
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3};
@@ -28,6 +29,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let run = std::path::Path::new(&args[1]);
     let every: usize = args.get(4).map_or(20, |s| s.parse().unwrap());
+    let start: usize = args.get(5).map_or(0, |s| s.parse().unwrap());
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run.join("a.json")).unwrap()).unwrap();
     let mut config_json = json["config"]["pgo"].clone();
@@ -78,7 +80,7 @@ fn main() {
             pgo.commit_closure_with_variances(s, t, rotation, translation, score, variances);
             next += 1;
         }
-        if (k + 1) % every == 0 {
+        if k + 1 >= start && ((k + 1) % every == 0 || k + 1 == start) {
             pgo.wait_for_solve();
         }
     }

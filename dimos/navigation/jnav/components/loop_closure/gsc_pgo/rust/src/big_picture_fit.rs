@@ -72,6 +72,9 @@ pub struct SolveConfig {
     /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
     /// (`closure_commitments`, decided by the caller).
     pub committed: Vec<bool>,
+    /// The noise evidence reads only the kept closures' PCM core on every solve, not only on GM's verdict
+    /// (`odometry_noise_evidence_core`).
+    pub evidence_core: bool,
     /// When set, per noise source (xy, z, yaw, roll/pitch) the factor the odometry edges' variances carry over the
     /// stated drift: the noise evidence is then taken with the odometry back at the stated drift
     /// (`odometry_noise_evidence_at_stated`), a fixed reference, instead of at the noise this solve used.
@@ -659,7 +662,7 @@ pub(crate) fn solve_core(
     // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
     // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the evidence reads the odometry at)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
-    let evidence_weights: Vec<f64> = if gm_taken {
+    let evidence_weights: Vec<f64> = if gm_taken || config.evidence_core {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
             .zip(&huber)

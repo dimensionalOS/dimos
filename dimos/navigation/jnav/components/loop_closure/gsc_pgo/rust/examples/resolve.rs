@@ -102,6 +102,7 @@ fn main() {
         gravity: Vec::new(),
         committed: Vec::new(),
         evidence_at_stated: None,
+        evidence_core: false,
     };
     let rotations: Vec<Mat3> = poses.iter().map(|p| p.0).collect();
     let positions: Vec<[f64; 3]> = poses.iter().map(|p| p.1).collect();

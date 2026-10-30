@@ -135,6 +135,8 @@ class PGOConfig(NativeModuleConfig):
     odometry_noise_evidence_at_stated: bool = False
     # True: closure acceptance (solve verdict, uninformative gate, yank spread) sees the learned odometry noise at most its prior's upper bound, the most drift the spread across recordings makes plausible
     odometry_noise_acceptance_ceiling: bool = False
+    # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
+    odometry_noise_evidence_core: bool = False
     closure_overlap_score: bool = False
     closure_overlap_sigma_m: float = 0.03
     closure_overlap_reach_m: float = 0.5

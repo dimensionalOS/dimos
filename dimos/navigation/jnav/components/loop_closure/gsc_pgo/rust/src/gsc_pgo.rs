@@ -542,6 +542,10 @@ pub struct Config {
     /// misfit loosened it further (huge: yaw x59 -> x41000 at keyframe 3360; huge_l1: kept closures 5-9 m off the ground
     /// truth, yaw x11000).
     pub odometry_noise_acceptance_ceiling: bool,
+    /// When true, the noise learner reads only the kept closures that agree pairwise around their raw-odometry cycles
+    /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
+    /// one (huge: kept wrong closures read as yaw x41000). Without it only GM's verdict reads the core.
+    pub odometry_noise_evidence_core: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -624,6 +628,7 @@ impl Default for Config {
             closure_yank_at_stated_drift: false,
             odometry_noise_evidence_at_stated: false,
             odometry_noise_acceptance_ceiling: false,
+            odometry_noise_evidence_core: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,

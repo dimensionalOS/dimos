@@ -125,6 +125,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
         gravity: Vec::new(),
         committed: Vec::new(),
         evidence_at_stated: None,
+        evidence_core: false,
     };
     let mut scale = [1.0_f64; 4];
     for iteration in 0..15 {
