@@ -21,7 +21,7 @@ Example:
 from __future__ import annotations
 
 import argparse
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import ExitStack
 from dataclasses import asdict
 from functools import partial
@@ -29,13 +29,16 @@ from importlib import import_module
 import json
 import os
 from pathlib import Path
+import signal
 import threading
 import time
+from types import FrameType
 from typing import Any, cast
 from uuid import uuid4
 
 import numpy as np
 from PIL import Image as PillowImage
+import rerun.blueprint as rrb
 from scipy.spatial.transform import Rotation
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -54,6 +57,23 @@ from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.unreal.module import UnrealCameraModule
+from dimos.visualization.vis_module import vis_module
+
+
+def live_layout() -> rrb.Blueprint:
+    """Show the actual Unreal sensor images beside the retained G1/LIO view."""
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(origin="world", name="G1 / Point-LIO"),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image", name="Unreal RGB"),
+                rrb.Spatial2DView(origin="world/depth_image", name="Unreal depth (metres)"),
+            ),
+            column_shares=[1, 1],
+        ),
+        rrb.TimePanel(state="collapsed"),
+        collapse_panels=True,
+    )
 
 
 def observer_camera() -> Camera:
@@ -79,13 +99,22 @@ def main() -> None:
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--project", type=Path, help="Only needed when using UnrealEditor -game")
     parser.add_argument("--output", type=Path, default=Path("/tmp/dimos-g1-unreal"))
-    parser.add_argument("--seconds", type=float, default=30)
+    parser.add_argument(
+        "--seconds", type=float, default=30, help="Run duration; 0 watches until Ctrl-C"
+    )
+    parser.add_argument("--viewer", choices=("none", "rerun"), default="none")
+    parser.add_argument(
+        "--viewer-open",
+        choices=("web", "native"),
+        default="web",
+        help="Where to open --viewer rerun",
+    )
     parser.add_argument("--camera", choices=("observer", "front"), default="observer")
     parser.add_argument("--walk", action="store_true", help="Walk forward briefly in simulation")
     parser.add_argument("--reset", action="store_true", help="Reset world and controller halfway")
     args = parser.parse_args()
-    if args.seconds < 10:
-        parser.error("--seconds must be at least 10")
+    if args.seconds != 0 and args.seconds < 10:
+        parser.error("--seconds must be 0 (until Ctrl-C) or at least 10")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -117,13 +146,22 @@ def main() -> None:
             log_path=output / "renderer.log",
             rpc_timeouts={"start": 210.0},
         ),
+        vis_module(
+            args.viewer,
+            rerun_config={
+                **g1._rerun_config,
+                "blueprint": live_layout,
+                "rerun_open": args.viewer_open,
+                "memory_limit": "1GB",
+            },
+        ),
     )
     parsed = BlueprintConfigParser(blueprint).parse(
         [],
         environ={},
         global_overrides={
             "simulation": "mujoco",
-            "viewer": "none",
+            "viewer": args.viewer,
             "transport": "zenoh",
             "zenoh_domain": domain,
             "zenoh_scout_addr": global_config.zenoh_scout_addr,
@@ -134,11 +172,14 @@ def main() -> None:
     channels: dict[str, OrderedDict[float, Any]] = {
         name: OrderedDict() for name in ("color_image", "depth_image", "camera_info")
     }
-    episodes: list[int] = []
+    first_episode: int | None = None
+    last_episode: int | None = None
+    epochs_monotonic = True
     lock = threading.Lock()
     frame_available = threading.Event()
 
     def receive(name: str, message: Any) -> None:
+        nonlocal first_episode, last_episode, epochs_monotonic
         with lock:
             counts[name] = counts.get(name, 0) + 1
             recent[name] = message
@@ -148,7 +189,11 @@ def main() -> None:
                 while len(channel) > 8:
                     channel.popitem(last=False)
             if name == "frame_metadata":
-                episodes.append(message.episode_id)
+                if first_episode is None:
+                    first_episode = message.episode_id
+                if last_episode is not None and message.episode_id < last_episode:
+                    epochs_monotonic = False
+                last_episode = message.episode_id
             if set.intersection(*(set(channel) for channel in channels.values())):
                 frame_available.set()
 
@@ -180,18 +225,36 @@ def main() -> None:
         if not frame_available.wait(timeout=60):
             raise RuntimeError(f"No aligned RGB-D frame: {camera.renderer_status()}")
         print("First aligned RGB-D frame received; recording G1 run.", flush=True)
+        stopped = threading.Event()
+
+        def request_stop(_signal: int, _frame: FrameType | None) -> None:
+            stopped.set()
+
+        for stop_signal in (signal.SIGINT, signal.SIGTERM):
+            previous_handler = signal.signal(stop_signal, request_stop)
+            resources.callback(signal.signal, stop_signal, previous_handler)
+        if args.viewer == "rerun":
+            print(
+                "Rerun shows Unreal RGB, depth and G1/Point-LIO. Press Ctrl-C to stop.", flush=True
+            )
         start = time.monotonic()
         baseline = world.status()
         first_frame = camera.renderer_status()["frames"]
         first_tick = coordinator.get_tick_count()
         reset_done = False
-        records = []
-        preview = []
+        records: deque[dict[str, Any]] = deque(maxlen=300)
+        preview: deque[PillowImage.Image] = deque(maxlen=60)
+        displacement = 0.0
         next_record = 0.0
-        while (elapsed := time.monotonic() - start) < args.seconds:
-            velocity = 0.15 if args.walk and 3 < elapsed < min(8, args.seconds / 3) else 0.0
+        reset_at = args.seconds / 2 if args.seconds else 15.0
+        walk_until = min(8, args.seconds / 3) if args.seconds else 8.0
+        while not stopped.is_set() and (
+            not args.seconds or (time.monotonic() - start) < args.seconds
+        ):
+            elapsed = time.monotonic() - start
+            velocity = 0.15 if args.walk and 3 < elapsed < walk_until else 0.0
             velocity_commands.publish(Twist(linear=[velocity, 0, 0]))
-            if args.reset and not reset_done and elapsed > args.seconds / 2:
+            if args.reset and not reset_done and elapsed > reset_at:
                 world.set_paused(True)
                 world.reset()
                 result = coordinator.reset_runtime_state(reactivate=True)
@@ -236,26 +299,28 @@ def main() -> None:
                     "renderer": render_state,
                     "messages": count_snapshot,
                 }
+                displacement = max(
+                    displacement,
+                    float(
+                        np.linalg.norm(
+                            np.asarray(state["robots"]["g1"])[:2]
+                            - np.asarray(baseline["robots"]["g1"])[:2]
+                        )
+                    ),
+                )
                 records.append(record)
                 print(json.dumps(record), flush=True)
                 next_record += 1
-            time.sleep(0.1)
+            stopped.wait(0.1)
         final = world.status()
         connection_state = connection.status()
         render_state = camera.renderer_status()
         lidar_state = lidar.sensor_status()
         duration = time.monotonic() - start
         with lock:
-            final_counts, final_episodes = dict(counts), list(episodes)
-        displacement = max(
-            float(
-                np.linalg.norm(
-                    np.asarray(record["world"]["robots"]["g1"])[:2]
-                    - np.asarray(baseline["robots"]["g1"])[:2]
-                )
-            )
-            for record in records
-        )
+            final_counts = dict(counts)
+            epoch_order_valid = epochs_monotonic
+            reset_observed = first_episode != last_episode
         checks = {
             "physics_running": final["running"] and final["error"] is None,
             "robot_standing": final["robots"]["g1"][2] > 0.5,
@@ -268,11 +333,12 @@ def main() -> None:
             and final_counts.get("lidar_raw", 0) > 0,
             "odometry_received": final_counts.get("odometry", 0) > 0,
             "rgbd_received": render_state["frames"] > 0 and render_state["error"] is None,
-            "epochs_monotonic": final_episodes == sorted(final_episodes),
-            "reset_observed": not args.reset or len(set(final_episodes)) > 1,
+            "epochs_monotonic": epoch_order_valid,
+            "reset_observed": not args.reset or reset_observed,
             "walk_observed": not args.walk or displacement > 0.15,
         }
         report = {
+            "interrupted": stopped.is_set(),
             "checks": checks,
             "duration": duration,
             "physics_steps_per_second": (final["steps"] - baseline["steps"]) / duration,
@@ -280,20 +346,20 @@ def main() -> None:
             "rgbd_frames_per_second": (render_state["frames"] - first_frame) / duration,
             "max_displacement_m": displacement,
             "final_connection": asdict(connection_state),
-            "samples": records,
+            "samples": list(records),
         }
         (output / "report.json").write_text(json.dumps(report, indent=2))
         if preview:
             preview[0].save(
                 output / "preview.gif",
                 save_all=True,
-                append_images=preview[1:],
+                append_images=list(preview)[1:],
                 duration=1000,
                 loop=0,
             )
-        if not all(checks.values()):
+        if not all(checks.values()) and not stopped.is_set():
             raise RuntimeError(f"G1 Unreal validation failed: {checks}")
-        print(f"PASS: {output / 'report.json'}", flush=True)
+        print(f"{'STOPPED' if stopped.is_set() else 'PASS'}: {output / 'report.json'}", flush=True)
 
 
 if __name__ == "__main__":

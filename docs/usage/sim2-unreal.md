@@ -81,9 +81,21 @@ module added:
 ```bash
 renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
 .venv/bin/python -m dimos.sim2.unreal.demo_g1 \
-  --executable "$renderer" --walk --reset \
+  --executable "$renderer" --viewer rerun --seconds 0 --walk --reset \
   --output /tmp/dimos-g1-unreal
 ```
+
+This opens a live Rerun browser view: Unreal RGB and depth beside the existing
+G1/Point-LIO view. Unreal produces the camera images; Rerun displays them.
+`--seconds 0` keeps running until Ctrl-C, which saves the report and shuts down
+the renderer and robot stack. Use `--viewer-open native` for a native Rerun
+window. For the original 30-second headless check, omit `--viewer rerun` and
+`--seconds 0`.
+
+This demo is **not integrated with DimOS Desktop**. It runs on an isolated
+transport domain and bypasses the normal CLI run registry. Desktop needs a
+compatible gateway, a registered runnable composition and matching discovery;
+starting the gateway alone does not connect this demo.
 
 The default camera observes the robot. Add `--camera front` to use the existing
 G1 `front_camera`, including its authored mount and calibration. Both use the
@@ -133,6 +145,28 @@ fixed Unreal setup. Unsupported geometry fails explicitly.
 The camera produces aligned RGB-D with shadows. Point clouds and modeled sensor
 latency are not implemented in this module. Per-reset model changes propagate;
 editing mesh/material definitions during an episode does not.
+
+## Which assets to provide
+
+The shipped G1 model and logistics scene already contain everything needed to
+run this demo. No additional assets are required.
+
+Currently the loader accepts the compiled MuJoCo world, built from MJCF and its
+referenced meshes. It transfers positions, surfaces, plain colors and roughness.
+It does not transfer UV coordinates or image textures: a box's printed label or
+a floor's wood grain becomes a plain surface. Partially transparent geometry,
+including glass, is rejected explicitly.
+
+For a textured environment, provide its editable Unreal project and referenced
+`Content` assets, including the map, meshes, materials and textures. Keep movable
+parts separate and named, with correct scale and pivots; retain the robot's
+existing joint/physics definition and collision geometry. A UV-mapped GLB with
+PBR textures is a portable alternative handoff.
+
+**Neither an Unreal map nor GLB is loaded by the current helper.** Adding the
+normal Unreal asset import/cook path and matching visual actors to physics
+bodies is still required. Supplying better assets alone will not fix the current
+importer's material limitations.
 
 `MotorScene` removes robosuite's extra editor target gizmos. Unmodified upstream
 tasks may still contain translucent gizmos and require their visibility to be
