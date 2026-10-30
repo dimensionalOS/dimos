@@ -55,16 +55,38 @@ async function waitFor<T>(
   }
 }
 
-async function readChannel(
+const LATEST_REFRESH_MS = 2_000;
+
+export interface ChannelRead {
+  readonly slot: Slot;
+  /** False when latest fell back to a frame cached by an earlier read. */
+  readonly fresh: boolean;
+}
+
+export async function readChannel(
   session: Session,
   spec: ChannelSpec,
   mode: "latest" | "next",
   signal: AbortSignal,
-): Promise<Slot> {
+): Promise<ChannelRead> {
   const previous = session.store.get(spec.ch);
+  // The store stops updating between reads, so a cached slot can be stale.
+  if (mode === "latest" && previous !== null) {
+    try {
+      return await readChannel(
+        session,
+        spec,
+        "next",
+        AbortSignal.any([signal, AbortSignal.timeout(LATEST_REFRESH_MS)]),
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") return { slot: previous, fresh: false };
+      throw error;
+    }
+  }
   const stop = session.subscribe(spec.ch, () => {});
   try {
-    return await waitFor(
+    const slot = await waitFor(
       () => {
         const current = channelFor(session, spec.ch);
         if (current === undefined || current.encoding !== spec.encoding)
@@ -82,6 +104,7 @@ async function readChannel(
       },
       signal,
     );
+    return { slot, fresh: true };
   } finally {
     stop();
   }
@@ -127,7 +150,7 @@ export function streamTool(options: {
     {
       name: "stream_get",
       description:
-        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the SDK's current frame; next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
+        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to 2 s for a live one and otherwise returning the last frame with fresh=false (only latest can return fresh=false); next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {
@@ -162,7 +185,7 @@ export function streamTool(options: {
             (changed) => session.status.subscribe(changed),
             signal,
           );
-          const slot = await readChannel(session, spec, input.mode ?? "latest", signal);
+          const { slot, fresh } = await readChannel(session, spec, input.mode ?? "latest", signal);
           const path = input.export
             ? await savePreview(await toFrame(channel, spec, slot, epochMs(Date.now())), options.exportsDir)
             : null;
@@ -176,6 +199,7 @@ export function streamTool(options: {
                   channel,
                   seq: slot.seq,
                   ts: slot.ts,
+                  fresh,
                   preview: slot.preview ?? null,
                   export: path,
                 }),
