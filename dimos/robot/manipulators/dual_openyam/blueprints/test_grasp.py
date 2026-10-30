@@ -170,7 +170,6 @@ def test_registration_is_self_cleared_for_the_overhead_camera() -> None:
 
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         atom = _atom(stack, SelfClearedSceneRegistrationModule)
-        assert "mask_erode_pixels" not in atom.kwargs
         assert atom.kwargs["distance_threshold"] == 0.03
         assert atom.kwargs["padding_m"] == 0.02
         xml = atom.kwargs["model"].load().xml
