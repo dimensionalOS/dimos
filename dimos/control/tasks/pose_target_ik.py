@@ -203,8 +203,9 @@ class PoseTargetIKTaskConfig:
         converter=float,
         validator=_positive_finite,
     )
+    # Measured joints this far (rad) past a model limit are steered back, not rejected.
     feedback_limit_tolerance: float = attrs.field(
-        default=1e-3,
+        default=0.05,
         converter=float,
         validator=_nonnegative_finite,
     )
@@ -231,7 +232,7 @@ class PoseTargetIKTaskParams(BaseConfig):
     joint_velocity_limits_rad_s: dict[str, float] = Field(default_factory=dict)
     joint_command_filter_cutoff_hz: float | None = 5.0
     max_command_tracking_error_deg: float = 10.0
-    feedback_limit_tolerance: float = 1e-3
+    feedback_limit_tolerance: float = 0.05
     command_limit_margin: float = 1e-4
 
 
@@ -624,8 +625,10 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             context
         ):
             index = controlled_index_by_q[q_index]
-            lower[index] = max(lower[index], urdf_lower + command_limit_margin)
-            upper[index] = min(upper[index], urdf_upper - command_limit_margin)
+            # A joint past its limit takes the bound nearest it, so the command heads back.
+            env_lower, env_upper = lower[index], upper[index]
+            lower[index] = max(env_lower, min(urdf_lower + command_limit_margin, env_upper))
+            upper[index] = min(env_upper, max(urdf_upper - command_limit_margin, env_lower))
 
         invalid = np.flatnonzero(lower > upper)
         if invalid.size:
